@@ -8,6 +8,7 @@
 			"**/*.json",
 			"!node_modules",
 			"!dist",
+			"!**/dist",
 			"!.turbo",
 			"!src-tauri/target",
 			"!*.min.js"
