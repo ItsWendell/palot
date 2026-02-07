@@ -7,7 +7,7 @@
 		"dev": "vite",
 		"build": "tsc -b && vite build",
 		"lint": "biome check .",
-		"check-types": "tsc --noEmit",
+		"check-types": "tsgo --noEmit",
 		"preview": "vite preview",
 		"clean": "rm -rf dist node_modules .turbo"
 	},
@@ -19,7 +19,10 @@
 		"lucide-react": "^0.563.0",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0",
+		"react-markdown": "^10.1.0",
 		"react-resizable-panels": "^4.6.2",
+		"react-syntax-highlighter": "^16.1.0",
+		"remark-gfm": "^4.0.1",
 		"zustand": "^5.0.11"
 	},
 	"devDependencies": {
@@ -28,6 +31,7 @@
 		"@types/node": "^25.2.1",
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
+		"@types/react-syntax-highlighter": "^15.5.13",
 		"@vitejs/plugin-react": "^4.3.0",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.0",

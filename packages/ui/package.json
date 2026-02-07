@@ -11,7 +11,7 @@
 	},
 	"scripts": {
 		"lint": "biome check .",
-		"check-types": "tsc --noEmit",
+		"check-types": "tsgo --noEmit",
 		"clean": "rm -rf dist node_modules .turbo"
 	},
 	"dependencies": {

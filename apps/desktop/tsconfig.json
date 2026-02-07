@@ -16,8 +16,7 @@
 		"paths": {
 			"@/*": ["./src/*"],
 			"@codedeck/ui/*": ["../../packages/ui/src/*"]
-		},
-		"baseUrl": "."
+		}
 	},
 	"include": ["src/**/*.ts", "src/**/*.tsx"],
 	"exclude": ["node_modules", "dist"]
