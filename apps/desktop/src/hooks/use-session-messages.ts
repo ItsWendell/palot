@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Activity } from "../lib/types"
+import { fetchSessionMessages } from "../services/codedeck-server"
 import { getClient } from "../services/connection-manager"
 
 /**
@@ -138,13 +139,7 @@ export function useSessionMessages(serverId: string | null, sessionId: string | 
 	const abortRef = useRef<AbortController | null>(null)
 
 	const loadMessages = useCallback(async () => {
-		if (!serverId || !sessionId) {
-			setActivities([])
-			return
-		}
-
-		const client = getClient(serverId)
-		if (!client) {
+		if (!sessionId) {
 			setActivities([])
 			return
 		}
@@ -158,13 +153,23 @@ export function useSessionMessages(serverId: string | null, sessionId: string | 
 		setError(null)
 
 		try {
-			const result = await client.session.messages({
-				path: { id: sessionId },
-			})
+			let messages: MessageEntry[]
+
+			// Try the live OpenCode server first (if we have a connection)
+			const client = serverId ? getClient(serverId) : null
+			if (client) {
+				const result = await client.session.messages({
+					path: { id: sessionId },
+				})
+				messages = (result.data as unknown as MessageEntry[]) ?? []
+			} else {
+				// Fallback: read from disk via the Codedeck backend server
+				const result = await fetchSessionMessages(sessionId)
+				messages = (result.messages as unknown as MessageEntry[]) ?? []
+			}
 
 			if (abort.signal.aborted) return
 
-			const messages = (result.data as unknown as MessageEntry[]) ?? []
 			const derived = messagesToActivities(messages)
 			setActivities(derived)
 		} catch (err) {

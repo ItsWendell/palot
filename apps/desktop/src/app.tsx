@@ -26,16 +26,21 @@ import {
 	useSetSelectedProject,
 	useSetSelectedSessionId,
 	useSetSelectedStatus,
+	useShowSubAgents,
 	useToggleSelectedSessionId,
+	useToggleShowSubAgents,
 } from "./hooks/use-agents"
+import { useDiscovery } from "./hooks/use-discovery"
 import { useAgentActions, useServerConnection } from "./hooks/use-server"
 import { useSessionMessages } from "./hooks/use-session-messages"
-import { MOCK_AGENTS, MOCK_PROJECTS } from "./lib/mock-data"
 import type { Agent } from "./lib/types"
 
 export function App() {
-	const storeAgents = useAgents()
-	const storeProjects = useProjectList()
+	// Auto-discover projects/sessions from local OpenCode storage
+	useDiscovery()
+
+	const agents = useAgents()
+	const projects = useProjectList()
 	const { hasConnections, connectedServers, connect } = useServerConnection()
 	const { abort, createSession, sendPrompt, respondToPermission } = useAgentActions()
 
@@ -46,6 +51,8 @@ export function App() {
 	const selectedSessionId = useSelectedSessionId()
 	const commandPaletteOpen = useCommandPaletteOpen()
 	const newAgentDialogOpen = useNewAgentDialogOpen()
+	const showSubAgents = useShowSubAgents()
+	const toggleShowSubAgents = useToggleShowSubAgents()
 
 	// UI setters — stable function references
 	const setSelectedProject = useSetSelectedProject()
@@ -59,20 +66,24 @@ export function App() {
 	// Connect server dialog
 	const [connectDialogOpen, setConnectDialogOpen] = useState(false)
 
-	// Use real data when connected, mock data as fallback
-	const useMockData = !hasConnections
-	const agents: Agent[] = useMockData && storeAgents.length === 0 ? MOCK_AGENTS : storeAgents
-	const projects = useMockData && storeProjects.length === 0 ? MOCK_PROJECTS : storeProjects
+	// Agents with sub-agent filter applied (used for counts and further filtering)
+	const visibleAgents = useMemo(() => {
+		if (showSubAgents) return agents
+		return agents.filter((agent) => !agent.parentId)
+	}, [agents, showSubAgents])
 
-	// Filter agents
+	// Sub-agent count for the toggle label
+	const subAgentCount = useMemo(() => agents.filter((a) => a.parentId).length, [agents])
+
+	// Filter agents by project/status/environment
 	const filteredAgents = useMemo(() => {
-		return agents.filter((agent) => {
+		return visibleAgents.filter((agent) => {
 			if (selectedProject && agent.project !== selectedProject) return false
 			if (selectedStatus && agent.status !== selectedStatus) return false
 			if (selectedEnvironment && agent.environment !== selectedEnvironment) return false
 			return true
 		})
-	}, [agents, selectedProject, selectedStatus, selectedEnvironment])
+	}, [visibleAgents, selectedProject, selectedStatus, selectedEnvironment])
 
 	const selectedAgent = useMemo(
 		() => agents.find((a) => a.id === selectedSessionId) || null,
@@ -205,7 +216,7 @@ export function App() {
 				<div className="w-[220px] shrink-0 border-r border-border">
 					<AppSidebar
 						projects={projects}
-						agents={agents}
+						agents={visibleAgents}
 						selectedProject={selectedProject}
 						selectedStatus={selectedStatus}
 						selectedEnvironment={selectedEnvironment}
@@ -229,6 +240,9 @@ export function App() {
 									onSelectAgent={handleSelectAgent}
 									onNewAgent={handleNewAgent}
 									onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+									showSubAgents={showSubAgents}
+									subAgentCount={subAgentCount}
+									onToggleSubAgents={toggleShowSubAgents}
 								/>
 							</ResizablePanel>
 							<ResizableHandle />
@@ -253,6 +267,9 @@ export function App() {
 							onSelectAgent={handleSelectAgent}
 							onNewAgent={handleNewAgent}
 							onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+							showSubAgents={showSubAgents}
+							subAgentCount={subAgentCount}
+							onToggleSubAgents={toggleShowSubAgents}
 						/>
 					)}
 				</div>

@@ -28,6 +28,51 @@ interface ServerConnection {
 	sessions: Record<string, SessionEntry>
 }
 
+/** A project discovered from OpenCode's local storage */
+export interface DiscoveredProject {
+	id: string
+	worktree: string
+	vcs: string
+	time: {
+		created: number
+		updated?: number
+	}
+}
+
+/** A session discovered from OpenCode's local storage */
+export interface DiscoveredSession {
+	id: string
+	slug?: string
+	projectID: string
+	directory: string
+	parentID?: string
+	title: string
+	version?: string
+	time: {
+		created: number
+		updated?: number
+	}
+	summary?: {
+		additions: number
+		deletions: number
+		files: number
+	}
+}
+
+/** State for discovered (offline) data from local storage */
+interface DiscoveryState {
+	/** Whether discovery has been loaded */
+	loaded: boolean
+	/** Whether discovery is currently loading */
+	loading: boolean
+	/** Error message if discovery failed */
+	error: string | null
+	/** Discovered projects */
+	projects: DiscoveredProject[]
+	/** Discovered sessions, keyed by project ID */
+	sessions: Record<string, DiscoveredSession[]>
+}
+
 interface UIState {
 	/** Currently selected project filter (null = all) */
 	selectedProject: string | null
@@ -41,11 +86,15 @@ interface UIState {
 	commandPaletteOpen: boolean
 	/** New agent dialog open state */
 	newAgentDialogOpen: boolean
+	/** Whether to show sub-agent sessions in the list (default: false) */
+	showSubAgents: boolean
 }
 
 interface AppState {
 	/** Connected OpenCode server instances */
 	servers: Record<string, ServerConnection>
+	/** Discovered data from local OpenCode storage */
+	discovery: DiscoveryState
 	/** UI state */
 	ui: UIState
 
@@ -66,6 +115,14 @@ interface AppState {
 		statuses: Record<string, SessionStatus>,
 	) => void
 
+	// ========== Discovery actions ==========
+	setDiscoveryLoading: () => void
+	setDiscoveryResult: (
+		projects: DiscoveredProject[],
+		sessions: Record<string, DiscoveredSession[]>,
+	) => void
+	setDiscoveryError: (error: string) => void
+
 	// ========== UI actions ==========
 	setSelectedProject: (project: string | null) => void
 	setSelectedStatus: (status: AgentStatus | null) => void
@@ -74,6 +131,8 @@ interface AppState {
 	toggleSelectedSessionId: (id: string) => void
 	setCommandPaletteOpen: (open: boolean) => void
 	setNewAgentDialogOpen: (open: boolean) => void
+	setShowSubAgents: (show: boolean) => void
+	toggleShowSubAgents: () => void
 
 	// ========== Event processing ==========
 	processEvent: (serverId: string, event: Event) => void
@@ -85,6 +144,13 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
 	servers: {},
+	discovery: {
+		loaded: false,
+		loading: false,
+		error: null,
+		projects: [],
+		sessions: {},
+	},
 	ui: {
 		selectedProject: null,
 		selectedStatus: null,
@@ -92,6 +158,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 		selectedSessionId: null,
 		commandPaletteOpen: false,
 		newAgentDialogOpen: false,
+		showSubAgents: false,
 	},
 
 	// ========== Server actions ==========
@@ -246,6 +313,23 @@ export const useAppStore = create<AppState>((set, get) => ({
 			}
 		}),
 
+	// ========== Discovery actions ==========
+
+	setDiscoveryLoading: () =>
+		set((state) => ({
+			discovery: { ...state.discovery, loading: true, error: null },
+		})),
+
+	setDiscoveryResult: (projects, sessions) =>
+		set(() => ({
+			discovery: { loaded: true, loading: false, error: null, projects, sessions },
+		})),
+
+	setDiscoveryError: (error) =>
+		set((state) => ({
+			discovery: { ...state.discovery, loading: false, error },
+		})),
+
 	// ========== UI actions ==========
 
 	setSelectedProject: (project) =>
@@ -271,6 +355,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 	setNewAgentDialogOpen: (open) =>
 		set((state) => ({ ui: { ...state.ui, newAgentDialogOpen: open } })),
+
+	setShowSubAgents: (show) => set((state) => ({ ui: { ...state.ui, showSubAgents: show } })),
+
+	toggleShowSubAgents: () =>
+		set((state) => ({ ui: { ...state.ui, showSubAgents: !state.ui.showSubAgents } })),
 
 	// ========== Event processing ==========
 

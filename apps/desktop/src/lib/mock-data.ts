@@ -57,6 +57,7 @@ export const MOCK_AGENTS: Agent[] = [
 				detail: "npm test -- --filter auth",
 			},
 		],
+		permissions: [],
 	},
 	{
 		id: "2",
@@ -92,6 +93,7 @@ export const MOCK_AGENTS: Agent[] = [
 				detail: "bun test",
 			},
 		],
+		permissions: [],
 	},
 	{
 		id: "3",
@@ -133,6 +135,7 @@ export const MOCK_AGENTS: Agent[] = [
 				detail: "All 47 tests passed",
 			},
 		],
+		permissions: [],
 	},
 	{
 		id: "4",
@@ -168,6 +171,7 @@ export const MOCK_AGENTS: Agent[] = [
 				detail: "+245 -180 lines",
 			},
 		],
+		permissions: [],
 	},
 	{
 		id: "5",
@@ -197,6 +201,7 @@ export const MOCK_AGENTS: Agent[] = [
 				detail: "tailwind-dark-mode@^2.0",
 			},
 		],
+		permissions: [],
 	},
 	{
 		id: "6",
@@ -226,5 +231,6 @@ export const MOCK_AGENTS: Agent[] = [
 				detail: "src/controllers/search.ts",
 			},
 		],
+		permissions: [],
 	},
 ]

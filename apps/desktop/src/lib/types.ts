@@ -1,3 +1,6 @@
+// Import SDK types we reference in our own interfaces
+import type { Permission as SdkPermission } from "@opencode-ai/sdk"
+
 // Re-export SDK types that we use across the app
 export type {
 	AssistantMessage,
@@ -82,6 +85,10 @@ export interface Agent {
 	sessionId: string
 	/** The server instance this agent belongs to */
 	serverId: string
+	/** Pending permission requests for this agent */
+	permissions: SdkPermission[]
+	/** If set, this is a sub-agent spawned by the parent session */
+	parentId?: string
 }
 
 /** Legacy Project type for sidebar display */

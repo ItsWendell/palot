@@ -10,8 +10,10 @@ import {
 	CirclePauseIcon,
 	CloudIcon,
 	ContainerIcon,
+	GitBranchIcon,
 	Loader2Icon,
 	MonitorIcon,
+	NetworkIcon,
 	PlusIcon,
 	TimerIcon,
 } from "lucide-react"
@@ -47,6 +49,12 @@ interface AgentListProps {
 	onSelectAgent: (id: string) => void
 	onNewAgent: () => void
 	onOpenCommandPalette: () => void
+	/** Whether sub-agents are currently shown */
+	showSubAgents?: boolean
+	/** Total number of sub-agents (hidden or not) */
+	subAgentCount?: number
+	/** Toggle sub-agent visibility */
+	onToggleSubAgents?: () => void
 }
 
 export function AgentList({
@@ -55,6 +63,9 @@ export function AgentList({
 	onSelectAgent,
 	onNewAgent,
 	onOpenCommandPalette,
+	showSubAgents = false,
+	subAgentCount = 0,
+	onToggleSubAgents,
 }: AgentListProps) {
 	// Sort: failed first, then running, waiting, idle, paused, completed
 	const sortOrder: Record<AgentStatus, number> = {
@@ -77,6 +88,29 @@ export function AgentList({
 					<span className="ml-1.5 text-muted-foreground">({agents.length})</span>
 				</span>
 				<div className="flex-1" />
+				{subAgentCount > 0 && (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								onClick={onToggleSubAgents}
+								className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors ${
+									showSubAgents
+										? "bg-accent text-accent-foreground"
+										: "text-muted-foreground hover:bg-muted hover:text-foreground"
+								}`}
+							>
+								<NetworkIcon className="size-3" />
+								<span>{subAgentCount}</span>
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>
+							<p>
+								{showSubAgents ? "Hide" : "Show"} sub-agents ({subAgentCount})
+							</p>
+						</TooltipContent>
+					</Tooltip>
+				)}
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
@@ -127,21 +161,29 @@ function AgentListItem({
 	const EnvIcon = ENV_ICON[agent.environment]
 	const statusColor = STATUS_COLOR[agent.status]
 
+	const isSubAgent = !!agent.parentId
+
 	return (
 		<button
 			type="button"
 			onClick={onSelect}
-			className={`flex w-full cursor-pointer items-start gap-3 rounded-lg p-3 text-left transition-colors ${
-				isSelected ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"
-			}`}
+			className={`flex w-full cursor-pointer items-start gap-3 rounded-lg text-left transition-colors ${
+				isSubAgent ? "py-2.5 pl-7 pr-3" : "p-3"
+			} ${isSelected ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"}`}
 		>
-			<StatusIcon
-				className={`mt-0.5 size-4 shrink-0 ${statusColor} ${agent.status === "running" ? "animate-spin" : ""}`}
-			/>
+			{isSubAgent ? (
+				<GitBranchIcon className={`mt-0.5 size-3.5 shrink-0 ${statusColor}`} />
+			) : (
+				<StatusIcon
+					className={`mt-0.5 size-4 shrink-0 ${statusColor} ${agent.status === "running" ? "animate-spin" : ""}`}
+				/>
+			)}
 
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-2">
-					<span className="truncate text-sm font-medium">{agent.name}</span>
+					<span className={`truncate font-medium ${isSubAgent ? "text-xs" : "text-sm"}`}>
+						{agent.name}
+					</span>
 				</div>
 				<div className="mt-0.5 flex items-center gap-2">
 					{agent.currentActivity && (
@@ -152,11 +194,13 @@ function AgentListItem({
 
 			<div className="flex shrink-0 flex-col items-end gap-1">
 				<span className="text-xs text-muted-foreground">{agent.duration}</span>
-				<div className="flex items-center gap-1">
-					<Badge variant="outline" className="h-5 gap-1 px-1.5 text-[10px] font-normal">
-						<EnvIcon className="size-3" />
-					</Badge>
-				</div>
+				{!isSubAgent && (
+					<div className="flex items-center gap-1">
+						<Badge variant="outline" className="h-5 gap-1 px-1.5 text-[10px] font-normal">
+							<EnvIcon className="size-3" />
+						</Badge>
+					</div>
+				)}
 			</div>
 		</button>
 	)

@@ -27,7 +27,7 @@ import {
 	ZapIcon,
 } from "lucide-react"
 import { useRef, useState } from "react"
-import type { Activity, Agent, AgentStatus, EnvironmentType } from "../lib/types"
+import type { Activity, Agent, AgentStatus, EnvironmentType, Permission } from "../lib/types"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
 	running: "Running",
@@ -302,26 +302,12 @@ export function AgentDetail({
 							</Button>
 						</div>
 					) : agent.status === "waiting" ? (
-						<div className="flex gap-2">
-							<Button
-								size="sm"
-								className="flex-1"
-								onClick={() => onApprove?.(agent, "")}
-								disabled={!isConnected}
-							>
-								<CheckCircle2Icon className="mr-1.5 size-3.5" />
-								Approve
-							</Button>
-							<Button
-								size="sm"
-								variant="outline"
-								className="flex-1"
-								onClick={() => onDeny?.(agent, "")}
-								disabled={!isConnected}
-							>
-								Deny
-							</Button>
-						</div>
+						<PermissionRequests
+							agent={agent}
+							onApprove={onApprove}
+							onDeny={onDeny}
+							isConnected={isConnected}
+						/>
 					) : agent.status === "paused" ? (
 						<Button size="sm" className="w-full">
 							<PlayIcon className="mr-1.5 size-3.5" />
@@ -348,6 +334,130 @@ function ActivityItem({ activity }: { activity: Activity }) {
 				{activity.detail && (
 					<p className="mt-0.5 text-xs text-muted-foreground">{activity.detail}</p>
 				)}
+			</div>
+		</div>
+	)
+}
+
+/**
+ * Renders pending permission requests for a waiting agent.
+ * Each permission gets its own approve/deny buttons with the real permission ID.
+ */
+function PermissionRequests({
+	agent,
+	onApprove,
+	onDeny,
+	isConnected,
+}: {
+	agent: Agent
+	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
+	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
+	isConnected?: boolean
+}) {
+	const permissions = agent.permissions
+
+	if (permissions.length === 0) {
+		// Fallback: status is "waiting" but no permissions in store yet
+		// (can happen if the event hasn't arrived)
+		return (
+			<div className="flex items-center gap-2 text-sm text-muted-foreground">
+				<TimerIcon className="size-3.5" />
+				<span>Waiting for permission request...</span>
+			</div>
+		)
+	}
+
+	return (
+		<div className="space-y-2">
+			{permissions.map((permission) => (
+				<PermissionItem
+					key={permission.id}
+					agent={agent}
+					permission={permission}
+					onApprove={onApprove}
+					onDeny={onDeny}
+					isConnected={isConnected}
+				/>
+			))}
+		</div>
+	)
+}
+
+function PermissionItem({
+	agent,
+	permission,
+	onApprove,
+	onDeny,
+	isConnected,
+}: {
+	agent: Agent
+	permission: Permission
+	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
+	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
+	isConnected?: boolean
+}) {
+	const [responding, setResponding] = useState(false)
+
+	async function handleApprove() {
+		if (!onApprove || responding) return
+		setResponding(true)
+		try {
+			await onApprove(agent, permission.id)
+		} finally {
+			setResponding(false)
+		}
+	}
+
+	async function handleDeny() {
+		if (!onDeny || responding) return
+		setResponding(true)
+		try {
+			await onDeny(agent, permission.id)
+		} finally {
+			setResponding(false)
+		}
+	}
+
+	// Extract useful metadata for display
+	const tool = permission.metadata?.tool as string | undefined
+	const command = permission.metadata?.command as string | undefined
+
+	return (
+		<div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-2.5">
+			<p className="text-sm font-medium">{permission.title}</p>
+			{(tool || command) && (
+				<p className="mt-0.5 truncate text-xs text-muted-foreground">
+					{tool && <span>{tool}</span>}
+					{command && (
+						<code className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+							{command.length > 80 ? `${command.slice(0, 80)}...` : command}
+						</code>
+					)}
+				</p>
+			)}
+			<div className="mt-2 flex gap-2">
+				<Button
+					size="sm"
+					className="flex-1"
+					onClick={handleApprove}
+					disabled={!isConnected || responding}
+				>
+					{responding ? (
+						<Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
+					) : (
+						<CheckCircle2Icon className="mr-1.5 size-3.5" />
+					)}
+					Approve
+				</Button>
+				<Button
+					size="sm"
+					variant="outline"
+					className="flex-1"
+					onClick={handleDeny}
+					disabled={!isConnected || responding}
+				>
+					Deny
+				</Button>
 			</div>
 		</div>
 	)
