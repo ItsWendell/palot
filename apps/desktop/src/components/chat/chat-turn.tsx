@@ -1,17 +1,23 @@
-import { CheckIcon, ChevronDownIcon, CopyIcon, Loader2Icon, UserIcon } from "lucide-react"
+import {
+	Message,
+	MessageAction,
+	MessageActions,
+	MessageContent,
+	MessageResponse,
+} from "@codedeck/ui/components/ai-elements/message"
+import { CheckIcon, ChevronDownIcon, CopyIcon, Loader2Icon } from "lucide-react"
 import { memo, useCallback, useMemo, useState } from "react"
 import type {
 	ChatMessageEntry,
 	ChatPart,
 	ChatTurn as ChatTurnType,
 } from "../../hooks/use-session-chat"
-import { ChatMarkdown } from "./chat-markdown"
 import { ChatToolCall } from "./chat-tool-call"
 
 /**
  * Formats a timestamp (milliseconds) to relative or absolute time.
  */
-function formatTimestamp(ms: number): string {
+export function formatTimestamp(ms: number): string {
 	const date = new Date(ms)
 	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 }
@@ -126,7 +132,6 @@ interface ChatTurnProps {
 	turn: ChatTurnType
 	isLast: boolean
 	isWorking: boolean
-	onNavigateToSession?: (sessionId: string) => void
 }
 
 /**
@@ -141,7 +146,6 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	turn,
 	isLast,
 	isWorking,
-	onNavigateToSession,
 }: ChatTurnProps) {
 	const [stepsExpanded, setStepsExpanded] = useState(false)
 	const [copied, setCopied] = useState(false)
@@ -175,34 +179,17 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	}, [responseText])
 
 	return (
-		<div className="group/turn">
+		<div className="group/turn space-y-3">
 			{/* User message */}
-			<div className="mb-3">
-				<div className="flex items-start gap-2.5">
-					<div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-muted">
-						<UserIcon className="size-3.5 text-muted-foreground" />
-					</div>
-					<div className="min-w-0 flex-1">
-						<div className="flex items-center gap-2">
-							<span className="text-xs font-medium text-foreground">You</span>
-							<span className="text-[11px] text-muted-foreground">
-								{formatTimestamp(turn.userMessage.info.time.created)}
-							</span>
-						</div>
-						<div className="mt-1 text-sm text-foreground">
-							{userText.length > 300 ? (
-								<ExpandableText text={userText} />
-							) : (
-								<ChatMarkdown text={userText} />
-							)}
-						</div>
-					</div>
-				</div>
-			</div>
+			<Message from="user">
+				<MessageContent>
+					{userText.length > 300 ? <ExpandableText text={userText} /> : <p>{userText}</p>}
+				</MessageContent>
+			</Message>
 
-			{/* Steps trigger + tool calls */}
+			{/* Steps trigger + tool calls — keep custom */}
 			{(working || hasSteps) && (
-				<div className="mb-3 ml-8">
+				<div className="mb-3">
 					{/* Collapsible trigger — like OpenCode's step trigger */}
 					<button
 						type="button"
@@ -225,12 +212,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 					{(stepsExpanded || working) && (
 						<div className="mt-1 ml-1 border-l border-border pl-2.5 space-y-0.5">
 							{toolParts.map((part) => (
-								<ChatToolCall
-									key={part.id}
-									part={part}
-									defaultOpen={part.tool === "todowrite"}
-									onNavigateToSession={onNavigateToSession}
-								/>
+								<ChatToolCall key={part.id} part={part} defaultOpen={part.tool === "todowrite"} />
 							))}
 						</div>
 					)}
@@ -239,34 +221,35 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 
 			{/* Error */}
 			{errorText && !stepsExpanded && (
-				<div className="mb-3 ml-8 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
+				<div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
 					{errorText.length > 300 ? `${errorText.slice(0, 300)}...` : errorText}
 				</div>
 			)}
 
-			{/* Response — always visible when not working */}
+			{/* Assistant response — always visible when not working */}
 			{!working && responseText && (
-				<div className="ml-8 mb-1">
-					<div className="mb-1 flex items-center gap-2">
-						<span className="text-[11px] font-medium text-muted-foreground">Response</span>
-						<button
-							type="button"
+				<Message from="assistant">
+					<MessageContent>
+						<MessageResponse>{responseText}</MessageResponse>
+					</MessageContent>
+					<MessageActions className="opacity-0 transition-opacity group-hover/turn:opacity-100">
+						<MessageAction
+							tooltip={copied ? "Copied" : "Copy response"}
 							onClick={handleCopyResponse}
-							className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/turn:opacity-100"
-							aria-label={copied ? "Copied" : "Copy response"}
 						>
 							{copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-						</button>
-					</div>
-					<ChatMarkdown text={responseText} />
-				</div>
+						</MessageAction>
+					</MessageActions>
+				</Message>
 			)}
 
 			{/* Streaming response — visible while working */}
 			{working && responseText && (
-				<div className="ml-8 mb-1">
-					<ChatMarkdown text={responseText} />
-				</div>
+				<Message from="assistant">
+					<MessageContent>
+						<MessageResponse>{responseText}</MessageResponse>
+					</MessageContent>
+				</Message>
 			)}
 		</div>
 	)
@@ -282,7 +265,7 @@ function ExpandableText({ text }: { text: string }) {
 	return (
 		<div className="relative">
 			<div className={`overflow-hidden ${expanded ? "" : "max-h-16"}`}>
-				<ChatMarkdown text={text} />
+				<MessageResponse>{text}</MessageResponse>
 			</div>
 			{!expanded && (
 				<div className="absolute inset-x-0 bottom-0 flex items-end justify-center bg-gradient-to-t from-background to-transparent pt-6 pb-0">

@@ -1,31 +1,39 @@
 import {
-	Collapsible,
-	CollapsibleContent,
-	CollapsibleTrigger,
-} from "@codedeck/ui/components/collapsible"
+	Plan,
+	PlanAction,
+	PlanContent,
+	PlanHeader,
+	PlanTitle,
+	PlanTrigger,
+} from "@codedeck/ui/components/ai-elements/plan"
+import { Task, TaskContent, TaskItem, TaskTrigger } from "@codedeck/ui/components/ai-elements/task"
+import {
+	Tool,
+	ToolContent,
+	ToolHeader,
+	ToolInput,
+	ToolOutput,
+} from "@codedeck/ui/components/ai-elements/tool"
+import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	ArrowRightIcon,
 	BookOpenIcon,
-	ChevronRightIcon,
 	CodeIcon,
 	EditIcon,
 	EyeIcon,
 	FileCodeIcon,
 	GlobeIcon,
-	Loader2Icon,
 	SearchIcon,
 	SquareCheckIcon,
 	TerminalIcon,
 	WrenchIcon,
 	ZapIcon,
 } from "lucide-react"
-import { memo, useCallback, useState } from "react"
+import { memo, useCallback } from "react"
 import type { ChatPart } from "../../hooks/use-session-chat"
-import { ChatMarkdown } from "./chat-markdown"
 
 /**
  * Tool info resolver — maps tool names to icon + display title.
- * Follows OpenCode's getToolInfo pattern.
  */
 function getToolInfo(tool: string): {
 	icon: typeof WrenchIcon
@@ -65,7 +73,6 @@ function getToolInfo(tool: string): {
 
 /**
  * Extracts a human-readable subtitle from tool state.
- * Follows OpenCode's per-tool subtitle extraction.
  */
 function getToolSubtitle(part: ChatPart): string | undefined {
 	const input = part.state?.input
@@ -99,172 +106,189 @@ function getToolSubtitle(part: ChatPart): string | undefined {
 }
 
 /**
- * Renders the expanded content for a tool call.
+ * Maps our ChatPart status to AI Elements ToolPart state.
  */
-function ToolContent({ part }: { part: ChatPart }) {
-	const output = part.state?.output
-	const error = part.state?.error
+function mapToolState(
+	part: ChatPart,
+): "input-streaming" | "input-available" | "output-available" | "output-error" {
 	const status = part.state?.status
-
-	if (status === "error" && error) {
-		return (
-			<div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
-				{error.length > 500 ? `${error.slice(0, 500)}...` : error}
-			</div>
-		)
-	}
-
-	if (!output) return null
-
-	// For shell commands, render as code block
-	if (part.tool === "bash") {
-		const command = (part.state?.input?.command as string) ?? ""
-		const formatted = command ? `$ ${command}\n\n${output}` : output
-		return (
-			<div data-scrollable className="max-h-[300px] overflow-auto rounded-md bg-muted/50 p-3">
-				<pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">
-					{formatted.length > 2000 ? `${formatted.slice(0, 2000)}\n... (truncated)` : formatted}
-				</pre>
-			</div>
-		)
-	}
-
-	// For todowrite, render as checkbox list
-	if (part.tool === "todowrite" || part.tool === "todoread") {
-		const input = part.state?.input
-		const todos = (input?.todos as Array<{ content: string; status: string }>) ?? []
-		if (todos.length > 0) {
-			return (
-				<div className="space-y-1">
-					{todos.map((todo, i) => (
-						<div
-							key={`todo-${todo.content.slice(0, 20)}-${i}`}
-							className="flex items-start gap-2 text-xs"
-						>
-							<span className="mt-0.5">
-								{todo.status === "completed" ? (
-									<SquareCheckIcon className="size-3.5 text-green-500" />
-								) : (
-									<span className="inline-block size-3.5 rounded-sm border border-border" />
-								)}
-							</span>
-							<span
-								className={
-									todo.status === "completed"
-										? "text-muted-foreground line-through"
-										: "text-foreground"
-								}
-							>
-								{todo.content}
-							</span>
-						</div>
-					))}
-				</div>
-			)
-		}
-	}
-
-	// Default: render output as markdown (truncated if very long)
-	const displayOutput =
-		output.length > 3000 ? `${output.slice(0, 3000)}\n\n... (truncated)` : output
-	return (
-		<div data-scrollable className="max-h-[300px] overflow-auto">
-			<ChatMarkdown text={displayOutput} />
-		</div>
-	)
+	if (status === "running" || status === "pending") return "input-available"
+	if (status === "error") return "output-error"
+	if (part.state?.output || status === "completed") return "output-available"
+	return "input-streaming"
 }
 
 interface ChatToolCallProps {
 	part: ChatPart
 	defaultOpen?: boolean
-	onNavigateToSession?: (sessionId: string) => void
 }
 
 /**
- * Collapsible tool call component.
- * Inspired by OpenCode's BasicTool: shows icon + title + subtitle in trigger,
- * with expandable content showing tool output.
+ * Renders a tool call using AI Elements Tool, Task, or Plan components.
  */
 export const ChatToolCall = memo(function ChatToolCall({
 	part,
 	defaultOpen = false,
-	onNavigateToSession,
 }: ChatToolCallProps) {
-	const [open, setOpen] = useState(defaultOpen)
+	const navigate = useNavigate()
+	const { projectSlug } = useParams({ strict: false }) as {
+		projectSlug?: string
+	}
+
 	const toolName = part.tool ?? "unknown"
-	const { icon: ToolIcon, title } = getToolInfo(toolName)
-	const subtitle = getToolSubtitle(part)
-	const status = part.state?.status
-	const isRunning = status === "running" || status === "pending"
-	const isError = status === "error"
-	const hasContent = !!(
-		part.state?.output ||
-		part.state?.error ||
-		(part.tool === "todowrite" && part.state?.input?.todos)
-	)
 
 	// Sub-agent navigation: extract sessionId from task tool metadata
 	const subAgentSessionId =
 		part.tool === "task" ? (part.state?.metadata?.sessionId as string | undefined) : undefined
-	const canNavigate = !!subAgentSessionId && !!onNavigateToSession
 
 	const handleNavigate = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation()
-			if (subAgentSessionId && onNavigateToSession) {
-				onNavigateToSession(subAgentSessionId)
+			if (subAgentSessionId) {
+				navigate({
+					to: "/project/$projectSlug/session/$sessionId",
+					params: {
+						projectSlug: projectSlug ?? "unknown",
+						sessionId: subAgentSessionId,
+					},
+				})
 			}
 		},
-		[subAgentSessionId, onNavigateToSession],
+		[subAgentSessionId, navigate, projectSlug],
 	)
 
-	// Skip rendering todoread parts (OpenCode filters these out)
+	// Skip rendering todoread parts without output
 	if (part.tool === "todoread" && !part.state?.output) return null
 
-	return (
-		<Collapsible open={open} onOpenChange={setOpen}>
-			<CollapsibleTrigger asChild>
-				<button
-					type="button"
-					className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-muted/50 ${
-						isError ? "text-red-400" : "text-muted-foreground"
-					}`}
-				>
-					{isRunning ? (
-						<Loader2Icon className="size-3.5 shrink-0 animate-spin" />
-					) : (
-						<ToolIcon className="size-3.5 shrink-0" />
-					)}
-					<span className="text-xs font-medium text-foreground">{title}</span>
-					{subtitle && (
-						<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-							{subtitle}
-						</span>
-					)}
-					{canNavigate && (
-						<button
-							type="button"
-							onClick={handleNavigate}
-							className="inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
-						>
-							Open
-							<ArrowRightIcon className="size-3" />
-						</button>
-					)}
-					{hasContent && (
-						<ChevronRightIcon
-							className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
-						/>
-					)}
-				</button>
-			</CollapsibleTrigger>
-			{hasContent && (
-				<CollapsibleContent>
-					<div className="ml-3 border-l border-border pl-3 pt-1 pb-2">
-						<ToolContent part={part} />
+	// --- Task tool: sub-agent ---
+	if (part.tool === "task") {
+		const taskTitle = (part.state?.input?.description as string) ?? part.state?.title ?? "Sub-agent"
+
+		return (
+			<Task defaultOpen={defaultOpen}>
+				<TaskTrigger title={taskTitle}>
+					<div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
+						<ZapIcon className="size-4" />
+						<p className="flex-1 truncate text-sm">{taskTitle}</p>
+						{subAgentSessionId && (
+							<button
+								type="button"
+								onClick={handleNavigate}
+								className="inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
+							>
+								Open
+								<ArrowRightIcon className="size-3" />
+							</button>
+						)}
 					</div>
-				</CollapsibleContent>
-			)}
-		</Collapsible>
+				</TaskTrigger>
+				<TaskContent>
+					{part.state?.output && (
+						<TaskItem>
+							{part.state.output.length > 500
+								? `${part.state.output.slice(0, 500)}...`
+								: part.state.output}
+						</TaskItem>
+					)}
+				</TaskContent>
+			</Task>
+		)
+	}
+
+	// --- Todo tools: plan ---
+	if (part.tool === "todowrite" || part.tool === "todoread") {
+		const todos =
+			(part.state?.input?.todos as Array<{ content: string; status: string }> | undefined) ?? []
+		const isStreaming = mapToolState(part) === "input-streaming"
+
+		return (
+			<Plan defaultOpen={defaultOpen || todos.length > 0} isStreaming={isStreaming}>
+				<PlanHeader>
+					<PlanTitle>{part.state?.title ?? "Plan"}</PlanTitle>
+					<PlanAction>
+						<PlanTrigger />
+					</PlanAction>
+				</PlanHeader>
+				{todos.length > 0 && (
+					<PlanContent>
+						<div className="space-y-1">
+							{todos.map((todo, i) => (
+								<div
+									key={`todo-${todo.content.slice(0, 20)}-${i}`}
+									className="flex items-start gap-2 text-xs"
+								>
+									<span className="mt-0.5">
+										{todo.status === "completed" ? (
+											<SquareCheckIcon className="size-3.5 text-green-500" />
+										) : (
+											<span className="inline-block size-3.5 rounded-sm border border-border" />
+										)}
+									</span>
+									<span
+										className={
+											todo.status === "completed"
+												? "text-muted-foreground line-through"
+												: "text-foreground"
+										}
+									>
+										{todo.content}
+									</span>
+								</div>
+							))}
+						</div>
+					</PlanContent>
+				)}
+			</Plan>
+		)
+	}
+
+	// --- All other tools ---
+	const { title } = getToolInfo(toolName)
+	const subtitle = getToolSubtitle(part)
+	const state = mapToolState(part)
+	const toolTitle = subtitle ? `${title}: ${subtitle}` : title
+
+	return (
+		<Tool defaultOpen={defaultOpen}>
+			<ToolHeader type="tool-invocation" state={state} title={toolTitle} />
+			<ToolContent>
+				{part.tool === "bash" ? (
+					<BashToolContent part={part} />
+				) : (
+					<>
+						{part.state?.input && <ToolInput input={part.state.input} />}
+						<ToolOutput output={part.state?.output} errorText={part.state?.error} />
+					</>
+				)}
+			</ToolContent>
+		</Tool>
 	)
 })
+
+/**
+ * Bash tool content: shows command + output as a preformatted block.
+ */
+function BashToolContent({ part }: { part: ChatPart }) {
+	const command = (part.state?.input?.command as string) ?? ""
+	const output = part.state?.output ?? ""
+	const error = part.state?.error
+
+	if (error) {
+		return (
+			<ToolOutput
+				output={undefined}
+				errorText={error.length > 500 ? `${error.slice(0, 500)}...` : error}
+			/>
+		)
+	}
+
+	const formatted = command ? `$ ${command}\n\n${output}` : output
+	const display =
+		formatted.length > 2000 ? `${formatted.slice(0, 2000)}\n... (truncated)` : formatted
+
+	return (
+		<div data-scrollable className="max-h-[300px] overflow-auto rounded-md bg-muted/50 p-3">
+			<pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">{display}</pre>
+		</div>
+	)
+}

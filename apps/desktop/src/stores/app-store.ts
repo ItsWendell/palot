@@ -67,13 +67,7 @@ interface DiscoveryState {
 }
 
 interface UIState {
-	/** Currently selected session ID (for detail panel) */
-	selectedSessionId: string | null
-	/** Command palette open state */
 	commandPaletteOpen: boolean
-	/** New agent dialog open state */
-	newAgentDialogOpen: boolean
-	/** Whether to show sub-agent sessions in the list (default: false) */
 	showSubAgents: boolean
 }
 
@@ -111,10 +105,7 @@ interface AppState {
 	setDiscoveryError: (error: string) => void
 
 	// ========== UI actions ==========
-	setSelectedSessionId: (id: string | null) => void
-	toggleSelectedSessionId: (id: string) => void
 	setCommandPaletteOpen: (open: boolean) => void
-	setNewAgentDialogOpen: (open: boolean) => void
 	setShowSubAgents: (show: boolean) => void
 	toggleShowSubAgents: () => void
 
@@ -136,9 +127,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 		sessions: {},
 	},
 	ui: {
-		selectedSessionId: null,
 		commandPaletteOpen: false,
-		newAgentDialogOpen: false,
 		showSubAgents: false,
 	},
 
@@ -313,21 +302,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 	// ========== UI actions ==========
 
-	setSelectedSessionId: (id) => set((state) => ({ ui: { ...state.ui, selectedSessionId: id } })),
-
-	toggleSelectedSessionId: (id) =>
-		set((state) => ({
-			ui: {
-				...state.ui,
-				selectedSessionId: state.ui.selectedSessionId === id ? null : id,
-			},
-		})),
-
 	setCommandPaletteOpen: (open) =>
 		set((state) => ({ ui: { ...state.ui, commandPaletteOpen: open } })),
-
-	setNewAgentDialogOpen: (open) =>
-		set((state) => ({ ui: { ...state.ui, newAgentDialogOpen: open } })),
 
 	setShowSubAgents: (show) => set((state) => ({ ui: { ...state.ui, showSubAgents: show } })),
 

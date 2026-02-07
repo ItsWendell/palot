@@ -8,6 +8,7 @@ import {
 	CommandSeparator,
 	CommandShortcut,
 } from "@codedeck/ui/components/command"
+import { useNavigate } from "@tanstack/react-router"
 import { CloudIcon, ContainerIcon, GitBranchIcon, MonitorIcon, PlusIcon } from "lucide-react"
 import { useEffect } from "react"
 import type { Agent } from "../lib/types"
@@ -16,17 +17,11 @@ interface CommandPaletteProps {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	agents: Agent[]
-	onNewSession: () => void
-	onSelectAgent: (id: string) => void
 }
 
-export function CommandPalette({
-	open,
-	onOpenChange,
-	agents,
-	onNewSession,
-	onSelectAgent,
-}: CommandPaletteProps) {
+export function CommandPalette({ open, onOpenChange, agents }: CommandPaletteProps) {
+	const navigate = useNavigate()
+
 	useEffect(() => {
 		function handleKeyDown(e: KeyboardEvent) {
 			if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
@@ -49,7 +44,7 @@ export function CommandPalette({
 				<CommandGroup heading="Actions">
 					<CommandItem
 						onSelect={() => {
-							onNewSession()
+							navigate({ to: "/" })
 							onOpenChange(false)
 						}}
 					>
@@ -67,7 +62,10 @@ export function CommandPalette({
 								<CommandItem
 									key={agent.id}
 									onSelect={() => {
-										onSelectAgent(agent.id)
+										navigate({
+											to: "/project/$projectSlug/session/$sessionId",
+											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
+										})
 										onOpenChange(false)
 									}}
 								>
@@ -94,7 +92,10 @@ export function CommandPalette({
 								<CommandItem
 									key={agent.id}
 									onSelect={() => {
-										onSelectAgent(agent.id)
+										navigate({
+											to: "/project/$projectSlug/session/$sessionId",
+											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
+										})
 										onOpenChange(false)
 									}}
 								>

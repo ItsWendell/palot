@@ -3,6 +3,7 @@ import { Button } from "@codedeck/ui/components/button"
 import { ScrollArea } from "@codedeck/ui/components/scroll-area"
 import { Separator } from "@codedeck/ui/components/separator"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
+import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	AlertCircleIcon,
 	CheckCircle2Icon,
@@ -54,10 +55,6 @@ const STATUS_COLOR: Record<AgentStatus, string> = {
 interface SidebarProps {
 	agents: Agent[]
 	projects: SidebarProject[]
-	selectedSessionId: string | null
-	onSelectSession: (id: string) => void
-	onNewSession: () => void
-	onNewSessionForProject: (projectName: string) => void
 	onOpenCommandPalette: () => void
 	showSubAgents: boolean
 	subAgentCount: number
@@ -71,15 +68,15 @@ interface SidebarProps {
 export function Sidebar({
 	agents,
 	projects,
-	selectedSessionId,
-	onSelectSession,
-	onNewSession,
-	onNewSessionForProject,
 	onOpenCommandPalette,
 	showSubAgents,
 	subAgentCount,
 	onToggleSubAgents,
 }: SidebarProps) {
+	const navigate = useNavigate()
+	const routeParams = useParams({ strict: false }) as { sessionId?: string }
+	const selectedSessionId = routeParams.sessionId ?? null
+
 	// Derive sections
 	const activeSessions = useMemo(
 		() =>
@@ -139,7 +136,12 @@ export function Sidebar({
 						</TooltipTrigger>
 						<TooltipContent>Search sessions (&#8984;K)</TooltipContent>
 					</Tooltip>
-					<Button size="icon" variant="ghost" className="size-7" onClick={onNewSession}>
+					<Button
+						size="icon"
+						variant="ghost"
+						className="size-7"
+						onClick={() => navigate({ to: "/" })}
+					>
 						<PlusIcon className="size-3.5" />
 					</Button>
 				</div>
@@ -155,7 +157,12 @@ export function Sidebar({
 									key={agent.id}
 									agent={agent}
 									isSelected={agent.id === selectedSessionId}
-									onSelect={() => onSelectSession(agent.id)}
+									onSelect={() =>
+										navigate({
+											to: "/project/$projectSlug/session/$sessionId",
+											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
+										})
+									}
 									showProject
 								/>
 							))}
@@ -170,7 +177,12 @@ export function Sidebar({
 									key={agent.id}
 									agent={agent}
 									isSelected={agent.id === selectedSessionId}
-									onSelect={() => onSelectSession(agent.id)}
+									onSelect={() =>
+										navigate({
+											to: "/project/$projectSlug/session/$sessionId",
+											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
+										})
+									}
 									showProject
 								/>
 							))}
@@ -186,12 +198,11 @@ export function Sidebar({
 							<SidebarSection label="Projects">
 								{projects.map((project) => (
 									<ProjectFolder
-										key={project.name}
+										key={project.id}
 										project={project}
 										agents={agents}
 										selectedSessionId={selectedSessionId}
-										onSelectSession={onSelectSession}
-										onNewSession={() => onNewSessionForProject(project.name)}
+										navigate={navigate}
 									/>
 								))}
 							</SidebarSection>
@@ -234,14 +245,12 @@ function ProjectFolder({
 	project,
 	agents,
 	selectedSessionId,
-	onSelectSession,
-	onNewSession,
+	navigate,
 }: {
 	project: SidebarProject
 	agents: Agent[]
 	selectedSessionId: string | null
-	onSelectSession: (id: string) => void
-	onNewSession: () => void
+	navigate: ReturnType<typeof useNavigate>
 }) {
 	const [expanded, setExpanded] = useState(false)
 	const [showAll, setShowAll] = useState(false)
@@ -263,7 +272,13 @@ function ProjectFolder({
 			<div className="group/project flex items-center overflow-hidden">
 				<button
 					type="button"
-					onClick={() => setExpanded(!expanded)}
+					onClick={() => {
+						setExpanded(!expanded)
+						navigate({
+							to: "/project/$projectSlug",
+							params: { projectSlug: project.slug },
+						})
+					}}
 					className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 overflow-hidden rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent/50"
 				>
 					{expanded ? (
@@ -280,7 +295,7 @@ function ProjectFolder({
 					type="button"
 					onClick={(e) => {
 						e.stopPropagation()
-						onNewSession()
+						navigate({ to: "/project/$projectSlug", params: { projectSlug: project.slug } })
 					}}
 					className="mr-1 shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar-accent hover:text-foreground group-hover/project:opacity-100"
 					aria-label={`New session for ${project.name}`}
@@ -300,7 +315,12 @@ function ProjectFolder({
 									key={agent.id}
 									agent={agent}
 									isSelected={agent.id === selectedSessionId}
-									onSelect={() => onSelectSession(agent.id)}
+									onSelect={() =>
+										navigate({
+											to: "/project/$projectSlug/session/$sessionId",
+											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
+										})
+									}
 									compact
 								/>
 							))}
@@ -364,12 +384,12 @@ function SessionItem({
 		</button>
 	)
 
-	if (showProject) {
+	if (showProject || compact) {
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>{btn}</TooltipTrigger>
 				<TooltipContent side="right" align="center">
-					{agent.project}
+					{showProject ? agent.project : agent.name}
 				</TooltipContent>
 			</Tooltip>
 		)

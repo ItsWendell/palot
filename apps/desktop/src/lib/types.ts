@@ -58,6 +58,10 @@ export interface ProjectInfo {
 
 /** Enriched project for the unified sidebar (includes directory for auto-start) */
 export interface SidebarProject {
+	/** OpenCode project ID (root commit hash) or hash of directory as fallback */
+	id: string
+	/** URL-safe slug: always `{name}-{id.slice(0,12)}` for stability */
+	slug: string
 	name: string
 	directory: string
 	agentCount: number
@@ -83,6 +87,8 @@ export interface Agent {
 	status: AgentStatus
 	environment: EnvironmentType
 	project: string
+	/** URL slug for the project (for router navigation) */
+	projectSlug: string
 	/** Full project directory path (for auto-starting servers) */
 	directory: string
 	branch: string

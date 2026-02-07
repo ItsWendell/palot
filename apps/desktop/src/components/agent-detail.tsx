@@ -1,7 +1,15 @@
+import {
+	Confirmation,
+	ConfirmationAction,
+	ConfirmationActions,
+	ConfirmationRequest,
+	ConfirmationTitle,
+} from "@codedeck/ui/components/ai-elements/confirmation"
 import { Badge } from "@codedeck/ui/components/badge"
 import { Button } from "@codedeck/ui/components/button"
 import { ScrollArea } from "@codedeck/ui/components/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@codedeck/ui/components/tabs"
+import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	AlertCircleIcon,
 	ArrowLeftIcon,
@@ -88,12 +96,10 @@ interface AgentDetailProps {
 	/** Structured chat turns (for Chat tab) */
 	chatTurns: ChatTurn[]
 	chatLoading?: boolean
-	onClose: () => void
 	onStop?: (agent: Agent) => Promise<void>
 	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
 	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
 	onSendMessage?: (agent: Agent, message: string) => Promise<void>
-	onNavigateToSession?: (sessionId: string) => void
 	/** Display name of the parent session (for breadcrumb) */
 	parentSessionName?: string
 	isConnected?: boolean
@@ -105,25 +111,31 @@ export function AgentDetail({
 	activitiesLoading,
 	chatTurns,
 	chatLoading,
-	onClose,
 	onStop,
 	onApprove,
 	onDeny,
 	onSendMessage,
-	onNavigateToSession,
 	parentSessionName,
 	isConnected,
 }: AgentDetailProps) {
+	const navigate = useNavigate()
+	const { projectSlug } = useParams({ strict: false }) as { projectSlug?: string }
+
 	const StatusIcon = STATUS_ICON[agent.status]
 	const EnvIcon = ENV_ICON[agent.environment]
 
 	return (
 		<div className="flex h-full flex-col">
 			{/* Sub-agent breadcrumb — navigate back to parent */}
-			{agent.parentId && onNavigateToSession && (
+			{agent.parentId && (
 				<button
 					type="button"
-					onClick={() => onNavigateToSession(agent.parentId!)}
+					onClick={() =>
+						navigate({
+							to: "/project/$projectSlug/session/$sessionId",
+							params: { projectSlug: projectSlug ?? agent.projectSlug, sessionId: agent.parentId! },
+						})
+					}
 					className="flex items-center gap-1.5 border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
 				>
 					<ArrowLeftIcon className="size-3" />
@@ -143,7 +155,12 @@ export function AgentDetail({
 						<h2 className="truncate text-sm font-semibold">{agent.name}</h2>
 						<button
 							type="button"
-							onClick={onClose}
+							onClick={() =>
+								navigate({
+									to: projectSlug ? "/project/$projectSlug" : "/",
+									params: projectSlug ? { projectSlug } : undefined,
+								})
+							}
 							className="ml-auto shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 						>
 							<XIcon className="size-4" />
@@ -211,7 +228,6 @@ export function AgentDetail({
 						agent={agent}
 						isConnected={isConnected ?? false}
 						onSendMessage={onSendMessage}
-						onNavigateToSession={onNavigateToSession}
 					/>
 				</TabsContent>
 
@@ -431,42 +447,37 @@ function PermissionItem({
 	const command = permission.metadata?.command as string | undefined
 
 	return (
-		<div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-2.5">
-			<p className="text-sm font-medium">{permission.title}</p>
-			{(tool || command) && (
-				<p className="mt-0.5 truncate text-xs text-muted-foreground">
-					{tool && <span>{tool}</span>}
-					{command && (
-						<code className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-							{command.length > 80 ? `${command.slice(0, 80)}...` : command}
-						</code>
-					)}
-				</p>
-			)}
-			<div className="mt-2 flex gap-2">
-				<Button
-					size="sm"
-					className="flex-1"
-					onClick={handleApprove}
+		<Confirmation approval={{ id: permission.id }} state="approval-requested">
+			<ConfirmationTitle>{permission.title}</ConfirmationTitle>
+			<ConfirmationRequest>
+				{(tool || command) && (
+					<p className="truncate text-xs text-muted-foreground">
+						{tool && <span>{tool}</span>}
+						{command && (
+							<code className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+								{command.length > 80 ? `${command.slice(0, 80)}...` : command}
+							</code>
+						)}
+					</p>
+				)}
+			</ConfirmationRequest>
+			<ConfirmationActions>
+				<ConfirmationAction
+					variant="outline"
+					onClick={handleDeny}
 					disabled={!isConnected || responding}
 				>
+					Deny
+				</ConfirmationAction>
+				<ConfirmationAction onClick={handleApprove} disabled={!isConnected || responding}>
 					{responding ? (
 						<Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
 					) : (
 						<CheckCircle2Icon className="mr-1.5 size-3.5" />
 					)}
 					Approve
-				</Button>
-				<Button
-					size="sm"
-					variant="outline"
-					className="flex-1"
-					onClick={handleDeny}
-					disabled={!isConnected || responding}
-				>
-					Deny
-				</Button>
-			</div>
-		</div>
+				</ConfirmationAction>
+			</ConfirmationActions>
+		</Confirmation>
 	)
 }

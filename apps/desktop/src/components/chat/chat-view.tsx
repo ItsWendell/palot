@@ -1,7 +1,11 @@
+import {
+	Conversation,
+	ConversationContent,
+	ConversationScrollButton,
+} from "@codedeck/ui/components/ai-elements/conversation"
 import { Button } from "@codedeck/ui/components/button"
-import { ArrowDownIcon, Loader2Icon, SendIcon } from "lucide-react"
+import { Loader2Icon, SendIcon } from "lucide-react"
 import { useCallback, useRef, useState } from "react"
-import { useAutoScroll } from "../../hooks/use-auto-scroll"
 import type { ChatTurn } from "../../hooks/use-session-chat"
 import type { Agent } from "../../lib/types"
 import { ChatTurnComponent } from "./chat-turn"
@@ -12,7 +16,6 @@ interface ChatViewProps {
 	agent: Agent
 	isConnected: boolean
 	onSendMessage?: (agent: Agent, message: string) => Promise<void>
-	onNavigateToSession?: (sessionId: string) => void
 }
 
 /**
@@ -20,70 +23,38 @@ interface ChatViewProps {
  * Renders the full conversation as turns with auto-scroll,
  * plus a message input at the bottom.
  *
- * Follows OpenCode's session page architecture:
- * - Scroll container with auto-follow
- * - Turn-based rendering
- * - "Scroll to bottom" floating button
- * - Prompt dock at the bottom
+ * Uses the AI Elements Conversation component for stick-to-bottom scrolling.
  */
-export function ChatView({
-	turns,
-	loading,
-	agent,
-	isConnected,
-	onSendMessage,
-	onNavigateToSession,
-}: ChatViewProps) {
+export function ChatView({ turns, loading, agent, isConnected, onSendMessage }: ChatViewProps) {
 	const isWorking = agent.status === "running"
-	const { scrollRef, contentRef, handleScroll, handleWheel, userScrolled, forceScrollToBottom } =
-		useAutoScroll(isWorking)
 
 	return (
 		<div className="flex h-full flex-col">
-			{/* Chat messages */}
-			<div
-				ref={scrollRef}
-				onScroll={handleScroll}
-				onWheel={handleWheel}
-				className="relative min-h-0 flex-1 overflow-y-auto"
-			>
-				<div ref={contentRef} className="px-4 py-4">
+			<Conversation className="min-h-0 flex-1">
+				<ConversationContent className="px-4 py-4">
 					{loading ? (
 						<div className="flex items-center justify-center py-8">
 							<Loader2Icon className="size-5 animate-spin text-muted-foreground" />
 							<span className="ml-2 text-sm text-muted-foreground">Loading chat...</span>
 						</div>
 					) : turns.length > 0 ? (
-						<div className="space-y-6">
-							{turns.map((turn, index) => (
-								<ChatTurnComponent
-									key={turn.id}
-									turn={turn}
-									isLast={index === turns.length - 1}
-									isWorking={isWorking}
-									onNavigateToSession={onNavigateToSession}
-								/>
-							))}
-						</div>
+						turns.map((turn, index) => (
+							<ChatTurnComponent
+								key={turn.id}
+								turn={turn}
+								isLast={index === turns.length - 1}
+								isWorking={isWorking}
+							/>
+						))
 					) : (
 						<div className="flex items-center justify-center py-8">
 							<p className="text-sm text-muted-foreground">No messages yet</p>
 						</div>
 					)}
-				</div>
+				</ConversationContent>
+				<ConversationScrollButton />
+			</Conversation>
 
-				{/* "Scroll to bottom" floating button — like OpenCode's */}
-				{userScrolled && (
-					<div className="sticky bottom-3 flex justify-center">
-						<Button size="sm" variant="outline" onClick={forceScrollToBottom} className="shadow-md">
-							<ArrowDownIcon className="mr-1.5 size-3.5" />
-							Scroll to bottom
-						</Button>
-					</div>
-				)}
-			</div>
-
-			{/* Message input */}
 			<ChatInput
 				agent={agent}
 				isConnected={isConnected}
