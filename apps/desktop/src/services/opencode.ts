@@ -1,0 +1,119 @@
+import type { OpencodeClient } from "@opencode-ai/sdk/client"
+import { createOpencodeClient } from "@opencode-ai/sdk/client"
+import type { Event, Session, SessionStatus } from "../lib/types"
+
+export type { OpencodeClient }
+
+/**
+ * Creates an OpenCode client connected to a running server.
+ * For now, we connect to an existing server. Later, Tauri will spawn servers.
+ */
+export function connectToServer(url: string, directory?: string): OpencodeClient {
+	return createOpencodeClient({
+		baseUrl: url,
+		directory,
+	})
+}
+
+/**
+ * Fetch all sessions from a server.
+ */
+export async function listSessions(client: OpencodeClient): Promise<Session[]> {
+	const result = await client.session.list()
+	return (result.data as Session[]) ?? []
+}
+
+/**
+ * Get session statuses (running/idle/retry) for all sessions.
+ */
+export async function getSessionStatuses(
+	client: OpencodeClient,
+): Promise<Record<string, SessionStatus>> {
+	const result = await client.session.status()
+	return (result.data as Record<string, SessionStatus>) ?? {}
+}
+
+/**
+ * Create a new session (= new agent).
+ */
+export async function createSession(client: OpencodeClient, title?: string): Promise<Session> {
+	const result = await client.session.create({ body: { title } })
+	return result.data as Session
+}
+
+/**
+ * Send a prompt to a session (async — returns immediately, track via events).
+ */
+export async function sendPrompt(
+	client: OpencodeClient,
+	sessionId: string,
+	text: string,
+	options?: {
+		providerID?: string
+		modelID?: string
+	},
+): Promise<void> {
+	await client.session.promptAsync({
+		path: { id: sessionId },
+		body: {
+			parts: [{ type: "text", text }],
+			model: options ? { providerID: options.providerID!, modelID: options.modelID! } : undefined,
+		},
+	})
+}
+
+/**
+ * Abort a running session.
+ */
+export async function abortSession(client: OpencodeClient, sessionId: string): Promise<void> {
+	await client.session.abort({ path: { id: sessionId } })
+}
+
+/**
+ * Delete a session.
+ */
+export async function deleteSession(client: OpencodeClient, sessionId: string): Promise<void> {
+	await client.session.delete({ path: { id: sessionId } })
+}
+
+/**
+ * Get file diffs for a session.
+ */
+export async function getSessionDiff(client: OpencodeClient, sessionId: string) {
+	const result = await client.session.diff({ path: { id: sessionId } })
+	return result.data ?? []
+}
+
+/**
+ * Respond to a permission request.
+ */
+export async function respondToPermission(
+	client: OpencodeClient,
+	sessionId: string,
+	permissionId: string,
+	response: "once" | "always" | "reject",
+): Promise<void> {
+	await client.postSessionIdPermissionsPermissionId({
+		path: { id: sessionId, permissionID: permissionId },
+		body: { response },
+	})
+}
+
+/**
+ * Subscribe to SSE events from a server.
+ * Returns an async iterable of events.
+ */
+export async function subscribeToEvents(client: OpencodeClient): Promise<AsyncIterable<Event>> {
+	const result = await client.event.subscribe()
+	return result.stream as AsyncIterable<Event>
+}
+
+/**
+ * Get messages for a session (for initial load of activity feed).
+ */
+export async function getSessionMessages(client: OpencodeClient, sessionId: string) {
+	const result = await client.session.messages({
+		path: { id: sessionId },
+	})
+	return result.data ?? []
+}
