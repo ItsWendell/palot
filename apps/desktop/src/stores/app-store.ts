@@ -1,12 +1,5 @@
 import { create } from "zustand"
-import type {
-	AgentStatus,
-	EnvironmentType,
-	Event,
-	Permission,
-	Session,
-	SessionStatus,
-} from "../lib/types"
+import type { Event, Permission, Session, SessionStatus } from "../lib/types"
 
 // ============================================================
 // Store types
@@ -74,12 +67,6 @@ interface DiscoveryState {
 }
 
 interface UIState {
-	/** Currently selected project filter (null = all) */
-	selectedProject: string | null
-	/** Currently selected status filter */
-	selectedStatus: AgentStatus | null
-	/** Currently selected environment filter */
-	selectedEnvironment: EnvironmentType | null
 	/** Currently selected session ID (for detail panel) */
 	selectedSessionId: string | null
 	/** Command palette open state */
@@ -124,9 +111,6 @@ interface AppState {
 	setDiscoveryError: (error: string) => void
 
 	// ========== UI actions ==========
-	setSelectedProject: (project: string | null) => void
-	setSelectedStatus: (status: AgentStatus | null) => void
-	setSelectedEnvironment: (env: EnvironmentType | null) => void
 	setSelectedSessionId: (id: string | null) => void
 	toggleSelectedSessionId: (id: string) => void
 	setCommandPaletteOpen: (open: boolean) => void
@@ -152,9 +136,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 		sessions: {},
 	},
 	ui: {
-		selectedProject: null,
-		selectedStatus: null,
-		selectedEnvironment: null,
 		selectedSessionId: null,
 		commandPaletteOpen: false,
 		newAgentDialogOpen: false,
@@ -331,14 +312,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 		})),
 
 	// ========== UI actions ==========
-
-	setSelectedProject: (project) =>
-		set((state) => ({ ui: { ...state.ui, selectedProject: project } })),
-
-	setSelectedStatus: (status) => set((state) => ({ ui: { ...state.ui, selectedStatus: status } })),
-
-	setSelectedEnvironment: (env) =>
-		set((state) => ({ ui: { ...state.ui, selectedEnvironment: env } })),
 
 	setSelectedSessionId: (id) => set((state) => ({ ui: { ...state.ui, selectedSessionId: id } })),
 

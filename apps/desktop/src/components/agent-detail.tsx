@@ -4,6 +4,7 @@ import { ScrollArea } from "@codedeck/ui/components/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@codedeck/ui/components/tabs"
 import {
 	AlertCircleIcon,
+	ArrowLeftIcon,
 	CheckCircle2Icon,
 	CircleDotIcon,
 	CirclePauseIcon,
@@ -18,7 +19,6 @@ import {
 	PauseIcon,
 	PlayIcon,
 	SearchIcon,
-	SendIcon,
 	SquareIcon,
 	TerminalIcon,
 	TimerIcon,
@@ -26,8 +26,10 @@ import {
 	XIcon,
 	ZapIcon,
 } from "lucide-react"
-import { useRef, useState } from "react"
+import { useState } from "react"
+import type { ChatTurn } from "../hooks/use-session-chat"
 import type { Activity, Agent, AgentStatus, EnvironmentType, Permission } from "../lib/types"
+import { ChatView } from "./chat"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
 	running: "Running",
@@ -80,13 +82,20 @@ const ACTIVITY_ICON: Record<Activity["type"], typeof EyeIcon> = {
 
 interface AgentDetailProps {
 	agent: Agent
+	/** Flattened activity list (for Activity tab) */
 	activities: Activity[]
 	activitiesLoading?: boolean
+	/** Structured chat turns (for Chat tab) */
+	chatTurns: ChatTurn[]
+	chatLoading?: boolean
 	onClose: () => void
 	onStop?: (agent: Agent) => Promise<void>
 	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
 	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
 	onSendMessage?: (agent: Agent, message: string) => Promise<void>
+	onNavigateToSession?: (sessionId: string) => void
+	/** Display name of the parent session (for breadcrumb) */
+	parentSessionName?: string
 	isConnected?: boolean
 }
 
@@ -94,33 +103,39 @@ export function AgentDetail({
 	agent,
 	activities,
 	activitiesLoading,
+	chatTurns,
+	chatLoading,
 	onClose,
 	onStop,
 	onApprove,
 	onDeny,
 	onSendMessage,
+	onNavigateToSession,
+	parentSessionName,
 	isConnected,
 }: AgentDetailProps) {
 	const StatusIcon = STATUS_ICON[agent.status]
 	const EnvIcon = ENV_ICON[agent.environment]
-	const [message, setMessage] = useState("")
-	const [sending, setSending] = useState(false)
-	const inputRef = useRef<HTMLTextAreaElement>(null)
-
-	async function handleSend() {
-		const text = message.trim()
-		if (!text || !onSendMessage || sending) return
-		setSending(true)
-		try {
-			await onSendMessage(agent, text)
-			setMessage("")
-		} finally {
-			setSending(false)
-		}
-	}
 
 	return (
 		<div className="flex h-full flex-col">
+			{/* Sub-agent breadcrumb — navigate back to parent */}
+			{agent.parentId && onNavigateToSession && (
+				<button
+					type="button"
+					onClick={() => onNavigateToSession(agent.parentId!)}
+					className="flex items-center gap-1.5 border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+				>
+					<ArrowLeftIcon className="size-3" />
+					<span>
+						Back to{" "}
+						<span className="font-medium text-foreground">
+							{parentSessionName || "parent session"}
+						</span>
+					</span>
+				</button>
+			)}
+
 			{/* Header */}
 			<div className="flex items-start gap-3 border-b border-border p-4">
 				<div className="min-w-0 flex-1">
@@ -175,9 +190,10 @@ export function AgentDetail({
 				</div>
 			</div>
 
-			{/* Tabs */}
-			<Tabs defaultValue="activity" className="flex min-h-0 flex-1 flex-col">
+			{/* Tabs — Chat is now the default */}
+			<Tabs defaultValue="chat" className="flex min-h-0 flex-1 flex-col">
 				<TabsList variant="line" className="shrink-0 border-b border-border px-4">
+					<TabsTrigger value="chat">Chat</TabsTrigger>
 					<TabsTrigger value="activity">
 						Activity
 						{activities.length > 0 && (
@@ -185,9 +201,21 @@ export function AgentDetail({
 						)}
 					</TabsTrigger>
 					<TabsTrigger value="diff">Diff</TabsTrigger>
-					<TabsTrigger value="terminal">Terminal</TabsTrigger>
 				</TabsList>
 
+				{/* Chat tab — turn-based conversation view with integrated input */}
+				<TabsContent value="chat" className="min-h-0 flex-1">
+					<ChatView
+						turns={chatTurns}
+						loading={chatLoading ?? false}
+						agent={agent}
+						isConnected={isConnected ?? false}
+						onSendMessage={onSendMessage}
+						onNavigateToSession={onNavigateToSession}
+					/>
+				</TabsContent>
+
+				{/* Activity tab — raw flat log of tool calls */}
 				<TabsContent value="activity" className="min-h-0 flex-1">
 					<ScrollArea className="h-full">
 						<div className="space-y-1 p-4">
@@ -217,105 +245,88 @@ export function AgentDetail({
 						</div>
 					</div>
 				</TabsContent>
-
-				<TabsContent value="terminal" className="min-h-0 flex-1">
-					<div className="flex h-full items-center justify-center">
-						<div className="text-center">
-							<TerminalIcon className="mx-auto mb-2 size-8 text-muted-foreground/40" />
-							<p className="text-sm text-muted-foreground">Terminal coming soon</p>
-						</div>
-					</div>
-				</TabsContent>
 			</Tabs>
 
-			{/* Message input + action bar */}
-			<div className="border-t border-border">
-				{/* Message input — always shown when connected */}
-				{isConnected && (
-					<div className="flex items-end gap-2 border-b border-border p-3">
-						<textarea
-							ref={inputRef}
-							value={message}
-							onChange={(e) => setMessage(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-									e.preventDefault()
-									handleSend()
-								}
-							}}
-							placeholder="Send a message..."
-							rows={1}
-							className="min-h-[36px] flex-1 resize-none rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-						/>
-						<Button
-							size="sm"
-							variant="ghost"
-							onClick={handleSend}
-							disabled={!message.trim() || sending}
-							className="shrink-0"
-						>
-							{sending ? (
-								<Loader2Icon className="size-4 animate-spin" />
-							) : (
-								<SendIcon className="size-4" />
-							)}
-						</Button>
-					</div>
-				)}
+			{/* Action bar — permissions, stop, etc. (no message input here anymore) */}
+			<ActionBar
+				agent={agent}
+				onStop={onStop}
+				onApprove={onApprove}
+				onDeny={onDeny}
+				isConnected={isConnected}
+			/>
+		</div>
+	)
+}
 
-				{/* Status-dependent action buttons */}
-				<div className="p-3">
-					{agent.status === "completed" ? (
-						<div className="flex gap-2">
-							<Button size="sm" className="flex-1">
-								Create PR
-							</Button>
-							<Button size="sm" variant="outline" className="flex-1">
-								Apply Locally
-							</Button>
-						</div>
-					) : agent.status === "running" ? (
-						<div className="flex gap-2">
-							<Button size="sm" variant="outline" className="flex-1">
-								<PauseIcon className="mr-1.5 size-3.5" />
-								Pause
-							</Button>
-							<Button
-								size="sm"
-								variant="destructive"
-								className="flex-1"
-								onClick={() => onStop?.(agent)}
-								disabled={!isConnected}
-							>
-								<SquareIcon className="mr-1.5 size-3.5" />
-								Stop
-							</Button>
-						</div>
-					) : agent.status === "failed" ? (
-						<div className="flex gap-2">
-							<Button size="sm" className="flex-1">
-								<PlayIcon className="mr-1.5 size-3.5" />
-								Retry
-							</Button>
-							<Button size="sm" variant="outline" className="flex-1">
-								View Logs
-							</Button>
-						</div>
-					) : agent.status === "waiting" ? (
-						<PermissionRequests
-							agent={agent}
-							onApprove={onApprove}
-							onDeny={onDeny}
-							isConnected={isConnected}
-						/>
-					) : agent.status === "paused" ? (
-						<Button size="sm" className="w-full">
-							<PlayIcon className="mr-1.5 size-3.5" />
-							Resume
-						</Button>
-					) : null}
+/**
+ * Status-dependent action buttons at the bottom of the detail panel.
+ * Permission approve/deny, stop, retry, etc.
+ */
+function ActionBar({
+	agent,
+	onStop,
+	onApprove,
+	onDeny,
+	isConnected,
+}: {
+	agent: Agent
+	onStop?: (agent: Agent) => Promise<void>
+	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
+	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
+	isConnected?: boolean
+}) {
+	// Only show action bar for statuses that have actions
+	const showActionBar =
+		agent.status === "running" ||
+		agent.status === "waiting" ||
+		agent.status === "failed" ||
+		agent.status === "paused"
+
+	if (!showActionBar) return null
+
+	return (
+		<div className="border-t border-border p-3">
+			{agent.status === "running" ? (
+				<div className="flex gap-2">
+					<Button size="sm" variant="outline" className="flex-1">
+						<PauseIcon className="mr-1.5 size-3.5" />
+						Pause
+					</Button>
+					<Button
+						size="sm"
+						variant="destructive"
+						className="flex-1"
+						onClick={() => onStop?.(agent)}
+						disabled={!isConnected}
+					>
+						<SquareIcon className="mr-1.5 size-3.5" />
+						Stop
+					</Button>
 				</div>
-			</div>
+			) : agent.status === "failed" ? (
+				<div className="flex gap-2">
+					<Button size="sm" className="flex-1">
+						<PlayIcon className="mr-1.5 size-3.5" />
+						Retry
+					</Button>
+					<Button size="sm" variant="outline" className="flex-1">
+						View Logs
+					</Button>
+				</div>
+			) : agent.status === "waiting" ? (
+				<PermissionRequests
+					agent={agent}
+					onApprove={onApprove}
+					onDeny={onDeny}
+					isConnected={isConnected}
+				/>
+			) : agent.status === "paused" ? (
+				<Button size="sm" className="w-full">
+					<PlayIcon className="mr-1.5 size-3.5" />
+					Resume
+				</Button>
+			) : null}
 		</div>
 	)
 }
@@ -357,8 +368,6 @@ function PermissionRequests({
 	const permissions = agent.permissions
 
 	if (permissions.length === 0) {
-		// Fallback: status is "waiting" but no permissions in store yet
-		// (can happen if the event hasn't arrived)
 		return (
 			<div className="flex items-center gap-2 text-sm text-muted-foreground">
 				<TimerIcon className="size-3.5" />
@@ -418,7 +427,6 @@ function PermissionItem({
 		}
 	}
 
-	// Extract useful metadata for display
 	const tool = permission.metadata?.tool as string | undefined
 	const command = permission.metadata?.command as string | undefined
 

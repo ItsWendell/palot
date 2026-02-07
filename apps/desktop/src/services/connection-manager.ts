@@ -1,5 +1,6 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/client"
 import { useAppStore } from "../stores/app-store"
+import { startServerForProject } from "./codedeck-server"
 import { connectToServer, getSessionStatuses, listSessions, subscribeToEvents } from "./opencode"
 
 /** Active connections, keyed by server ID */
@@ -66,6 +67,46 @@ export function disconnect(serverId: string): void {
  */
 export function getClient(serverId: string): OpencodeClient | undefined {
 	return connections.get(serverId)?.client
+}
+
+/**
+ * Find an already-connected server for a given project directory.
+ * Returns the server ID or null if no server is connected for that directory.
+ */
+export function findServerForDirectory(directory: string): string | null {
+	const servers = useAppStore.getState().servers
+	for (const server of Object.values(servers)) {
+		if (server.connected && server.directory === directory) {
+			return server.id
+		}
+	}
+	return null
+}
+
+/** Auto-incrementing ID for servers started via ensureServerForProject */
+let nextAutoServerId = 1
+
+/**
+ * Ensures a server is running and connected for a given project directory.
+ * - If already connected, returns the existing server ID immediately.
+ * - If not, starts the server via the codedeck backend, connects to it, and returns the new server ID.
+ *
+ * This is the main entry point for the "invisible server" UX — the user never
+ * thinks about servers, they just interact with projects and sessions.
+ */
+export async function ensureServerForProject(directory: string): Promise<string> {
+	// Check if we already have a connected server for this directory
+	const existingId = findServerForDirectory(directory)
+	if (existingId) return existingId
+
+	// Start the server via the codedeck backend (waits for it to be ready)
+	const { server } = await startServerForProject(directory)
+
+	// Connect to the new server and subscribe to events
+	const serverId = server.id ?? `auto-${nextAutoServerId++}`
+	await connectAndSubscribe(serverId, server.url, server.directory)
+
+	return serverId
 }
 
 /**

@@ -56,6 +56,14 @@ export interface ProjectInfo {
 	agentCount: number
 }
 
+/** Enriched project for the unified sidebar (includes directory for auto-start) */
+export interface SidebarProject {
+	name: string
+	directory: string
+	agentCount: number
+	lastActiveAt: number
+}
+
 /** Activity entry for the detail panel — derived from message parts */
 export interface Activity {
 	id: string
@@ -75,6 +83,8 @@ export interface Agent {
 	status: AgentStatus
 	environment: EnvironmentType
 	project: string
+	/** Full project directory path (for auto-starting servers) */
+	directory: string
 	branch: string
 	duration: string
 	tokens: number
@@ -89,6 +99,8 @@ export interface Agent {
 	permissions: SdkPermission[]
 	/** If set, this is a sub-agent spawned by the parent session */
 	parentId?: string
+	/** Timestamp (ms) of last activity — for sorting and relative time display */
+	lastActiveAt: number
 }
 
 /** Legacy Project type for sidebar display */

@@ -16,7 +16,7 @@ interface CommandPaletteProps {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	agents: Agent[]
-	onNewAgent: () => void
+	onNewSession: () => void
 	onSelectAgent: (id: string) => void
 }
 
@@ -24,7 +24,7 @@ export function CommandPalette({
 	open,
 	onOpenChange,
 	agents,
-	onNewAgent,
+	onNewSession,
 	onSelectAgent,
 }: CommandPaletteProps) {
 	useEffect(() => {
@@ -38,7 +38,7 @@ export function CommandPalette({
 		return () => document.removeEventListener("keydown", handleKeyDown)
 	}, [open, onOpenChange])
 
-	const runningAgents = agents.filter((a) => a.status === "running")
+	const activeSessions = agents.filter((a) => a.status === "running" || a.status === "waiting")
 
 	return (
 		<CommandDialog open={open} onOpenChange={onOpenChange}>
@@ -49,21 +49,21 @@ export function CommandPalette({
 				<CommandGroup heading="Actions">
 					<CommandItem
 						onSelect={() => {
-							onNewAgent()
+							onNewSession()
 							onOpenChange(false)
 						}}
 					>
 						<PlusIcon />
-						<span>New Agent</span>
+						<span>New Session</span>
 						<CommandShortcut>&#8984;N</CommandShortcut>
 					</CommandItem>
 				</CommandGroup>
 
-				{runningAgents.length > 0 && (
+				{activeSessions.length > 0 && (
 					<>
 						<CommandSeparator />
-						<CommandGroup heading="Running Agents">
-							{runningAgents.map((agent) => (
+						<CommandGroup heading="Active Sessions">
+							{activeSessions.map((agent) => (
 								<CommandItem
 									key={agent.id}
 									onSelect={() => {
@@ -79,7 +79,7 @@ export function CommandPalette({
 										<MonitorIcon />
 									)}
 									<span>{agent.name}</span>
-									<span className="text-muted-foreground text-xs">{agent.project}</span>
+									<span className="text-xs text-muted-foreground">{agent.project}</span>
 								</CommandItem>
 							))}
 						</CommandGroup>
@@ -89,7 +89,7 @@ export function CommandPalette({
 				{agents.length > 0 && (
 					<>
 						<CommandSeparator />
-						<CommandGroup heading="All Agents">
+						<CommandGroup heading="All Sessions">
 							{agents.map((agent) => (
 								<CommandItem
 									key={agent.id}
@@ -100,8 +100,8 @@ export function CommandPalette({
 								>
 									<GitBranchIcon />
 									<span>{agent.name}</span>
-									<span className="text-muted-foreground text-xs">
-										{agent.project} &middot; {agent.branch}
+									<span className="text-xs text-muted-foreground">
+										{agent.project} &middot; {agent.duration}
 									</span>
 								</CommandItem>
 							))}
