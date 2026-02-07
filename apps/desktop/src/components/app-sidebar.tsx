@@ -2,7 +2,7 @@ import { Badge } from "@codedeck/ui/components/badge"
 import { Button } from "@codedeck/ui/components/button"
 import { ScrollArea } from "@codedeck/ui/components/scroll-area"
 import { Separator } from "@codedeck/ui/components/separator"
-import { CloudIcon, ContainerIcon, MonitorIcon, PlusIcon } from "lucide-react"
+import { CloudIcon, ContainerIcon, MonitorIcon, PlugIcon, PlusIcon } from "lucide-react"
 import type { Agent, AgentStatus, EnvironmentType, Project } from "../lib/types"
 
 const STATUS_CONFIG: Record<AgentStatus, { label: string; color: string; dotClass: string }> = {
@@ -46,6 +46,8 @@ interface AppSidebarProps {
 	onSelectStatus: (status: AgentStatus | null) => void
 	onSelectEnvironment: (env: EnvironmentType | null) => void
 	onNewAgent: () => void
+	onConnectServer?: () => void
+	hasConnections?: boolean
 }
 
 export function AppSidebar({
@@ -58,6 +60,8 @@ export function AppSidebar({
 	onSelectStatus,
 	onSelectEnvironment,
 	onNewAgent,
+	onConnectServer,
+	hasConnections,
 }: AppSidebarProps) {
 	const statusCounts = agents.reduce(
 		(acc, agent) => {
@@ -84,11 +88,22 @@ export function AppSidebar({
 				<h1 className="text-sm font-semibold tracking-tight">Codedeck</h1>
 			</div>
 
-			<div className="p-3">
+			<div className="space-y-1.5 p-3">
 				<Button className="w-full" size="sm" onClick={onNewAgent}>
 					<PlusIcon className="mr-1.5 size-3.5" />
 					New Agent
 				</Button>
+				{onConnectServer && (
+					<Button
+						className="w-full"
+						size="sm"
+						variant={hasConnections ? "ghost" : "outline"}
+						onClick={onConnectServer}
+					>
+						<PlugIcon className="mr-1.5 size-3.5" />
+						{hasConnections ? "Add Server" : "Connect Server"}
+					</Button>
+				)}
 			</div>
 
 			<ScrollArea className="flex-1">

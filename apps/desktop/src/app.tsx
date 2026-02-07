@@ -4,11 +4,12 @@ import {
 	ResizablePanelGroup,
 } from "@codedeck/ui/components/resizable"
 import { TooltipProvider } from "@codedeck/ui/components/tooltip"
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { AgentDetail } from "./components/agent-detail"
 import { AgentList } from "./components/agent-list"
 import { AppSidebar } from "./components/app-sidebar"
 import { CommandPalette } from "./components/command-palette"
+import { ConnectServerDialog } from "./components/connect-server-dialog"
 import { NewAgentDialog } from "./components/new-agent-dialog"
 import {
 	useAgents,
@@ -27,19 +28,15 @@ import {
 	useSetSelectedStatus,
 	useToggleSelectedSessionId,
 } from "./hooks/use-agents"
+import { useAgentActions, useServerConnection } from "./hooks/use-server"
 import { MOCK_AGENTS, MOCK_PROJECTS } from "./lib/mock-data"
 import type { Agent } from "./lib/types"
-
-/**
- * Whether to use mock data (when no OpenCode servers are connected).
- * In development without a running server, this provides the demo UI.
- * Once real servers connect via the store, real data takes over.
- */
-const USE_MOCK_DATA = true
 
 export function App() {
 	const storeAgents = useAgents()
 	const storeProjects = useProjectList()
+	const { hasConnections, connectedServers, connect } = useServerConnection()
+	const { abort, createSession, sendPrompt, respondToPermission } = useAgentActions()
 
 	// UI state — individual selectors for minimal re-renders
 	const selectedProject = useSelectedProject()
@@ -58,9 +55,13 @@ export function App() {
 	const setCommandPaletteOpen = useSetCommandPaletteOpen()
 	const setNewAgentDialogOpen = useSetNewAgentDialogOpen()
 
-	// Use store data if available, otherwise fall back to mock
-	const agents: Agent[] = USE_MOCK_DATA && storeAgents.length === 0 ? MOCK_AGENTS : storeAgents
-	const projects = USE_MOCK_DATA && storeProjects.length === 0 ? MOCK_PROJECTS : storeProjects
+	// Connect server dialog
+	const [connectDialogOpen, setConnectDialogOpen] = useState(false)
+
+	// Use real data when connected, mock data as fallback
+	const useMockData = !hasConnections
+	const agents: Agent[] = useMockData && storeAgents.length === 0 ? MOCK_AGENTS : storeAgents
+	const projects = useMockData && storeProjects.length === 0 ? MOCK_PROJECTS : storeProjects
 
 	// Filter agents
 	const filteredAgents = useMemo(() => {
@@ -88,6 +89,97 @@ export function App() {
 		[toggleSelectedSessionId],
 	)
 
+	const handleConnect = useCallback(
+		async (url: string, directory: string) => {
+			await connect(url, directory)
+		},
+		[connect],
+	)
+
+	const handleLaunchAgent = useCallback(
+		async (serverId: string, prompt: string) => {
+			const session = await createSession(serverId, prompt.slice(0, 80))
+			if (session) {
+				await sendPrompt(serverId, session.id, prompt)
+			}
+		},
+		[createSession, sendPrompt],
+	)
+
+	const handleStopAgent = useCallback(
+		async (agent: Agent) => {
+			await abort(agent.serverId, agent.sessionId)
+		},
+		[abort],
+	)
+
+	const handleApprovePermission = useCallback(
+		async (agent: Agent, permissionId: string) => {
+			await respondToPermission(agent.serverId, agent.sessionId, permissionId, "once")
+		},
+		[respondToPermission],
+	)
+
+	const handleDenyPermission = useCallback(
+		async (agent: Agent, permissionId: string) => {
+			await respondToPermission(agent.serverId, agent.sessionId, permissionId, "reject")
+		},
+		[respondToPermission],
+	)
+
+	// Keyboard navigation
+	useEffect(() => {
+		function handleKeyDown(e: KeyboardEvent) {
+			// Don't capture when typing in inputs
+			const target = e.target as HTMLElement
+			if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+				return
+			}
+
+			// Escape — close detail panel
+			if (e.key === "Escape" && selectedSessionId) {
+				e.preventDefault()
+				setSelectedSessionId(null)
+				return
+			}
+
+			// J/K — navigate agent list
+			if (e.key === "j" || e.key === "k") {
+				e.preventDefault()
+				const currentIndex = filteredAgents.findIndex((a) => a.id === selectedSessionId)
+				let nextIndex: number
+
+				if (e.key === "j") {
+					nextIndex = currentIndex < filteredAgents.length - 1 ? currentIndex + 1 : 0
+				} else {
+					nextIndex = currentIndex > 0 ? currentIndex - 1 : filteredAgents.length - 1
+				}
+
+				if (filteredAgents[nextIndex]) {
+					setSelectedSessionId(filteredAgents[nextIndex].id)
+				}
+				return
+			}
+
+			// Cmd+N — new agent
+			if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+				e.preventDefault()
+				handleNewAgent()
+				return
+			}
+
+			// Cmd+Shift+C — connect server
+			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "C") {
+				e.preventDefault()
+				setConnectDialogOpen(true)
+				return
+			}
+		}
+
+		document.addEventListener("keydown", handleKeyDown)
+		return () => document.removeEventListener("keydown", handleKeyDown)
+	}, [selectedSessionId, filteredAgents, setSelectedSessionId, handleNewAgent])
+
 	return (
 		<TooltipProvider>
 			<div className="flex h-screen bg-background text-foreground">
@@ -103,6 +195,8 @@ export function App() {
 						onSelectStatus={setSelectedStatus}
 						onSelectEnvironment={setSelectedEnvironment}
 						onNewAgent={handleNewAgent}
+						onConnectServer={() => setConnectDialogOpen(true)}
+						hasConnections={hasConnections}
 					/>
 				</div>
 
@@ -121,7 +215,14 @@ export function App() {
 							</ResizablePanel>
 							<ResizableHandle />
 							<ResizablePanel id="agent-detail" defaultSize={45} minSize={25}>
-								<AgentDetail agent={selectedAgent} onClose={() => setSelectedSessionId(null)} />
+								<AgentDetail
+									agent={selectedAgent}
+									onClose={() => setSelectedSessionId(null)}
+									onStop={handleStopAgent}
+									onApprove={handleApprovePermission}
+									onDeny={handleDenyPermission}
+									isConnected={hasConnections}
+								/>
 							</ResizablePanel>
 						</ResizablePanelGroup>
 					) : (
@@ -148,6 +249,17 @@ export function App() {
 				open={newAgentDialogOpen}
 				onOpenChange={setNewAgentDialogOpen}
 				projects={projects}
+				connectedServers={connectedServers.map((s) => ({
+					id: s.id,
+					name: s.directory.split("/").pop() || s.directory,
+					directory: s.directory,
+				}))}
+				onLaunch={handleLaunchAgent}
+			/>
+			<ConnectServerDialog
+				open={connectDialogOpen}
+				onOpenChange={setConnectDialogOpen}
+				onConnect={handleConnect}
 			/>
 		</TooltipProvider>
 	)

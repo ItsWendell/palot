@@ -79,9 +79,20 @@ const ACTIVITY_ICON: Record<Activity["type"], typeof EyeIcon> = {
 interface AgentDetailProps {
 	agent: Agent
 	onClose: () => void
+	onStop?: (agent: Agent) => Promise<void>
+	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
+	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
+	isConnected?: boolean
 }
 
-export function AgentDetail({ agent, onClose }: AgentDetailProps) {
+export function AgentDetail({
+	agent,
+	onClose,
+	onStop,
+	onApprove,
+	onDeny,
+	isConnected,
+}: AgentDetailProps) {
 	const StatusIcon = STATUS_ICON[agent.status]
 	const EnvIcon = ENV_ICON[agent.environment]
 
@@ -184,7 +195,13 @@ export function AgentDetail({ agent, onClose }: AgentDetailProps) {
 							<PauseIcon className="mr-1.5 size-3.5" />
 							Pause
 						</Button>
-						<Button size="sm" variant="destructive" className="flex-1">
+						<Button
+							size="sm"
+							variant="destructive"
+							className="flex-1"
+							onClick={() => onStop?.(agent)}
+							disabled={!isConnected}
+						>
 							<SquareIcon className="mr-1.5 size-3.5" />
 							Stop
 						</Button>
@@ -201,11 +218,22 @@ export function AgentDetail({ agent, onClose }: AgentDetailProps) {
 					</div>
 				) : agent.status === "waiting" ? (
 					<div className="flex gap-2">
-						<Button size="sm" className="flex-1">
+						<Button
+							size="sm"
+							className="flex-1"
+							onClick={() => onApprove?.(agent, "")}
+							disabled={!isConnected}
+						>
 							<CheckCircle2Icon className="mr-1.5 size-3.5" />
 							Approve
 						</Button>
-						<Button size="sm" variant="outline" className="flex-1">
+						<Button
+							size="sm"
+							variant="outline"
+							className="flex-1"
+							onClick={() => onDeny?.(agent, "")}
+							disabled={!isConnected}
+						>
 							Deny
 						</Button>
 					</div>
