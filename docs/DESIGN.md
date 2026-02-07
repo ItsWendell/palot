@@ -1279,6 +1279,17 @@ OpenCode's built-in permission system handles tool-level permissions (bash comma
 
 12. **Maximum useful agents**: Research suggests ~5 parallel agents is the human attention limit. Should we enforce or warn about this?
 
+### Discovery & Onboarding
+
+13. **Auto-detect existing OpenCode projects and sessions**: Instead of requiring manual "Connect Server", Codedeck could auto-discover:
+    - **Running servers**: OpenCode supports `--mdns` for mDNS service discovery. Codedeck could listen for `_opencode._tcp` services on the local network.
+    - **Port scanning**: Scan common ports (4096, or read from OpenCode's state files) for running servers.
+    - **OpenCode state directory**: Read `~/.opencode/` (or `$XDG_STATE_HOME/opencode/`) to find known projects, their directories, and last-used ports. OpenCode stores project configs with `projectID` hashes — Codedeck could map these to directories and auto-connect.
+    - **Process detection**: On startup, scan running processes for `opencode serve` instances and extract their `--port` and working directory.
+    - This would make the first-run experience seamless: open Codedeck, and it already shows your projects and sessions.
+
+14. **Auto-spawn servers for known projects**: When Codedeck detects a project directory but no running server, should it auto-spawn `opencode serve` for that project? This would eliminate the need to manually start servers, but introduces lifecycle management complexity (who owns the process? what happens on app quit?).
+
 ---
 
 *End of Design Document*

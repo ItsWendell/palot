@@ -1,7 +1,6 @@
 import { useMemo } from "react"
-import { useShallow } from "zustand/shallow"
 import type { Agent, AgentStatus, Project, SessionStatus } from "../lib/types"
-import { selectAllSessions, selectProjects, useAppStore } from "../stores/app-store"
+import { useAppStore } from "../stores/app-store"
 
 /**
  * Maps an OpenCode SessionStatus to our UI AgentStatus.
@@ -38,49 +37,78 @@ function projectNameFromDir(directory: string): string {
 
 /**
  * Hook that returns agents derived from the store's sessions.
- * Agents are our UI-facing representation of OpenCode sessions.
+ *
+ * IMPORTANT: We select the raw `servers` Record (a single stable reference
+ * that only changes when the store mutates it) and compute agents inside
+ * useMemo. This avoids the "getSnapshot must be cached" error that occurs
+ * when selectors create new arrays/objects on every call.
  */
 export function useAgents(): Agent[] {
-	const allSessions = useAppStore(useShallow(selectAllSessions))
+	const servers = useAppStore((s) => s.servers)
 
 	return useMemo(() => {
-		return allSessions.map((entry) => {
-			const { session, status, permissions, serverId, directory } = entry
-			const agentStatus = deriveAgentStatus(status, permissions.length > 0)
+		const agents: Agent[] = []
+		for (const server of Object.values(servers)) {
+			for (const entry of Object.values(server.sessions)) {
+				const { session, status, permissions } = entry
+				const agentStatus = deriveAgentStatus(status, permissions.length > 0)
 
-			const now = Date.now() / 1000
-			const created = session.time.created
-			const durationSec = now - created
+				const now = Date.now()
+				const created = session.time.created
+				// OpenCode timestamps are in milliseconds
+				const durationSec = Math.max(0, (now - created) / 1000)
 
-			return {
-				id: session.id,
-				sessionId: session.id,
-				serverId,
-				name: session.title || "Untitled",
-				status: agentStatus,
-				environment: "local" as const, // For now, all local. Will be enriched later.
-				project: projectNameFromDir(directory),
-				branch: "", // Will be populated from VCS info later
-				duration: formatDuration(durationSec),
-				tokens: 0, // Will be populated from message aggregation later
-				cost: 0, // Same
-				currentActivity:
-					permissions.length > 0
-						? `Waiting for approval: ${permissions[0].title}`
-						: status.type === "busy"
-							? "Working..."
-							: undefined,
-				activities: [], // Will be populated from message parts later
+				agents.push({
+					id: session.id,
+					sessionId: session.id,
+					serverId: server.id,
+					name: session.title || "Untitled",
+					status: agentStatus,
+					environment: "local" as const,
+					project: projectNameFromDir(server.directory),
+					branch: "",
+					duration: formatDuration(durationSec),
+					tokens: 0,
+					cost: 0,
+					currentActivity:
+						permissions.length > 0
+							? `Waiting for approval: ${permissions[0].title}`
+							: status.type === "busy"
+								? "Working..."
+								: undefined,
+					activities: [],
+				})
 			}
-		})
-	}, [allSessions])
+		}
+		return agents
+	}, [servers])
 }
 
 /**
  * Hook that returns the project list for the sidebar.
+ *
+ * Same pattern: select raw `servers` and compute in useMemo.
  */
 export function useProjectList(): Project[] {
-	return useAppStore(useShallow(selectProjects))
+	const servers = useAppStore((s) => s.servers)
+
+	return useMemo(() => {
+		const projects = new Map<string, { name: string; count: number }>()
+		for (const server of Object.values(servers)) {
+			const name = server.directory.split("/").pop() || server.directory
+			const existing = projects.get(server.id)
+			const sessionCount = Object.keys(server.sessions).length
+			if (existing) {
+				existing.count += sessionCount
+			} else {
+				projects.set(server.id, { name, count: sessionCount })
+			}
+		}
+		return Array.from(projects.values()).map((p) => ({
+			name: p.name,
+			agentCount: p.count,
+		}))
+	}, [servers])
 }
 
 /**

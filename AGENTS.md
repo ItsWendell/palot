@@ -57,7 +57,16 @@
 ### Zustand + React 19
 - Zustand 5 with React 19's `useSyncExternalStore` requires selectors to return **referentially stable** values
 - Selectors that create new arrays/objects on every call cause "The result of getSnapshot should be cached to avoid an infinite loop" error, which cascades into "Invalid hook call" and "Maximum update depth exceeded"
-- **Fix**: Use `useShallow` from `zustand/shallow` to wrap selectors that derive new arrays/objects: `useAppStore(useShallow(selectAllSessions))`
-- Export plain selector functions (not hooks) from the store, then wrap them with `useShallow` in the consuming hook
-- For simple scalar/reference selectors (e.g., `(s) => s.ui.selectedProject`), `useShallow` is NOT needed — only for selectors that construct new objects/arrays
+- **Best pattern**: Select the raw store reference (e.g., `useAppStore((s) => s.servers)`) and derive data in `useMemo`. The store reference only changes when Zustand mutates it, so `useMemo` correctly memoizes. Do NOT use `useShallow` with selectors that create wrapper objects — shallow comparison of wrapper objects still fails because the wrappers are new every time even if inner refs are stable.
+- For simple scalar/reference selectors (e.g., `(s) => s.ui.selectedProject`), no memoization is needed
 - Use individual selector hooks (e.g., `useSelectedProject`, `useSetSelectedProject`) instead of a single `useUIState()` hook to minimize re-renders
+
+### OpenCode SDK Integration
+- The SDK's session messages endpoint returns `Array<{ info: Message, parts: Part[] }>` — not a flat `Message[]`
+- Session timestamps (`session.time.created`) are in **milliseconds**, not seconds
+- The API route for messages is `/session/{id}/message` (singular), not `/messages`
+- Part types from messages: `text`, `tool`, `step-start`, `step-finish`
+- Tool parts have `tool` (name), `state.status`, `state.title`, `state.error`, and `time.start`/`time.end`
+- CORS works out of the box between different localhost ports (OpenCode sends `Access-Control-Allow-Origin`)
+- `opencode serve --port 4096` starts a headless server; no auth by default (warning printed)
+- The Zustand store state is lost on Vite HMR reload because the module-level `connections` Map in `connection-manager.ts` gets reset — server must be reconnected after code changes

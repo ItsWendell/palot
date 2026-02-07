@@ -308,60 +308,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 	},
 }))
 
-// ============================================================
-// Derived selectors (not in the store, computed on read)
-// ============================================================
-
-export interface FlatSessionEntry {
-	serverId: string
-	directory: string
-	session: Session
-	status: SessionStatus
-	permissions: Permission[]
-}
-
-/**
- * Plain selector function for getting all sessions.
- * Must be used with useShallow or a custom equality fn to avoid infinite loops.
- */
-export function selectAllSessions(state: AppState): FlatSessionEntry[] {
-	const entries: FlatSessionEntry[] = []
-	for (const server of Object.values(state.servers)) {
-		for (const entry of Object.values(server.sessions)) {
-			entries.push({
-				serverId: server.id,
-				directory: server.directory,
-				session: entry.session,
-				status: entry.status,
-				permissions: entry.permissions,
-			})
-		}
-	}
-	return entries
-}
-
-/**
- * Plain selector function for getting project list.
- * Must be used with useShallow or a custom equality fn to avoid infinite loops.
- */
-export function selectProjects(state: AppState): Array<{ name: string; agentCount: number }> {
-	const projects = new Map<string, { name: string; directory: string; count: number }>()
-	for (const server of Object.values(state.servers)) {
-		const name = server.directory.split("/").pop() || server.directory
-		const existing = projects.get(server.id)
-		const sessionCount = Object.keys(server.sessions).length
-		if (existing) {
-			existing.count += sessionCount
-		} else {
-			projects.set(server.id, {
-				name,
-				directory: server.directory,
-				count: sessionCount,
-			})
-		}
-	}
-	return Array.from(projects.values()).map((p) => ({
-		name: p.name,
-		agentCount: p.count,
-	}))
-}
+// Derived selectors have been moved to hooks/use-agents.ts
+// They use `useAppStore((s) => s.servers)` + `useMemo` to avoid
+// the "getSnapshot must be cached" infinite loop issue.

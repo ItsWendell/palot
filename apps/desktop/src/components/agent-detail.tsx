@@ -18,6 +18,7 @@ import {
 	PauseIcon,
 	PlayIcon,
 	SearchIcon,
+	SendIcon,
 	SquareIcon,
 	TerminalIcon,
 	TimerIcon,
@@ -25,6 +26,7 @@ import {
 	XIcon,
 	ZapIcon,
 } from "lucide-react"
+import { useRef, useState } from "react"
 import type { Activity, Agent, AgentStatus, EnvironmentType } from "../lib/types"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
@@ -78,23 +80,44 @@ const ACTIVITY_ICON: Record<Activity["type"], typeof EyeIcon> = {
 
 interface AgentDetailProps {
 	agent: Agent
+	activities: Activity[]
+	activitiesLoading?: boolean
 	onClose: () => void
 	onStop?: (agent: Agent) => Promise<void>
 	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
 	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
+	onSendMessage?: (agent: Agent, message: string) => Promise<void>
 	isConnected?: boolean
 }
 
 export function AgentDetail({
 	agent,
+	activities,
+	activitiesLoading,
 	onClose,
 	onStop,
 	onApprove,
 	onDeny,
+	onSendMessage,
 	isConnected,
 }: AgentDetailProps) {
 	const StatusIcon = STATUS_ICON[agent.status]
 	const EnvIcon = ENV_ICON[agent.environment]
+	const [message, setMessage] = useState("")
+	const [sending, setSending] = useState(false)
+	const inputRef = useRef<HTMLTextAreaElement>(null)
+
+	async function handleSend() {
+		const text = message.trim()
+		if (!text || !onSendMessage || sending) return
+		setSending(true)
+		try {
+			await onSendMessage(agent, text)
+			setMessage("")
+		} finally {
+			setSending(false)
+		}
+	}
 
 	return (
 		<div className="flex h-full flex-col">
@@ -123,20 +146,31 @@ export function AgentDetail({
 							<EnvIcon className="size-3" />
 							{ENV_LABEL[agent.environment]}
 						</Badge>
-						<Badge variant="outline" className="gap-1.5">
-							<GitBranchIcon className="size-3" />
-							{agent.branch}
-						</Badge>
+						{agent.branch && (
+							<Badge variant="outline" className="gap-1.5">
+								<GitBranchIcon className="size-3" />
+								{agent.branch}
+							</Badge>
+						)}
 					</div>
 
 					<div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
 						<span>{agent.duration}</span>
-						<span>&middot;</span>
-						<span>
-							{agent.tokens >= 1000 ? `${(agent.tokens / 1000).toFixed(1)}k` : agent.tokens} tokens
-						</span>
-						<span>&middot;</span>
-						<span>${agent.cost.toFixed(2)}</span>
+						{agent.tokens > 0 && (
+							<>
+								<span>&middot;</span>
+								<span>
+									{agent.tokens >= 1000 ? `${(agent.tokens / 1000).toFixed(1)}k` : agent.tokens}{" "}
+									tokens
+								</span>
+							</>
+						)}
+						{agent.cost > 0 && (
+							<>
+								<span>&middot;</span>
+								<span>${agent.cost.toFixed(2)}</span>
+							</>
+						)}
 					</div>
 				</div>
 			</div>
@@ -144,7 +178,12 @@ export function AgentDetail({
 			{/* Tabs */}
 			<Tabs defaultValue="activity" className="flex min-h-0 flex-1 flex-col">
 				<TabsList variant="line" className="shrink-0 border-b border-border px-4">
-					<TabsTrigger value="activity">Activity</TabsTrigger>
+					<TabsTrigger value="activity">
+						Activity
+						{activities.length > 0 && (
+							<span className="ml-1.5 text-muted-foreground">({activities.length})</span>
+						)}
+					</TabsTrigger>
 					<TabsTrigger value="diff">Diff</TabsTrigger>
 					<TabsTrigger value="terminal">Terminal</TabsTrigger>
 				</TabsList>
@@ -152,9 +191,20 @@ export function AgentDetail({
 				<TabsContent value="activity" className="min-h-0 flex-1">
 					<ScrollArea className="h-full">
 						<div className="space-y-1 p-4">
-							{[...agent.activities].reverse().map((activity) => (
-								<ActivityItem key={activity.id} activity={activity} />
-							))}
+							{activitiesLoading ? (
+								<div className="flex items-center justify-center py-8">
+									<Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+									<span className="ml-2 text-sm text-muted-foreground">Loading activity...</span>
+								</div>
+							) : activities.length > 0 ? (
+								[...activities]
+									.reverse()
+									.map((activity) => <ActivityItem key={activity.id} activity={activity} />)
+							) : (
+								<div className="flex items-center justify-center py-8">
+									<p className="text-sm text-muted-foreground">No activity yet</p>
+								</div>
+							)}
 						</div>
 					</ScrollArea>
 				</TabsContent>
@@ -178,71 +228,107 @@ export function AgentDetail({
 				</TabsContent>
 			</Tabs>
 
-			{/* Action bar */}
-			<div className="border-t border-border p-3">
-				{agent.status === "completed" ? (
-					<div className="flex gap-2">
-						<Button size="sm" className="flex-1">
-							Create PR
-						</Button>
-						<Button size="sm" variant="outline" className="flex-1">
-							Apply Locally
-						</Button>
-					</div>
-				) : agent.status === "running" ? (
-					<div className="flex gap-2">
-						<Button size="sm" variant="outline" className="flex-1">
-							<PauseIcon className="mr-1.5 size-3.5" />
-							Pause
-						</Button>
+			{/* Message input + action bar */}
+			<div className="border-t border-border">
+				{/* Message input — always shown when connected */}
+				{isConnected && (
+					<div className="flex items-end gap-2 border-b border-border p-3">
+						<textarea
+							ref={inputRef}
+							value={message}
+							onChange={(e) => setMessage(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+									e.preventDefault()
+									handleSend()
+								}
+							}}
+							placeholder="Send a message..."
+							rows={1}
+							className="min-h-[36px] flex-1 resize-none rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+						/>
 						<Button
 							size="sm"
-							variant="destructive"
-							className="flex-1"
-							onClick={() => onStop?.(agent)}
-							disabled={!isConnected}
+							variant="ghost"
+							onClick={handleSend}
+							disabled={!message.trim() || sending}
+							className="shrink-0"
 						>
-							<SquareIcon className="mr-1.5 size-3.5" />
-							Stop
+							{sending ? (
+								<Loader2Icon className="size-4 animate-spin" />
+							) : (
+								<SendIcon className="size-4" />
+							)}
 						</Button>
 					</div>
-				) : agent.status === "failed" ? (
-					<div className="flex gap-2">
-						<Button size="sm" className="flex-1">
+				)}
+
+				{/* Status-dependent action buttons */}
+				<div className="p-3">
+					{agent.status === "completed" ? (
+						<div className="flex gap-2">
+							<Button size="sm" className="flex-1">
+								Create PR
+							</Button>
+							<Button size="sm" variant="outline" className="flex-1">
+								Apply Locally
+							</Button>
+						</div>
+					) : agent.status === "running" ? (
+						<div className="flex gap-2">
+							<Button size="sm" variant="outline" className="flex-1">
+								<PauseIcon className="mr-1.5 size-3.5" />
+								Pause
+							</Button>
+							<Button
+								size="sm"
+								variant="destructive"
+								className="flex-1"
+								onClick={() => onStop?.(agent)}
+								disabled={!isConnected}
+							>
+								<SquareIcon className="mr-1.5 size-3.5" />
+								Stop
+							</Button>
+						</div>
+					) : agent.status === "failed" ? (
+						<div className="flex gap-2">
+							<Button size="sm" className="flex-1">
+								<PlayIcon className="mr-1.5 size-3.5" />
+								Retry
+							</Button>
+							<Button size="sm" variant="outline" className="flex-1">
+								View Logs
+							</Button>
+						</div>
+					) : agent.status === "waiting" ? (
+						<div className="flex gap-2">
+							<Button
+								size="sm"
+								className="flex-1"
+								onClick={() => onApprove?.(agent, "")}
+								disabled={!isConnected}
+							>
+								<CheckCircle2Icon className="mr-1.5 size-3.5" />
+								Approve
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								className="flex-1"
+								onClick={() => onDeny?.(agent, "")}
+								disabled={!isConnected}
+							>
+								Deny
+							</Button>
+						</div>
+					) : agent.status === "paused" ? (
+						<Button size="sm" className="w-full">
 							<PlayIcon className="mr-1.5 size-3.5" />
-							Retry
+							Resume
 						</Button>
-						<Button size="sm" variant="outline" className="flex-1">
-							View Logs
-						</Button>
-					</div>
-				) : agent.status === "waiting" ? (
-					<div className="flex gap-2">
-						<Button
-							size="sm"
-							className="flex-1"
-							onClick={() => onApprove?.(agent, "")}
-							disabled={!isConnected}
-						>
-							<CheckCircle2Icon className="mr-1.5 size-3.5" />
-							Approve
-						</Button>
-						<Button
-							size="sm"
-							variant="outline"
-							className="flex-1"
-							onClick={() => onDeny?.(agent, "")}
-							disabled={!isConnected}
-						>
-							Deny
-						</Button>
-					</div>
-				) : agent.status === "paused" ? (
-					<Button size="sm" className="w-full">
-						<PlayIcon className="mr-1.5 size-3.5" />
-						Resume
-					</Button>
-				) : null}
+					) : null}
+				</div>
 			</div>
 		</div>
 	)
@@ -253,7 +339,9 @@ function ActivityItem({ activity }: { activity: Activity }) {
 
 	return (
 		<div className="flex items-start gap-3 rounded-md px-2 py-2 transition-colors hover:bg-muted/50">
-			<span className="mt-0.5 text-xs text-muted-foreground">{activity.timestamp}</span>
+			<span className="mt-0.5 shrink-0 text-xs text-muted-foreground tabular-nums">
+				{activity.timestamp}
+			</span>
 			<Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
 			<div className="min-w-0 flex-1">
 				<p className="text-sm">{activity.description}</p>

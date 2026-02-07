@@ -29,6 +29,7 @@ import {
 	useToggleSelectedSessionId,
 } from "./hooks/use-agents"
 import { useAgentActions, useServerConnection } from "./hooks/use-server"
+import { useSessionMessages } from "./hooks/use-session-messages"
 import { MOCK_AGENTS, MOCK_PROJECTS } from "./lib/mock-data"
 import type { Agent } from "./lib/types"
 
@@ -127,6 +128,23 @@ export function App() {
 		[respondToPermission],
 	)
 
+	const handleSendMessage = useCallback(
+		async (agent: Agent, message: string) => {
+			await sendPrompt(agent.serverId, agent.sessionId, message)
+		},
+		[sendPrompt],
+	)
+
+	// Load messages for the selected session
+	const { activities: sessionActivities, loading: activitiesLoading } = useSessionMessages(
+		selectedAgent?.serverId ?? null,
+		selectedAgent?.sessionId ?? null,
+	)
+
+	// Use real activities from messages if available, otherwise fall back to agent's mock activities
+	const detailActivities =
+		sessionActivities.length > 0 ? sessionActivities : (selectedAgent?.activities ?? [])
+
 	// Keyboard navigation
 	useEffect(() => {
 		function handleKeyDown(e: KeyboardEvent) {
@@ -217,10 +235,13 @@ export function App() {
 							<ResizablePanel id="agent-detail" defaultSize={45} minSize={25}>
 								<AgentDetail
 									agent={selectedAgent}
+									activities={detailActivities}
+									activitiesLoading={activitiesLoading}
 									onClose={() => setSelectedSessionId(null)}
 									onStop={handleStopAgent}
 									onApprove={handleApprovePermission}
 									onDeny={handleDenyPermission}
+									onSendMessage={handleSendMessage}
 									isConnected={hasConnections}
 								/>
 							</ResizablePanel>
