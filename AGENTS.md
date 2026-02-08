@@ -67,7 +67,7 @@ Biome v2 cannot parse Tailwind v4 syntax. CSS linting/formatting is disabled. Do
 
 ### Changesets — versioning workflow
 
-All three workspace packages are **linked** (version together). When making user-facing changes, run `bun changeset` before opening a PR. The changeset-check workflow warns (non-blocking) if a PR has no changeset. On merge to `master`, the release workflow creates a "Version Packages" PR; merging that PR triggers cross-platform release builds and publishes to GitHub Releases. You can also trigger a release manually by pushing a `v*` tag.
+All three workspace packages are **linked** (version together). When making user-facing changes, run `bun changeset` before opening a PR. The changeset-check workflow warns (non-blocking) if a PR has no changeset. On merge to `main`, the release workflow creates a "Version Packages" PR; merging that PR triggers cross-platform release builds and publishes to GitHub Releases. You can also trigger a release manually by pushing a `v*` tag.
 
 ### Packaging — macOS without code signing
 

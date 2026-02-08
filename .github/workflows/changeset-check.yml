@@ -2,7 +2,7 @@ name: Changeset Check
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main]
 
 jobs:
   changeset-check:
@@ -24,7 +24,7 @@ jobs:
 
       - name: Check for changeset
         run: |
-          STATUS=$(bun changeset status --since=origin/master 2>&1) || true
+          STATUS=$(bun changeset status --since=origin/main 2>&1) || true
           if echo "$STATUS" | grep -q "No changesets present"; then
             echo "::warning::No changeset found. If this PR includes user-facing changes, please run 'bun changeset' and commit the generated file."
           else

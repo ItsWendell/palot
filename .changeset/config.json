@@ -5,7 +5,7 @@
 	"fixed": [],
 	"linked": [["@codedeck/desktop", "@codedeck/ui", "@codedeck/server"]],
 	"access": "restricted",
-	"baseBranch": "master",
+	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
 	"ignore": [],
 	"privatePackages": {
