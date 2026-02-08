@@ -1,8 +1,12 @@
 import path from "node:path"
-import { app, BrowserWindow, shell } from "electron"
+import { app, BrowserWindow, Menu, shell } from "electron"
 import { registerIpcHandlers } from "./ipc-handlers"
 import { stopServer } from "./opencode-manager"
 import { initAutoUpdater, stopAutoUpdater } from "./updater"
+
+// Skip default menu construction — saves startup time.
+// Must be called before app.whenReady(). See: https://electronjs.org/docs/latest/tutorial/performance
+Menu.setApplicationMenu(null)
 
 // Linux/Wayland: enable native Wayland rendering to avoid blurry XWayland scaling.
 // These flags must be set before app.whenReady().
@@ -27,6 +31,8 @@ function createWindow(): BrowserWindow {
 			contextIsolation: true,
 			sandbox: true,
 			nodeIntegration: false,
+			spellcheck: false,
+			v8CacheOptions: "bypassHeatCheckAndEagerCompile",
 		},
 	})
 
@@ -62,7 +68,7 @@ if (!gotLock) {
 	app.whenReady().then(() => {
 		registerIpcHandlers()
 		createWindow()
-		initAutoUpdater()
+		initAutoUpdater().catch(console.error)
 
 		app.on("activate", () => {
 			if (BrowserWindow.getAllWindows().length === 0) createWindow()

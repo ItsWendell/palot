@@ -44,5 +44,5 @@ export function registerIpcHandlers(): void {
 
 	ipcMain.handle("updater:download", async () => await downloadUpdate())
 
-	ipcMain.handle("updater:install", () => installUpdate())
+	ipcMain.handle("updater:install", async () => await installUpdate())
 }
