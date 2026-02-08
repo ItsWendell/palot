@@ -3,6 +3,12 @@ import { discover } from "./discovery"
 import { readSessionMessages } from "./messages"
 import { readModelState } from "./model-state"
 import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
+import {
+	checkForUpdates,
+	downloadUpdate,
+	getUpdateState,
+	installUpdate,
+} from "./updater"
 
 /**
  * Registers all IPC handlers that the renderer can invoke via contextBridge.
@@ -34,4 +40,14 @@ export function registerIpcHandlers(): void {
 	// --- Model state ---
 
 	ipcMain.handle("model-state", async () => await readModelState())
+
+	// --- Auto-updater ---
+
+	ipcMain.handle("updater:state", () => getUpdateState())
+
+	ipcMain.handle("updater:check", async () => await checkForUpdates())
+
+	ipcMain.handle("updater:download", async () => await downloadUpdate())
+
+	ipcMain.handle("updater:install", () => installUpdate())
 }

@@ -73,6 +73,19 @@ export interface ModelState {
 	variant: Record<string, string | undefined>
 }
 
+export interface UpdateState {
+	status: "idle" | "checking" | "available" | "downloading" | "ready" | "error"
+	version?: string
+	releaseNotes?: string
+	progress?: {
+		percent: number
+		bytesPerSecond: number
+		transferred: number
+		total: number
+	}
+	error?: string
+}
+
 export interface CodedeckAPI {
 	ensureOpenCode: () => Promise<OpenCodeServerInfo>
 	getServerUrl: () => Promise<string | null>
@@ -80,6 +93,13 @@ export interface CodedeckAPI {
 	discover: () => Promise<DiscoveryResult>
 	getSessionMessages: (sessionId: string) => Promise<MessagesResult>
 	getModelState: () => Promise<ModelState>
+
+	// Auto-updater
+	getUpdateState: () => Promise<UpdateState>
+	checkForUpdates: () => Promise<void>
+	downloadUpdate: () => Promise<void>
+	installUpdate: () => Promise<void>
+	onUpdateStateChanged: (callback: (state: UpdateState) => void) => () => void
 }
 
 declare global {

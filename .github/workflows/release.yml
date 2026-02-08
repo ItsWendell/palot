@@ -7,12 +7,18 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  # Changeset-driven: creates/updates a "Version Packages" PR
+  # ──────────────────────────────────────────────
+  # Job 1: Changeset versioning (master push only)
+  # ──────────────────────────────────────────────
   changeset:
     name: Changeset Version
     if: github.ref == 'refs/heads/master' && !startsWith(github.ref, 'refs/tags/')
@@ -43,46 +49,39 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Determine if we should build release artifacts
-  should-release:
-    name: Check Release Trigger
-    runs-on: ubuntu-latest
+  # ──────────────────────────────────────────────
+  # Job 2: Create git tag after changeset publish
+  # ──────────────────────────────────────────────
+  create-tag:
+    name: Create Release Tag
     needs: [changeset]
-    if: always()
-    outputs:
-      release: ${{ steps.check.outputs.release }}
-      version: ${{ steps.version.outputs.version }}
+    if: needs.changeset.outputs.published == 'true'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Check if release should proceed
-        id: check
-        run: |
-          # Release if: tag push OR changeset published packages
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ needs.changeset.outputs.published }}" == "true" ]]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Get version
+      - name: Get version from package.json
         id: version
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION=$(node -p "require('./apps/desktop/package.json').version")
-          fi
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-  # Build and publish release artifacts
+      - name: Create and push tag
+        run: |
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin ${{ steps.version.outputs.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────
+  # Job 3: Cross-platform build & publish to draft
+  # ──────────────────────────────────────────────
   release-build:
-    name: Release Build (${{ matrix.os }})
-    needs: [should-release]
-    if: needs.should-release.outputs.release == 'true'
+    name: Build (${{ matrix.os }})
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -93,7 +92,6 @@ jobs:
             platform: mac
           - os: windows-latest
             platform: win
-
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -110,20 +108,20 @@ jobs:
         run: bun run build
         working-directory: apps/desktop
 
-      - name: Package & Publish Electron app
+      - name: Package & publish to GitHub Release (draft)
         run: bun run package:${{ matrix.platform }} -- --publish always
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Skip code signing for now (configure secrets when ready)
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # macOS notarization (uncomment when configured)
+          # macOS notarization (uncomment when configured):
           # APPLE_ID: ${{ secrets.APPLE_ID }}
           # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           # CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
 
+      # Keep artifacts as fallback in case publish fails
       - name: Upload artifacts (Linux)
         if: matrix.platform == 'linux'
         uses: actions/upload-artifact@v4
@@ -134,7 +132,7 @@ jobs:
             apps/desktop/release/*.deb
             apps/desktop/release/*.rpm
             apps/desktop/release/*.yml
-          retention-days: 90
+          retention-days: 30
 
       - name: Upload artifacts (macOS)
         if: matrix.platform == 'mac'
@@ -145,7 +143,7 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*.yml
-          retention-days: 90
+          retention-days: 30
 
       - name: Upload artifacts (Windows)
         if: matrix.platform == 'win'
@@ -155,35 +153,103 @@ jobs:
           path: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.yml
-          retention-days: 90
+          retention-days: 30
 
-  # Create GitHub Release (for tag-based releases)
-  create-release:
-    name: Create GitHub Release
-    needs: [should-release, release-build]
+  # ──────────────────────────────────────────────
+  # Job 4: Promote draft → published release
+  # ──────────────────────────────────────────────
+  publish-release:
+    name: Publish GitHub Release
+    needs: [release-build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          pattern: release-*
-          merge-multiple: true
+          fetch-depth: 0
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Get version info
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # Extract the changelog section for this version from CHANGELOG.md
+          CHANGELOG_FILE="apps/desktop/CHANGELOG.md"
+          if [ -f "$CHANGELOG_FILE" ]; then
+            # Extract content between this version header and the next version header
+            CONTENT=$(awk '/^## ${{ steps.version.outputs.version }}$/,/^## [0-9]/' "$CHANGELOG_FILE" | head -n -1 | tail -n +2)
+            if [ -z "$CONTENT" ]; then
+              CONTENT="No changelog entry found for this version."
+            fi
+          else
+            CONTENT="No changelog file found."
+          fi
+          # Write to file to avoid escaping issues
+          echo "$CONTENT" > /tmp/changelog.md
+          echo "has_changelog=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish draft release
+        uses: actions/github-script@v7
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Codedeck ${{ needs.should-release.outputs.version }}
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
-          files: |
-            artifacts/**/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const tag = '${{ steps.version.outputs.tag }}';
+            const draft = releases.find(
+              (r) => r.draft && r.tag_name === tag
+            );
+
+            if (!draft) {
+              core.setFailed(`No draft release found for tag ${tag}`);
+              return;
+            }
+
+            console.log(`Found draft release: ${draft.name} (${draft.id})`);
+            console.log(`Assets: ${draft.assets.map(a => a.name).join(', ')}`);
+
+            // Read changelog content
+            let body = '';
+            try {
+              const changelog = fs.readFileSync('/tmp/changelog.md', 'utf8').trim();
+              if (changelog && changelog !== 'No changelog entry found for this version.' && changelog !== 'No changelog file found.') {
+                body = `## What's Changed\n\n${changelog}`;
+              }
+            } catch (e) {
+              console.log('No changelog file found, using auto-generated notes');
+            }
+
+            // If no changeset changelog, fall back to auto-generated release notes
+            if (!body) {
+              const { data: generatedNotes } = await github.rest.repos.generateReleaseNotes({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+              });
+              body = generatedNotes.body;
+            }
+
+            const isPrerelease = '${{ steps.version.outputs.version }}'.includes('-');
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: draft.id,
+              draft: false,
+              prerelease: isPrerelease,
+              name: `Codedeck ${{ steps.version.outputs.version }}`,
+              body: body,
+              make_latest: isPrerelease ? 'false' : 'true',
+            });
+
+            console.log('Release published successfully!');
