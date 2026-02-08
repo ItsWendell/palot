@@ -195,7 +195,7 @@ jobs:
           echo "has_changelog=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish draft release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
