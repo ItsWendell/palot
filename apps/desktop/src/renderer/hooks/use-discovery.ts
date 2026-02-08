@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { fetchDiscovery, fetchOpenCodeUrl } from "../services/codedeck-server"
+import { fetchDiscovery, fetchOpenCodeUrl } from "../services/backend"
 import { connectToOpenCode, loadProjectSessions } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import type { Message, Part } from "../lib/types"
-import { fetchSessionMessages } from "../services/codedeck-server"
+import { fetchSessionMessages } from "../services/backend"
 import { getProjectClient } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
 import {

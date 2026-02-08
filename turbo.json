@@ -9,6 +9,10 @@
 			"persistent": true,
 			"cache": false
 		},
+		"dev:web": {
+			"persistent": true,
+			"cache": false
+		},
 		"lint": {
 			"cache": false
 		},

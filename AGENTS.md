@@ -10,19 +10,35 @@ Do NOT add one-time setup notes, general knowledge, or things discoverable from 
 
 - **Monorepo**: Turborepo + Bun workspaces
 - **`packages/ui`**: Shared shadcn/ui component library (`@codedeck/ui`)
-- **`apps/desktop`**: Vite + React 19 desktop app (future Tauri)
-- **`apps/server`**: Bun + Hono backend that manages the OpenCode server process and proxies filesystem operations the browser can't do directly (e.g. reading `model.json`)
+- **`apps/desktop`**: Electron 40 + Vite + React 19 desktop app (via `electron-vite`)
+- **`apps/server`**: Bun + Hono backend — used only in browser-mode dev (`dev:web`), NOT bundled with Electron
+
+### Desktop App Layout (`apps/desktop/src/`)
+
+- **`main/`** — Electron main process (Node.js): window management, IPC handlers, OpenCode server lifecycle, filesystem reads
+- **`preload/`** — Electron preload bridge: exposes `window.codedeck` API via `contextBridge`
+- **`renderer/`** — React app (browser context): components, hooks, services, stores
 
 ## Commands
 
-- **Dev server**: `cd apps/desktop && bun run dev` (port 1420)
-- **Backend server**: `cd apps/server && bun run dev` (port 3100)
+- **Electron dev**: `cd apps/desktop && bun run dev` (electron-vite, renderer on port 1420)
+- **Browser-only dev**: `cd apps/desktop && bun run dev:web` (Vite only, needs `apps/server` running)
+- **Backend server** (browser mode only): `cd apps/server && bun run dev` (port 3100)
 - **Lint/format**: `bunx biome check --write .` from root
 - **Type check**: `cd apps/desktop && bun run check-types`
 - **Rebuild server types**: `cd apps/server && bun run build:types` (required after adding server routes)
 - **Add UI component**: `cd packages/ui && bunx shadcn@latest add <component>`
+- **Package**: `cd apps/desktop && bun run package` (or `package:linux`, `package:mac`, `package:win`)
 
 ## Critical Footguns
+
+### Electron — Two Runtime Contexts
+
+The main process runs in Node.js, the renderer runs in a Chromium sandbox. They communicate via IPC only. Never import Node.js modules (`fs`, `child_process`, `path`) in the renderer — use the `window.codedeck` bridge or `services/backend.ts` instead.
+
+### Backend Service Layer — `services/backend.ts`
+
+All hooks must import from `services/backend.ts`, NOT from `services/codedeck-server.ts` directly. The backend module detects Electron (`"codedeck" in window`) and routes to IPC or HTTP automatically. `codedeck-server.ts` is only used as an HTTP fallback for browser-mode dev.
 
 ### Zustand + React 19 (causes infinite render loops)
 
@@ -64,9 +80,13 @@ The server has no single "current model" concept. When `promptAsync` is called w
 
 The Azure provider causes `TypeError: sdk.responses is not a function` when used from the browser. This is a known upstream issue. Do not attempt to fix it — just ensure the correct provider (e.g. Anthropic) is selected.
 
-### Server type regeneration
+### Server type regeneration (browser mode only)
 
-When adding routes to `apps/server`, you must run `cd apps/server && bun run build:types` to regenerate `.d.ts` files in `dist/`. The desktop app imports types from `@codedeck/server/client` which reads from `dist/src/client.d.ts`. Without this step, new routes won't have type inference in the frontend RPC client.
+When adding routes to `apps/server`, you must run `cd apps/server && bun run build:types` to regenerate `.d.ts` files in `dist/`. The desktop app imports types from `@codedeck/server/client` which reads from `dist/src/client.d.ts`. Without this step, new routes won't have type inference in the frontend RPC client. This only applies to browser-mode dev — Electron uses IPC instead.
+
+### electron-vite — Three Build Targets
+
+`electron.vite.config.ts` has three sections: `main`, `preload`, `renderer`. Each produces separate output in `out/`. The renderer section is a normal Vite config. Main and preload use `externalizeDepsPlugin()` to keep Node.js deps external.
 
 ## Style Rules
 

@@ -5,7 +5,7 @@ import type {
 	Provider as SdkProvider,
 } from "@opencode-ai/sdk/v2/client"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { fetchModelState } from "../services/codedeck-server"
+import { fetchModelState } from "../services/backend"
 import { getProjectClient } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
 

@@ -1,0 +1,44 @@
+appId: com.codedeck.desktop
+productName: Codedeck
+copyright: Copyright (c) 2025-2026 Codedeck
+directories:
+  buildResources: resources
+  output: release
+
+files:
+  - "out/**/*"
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+  category: Development
+  maintainer: codedeck
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+publish:
+  provider: github
+  releaseType: release

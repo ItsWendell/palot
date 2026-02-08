@@ -9,6 +9,8 @@
 	"scripts": {
 		"build": "turbo build",
 		"dev": "turbo dev",
+		"dev:desktop": "turbo dev --filter=@codedeck/desktop",
+		"dev:web": "turbo dev:web --filter=@codedeck/desktop",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"format": "biome format --write .",

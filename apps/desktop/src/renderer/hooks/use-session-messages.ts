@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Activity } from "../lib/types"
-import { fetchSessionMessages } from "../services/codedeck-server"
+import { fetchSessionMessages } from "../services/backend"
 import { getProjectClient } from "../services/connection-manager"
 
 /**

@@ -14,10 +14,16 @@
 		"noUnusedParameters": true,
 		"noEmit": true,
 		"paths": {
-			"@/*": ["./src/*"],
+			"@/*": ["./src/renderer/*"],
 			"@codedeck/ui/*": ["../../packages/ui/src/*"]
 		}
 	},
-	"include": ["src/**/*.ts", "src/**/*.tsx"],
-	"exclude": ["node_modules", "dist"]
+	"include": [
+		"src/main/**/*.ts",
+		"src/preload/**/*.ts",
+		"src/preload/**/*.d.ts",
+		"src/renderer/**/*.ts",
+		"src/renderer/**/*.tsx"
+	],
+	"exclude": ["node_modules", "dist", "out", "release"]
 }
