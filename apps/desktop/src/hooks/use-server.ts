@@ -1,5 +1,12 @@
 import { useCallback } from "react"
-import type { FileAttachment, FilePart, FilePartInput, TextPart, UserMessage } from "../lib/types"
+import type {
+	FileAttachment,
+	FilePart,
+	FilePartInput,
+	QuestionAnswer,
+	TextPart,
+	UserMessage,
+} from "../lib/types"
 import { getProjectClient } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
 
@@ -154,6 +161,21 @@ export function useAgentActions() {
 		[],
 	)
 
+	const replyToQuestion = useCallback(
+		async (directory: string, requestId: string, answers: QuestionAnswer[]) => {
+			const client = getProjectClient(directory)
+			if (!client) throw new Error("Not connected to OpenCode server")
+			await client.question.reply({ requestID: requestId, answers })
+		},
+		[],
+	)
+
+	const rejectQuestion = useCallback(async (directory: string, requestId: string) => {
+		const client = getProjectClient(directory)
+		if (!client) throw new Error("Not connected to OpenCode server")
+		await client.question.reject({ requestID: requestId })
+	}, [])
+
 	return {
 		abort,
 		sendPrompt,
@@ -161,5 +183,7 @@ export function useAgentActions() {
 		renameSession,
 		deleteSession,
 		respondToPermission,
+		replyToQuestion,
+		rejectQuestion,
 	}
 }

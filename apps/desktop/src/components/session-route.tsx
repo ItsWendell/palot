@@ -5,7 +5,7 @@ import type { ModelRef } from "../hooks/use-opencode-data"
 import { useConfig, useOpenCodeAgents, useProviders, useVcs } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import { useSessionChat } from "../hooks/use-session-chat"
-import type { Agent, FileAttachment } from "../lib/types"
+import type { Agent, FileAttachment, QuestionAnswer } from "../lib/types"
 import { AgentDetail } from "./agent-detail"
 
 export function SessionRoute() {
@@ -16,7 +16,8 @@ export function SessionRoute() {
 	}
 
 	const agents = useAgents()
-	const { abort, sendPrompt, renameSession, respondToPermission } = useAgentActions()
+	const { abort, sendPrompt, renameSession, respondToPermission, replyToQuestion, rejectQuestion } =
+		useAgentActions()
 
 	const selectedAgent = useMemo(
 		() => agents.find((a) => a.id === sessionId) ?? null,
@@ -60,8 +61,8 @@ export function SessionRoute() {
 	)
 
 	const handleApprovePermission = useCallback(
-		async (agent: Agent, permissionId: string) => {
-			await respondToPermission(agent.directory, agent.sessionId, permissionId, "once")
+		async (agent: Agent, permissionId: string, response?: "once" | "always") => {
+			await respondToPermission(agent.directory, agent.sessionId, permissionId, response ?? "once")
 		},
 		[respondToPermission],
 	)
@@ -71,6 +72,20 @@ export function SessionRoute() {
 			await respondToPermission(agent.directory, agent.sessionId, permissionId, "reject")
 		},
 		[respondToPermission],
+	)
+
+	const handleReplyQuestion = useCallback(
+		async (agent: Agent, requestId: string, answers: QuestionAnswer[]) => {
+			await replyToQuestion(agent.directory, requestId, answers)
+		},
+		[replyToQuestion],
+	)
+
+	const handleRejectQuestion = useCallback(
+		async (agent: Agent, requestId: string) => {
+			await rejectQuestion(agent.directory, requestId)
+		},
+		[rejectQuestion],
 	)
 
 	const handleRenameSession = useCallback(
@@ -126,6 +141,8 @@ export function SessionRoute() {
 			onStop={handleStopAgent}
 			onApprove={handleApprovePermission}
 			onDeny={handleDenyPermission}
+			onReplyQuestion={handleReplyQuestion}
+			onRejectQuestion={handleRejectQuestion}
 			onSendMessage={handleSendMessage}
 			onRename={handleRenameSession}
 			parentSessionName={parentSessionName}

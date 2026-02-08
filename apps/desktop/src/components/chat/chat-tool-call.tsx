@@ -124,6 +124,9 @@ function mapToolState(
 interface ChatToolCallProps {
 	part: ToolPart
 	defaultOpen?: boolean
+	permission?: { id: string; title: string; metadata?: Record<string, unknown> }
+	onApprove?: (permissionId: string, response: "once" | "always") => void
+	onDeny?: (permissionId: string) => void
 }
 
 /**
@@ -134,6 +137,9 @@ interface ChatToolCallProps {
 export const ChatToolCall = memo(function ChatToolCall({
 	part,
 	defaultOpen = false,
+	permission,
+	onApprove,
+	onDeny,
 }: ChatToolCallProps) {
 	const navigate = useNavigate()
 	const { projectSlug } = useParams({ strict: false }) as {
@@ -273,6 +279,25 @@ export const ChatToolCall = memo(function ChatToolCall({
 					)}
 				</span>
 			</div>
+			{permission && (part.state.status === "pending" || part.state.status === "running") && (
+				<div className="ml-5 mt-1 flex items-center gap-2 rounded border border-blue-500/30 bg-blue-500/[0.03] px-2.5 py-1.5">
+					<span className="flex-1 truncate text-xs text-muted-foreground">{permission.title}</span>
+					<button
+						type="button"
+						onClick={() => onDeny?.(permission.id)}
+						className="shrink-0 text-xs text-muted-foreground hover:text-red-400"
+					>
+						Deny
+					</button>
+					<button
+						type="button"
+						onClick={() => onApprove?.(permission.id, "once")}
+						className="shrink-0 text-xs font-medium text-blue-400 hover:text-blue-300"
+					>
+						Approve
+					</button>
+				</div>
+			)}
 			{attachments.length > 0 && <ToolAttachments attachments={attachments} />}
 		</div>
 	)

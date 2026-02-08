@@ -6,8 +6,12 @@ import { useAppStore } from "../stores/app-store"
 /**
  * Maps an OpenCode SessionStatus to our UI AgentStatus.
  */
-function deriveAgentStatus(status: SessionStatus, hasPermissions: boolean): AgentStatus {
-	if (hasPermissions) return "waiting"
+function deriveAgentStatus(
+	status: SessionStatus,
+	hasPermissions: boolean,
+	hasQuestions: boolean,
+): AgentStatus {
+	if (hasPermissions || hasQuestions) return "waiting"
 	switch (status.type) {
 		case "busy":
 			return "running"
@@ -155,10 +159,10 @@ export function useAgents(): Agent[] {
 
 		// 1. Live sessions — these take priority
 		for (const entry of Object.values(sessions)) {
-			const { session, status, permissions, directory } = entry
+			const { session, status, permissions, questions, directory } = entry
 			liveSessionIds.add(session.id)
 			const projectInfo = slugMap.get(directory)
-			const agentStatus = deriveAgentStatus(status, permissions.length > 0)
+			const agentStatus = deriveAgentStatus(status, permissions.length > 0, questions.length > 0)
 
 			const created = session.time.created
 			const lastActiveAt = session.time.updated ?? session.time.created
@@ -177,13 +181,16 @@ export function useAgents(): Agent[] {
 				tokens: 0,
 				cost: 0,
 				currentActivity:
-					permissions.length > 0
-						? `Waiting for approval: ${permissions[0].title}`
-						: status.type === "busy"
-							? "Working..."
-							: undefined,
+					questions.length > 0
+						? `Asking: ${questions[0].questions[0]?.header ?? "Question"}`
+						: permissions.length > 0
+							? `Waiting for approval: ${permissions[0].title}`
+							: status.type === "busy"
+								? "Working..."
+								: undefined,
 				activities: [],
 				permissions,
+				questions,
 				parentId: session.parentID,
 				createdAt: created,
 				lastActiveAt,
@@ -224,6 +231,7 @@ export function useAgents(): Agent[] {
 						currentActivity: undefined,
 						activities: [],
 						permissions: [],
+						questions: [],
 						parentId: session.parentID,
 						createdAt: session.time.created,
 						lastActiveAt,

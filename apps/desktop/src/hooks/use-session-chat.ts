@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import type { Message, Part } from "../lib/types"
 import { fetchSessionMessages } from "../services/codedeck-server"
 import { getProjectClient } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
+import {
+	getAllStreamingParts,
+	getSnapshot as getStreamingSnapshot,
+	subscribe as subscribeStreaming,
+} from "../stores/streaming-store"
 
 /** Sentinel empty array — stable reference to avoid creating new arrays */
 const EMPTY_PARTS: Part[] = []
@@ -34,12 +39,22 @@ export interface ChatTurn {
 
 /**
  * Creates a fingerprint for a message entry based on its ID,
- * completion time, and part count. Used for cheap equality checks.
+ * completion time, part count, and streaming text length.
+ * Used for cheap equality checks — includes text content length
+ * so that streaming updates (where part count stays the same but
+ * content grows) correctly invalidate the fingerprint.
  */
 function messageFingerprint(entry: ChatMessageEntry): string {
 	const lastPart = entry.parts.at(-1)
 	const completed = entry.info.role === "assistant" ? (entry.info.time.completed ?? 0) : 0
-	return `${entry.info.id}:${completed}:${entry.parts.length}:${lastPart?.id ?? ""}`
+	// Include text length for text/reasoning parts so fingerprint changes during streaming
+	let textLen = 0
+	for (const part of entry.parts) {
+		if (part.type === "text" || part.type === "reasoning") {
+			textLen += part.text.length
+		}
+	}
+	return `${entry.info.id}:${completed}:${entry.parts.length}:${lastPart?.id ?? ""}:${textLen}`
 }
 
 /**
@@ -131,11 +146,36 @@ export function useSessionChat(
 	// React 19's strict useSyncExternalStore.
 	const storeParts = useAppStore((s) => s.parts)
 
-	// Derive per-session parts in useMemo to avoid creating new arrays in the selector
+	// Subscribe to the streaming store — during active streaming, text/reasoning
+	// parts are accumulated here at ~50ms cadence instead of hitting Zustand on
+	// every SSE token. The version counter triggers re-renders only when the
+	// streaming store's throttled notify fires.
+	const streamingVersion = useSyncExternalStore(subscribeStreaming, getStreamingSnapshot)
+
+	// Derive per-session parts in useMemo, merging streaming store overrides
+	// on top of main store parts. Streaming parts take priority because they
+	// contain the latest content that hasn't been flushed to the main store yet.
 	const sessionParts = useMemo(() => {
 		if (!storeMessages) return EMPTY_PARTS_ARRAY
-		return storeMessages.map((msg) => storeParts[msg.id] ?? EMPTY_PARTS)
-	}, [storeMessages, storeParts])
+
+		// Read streaming overrides. `streamingVersion` is in the dependency
+		// array to trigger recomputation when the streaming store notifies,
+		// even when `storeParts` hasn't been flushed yet. Reference it here
+		// so the linter sees it as used within the memo body.
+		void streamingVersion
+		const streaming = getAllStreamingParts()
+
+		return storeMessages.map((msg) => {
+			const baseParts = storeParts[msg.id] ?? EMPTY_PARTS
+			const overrides = streaming[msg.id]
+
+			// Fast path: no streaming overrides for this message
+			if (!overrides) return baseParts
+
+			// Overlay streaming parts on top of the base parts
+			return baseParts.map((part) => overrides[part.id] ?? part)
+		})
+	}, [storeMessages, storeParts, streamingVersion])
 
 	// Assemble ChatMessageEntry[] from store state
 	const entries: ChatMessageEntry[] = useMemo(() => {

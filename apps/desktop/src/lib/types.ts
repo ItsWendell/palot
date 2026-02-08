@@ -1,5 +1,6 @@
 // Import SDK types we reference in our own interfaces
 import type { Permission as SdkPermission } from "@opencode-ai/sdk"
+import type { QuestionRequest as SdkQuestionRequest } from "@opencode-ai/sdk/v2/client"
 
 // Re-export SDK types that we use across the app
 export type {
@@ -28,6 +29,14 @@ export type {
 	ToolStateCompleted,
 	UserMessage,
 } from "@opencode-ai/sdk"
+
+// Re-export question types from v2 SDK (not available in root SDK)
+export type {
+	QuestionAnswer,
+	QuestionInfo,
+	QuestionOption,
+	QuestionRequest,
+} from "@opencode-ai/sdk/v2/client"
 
 // ============================================================
 // File attachment types
@@ -119,6 +128,8 @@ export interface Agent {
 	sessionId: string
 	/** Pending permission requests for this agent */
 	permissions: SdkPermission[]
+	/** Pending question requests for this agent */
+	questions: SdkQuestionRequest[]
 	/** If set, this is a sub-agent spawned by the parent session */
 	parentId?: string
 	/** Timestamp (ms) of session creation — stable, never changes */

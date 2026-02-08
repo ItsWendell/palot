@@ -13,7 +13,7 @@ import {
 	usePromptInputAttachments,
 } from "@codedeck/ui/components/ai-elements/prompt-input"
 import { ChevronUpIcon, Loader2Icon, PlusIcon } from "lucide-react"
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import type {
 	ConfigData,
 	ModelRef,
@@ -27,7 +27,9 @@ import {
 	useModelState,
 } from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
-import type { Agent, FileAttachment } from "../../lib/types"
+import type { Agent, FileAttachment, QuestionAnswer } from "../../lib/types"
+import { PermissionItem } from "./chat-permission"
+import { ChatQuestionCard } from "./chat-question"
 import { ChatTurnComponent } from "./chat-turn"
 import { PromptAttachmentPreview } from "./prompt-attachments"
 import { PromptToolbar, StatusBar } from "./prompt-toolbar"
@@ -66,6 +68,8 @@ interface ChatViewProps {
 		message: string,
 		options?: { model?: ModelRef; agentName?: string; variant?: string; files?: FileAttachment[] },
 	) => Promise<void>
+	/** Callback to stop/abort the running session */
+	onStop?: (agent: Agent) => Promise<void>
 	/** Provider data for model selector */
 	providers?: ProvidersData | null
 	/** Config data (default model, default agent) */
@@ -74,6 +78,12 @@ interface ChatViewProps {
 	vcs?: VcsData | null
 	/** Available OpenCode agents */
 	openCodeAgents?: SdkAgent[]
+	/** Permission handlers */
+	onApprove?: (agent: Agent, permissionId: string, response?: "once" | "always") => Promise<void>
+	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
+	/** Question handlers */
+	onReplyQuestion?: (agent: Agent, requestId: string, answers: QuestionAnswer[]) => Promise<void>
+	onRejectQuestion?: (agent: Agent, requestId: string) => Promise<void>
 }
 
 /**
@@ -90,13 +100,22 @@ export function ChatView({
 	agent,
 	isConnected,
 	onSendMessage,
+	onStop,
 	providers,
 	config,
 	vcs,
 	openCodeAgents,
+	onApprove,
+	onDeny,
+	onReplyQuestion,
+	onRejectQuestion,
 }: ChatViewProps) {
 	const isWorking = agent.status === "running"
 	const [sending, setSending] = useState(false)
+
+	// Escape-to-abort: double-press within 3s
+	const [interruptCount, setInterruptCount] = useState(0)
+	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
 	// Toolbar state
 	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null)
@@ -150,7 +169,32 @@ export function ChatView({
 		[onSendMessage, sending, agent, effectiveModel, selectedAgent, selectedVariant],
 	)
 
-	const canSend = isConnected && !isWorking && !sending
+	// Allow sending while the AI is working — the server queues follow-up messages
+	const canSend = isConnected && !sending
+
+	const handleStop = useCallback(() => {
+		if (onStop && isWorking) {
+			onStop(agent)
+		}
+	}, [onStop, isWorking, agent])
+
+	const handleEscapeAbort = useCallback(() => {
+		if (!isWorking) return
+
+		setInterruptCount((prev) => {
+			const next = prev + 1
+			if (next >= 2) {
+				// Double-press: abort
+				handleStop()
+				if (interruptTimerRef.current) clearTimeout(interruptTimerRef.current)
+				return 0
+			}
+			// First press: start countdown
+			if (interruptTimerRef.current) clearTimeout(interruptTimerRef.current)
+			interruptTimerRef.current = setTimeout(() => setInterruptCount(0), 3000)
+			return next
+		})
+	}, [isWorking, handleStop])
 
 	return (
 		<div className="flex h-full flex-col">
@@ -220,6 +264,35 @@ export function ChatView({
 					{/* Session task list — collapsible todo progress */}
 					<SessionTaskList sessionId={agent.sessionId} />
 
+					{/* Pending questions + permissions — above the input */}
+					{(agent.questions.length > 0 || agent.permissions.length > 0) && (
+						<div className="pb-2">
+							{agent.questions.map((q) => (
+								<ChatQuestionCard
+									key={q.id}
+									question={q}
+									onReply={async (requestId, answers) => {
+										await onReplyQuestion?.(agent, requestId, answers)
+									}}
+									onReject={async (requestId) => {
+										await onRejectQuestion?.(agent, requestId)
+									}}
+									disabled={!isConnected}
+								/>
+							))}
+							{agent.permissions.map((permission) => (
+								<PermissionItem
+									key={permission.id}
+									agent={agent}
+									permission={permission}
+									onApprove={onApprove}
+									onDeny={onDeny}
+									isConnected={isConnected}
+								/>
+							))}
+						</div>
+					)}
+
 					{/* Input card — rounded container with textarea + toolbar inside */}
 					<PromptInput
 						className="rounded-xl"
@@ -240,11 +313,21 @@ export function ChatView({
 								!isConnected
 									? "Connect to server to send messages..."
 									: isWorking
-										? "Waiting for response..."
+										? "Send a follow-up or correction..."
 										: "Ask for follow-up changes"
 							}
 							disabled={!isConnected}
 							className="min-h-[80px]"
+							onKeyDown={(e) => {
+								if (
+									e.key === "Escape" &&
+									isWorking &&
+									!(e.target as HTMLTextAreaElement).value.trim()
+								) {
+									e.preventDefault()
+									handleEscapeAbort()
+								}
+							}}
 						/>
 
 						{/* Toolbar inside the card — agent + model + variant selectors + submit */}
@@ -260,17 +343,27 @@ export function ChatView({
 									effectiveModel={effectiveModel}
 									hasModelOverride={!!selectedModel}
 									onSelectModel={setSelectedModel}
+									recentModels={recentModels}
 									selectedVariant={selectedVariant}
 									onSelectVariant={setSelectedVariant}
 									disabled={!isConnected}
 								/>
 							</PromptInputTools>
-							<PromptInputSubmit disabled={!canSend} status={isWorking ? "streaming" : undefined} />
+							<PromptInputSubmit
+								disabled={!canSend}
+								status={isWorking ? "streaming" : undefined}
+								onStop={handleStop}
+							/>
 						</PromptInputFooter>
 					</PromptInput>
 
 					{/* Status bar — outside the card */}
-					<StatusBar vcs={vcs ?? null} isConnected={isConnected} />
+					<StatusBar
+						vcs={vcs ?? null}
+						isConnected={isConnected}
+						isWorking={isWorking}
+						interruptCount={interruptCount}
+					/>
 				</div>
 			</div>
 		</div>

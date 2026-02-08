@@ -11,6 +11,7 @@ import {
 } from "../hooks/use-agents"
 import { useDiscovery } from "../hooks/use-discovery"
 import { useAgentActions, useServerConnection } from "../hooks/use-server"
+import { useWaitingIndicator } from "../hooks/use-waiting-indicator"
 import type { Agent } from "../lib/types"
 import { CommandPalette } from "./command-palette"
 import { Sidebar } from "./sidebar"
@@ -18,6 +19,7 @@ import { Sidebar } from "./sidebar"
 export function RootLayout() {
 	useDiscovery()
 	useServerConnection()
+	useWaitingIndicator()
 
 	const agents = useAgents()
 	const projects = useProjectList()

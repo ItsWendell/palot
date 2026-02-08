@@ -1,6 +1,6 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
-import type { Event, Session, SessionStatus } from "../lib/types"
+import type { Event, QuestionAnswer, Session, SessionStatus } from "../lib/types"
 
 export type { OpencodeClient }
 
@@ -114,6 +114,24 @@ export async function respondToPermission(
 		permissionID: permissionId,
 		response,
 	})
+}
+
+/**
+ * Reply to a question request from the AI assistant.
+ */
+export async function replyToQuestion(
+	client: OpencodeClient,
+	requestId: string,
+	answers: QuestionAnswer[],
+): Promise<void> {
+	await client.question.reply({ requestID: requestId, answers })
+}
+
+/**
+ * Reject a question request from the AI assistant.
+ */
+export async function rejectQuestion(client: OpencodeClient, requestId: string): Promise<void> {
+	await client.question.reject({ requestID: requestId })
 }
 
 /**

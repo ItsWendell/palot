@@ -1,5 +1,14 @@
 import { create } from "zustand"
-import type { Event, Message, Part, Permission, Session, SessionStatus, Todo } from "../lib/types"
+import type {
+	Event,
+	Message,
+	Part,
+	Permission,
+	QuestionRequest,
+	Session,
+	SessionStatus,
+	Todo,
+} from "../lib/types"
 
 // ============================================================
 // Store types
@@ -10,6 +19,8 @@ export interface SessionEntry {
 	status: SessionStatus
 	/** Pending permission requests */
 	permissions: Permission[]
+	/** Pending question requests */
+	questions: QuestionRequest[]
 	/** Project directory this session belongs to */
 	directory: string
 }
@@ -91,6 +102,8 @@ interface AppState {
 	setSessionStatus: (sessionId: string, status: SessionStatus) => void
 	addPermission: (sessionId: string, permission: Permission) => void
 	removePermission: (sessionId: string, permissionId: string) => void
+	addQuestion: (sessionId: string, question: QuestionRequest) => void
+	removeQuestion: (sessionId: string, requestId: string) => void
 	setSessions: (
 		sessions: Session[],
 		statuses: Record<string, SessionStatus>,
@@ -199,6 +212,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 						session,
 						status: existing?.status ?? { type: "idle" },
 						permissions: existing?.permissions ?? [],
+						questions: existing?.questions ?? [],
 						directory: existing?.directory ?? directory,
 					},
 				},
@@ -253,6 +267,38 @@ export const useAppStore = create<AppState>((set, get) => ({
 			}
 		}),
 
+	addQuestion: (sessionId, question) =>
+		set((state) => {
+			const entry = state.sessions[sessionId]
+			if (!entry) return state
+			// Avoid duplicates
+			if (entry.questions.some((q) => q.id === question.id)) return state
+			return {
+				sessions: {
+					...state.sessions,
+					[sessionId]: {
+						...entry,
+						questions: [...entry.questions, question],
+					},
+				},
+			}
+		}),
+
+	removeQuestion: (sessionId, requestId) =>
+		set((state) => {
+			const entry = state.sessions[sessionId]
+			if (!entry) return state
+			return {
+				sessions: {
+					...state.sessions,
+					[sessionId]: {
+						...entry,
+						questions: entry.questions.filter((q) => q.id !== requestId),
+					},
+				},
+			}
+		}),
+
 	setSessions: (sessions, statuses, directory) =>
 		set((state) => {
 			const newSessions = { ...state.sessions }
@@ -262,6 +308,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 					session,
 					status: statuses[session.id] ?? existing?.status ?? { type: "idle" },
 					permissions: existing?.permissions ?? [],
+					questions: existing?.questions ?? [],
 					directory,
 				}
 			}
@@ -282,20 +329,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 			let existing = state.messages[sessionId] ?? []
 			let newParts = state.parts
 
-			// When a real user message arrives, remove any optimistic placeholder
+			// When a real user message arrives, remove the oldest optimistic placeholder.
+			// Only remove ONE at a time so queued optimistic messages are preserved
+			// until their own server-confirmed message arrives.
 			if (message.role === "user" && !message.id.startsWith("optimistic-")) {
-				const hasOptimistic = existing.some(
+				const optimisticIndex = existing.findIndex(
 					(m) => m.id.startsWith("optimistic-") && m.role === "user",
 				)
-				if (hasOptimistic) {
+				if (optimisticIndex !== -1) {
+					const optimisticId = existing[optimisticIndex].id
 					const cleaned: Record<string, Part[]> = { ...state.parts }
-					existing = existing.filter((m) => {
-						if (m.id.startsWith("optimistic-")) {
-							delete cleaned[m.id]
-							return false
-						}
-						return true
-					})
+					delete cleaned[optimisticId]
+					existing = existing.filter((_, i) => i !== optimisticIndex)
 					newParts = cleaned
 				}
 			}
@@ -434,6 +479,29 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 	processEvent: (event) => {
 		const state = get()
+
+		// Handle question events first — these come from the v2 SDK event union
+		// but the root SDK's Event type doesn't include them in its discriminant.
+		// We match on the type string before the switch to avoid TS narrowing issues.
+		const eventType = event.type as string
+		if (eventType === "question.asked") {
+			const props = (event as unknown as { properties: QuestionRequest }).properties
+			state.addQuestion(props.sessionID, props)
+			return
+		}
+		if (eventType === "question.replied") {
+			const props = (event as unknown as { properties: { sessionID: string; requestID: string } })
+				.properties
+			state.removeQuestion(props.sessionID, props.requestID)
+			return
+		}
+		if (eventType === "question.rejected") {
+			const props = (event as unknown as { properties: { sessionID: string; requestID: string } })
+				.properties
+			state.removeQuestion(props.sessionID, props.requestID)
+			return
+		}
+
 		switch (event.type) {
 			case "server.connected":
 				state.setOpenCodeConnected(true)

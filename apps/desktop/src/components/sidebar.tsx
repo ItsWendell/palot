@@ -262,7 +262,8 @@ function GlobalAttachCommand() {
 	const [copied, setCopied] = useState(false)
 	const [open, setOpen] = useState(false)
 
-	const command = `opencode attach ${url ?? "http://127.0.0.1:4101"}`
+	const serverUrl = url ?? "http://127.0.0.1:4101"
+	const command = `opencode attach ${serverUrl} --dir .`
 
 	const handleOpen = useCallback(
 		async (nextOpen: boolean) => {
@@ -316,7 +317,7 @@ function GlobalAttachCommand() {
 						</Button>
 					</div>
 					<p className="text-[11px] leading-normal text-muted-foreground">
-						Paste in your terminal to connect. New sessions will appear here automatically.
+						Run from your project directory. Sessions will appear here automatically.
 					</p>
 				</div>
 			</PopoverContent>
@@ -546,11 +547,16 @@ const SessionItem = memo(function SessionItem({
 					className={`h-auto min-w-0 flex-1 border-none bg-transparent p-0 shadow-none focus-visible:ring-0 ${compact ? "text-xs" : "text-[13px]"}`}
 				/>
 			) : (
-				<span
-					className={`min-w-0 flex-1 truncate leading-tight ${compact ? "text-xs" : "text-[13px]"}`}
-				>
-					{agent.name}
-				</span>
+				<div className="min-w-0 flex-1">
+					<span className={`block truncate leading-tight ${compact ? "text-xs" : "text-[13px]"}`}>
+						{agent.name}
+					</span>
+					{agent.status === "waiting" && agent.currentActivity && (
+						<span className="block truncate text-[11px] leading-tight text-yellow-500">
+							{agent.currentActivity}
+						</span>
+					)}
+				</div>
 			)}
 
 			{!isEditing && (

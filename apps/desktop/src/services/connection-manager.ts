@@ -2,6 +2,11 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import type { Event } from "../lib/types"
 import { useAppStore } from "../stores/app-store"
 import {
+	flushStreamingParts,
+	isStreamingPartType,
+	updateStreamingPart,
+} from "../stores/streaming-store"
+import {
 	connectToServer,
 	getSessionStatuses,
 	listSessions,
@@ -147,7 +152,8 @@ function coalescingKey(event: Event): string | undefined {
  * - Incoming events are queued into a batch.
  * - If the same coalescing key appears multiple times in the batch, only the
  *   latest event is kept (e.g. rapid `message.part.updated` for the same part).
- * - The batch is flushed at most every 16ms (~60fps).
+ * - The batch is flushed using `requestAnimationFrame` so dispatches align
+ *   with the browser's paint cycle — no wasted updates between frames.
  * - The *first* event after a quiet period flushes immediately (no added latency).
  */
 function createEventBatcher() {
@@ -155,7 +161,7 @@ function createEventBatcher() {
 	let queue: Event[] = []
 	/** Coalescable events — only the latest per key is kept */
 	const coalesced = new Map<string, Event>()
-	let timer: ReturnType<typeof setTimeout> | undefined
+	let scheduled: number | undefined
 	let lastFlush = 0
 
 	function flush() {
@@ -163,8 +169,8 @@ function createEventBatcher() {
 		const events = [...queue, ...coalesced.values()]
 		queue = []
 		coalesced.clear()
-		timer = undefined
-		lastFlush = Date.now()
+		scheduled = undefined
+		lastFlush = performance.now()
 
 		if (events.length === 0) return
 
@@ -178,6 +184,45 @@ function createEventBatcher() {
 	}
 
 	function enqueue(event: Event) {
+		// Fast path: route high-frequency text/reasoning part updates to
+		// the streaming store. This bypasses the main Zustand store entirely
+		// — the streaming store has its own throttled notification cycle (~50ms)
+		// so React re-renders far less often during active streaming.
+		if (event.type === "message.part.updated") {
+			const part = event.properties.part
+			if (isStreamingPartType(part)) {
+				updateStreamingPart(part)
+				// Also enqueue in the normal path so the main store stays
+				// eventually consistent — but coalescing means only the
+				// latest version per part makes it through each flush.
+				const key = coalescingKey(event)
+				if (key) coalesced.set(key, event)
+				if (scheduled !== undefined) return
+				const elapsed = performance.now() - lastFlush
+				if (elapsed < FRAME_BUDGET_MS) {
+					scheduled = requestAnimationFrame(flush)
+				} else {
+					flush()
+				}
+				return
+			}
+		}
+
+		// When a session goes idle, flush accumulated streaming parts to
+		// the main store so the final state is persisted.
+		if (event.type === "session.status" && event.properties.status.type === "idle") {
+			const accumulated = flushStreamingParts()
+			// Apply accumulated parts to main store
+			if (Object.keys(accumulated).length > 0) {
+				const { upsertPart } = useAppStore.getState()
+				for (const messageParts of Object.values(accumulated)) {
+					for (const part of Object.values(messageParts)) {
+						upsertPart(part)
+					}
+				}
+			}
+		}
+
 		const key = coalescingKey(event)
 		if (key) {
 			// Coalescable — overwrite any previous event with the same key
@@ -186,13 +231,15 @@ function createEventBatcher() {
 			queue.push(event)
 		}
 
-		// If a timer is already scheduled, the event will be included in that flush
-		if (timer) return
+		// If a frame is already scheduled, the event will be included in that flush
+		if (scheduled !== undefined) return
 
-		const elapsed = Date.now() - lastFlush
+		const elapsed = performance.now() - lastFlush
 		if (elapsed < FRAME_BUDGET_MS) {
-			// Within the current frame budget — defer flush to next frame
-			timer = setTimeout(flush, FRAME_BUDGET_MS)
+			// Within the current frame budget — defer to next paint via rAF.
+			// rAF fires right before the browser paints, ensuring the store
+			// update and subsequent React render happen just-in-time.
+			scheduled = requestAnimationFrame(flush)
 		} else {
 			// Enough time has passed — flush immediately (keeps first-event latency low)
 			flush()
@@ -200,9 +247,9 @@ function createEventBatcher() {
 	}
 
 	function dispose() {
-		if (timer) {
-			clearTimeout(timer)
-			timer = undefined
+		if (scheduled !== undefined) {
+			cancelAnimationFrame(scheduled)
+			scheduled = undefined
 		}
 		// Flush any remaining events
 		flush()

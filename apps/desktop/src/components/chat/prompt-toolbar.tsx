@@ -137,6 +137,8 @@ interface ModelSelectorProps {
 	/** Whether the user has explicitly overridden the model */
 	hasOverride: boolean
 	onSelectModel: (model: ModelRef | null) => void
+	/** Recent models from model.json (most recently used first) */
+	recentModels?: ModelRef[]
 	disabled?: boolean
 }
 
@@ -144,9 +146,21 @@ export function ModelSelector({
 	providers,
 	effectiveModel,
 	onSelectModel,
+	recentModels,
 	disabled,
 }: ModelSelectorProps) {
 	const models = useMemo(() => (providers ? flattenModels(providers.providers) : []), [providers])
+
+	// Build "Last used" group from recentModels (up to 3, only models that exist in providers)
+	const lastUsedModels = useMemo(() => {
+		if (!recentModels || recentModels.length === 0) return []
+		return recentModels
+			.slice(0, 3)
+			.map((ref) =>
+				models.find((m) => m.providerID === ref.providerID && m.modelID === ref.modelID),
+			)
+			.filter((m): m is ModelOption => m != null)
+	}, [recentModels, models])
 
 	const activeValue = effectiveModel
 		? `${effectiveModel.providerID}/${effectiveModel.modelID}`
@@ -247,33 +261,66 @@ export function ModelSelector({
 					{filteredModels.length === 0 ? (
 						<div className="py-4 text-center text-sm text-muted-foreground">No models found</div>
 					) : (
-						Array.from(grouped.entries()).map(([providerName, providerModels]) => (
-							<div key={providerName}>
-								{/* Sticky provider header */}
-								<div className="sticky top-0 z-10 border-b bg-popover px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-									{providerName}
-								</div>
-								{/* Models in this provider group */}
-								{providerModels.map((model) => (
-									<button
-										key={model.value}
-										type="button"
-										onClick={() => handleSelect(model.value)}
-										className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted"
-									>
-										<span className="flex-1 truncate">{model.displayName}</span>
-										{model.reasoning && (
-											<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground/60">
-												reasoning
+						<>
+							{/* Last used group — only shown when not searching */}
+							{!search && lastUsedModels.length > 0 && (
+								<div>
+									<div className="sticky top-0 z-10 border-b bg-popover px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+										Last used
+									</div>
+									{lastUsedModels.map((model) => (
+										<button
+											key={`recent-${model.value}`}
+											type="button"
+											onClick={() => handleSelect(model.value)}
+											className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted"
+										>
+											<span className="flex-1 truncate">{model.displayName}</span>
+											<span className="shrink-0 text-[10px] text-muted-foreground/40">
+												{model.providerName}
 											</span>
-										)}
-										{model.value === activeValue && (
-											<CheckIcon className="size-3.5 shrink-0 text-primary" />
-										)}
-									</button>
-								))}
-							</div>
-						))
+											{model.reasoning && (
+												<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground/60">
+													reasoning
+												</span>
+											)}
+											{model.value === activeValue && (
+												<CheckIcon className="size-3.5 shrink-0 text-primary" />
+											)}
+										</button>
+									))}
+								</div>
+							)}
+
+							{/* Provider-grouped models */}
+							{Array.from(grouped.entries()).map(([providerName, providerModels]) => (
+								<div key={providerName}>
+									{/* Sticky provider header */}
+									<div className="sticky top-0 z-10 border-b bg-popover px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+										{providerName}
+									</div>
+									{/* Models in this provider group */}
+									{providerModels.map((model) => (
+										<button
+											key={model.value}
+											type="button"
+											onClick={() => handleSelect(model.value)}
+											className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted"
+										>
+											<span className="flex-1 truncate">{model.displayName}</span>
+											{model.reasoning && (
+												<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground/60">
+													reasoning
+												</span>
+											)}
+											{model.value === activeValue && (
+												<CheckIcon className="size-3.5 shrink-0 text-primary" />
+											)}
+										</button>
+									))}
+								</div>
+							))}
+						</>
 					)}
 				</ScrollArea>
 			</PopoverContent>
@@ -352,6 +399,9 @@ export interface PromptToolbarProps {
 	hasModelOverride: boolean
 	onSelectModel: (model: ModelRef | null) => void
 
+	/** Recent models from model.json */
+	recentModels?: ModelRef[]
+
 	/** Currently selected variant */
 	selectedVariant: string | undefined
 	onSelectVariant: (variant: string | undefined) => void
@@ -372,6 +422,7 @@ export function PromptToolbar({
 	effectiveModel,
 	hasModelOverride,
 	onSelectModel,
+	recentModels,
 	selectedVariant,
 	onSelectVariant,
 	disabled,
@@ -404,6 +455,7 @@ export function PromptToolbar({
 				effectiveModel={effectiveModel}
 				hasOverride={hasModelOverride}
 				onSelectModel={onSelectModel}
+				recentModels={recentModels}
 				disabled={disabled}
 			/>
 
@@ -428,12 +480,16 @@ export function PromptToolbar({
 interface StatusBarProps {
 	vcs: VcsData | null
 	isConnected: boolean
+	/** Whether the session is currently running */
+	isWorking?: boolean
+	/** Number of Escape presses toward abort (0 = none, 1 = first press) */
+	interruptCount?: number
 }
 
-export function StatusBar({ vcs, isConnected }: StatusBarProps) {
+export function StatusBar({ vcs, isConnected, isWorking, interruptCount }: StatusBarProps) {
 	return (
 		<div className="flex items-center gap-3 px-2 pt-2 text-[11px] text-muted-foreground/60">
-			{/* Left side — environment + connection */}
+			{/* Left side — environment + connection + interrupt hint */}
 			<div className="flex items-center gap-3">
 				<div className="flex items-center gap-1">
 					<MonitorIcon className="size-3" />
@@ -444,6 +500,20 @@ export function StatusBar({ vcs, isConnected }: StatusBarProps) {
 					<div className="flex items-center gap-1 text-yellow-500/70">
 						<span className="inline-block size-1.5 rounded-full bg-yellow-500/70" />
 						<span>Disconnected</span>
+					</div>
+				)}
+
+				{/* Escape-to-abort hint — shown when session is working */}
+				{isConnected && isWorking && (
+					<div
+						className={`flex items-center gap-1 transition-colors ${interruptCount && interruptCount > 0 ? "text-orange-400" : ""}`}
+					>
+						<kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px] leading-none">
+							esc
+						</kbd>
+						<span>
+							{interruptCount && interruptCount > 0 ? "press again to stop" : "interrupt"}
+						</span>
 					</div>
 				)}
 			</div>

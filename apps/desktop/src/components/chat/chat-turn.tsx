@@ -7,7 +7,14 @@ import {
 } from "@codedeck/ui/components/ai-elements/message"
 import { Shimmer } from "@codedeck/ui/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
-import { CheckIcon, ChevronDownIcon, CopyIcon, FileIcon } from "lucide-react"
+import {
+	BotIcon,
+	CheckIcon,
+	ChevronDownIcon,
+	CopyIcon,
+	FileIcon,
+	ListOrderedIcon,
+} from "lucide-react"
 import { memo, useCallback, useDeferredValue, useMemo, useState } from "react"
 import type { ChatMessageEntry, ChatTurn as ChatTurnType } from "../../hooks/use-session-chat"
 import type { FilePart, Part, TextPart, ToolPart } from "../../lib/types"
@@ -60,6 +67,8 @@ function computeStatus(parts: Part[]): string {
 					return "Making edits..."
 				case "bash":
 					return "Running command..."
+				case "question":
+					return "Asking a question..."
 				default:
 					return `Running ${part.tool}...`
 			}
@@ -92,6 +101,8 @@ function getToolSummary(toolParts: ToolPart[]): string {
 			counts.fetched = (counts.fetched ?? 0) + 1
 		} else if (tool === "todowrite" || tool === "todoread") {
 			// skip — rendered separately
+		} else if (tool === "question") {
+			counts.asked = (counts.asked ?? 0) + 1
 		} else {
 			counts.used = (counts.used ?? 0) + 1
 		}
@@ -106,19 +117,50 @@ function getToolSummary(toolParts: ToolPart[]): string {
 		parts.push(`Delegated ${counts.delegated} ${counts.delegated === 1 ? "task" : "tasks"}`)
 	if (counts.fetched)
 		parts.push(`Fetched ${counts.fetched} ${counts.fetched === 1 ? "page" : "pages"}`)
+	if (counts.asked)
+		parts.push(`Asked ${counts.asked} ${counts.asked === 1 ? "question" : "questions"}`)
 	if (counts.used) parts.push(`Used ${counts.used} ${counts.used === 1 ? "tool" : "tools"}`)
 
 	return parts.join(", ")
 }
 
 /**
- * Extracts the user message text from parts.
+ * Checks if a user message is entirely synthetic (all text parts are synthetic).
+ * Synthetic messages are injected by the system (e.g. compaction continuation,
+ * shell command framing, plan mode switches) and not authored by the user.
+ */
+function isSyntheticMessage(entry: ChatMessageEntry): boolean {
+	const textParts = entry.parts.filter((p): p is TextPart => p.type === "text")
+	return textParts.length > 0 && textParts.every((p) => p.synthetic === true)
+}
+
+/**
+ * Extracts the user message text from parts, excluding synthetic parts.
  */
 function getUserText(entry: ChatMessageEntry): string {
 	return entry.parts
+		.filter((p): p is TextPart => p.type === "text" && !p.synthetic)
+		.map((p) => p.text)
+		.join("\n")
+}
+
+/**
+ * Gets a display label for a synthetic user message based on its content.
+ */
+function getSyntheticLabel(entry: ChatMessageEntry): string {
+	const text = entry.parts
 		.filter((p): p is TextPart => p.type === "text")
 		.map((p) => p.text)
 		.join("\n")
+		.toLowerCase()
+
+	if (text.includes("continue if you have next steps")) return "Auto-continued after compaction"
+	if (text.includes("summarize the task tool output")) return "Auto-continued after task"
+	if (text.includes("tool was executed by the user")) return "Shell command executed"
+	if (text.includes("plan has been approved")) return "Plan approved"
+	if (text.includes("enter plan mode")) return "Entered plan mode"
+	if (text.includes("switch") && text.includes("plan")) return "Mode switched"
+	return "Auto-continued"
 }
 
 /**
@@ -266,7 +308,12 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	const [stepsExpanded, setStepsExpanded] = useState(false)
 	const [copied, setCopied] = useState(false)
 
+	const isSynthetic = useMemo(() => isSyntheticMessage(turn.userMessage), [turn.userMessage])
 	const userText = useMemo(() => getUserText(turn.userMessage), [turn.userMessage])
+	const syntheticLabel = useMemo(
+		() => (isSynthetic ? getSyntheticLabel(turn.userMessage) : ""),
+		[isSynthetic, turn.userMessage],
+	)
 	const userFiles = useMemo(() => getFileParts(turn.userMessage), [turn.userMessage])
 	const { text: rawResponseText } = useMemo(
 		() => getResponseText(turn.assistantMessages),
@@ -287,6 +334,13 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	const toolSummary = useMemo(() => getToolSummary(toolParts), [toolParts])
 
 	const working = isLast && isWorking
+	// A turn is "queued" if the session is working but this turn has no assistant
+	// response yet AND it's not the turn currently being worked on (isLast).
+	// This means the user sent a follow-up while the AI was busy with a previous turn.
+	const isQueued = isWorking && turn.assistantMessages.length === 0 && !isLast
+	// Also show queued state for the last turn if it has no assistant messages
+	// and the session is working (the message was just sent as a steering message)
+	const isQueuedLast = isWorking && turn.assistantMessages.length === 0 && isLast
 	const hasSteps = toolParts.length > 0
 	const lastAssistant = turn.assistantMessages.at(-1)
 	const duration = useMemo(() => {
@@ -305,12 +359,25 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	return (
 		<div className="group/turn space-y-4">
 			{/* User message */}
-			<Message from="user">
-				<MessageContent>
-					{userFiles.length > 0 && <AttachmentGrid files={userFiles} />}
-					<p>{userText}</p>
-				</MessageContent>
-			</Message>
+			{isSynthetic ? (
+				<div className="flex items-center justify-end gap-1.5 text-[11px] italic text-muted-foreground/50">
+					<BotIcon className="size-3" aria-hidden="true" />
+					<span>{syntheticLabel}</span>
+				</div>
+			) : (
+				<Message from="user">
+					<MessageContent>
+						{userFiles.length > 0 && <AttachmentGrid files={userFiles} />}
+						<p>{userText}</p>
+						{(isQueued || isQueuedLast) && (
+							<span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/60">
+								<ListOrderedIcon className="size-3" />
+								Queued
+							</span>
+						)}
+					</MessageContent>
+				</Message>
+			)}
 
 			{/* Compact tool summary — Codex-style */}
 			{(working || hasSteps) && (

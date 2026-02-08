@@ -1,10 +1,3 @@
-import {
-	Confirmation,
-	ConfirmationAction,
-	ConfirmationActions,
-	ConfirmationRequest,
-	ConfirmationTitle,
-} from "@codedeck/ui/components/ai-elements/confirmation"
 import { Badge } from "@codedeck/ui/components/badge"
 import { Button } from "@codedeck/ui/components/button"
 import { Input } from "@codedeck/ui/components/input"
@@ -13,11 +6,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components
 import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	ArrowLeftIcon,
-	CheckCircle2Icon,
 	CheckIcon,
-	CircleDotIcon,
 	CopyIcon,
-	Loader2Icon,
 	PencilIcon,
 	SquareIcon,
 	TerminalIcon,
@@ -33,7 +23,7 @@ import type {
 } from "../hooks/use-opencode-data"
 import { useServerConnection } from "../hooks/use-server"
 import type { ChatTurn } from "../hooks/use-session-chat"
-import type { Agent, AgentStatus, FileAttachment } from "../lib/types"
+import type { Agent, AgentStatus, FileAttachment, QuestionAnswer } from "../lib/types"
 import { ChatView } from "./chat"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
@@ -66,8 +56,10 @@ interface AgentDetailProps {
 	/** Callback to load earlier messages */
 	onLoadEarlier?: () => void
 	onStop?: (agent: Agent) => Promise<void>
-	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
+	onApprove?: (agent: Agent, permissionId: string, response?: "once" | "always") => Promise<void>
 	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
+	onReplyQuestion?: (agent: Agent, requestId: string, answers: QuestionAnswer[]) => Promise<void>
+	onRejectQuestion?: (agent: Agent, requestId: string) => Promise<void>
 	onSendMessage?: (
 		agent: Agent,
 		message: string,
@@ -94,6 +86,8 @@ export function AgentDetail({
 	onStop,
 	onApprove,
 	onDeny,
+	onReplyQuestion,
+	onRejectQuestion,
 	onSendMessage,
 	onRename,
 	parentSessionName,
@@ -255,24 +249,17 @@ export function AgentDetail({
 					agent={agent}
 					isConnected={isConnected ?? false}
 					onSendMessage={onSendMessage}
+					onStop={onStop}
 					providers={providers}
 					config={config}
 					vcs={vcs}
 					openCodeAgents={openCodeAgents}
+					onApprove={onApprove}
+					onDeny={onDeny}
+					onReplyQuestion={onReplyQuestion}
+					onRejectQuestion={onRejectQuestion}
 				/>
 			</div>
-
-			{/* Permission requests (when waiting) */}
-			{agent.status === "waiting" && (
-				<div className="border-t border-border p-3">
-					<PermissionRequests
-						agent={agent}
-						onApprove={onApprove}
-						onDeny={onDeny}
-						isConnected={isConnected}
-					/>
-				</div>
-			)}
 		</div>
 	)
 }
@@ -344,120 +331,5 @@ function AttachCommand({ sessionId, directory }: { sessionId: string; directory:
 				</div>
 			</PopoverContent>
 		</Popover>
-	)
-}
-
-/**
- * Renders pending permission requests for a waiting agent.
- */
-function PermissionRequests({
-	agent,
-	onApprove,
-	onDeny,
-	isConnected,
-}: {
-	agent: Agent
-	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
-	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
-	isConnected?: boolean
-}) {
-	const permissions = agent.permissions
-
-	if (permissions.length === 0) {
-		return (
-			<div className="flex items-center gap-2 text-sm text-muted-foreground">
-				<CircleDotIcon className="size-3.5" />
-				<span>Waiting for permission request...</span>
-			</div>
-		)
-	}
-
-	return (
-		<div className="space-y-2">
-			{permissions.map((permission) => (
-				<PermissionItem
-					key={permission.id}
-					agent={agent}
-					permission={permission}
-					onApprove={onApprove}
-					onDeny={onDeny}
-					isConnected={isConnected}
-				/>
-			))}
-		</div>
-	)
-}
-
-function PermissionItem({
-	agent,
-	permission,
-	onApprove,
-	onDeny,
-	isConnected,
-}: {
-	agent: Agent
-	permission: { id: string; title: string; metadata?: Record<string, unknown> }
-	onApprove?: (agent: Agent, permissionId: string) => Promise<void>
-	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
-	isConnected?: boolean
-}) {
-	const [responding, setResponding] = useState(false)
-
-	async function handleApprove() {
-		if (!onApprove || responding) return
-		setResponding(true)
-		try {
-			await onApprove(agent, permission.id)
-		} finally {
-			setResponding(false)
-		}
-	}
-
-	async function handleDeny() {
-		if (!onDeny || responding) return
-		setResponding(true)
-		try {
-			await onDeny(agent, permission.id)
-		} finally {
-			setResponding(false)
-		}
-	}
-
-	const tool = permission.metadata?.tool as string | undefined
-	const command = permission.metadata?.command as string | undefined
-
-	return (
-		<Confirmation approval={{ id: permission.id }} state="approval-requested">
-			<ConfirmationTitle>{permission.title}</ConfirmationTitle>
-			<ConfirmationRequest>
-				{(tool || command) && (
-					<p className="truncate text-xs text-muted-foreground">
-						{tool && <span>{tool}</span>}
-						{command && (
-							<code className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-								{command.length > 80 ? `${command.slice(0, 80)}...` : command}
-							</code>
-						)}
-					</p>
-				)}
-			</ConfirmationRequest>
-			<ConfirmationActions>
-				<ConfirmationAction
-					variant="outline"
-					onClick={handleDeny}
-					disabled={!isConnected || responding}
-				>
-					Deny
-				</ConfirmationAction>
-				<ConfirmationAction onClick={handleApprove} disabled={!isConnected || responding}>
-					{responding ? (
-						<Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
-					) : (
-						<CheckCircle2Icon className="mr-1.5 size-3.5" />
-					)}
-					Approve
-				</ConfirmationAction>
-			</ConfirmationActions>
-		</Confirmation>
 	)
 }
