@@ -138,6 +138,23 @@ export function ChatView({
 	const isWorking = agent.status === "running"
 	const [sending, setSending] = useState(false)
 
+	// Stable callbacks for question/permission handlers — agent is stable
+	// per render, but wrapping in useCallback avoids creating new inline
+	// closures inside the JSX .map() that would defeat memo() on children.
+	const handleReplyQuestion = useCallback(
+		async (requestId: string, answers: QuestionAnswer[]) => {
+			await onReplyQuestion?.(agent, requestId, answers)
+		},
+		[onReplyQuestion, agent],
+	)
+
+	const handleRejectQuestion = useCallback(
+		async (requestId: string) => {
+			await onRejectQuestion?.(agent, requestId)
+		},
+		[onRejectQuestion, agent],
+	)
+
 	// Draft persistence — survives session switches and reloads
 	const draft = useDraft(agent.sessionId)
 	const { setDraft, clearDraft } = useDraftActions(agent.sessionId)
@@ -301,12 +318,8 @@ export function ChatView({
 								<ChatQuestionCard
 									key={q.id}
 									question={q}
-									onReply={async (requestId, answers) => {
-										await onReplyQuestion?.(agent, requestId, answers)
-									}}
-									onReject={async (requestId) => {
-										await onRejectQuestion?.(agent, requestId)
-									}}
+									onReply={handleReplyQuestion}
+									onReject={handleRejectQuestion}
 									disabled={!isConnected}
 								/>
 							))}
@@ -324,7 +337,7 @@ export function ChatView({
 					)}
 
 					{/* Input card — rounded container with textarea + toolbar inside */}
-					<PromptInputProvider initialInput={draft}>
+					<PromptInputProvider key={agent.sessionId} initialInput={draft}>
 						<DraftSync setDraft={setDraft} />
 						<PromptInput
 							className="rounded-xl"

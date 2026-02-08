@@ -119,21 +119,21 @@ export function RootLayout() {
 			<div className="flex h-screen flex-col bg-background text-foreground">
 				<UpdateBanner />
 				<div className="flex min-h-0 flex-1">
-				<div className="w-[280px] shrink-0 border-r border-border">
-					<Sidebar
-						agents={visibleAgents}
-						projects={projects}
-						onOpenCommandPalette={() => setCommandPaletteOpen(true)}
-						showSubAgents={showSubAgents}
-						subAgentCount={subAgentCount}
-						onToggleSubAgents={toggleShowSubAgents}
-						onRenameSession={handleRenameSession}
-						onDeleteSession={handleDeleteSession}
-					/>
-				</div>
-				<div className="min-w-0 flex-1">
-					<Outlet />
-				</div>
+					<div className="w-[280px] shrink-0 border-r border-border">
+						<Sidebar
+							agents={visibleAgents}
+							projects={projects}
+							onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+							showSubAgents={showSubAgents}
+							subAgentCount={subAgentCount}
+							onToggleSubAgents={toggleShowSubAgents}
+							onRenameSession={handleRenameSession}
+							onDeleteSession={handleDeleteSession}
+						/>
+					</div>
+					<div className="min-w-0 flex-1">
+						<Outlet />
+					</div>
 				</div>
 			</div>
 			<CommandPalette

@@ -277,36 +277,29 @@ function AttachmentThumbnail({ file }: { file: FilePart }) {
 type RenderablePart = { kind: "tool"; part: ToolPart } | { kind: "text"; id: string; text: string }
 
 /**
- * Flattens all assistant parts into an ordered list of renderable items.
+ * Flattens all assistant parts into an ordered list of renderable items
+ * AND extracts the tool-only subset in a single pass.
  * Preserves the natural order: text, tool, text, tool, text...
  * Filters out synthetic text, todoread without output, and empty text.
  */
-function getOrderedParts(assistantMessages: ChatMessageEntry[]): RenderablePart[] {
-	const result: RenderablePart[] = []
-	for (const msg of assistantMessages) {
-		for (const part of msg.parts) {
-			if (part.type === "tool") {
-				if (part.tool === "todoread" && part.state.status !== "completed") continue
-				result.push({ kind: "tool", part })
-			} else if (part.type === "text" && !part.synthetic && part.text.trim()) {
-				result.push({ kind: "text", id: part.id, text: part.text })
-			}
-		}
-	}
-	return result
-}
-
-/** Extract only tool parts (for pill summary counting) */
-function getToolParts(assistantMessages: ChatMessageEntry[]): ToolPart[] {
+function getPartsAndTools(assistantMessages: ChatMessageEntry[]): {
+	ordered: RenderablePart[]
+	tools: ToolPart[]
+} {
+	const ordered: RenderablePart[] = []
 	const tools: ToolPart[] = []
 	for (const msg of assistantMessages) {
 		for (const part of msg.parts) {
 			if (part.type === "tool") {
 				tools.push(part)
+				if (part.tool === "todoread" && part.state.status !== "completed") continue
+				ordered.push({ kind: "tool", part })
+			} else if (part.type === "text" && !part.synthetic && part.text.trim()) {
+				ordered.push({ kind: "text", id: part.id, text: part.text })
 			}
 		}
 	}
-	return tools
+	return { ordered, tools }
 }
 
 /**
@@ -378,9 +371,9 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	)
 	const userFiles = useMemo(() => getFileParts(turn.userMessage), [turn.userMessage])
 
-	// Ordered parts: text and tool calls interleaved in their natural order
-	const orderedParts = useMemo(
-		() => getOrderedParts(turn.assistantMessages),
+	// Ordered parts + tool-only subset in a single pass (avoids double iteration)
+	const { ordered: orderedParts, tools: toolParts } = useMemo(
+		() => getPartsAndTools(turn.assistantMessages),
 		[turn.assistantMessages],
 	)
 
@@ -388,15 +381,17 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	const rawResponseText = useMemo(() => getLastResponseText(orderedParts), [orderedParts])
 	const responseText = useDeferredValue(rawResponseText)
 
-	// Tool-only subset (for pill summary + counting)
-	const toolParts = useMemo(() => getToolParts(turn.assistantMessages), [turn.assistantMessages])
 	const errorText = useMemo(() => getError(turn.assistantMessages), [turn.assistantMessages])
 
-	const allAssistantParts = useMemo(
-		() => turn.assistantMessages.flatMap((m) => m.parts),
-		[turn.assistantMessages],
-	)
-	const statusText = useMemo(() => computeStatus(allAssistantParts), [allAssistantParts])
+	// Compute status by walking the last message's parts in reverse — no
+	// need to flatMap all messages into a temporary array.
+	const statusText = useMemo(() => {
+		for (let m = turn.assistantMessages.length - 1; m >= 0; m--) {
+			const status = computeStatus(turn.assistantMessages[m].parts)
+			if (status !== "Working...") return status
+		}
+		return "Working..."
+	}, [turn.assistantMessages])
 
 	const working = isLast && isWorking
 	const isQueued = isWorking && turn.assistantMessages.length === 0 && !isLast

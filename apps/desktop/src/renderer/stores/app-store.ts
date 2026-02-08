@@ -85,6 +85,13 @@ interface AppState {
 	messages: Record<string, Message[]>
 	/** Parts keyed by messageID, sorted by id */
 	parts: Record<string, Part[]>
+	/**
+	 * Per-session version counter for parts — bumped on every upsertPart/batchUpsertParts.
+	 * Allows selectors to subscribe to a specific session's parts changes without
+	 * subscribing to the entire `parts` record (which changes on every part update
+	 * across all sessions).
+	 */
+	partsVersion: Record<string, number>
 	/** Todos keyed by sessionID — latest task list per session */
 	todos: Record<string, Todo[]>
 	/** Discovered data from local OpenCode storage */
@@ -115,6 +122,8 @@ interface AppState {
 	upsertMessage: (message: Message) => void
 	removeMessage: (sessionId: string, messageId: string) => void
 	upsertPart: (part: Part) => void
+	/** Batch-upsert multiple parts in a single store update (one spread, one notification). */
+	batchUpsertParts: (parts: Part[]) => void
 	removePart: (messageId: string, partId: string) => void
 
 	// ========== Todo actions ==========
@@ -175,6 +184,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 	sessions: {},
 	messages: {},
 	parts: {},
+	partsVersion: {},
 	todos: {},
 	discovery: {
 		loaded: false,
@@ -397,12 +407,19 @@ export const useAppStore = create<AppState>((set, get) => ({
 	upsertPart: (part) =>
 		set((state) => {
 			const messageId = part.messageID
+			const sessionId = part.sessionID
 			const existing = state.parts[messageId]
+
+			// Bump the per-session version counter so components that only
+			// care about this session's parts can use a cheap numeric selector.
+			const nextVersion = (state.partsVersion[sessionId] ?? 0) + 1
+			const newPartsVersion = { ...state.partsVersion, [sessionId]: nextVersion }
 
 			// Fast path: no parts yet for this message — create a new single-element array
 			if (!existing) {
 				return {
 					parts: { ...state.parts, [messageId]: [part] },
+					partsVersion: newPartsVersion,
 				}
 			}
 
@@ -417,6 +434,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 				updated[result.index] = part
 				return {
 					parts: { ...state.parts, [messageId]: updated },
+					partsVersion: newPartsVersion,
 				}
 			}
 
@@ -425,7 +443,43 @@ export const useAppStore = create<AppState>((set, get) => ({
 			updated.splice(result.index, 0, part)
 			return {
 				parts: { ...state.parts, [messageId]: updated },
+				partsVersion: newPartsVersion,
 			}
+		}),
+
+	batchUpsertParts: (parts) =>
+		set((state) => {
+			if (parts.length === 0) return state
+
+			// Build a single new parts record in one pass — only one spread
+			// of the top-level record instead of one per part.
+			const newParts = { ...state.parts }
+			const touchedSessions = new Set<string>()
+			for (const part of parts) {
+				const messageId = part.messageID
+				const existing = newParts[messageId] ?? []
+				const result = binarySearch(existing, part.id, (p) => p.id)
+
+				if (result.found) {
+					if (existing[result.index] === part) continue
+					const updated = existing.slice()
+					updated[result.index] = part
+					newParts[messageId] = updated
+				} else {
+					const updated = existing.slice()
+					updated.splice(result.index, 0, part)
+					newParts[messageId] = updated
+				}
+				touchedSessions.add(part.sessionID)
+			}
+
+			// Bump version for all affected sessions
+			const newPartsVersion = { ...state.partsVersion }
+			for (const sid of touchedSessions) {
+				newPartsVersion[sid] = (newPartsVersion[sid] ?? 0) + 1
+			}
+
+			return { parts: newParts, partsVersion: newPartsVersion }
 		}),
 
 	removePart: (messageId, partId) =>

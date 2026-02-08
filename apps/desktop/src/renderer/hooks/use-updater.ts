@@ -19,7 +19,10 @@ export function useUpdater() {
 		if (!isElectron) return
 
 		// Get current state on mount
-		window.codedeck.getUpdateState().then(setState).catch(() => {})
+		window.codedeck
+			.getUpdateState()
+			.then(setState)
+			.catch(() => {})
 
 		// Subscribe to state changes pushed from main process
 		const unsubscribe = window.codedeck.onUpdateStateChanged((newState) => {

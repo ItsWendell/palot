@@ -1,5 +1,5 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
-import type { Event } from "../lib/types"
+import type { Event, Part } from "../lib/types"
 import { useAppStore } from "../stores/app-store"
 import {
 	flushStreamingParts,
@@ -212,14 +212,15 @@ function createEventBatcher() {
 		// the main store so the final state is persisted.
 		if (event.type === "session.status" && event.properties.status.type === "idle") {
 			const accumulated = flushStreamingParts()
-			// Apply accumulated parts to main store
-			if (Object.keys(accumulated).length > 0) {
-				const { upsertPart } = useAppStore.getState()
-				for (const messageParts of Object.values(accumulated)) {
-					for (const part of Object.values(messageParts)) {
-						upsertPart(part)
-					}
+			// Apply accumulated parts to main store in a single batch update
+			const allParts: Part[] = []
+			for (const messageParts of Object.values(accumulated)) {
+				for (const part of Object.values(messageParts)) {
+					allParts.push(part)
 				}
+			}
+			if (allParts.length > 0) {
+				useAppStore.getState().batchUpsertParts(allParts)
 			}
 		}
 

@@ -3,12 +3,7 @@ import { discover } from "./discovery"
 import { readSessionMessages } from "./messages"
 import { readModelState } from "./model-state"
 import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
-import {
-	checkForUpdates,
-	downloadUpdate,
-	getUpdateState,
-	installUpdate,
-} from "./updater"
+import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from "./updater"
 
 /**
  * Registers all IPC handlers that the renderer can invoke via contextBridge.

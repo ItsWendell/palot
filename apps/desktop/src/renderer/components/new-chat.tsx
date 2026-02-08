@@ -272,7 +272,7 @@ export function NewChat() {
 			<div className="shrink-0 px-6 pb-5 pt-3">
 				<div className="mx-auto w-full max-w-4xl">
 					{/* Input card */}
-					<PromptInputProvider initialInput={draft}>
+					<PromptInputProvider key={NEW_CHAT_DRAFT_KEY} initialInput={draft}>
 						<DraftSync setDraft={setDraft} />
 						<PromptInput
 							className="rounded-xl"

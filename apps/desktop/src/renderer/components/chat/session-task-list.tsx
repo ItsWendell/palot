@@ -21,7 +21,9 @@ import { useAppStore } from "../../stores/app-store"
 function useSessionTodos(sessionId: string | null): Todo[] {
 	const storeTodos = useAppStore((s) => (sessionId ? s.todos[sessionId] : undefined))
 	const storeMessages = useAppStore((s) => (sessionId ? s.messages[sessionId] : undefined))
-	const storeParts = useAppStore((s) => s.parts)
+	// Subscribe to the per-session parts version counter instead of the entire
+	// parts record — avoids re-renders when other sessions' parts change.
+	const partsVersion = useAppStore((s) => (sessionId ? (s.partsVersion[sessionId] ?? 0) : 0))
 
 	return useMemo(() => {
 		// If we have SSE-pushed todos, prefer those — they're the most up-to-date
@@ -29,9 +31,12 @@ function useSessionTodos(sessionId: string | null): Todo[] {
 
 		// Fallback: walk messages backwards to find the last todowrite part
 		if (!storeMessages) return []
+		// partsVersion in deps triggers recomputation; read parts via getState()
+		void partsVersion
+		const allParts = useAppStore.getState().parts
 		for (let i = storeMessages.length - 1; i >= 0; i--) {
 			const msg = storeMessages[i]
-			const parts = storeParts[msg.id]
+			const parts = allParts[msg.id]
 			if (!parts) continue
 			for (let j = parts.length - 1; j >= 0; j--) {
 				const part = parts[j]
@@ -42,7 +47,7 @@ function useSessionTodos(sessionId: string | null): Todo[] {
 			}
 		}
 		return []
-	}, [storeTodos, storeMessages, storeParts])
+	}, [storeTodos, storeMessages, partsVersion])
 }
 
 /** Status icon for a todo item */

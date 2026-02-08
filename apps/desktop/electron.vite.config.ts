@@ -13,10 +13,14 @@ export default defineConfig({
 		},
 	},
 	preload: {
-		plugins: [externalizeDepsPlugin()],
+		// No externalizeDepsPlugin — sandboxed preloads must bundle all deps.
+		// Output CJS because Electron sandboxed preloads cannot use ESM.
 		build: {
 			rollupOptions: {
 				input: { index: path.resolve(__dirname, "src/preload/index.ts") },
+				output: {
+					format: "cjs",
+				},
 			},
 		},
 	},

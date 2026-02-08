@@ -16,7 +16,7 @@ import {
 } from "@codedeck/ui/components/ai-elements/terminal"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
 import { cn } from "@codedeck/ui/lib/utils"
-import { useNavigate, useParams } from "@tanstack/react-router"
+
 import {
 	AlertTriangleIcon,
 	BookOpenIcon,
@@ -36,7 +36,7 @@ import {
 	ZapIcon,
 } from "lucide-react"
 import type { ReactNode } from "react"
-import { memo, useCallback, useMemo } from "react"
+import { memo, useMemo } from "react"
 import type { BundledLanguage } from "shiki"
 import { detectContentLanguage, detectLanguage } from "../../lib/language"
 import type { FilePart, ToolPart, ToolStateCompleted } from "../../lib/types"
@@ -60,6 +60,9 @@ function truncateOutput(output: string, max = MAX_OUTPUT_LENGTH): string {
 // Read output parsing — strip cat -n prefixes and <file> tags
 // ============================================================
 
+/** Pre-compiled regex for cat -n line-number format (hoisted to avoid re-creation per call) */
+const LINE_NUM_REGEX = /^\s*(\d{4,5})[|\t]\s?(.*)$/
+
 /**
  * Claude Code's read tool returns output in `cat -n` format:
  *   <file>
@@ -82,8 +85,7 @@ function parseReadOutput(raw: string): { content: string; startLine: number } {
 	const lines = text.split("\n")
 
 	// Detect cat -n format: "  00001| content" or "00001\tcontent"
-	const lineNumRegex = /^\s*(\d{4,5})[|\t]\s?(.*)$/
-	const firstMatch = lines[0]?.match(lineNumRegex)
+	const firstMatch = lines[0]?.match(LINE_NUM_REGEX)
 
 	if (!firstMatch) {
 		return { content: text, startLine: 1 }
@@ -93,7 +95,7 @@ function parseReadOutput(raw: string): { content: string; startLine: number } {
 	const stripped: string[] = []
 
 	for (const line of lines) {
-		const match = line.match(lineNumRegex)
+		const match = line.match(LINE_NUM_REGEX)
 		if (match) {
 			stripped.push(match[2])
 		} else {
@@ -249,7 +251,7 @@ function shortenPath(path: string | undefined): string | undefined {
 /**
  * Compute tool duration from state times.
  */
-function getToolDuration(part: ToolPart): string | undefined {
+export function getToolDuration(part: ToolPart): string | undefined {
 	const state = part.state
 	if (state.status === "completed" || state.status === "error") {
 		const ms = state.time.end - state.time.start
@@ -795,33 +797,6 @@ export const ChatToolCall = memo(function ChatToolCall({
 	onApprove,
 	onDeny,
 }: ChatToolCallProps) {
-	const navigate = useNavigate()
-	const { projectSlug } = useParams({ strict: false }) as {
-		projectSlug?: string
-	}
-
-	// Sub-agent navigation
-	const subAgentSessionId =
-		part.tool === "task" && "metadata" in part.state
-			? (part.state.metadata?.sessionId as string | undefined)
-			: undefined
-
-	const handleNavigate = useCallback(
-		(e: React.MouseEvent) => {
-			e.stopPropagation()
-			if (subAgentSessionId) {
-				navigate({
-					to: "/project/$projectSlug/session/$sessionId",
-					params: {
-						projectSlug: projectSlug ?? "unknown",
-						sessionId: subAgentSessionId,
-					},
-				})
-			}
-		},
-		[subAgentSessionId, navigate, projectSlug],
-	)
-
 	// Compute diff stats for edit tools (shown in trailing area)
 	// Must be called before early returns to satisfy hooks rules.
 	const diffStats = useMemo(() => {
@@ -879,7 +854,7 @@ export const ChatToolCall = memo(function ChatToolCall({
 
 	// --- Task tool: Sub-agent card ---
 	if (part.tool === "task") {
-		return <SubAgentCard part={part} sessionId={subAgentSessionId} onNavigate={handleNavigate} />
+		return <SubAgentCard part={part} />
 	}
 
 	// --- All other tools (including todos): ToolCard ---

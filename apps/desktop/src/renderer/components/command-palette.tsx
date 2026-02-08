@@ -10,7 +10,7 @@ import {
 } from "@codedeck/ui/components/command"
 import { useNavigate } from "@tanstack/react-router"
 import { CloudIcon, ContainerIcon, GitBranchIcon, MonitorIcon, PlusIcon } from "lucide-react"
-import { useEffect } from "react"
+import { useEffect, useMemo } from "react"
 import type { Agent } from "../lib/types"
 
 interface CommandPaletteProps {
@@ -33,7 +33,10 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 		return () => document.removeEventListener("keydown", handleKeyDown)
 	}, [open, onOpenChange])
 
-	const activeSessions = agents.filter((a) => a.status === "running" || a.status === "waiting")
+	const activeSessions = useMemo(
+		() => (open ? agents.filter((a) => a.status === "running" || a.status === "waiting") : []),
+		[agents, open],
+	)
 
 	return (
 		<CommandDialog open={open} onOpenChange={onOpenChange}>

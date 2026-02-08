@@ -39,22 +39,34 @@ export interface ChatTurn {
 
 /**
  * Creates a fingerprint for a message entry based on its ID,
- * completion time, part count, and streaming text length.
+ * completion time, part count, and content characteristics.
  * Used for cheap equality checks — includes text content length
  * so that streaming updates (where part count stays the same but
- * content grows) correctly invalidate the fingerprint.
+ * content grows) correctly invalidate the fingerprint, and tool
+ * state so that tool status transitions (running → completed) and
+ * output arrivals also invalidate it.
  */
 function messageFingerprint(entry: ChatMessageEntry): string {
 	const lastPart = entry.parts.at(-1)
 	const completed = entry.info.role === "assistant" ? (entry.info.time.completed ?? 0) : 0
-	// Include text length for text/reasoning parts so fingerprint changes during streaming
 	let textLen = 0
+	const toolSegments: string[] = []
 	for (const part of entry.parts) {
 		if (part.type === "text" || part.type === "reasoning") {
 			textLen += part.text.length
+		} else if (part.type === "tool") {
+			// Include tool status and output length so the fingerprint
+			// changes when a tool transitions state or produces output.
+			const outLen =
+				part.state.status === "completed"
+					? part.state.output.length
+					: part.state.status === "error"
+						? part.state.error.length
+						: 0
+			toolSegments.push(`${part.id}:${part.state.status}:${outLen}`)
 		}
 	}
-	return `${entry.info.id}:${completed}:${entry.parts.length}:${lastPart?.id ?? ""}:${textLen}`
+	return `${entry.info.id}:${completed}:${entry.parts.length}:${lastPart?.id ?? ""}:${textLen}:${toolSegments.join(",")}`
 }
 
 /**
@@ -117,6 +129,9 @@ function groupIntoTurns(entries: ChatMessageEntry[], prevTurns: ChatTurn[]): Cha
 /** How many messages to fetch on initial load */
 const INITIAL_LIMIT = 100
 
+/** Stable no-op for the loadEarlier fallback (avoids new ref every render) */
+const NOOP_ASYNC = async () => {}
+
 /**
  * Hook to load chat data for a session.
  *
@@ -132,19 +147,18 @@ export function useSessionChat(
 ) {
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	/** Track which sessions we've already synced */
-	const syncedRef = useRef<Set<string>>(new Set())
+	/** Track which session we've already synced (no growing Set) */
+	const syncedRef = useRef<string | null>(null)
 	const turnsRef = useRef<ChatTurn[]>([])
 
 	// Read from store — Zustand selector returns stable ref if unchanged
 	const storeMessages = useAppStore((s) => s.messages[sessionId ?? ""])
 
-	// Read the raw parts record from the store — this is a stable reference
-	// that only changes when parts are actually updated.
-	// IMPORTANT: Do NOT use a selector that derives/maps arrays — that creates
-	// new references on every getSnapshot call, causing infinite loops with
-	// React 19's strict useSyncExternalStore.
-	const storeParts = useAppStore((s) => s.parts)
+	// Subscribe to a lightweight per-session version counter instead of the
+	// entire `s.parts` record. This avoids re-renders when parts for OTHER
+	// sessions change (e.g., a sub-agent streaming in the background).
+	// The actual part data is read via getState() inside the useMemo.
+	const partsVersion = useAppStore((s) => s.partsVersion[sessionId ?? ""] ?? 0)
 
 	// Subscribe to the streaming store — during active streaming, text/reasoning
 	// parts are accumulated here at ~50ms cadence instead of hitting Zustand on
@@ -160,13 +174,16 @@ export function useSessionChat(
 
 		// Read streaming overrides. `streamingVersion` is in the dependency
 		// array to trigger recomputation when the streaming store notifies,
-		// even when `storeParts` hasn't been flushed yet. Reference it here
-		// so the linter sees it as used within the memo body.
+		// even when main-store parts haven't been flushed yet.
 		void streamingVersion
+		// `partsVersion` is in the dependency array to trigger recomputation
+		// when this session's parts are updated in the main store.
+		void partsVersion
 		const streaming = getAllStreamingParts()
+		const currentParts = useAppStore.getState().parts
 
 		return storeMessages.map((msg) => {
-			const baseParts = storeParts[msg.id] ?? EMPTY_PARTS
+			const baseParts = currentParts[msg.id] ?? EMPTY_PARTS
 			const overrides = streaming[msg.id]
 
 			// Fast path: no streaming overrides for this message
@@ -175,7 +192,7 @@ export function useSessionChat(
 			// Overlay streaming parts on top of the base parts
 			return baseParts.map((part) => overrides[part.id] ?? part)
 		})
-	}, [storeMessages, storeParts, streamingVersion])
+	}, [storeMessages, partsVersion, streamingVersion])
 
 	// Assemble ChatMessageEntry[] from store state
 	const entries: ChatMessageEntry[] = useMemo(() => {
@@ -235,8 +252,8 @@ export function useSessionChat(
 	// Trigger initial fetch when session changes (only once per session)
 	useEffect(() => {
 		if (!sessionId) return
-		if (syncedRef.current.has(sessionId)) return
-		syncedRef.current.add(sessionId)
+		if (syncedRef.current === sessionId) return
+		syncedRef.current = sessionId
 		fetchAndHydrate(sessionId)
 	}, [sessionId, fetchAndHydrate])
 
@@ -256,7 +273,7 @@ export function useSessionChat(
 		/** Whether there are earlier messages that haven't been loaded */
 		hasEarlierMessages: false,
 		/** Load the full message history (no-op for now, could be implemented later) */
-		loadEarlier: async () => {},
+		loadEarlier: NOOP_ASYNC,
 		reload: fetchAndHydrate,
 	}
 }

@@ -18,8 +18,12 @@ function createWindow(): BrowserWindow {
 		height: 800,
 		minWidth: 900,
 		minHeight: 600,
+		// Set window icon for dev mode on Linux/Windows (macOS uses the .app bundle icon)
+		...(process.platform !== "darwin" && {
+			icon: path.join(__dirname, "../../resources/icon.png"),
+		}),
 		webPreferences: {
-			preload: path.join(__dirname, "../preload/index.js"),
+			preload: path.join(__dirname, "../preload/index.cjs"),
 			contextIsolation: true,
 			sandbox: true,
 			nodeIntegration: false,

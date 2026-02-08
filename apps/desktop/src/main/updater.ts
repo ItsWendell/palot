@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron"
+import { app, BrowserWindow } from "electron"
 import electronUpdater, { type AppUpdater, type UpdateInfo } from "electron-updater"
 
 /**
@@ -48,7 +48,7 @@ function setState(next: Partial<UpdateState>): void {
  * In development (unpackaged), this is a no-op.
  */
 export function initAutoUpdater(): void {
-	if (!require("electron").app.isPackaged) return
+	if (!app.isPackaged) return
 
 	const autoUpdater = getAutoUpdater()
 
@@ -127,7 +127,7 @@ export function getUpdateState(): UpdateState {
 
 /** Manually triggers an update check. */
 export async function checkForUpdates(): Promise<void> {
-	if (!require("electron").app.isPackaged) return
+	if (!app.isPackaged) return
 	await getAutoUpdater().checkForUpdates()
 }
 
