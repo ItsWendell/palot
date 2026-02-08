@@ -5,13 +5,15 @@ node_modules/
 dist/
 .next/
 out/
-release/
 
 # Turborepo
 .turbo/
 
 # Tauri
 src-tauri/target/
+
+# Electron Builder
+release/
 
 # Environment
 .env

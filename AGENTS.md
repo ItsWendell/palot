@@ -28,7 +28,11 @@ Do NOT add one-time setup notes, general knowledge, or things discoverable from 
 - **Type check**: `cd apps/desktop && bun run check-types`
 - **Rebuild server types**: `cd apps/server && bun run build:types` (required after adding server routes)
 - **Add UI component**: `cd packages/ui && bunx shadcn@latest add <component>`
-- **Package**: `cd apps/desktop && bun run package` (or `package:linux`, `package:mac`, `package:win`)
+- **Package**: `cd apps/desktop && bun run package` (or `package:linux`, `package:mac`, `package:win`, `package:all`)
+- **Package without code signing (macOS)**: `CSC_IDENTITY_AUTO_DISCOVERY=false cd apps/desktop && bun run package:mac`
+- **Changeset — add**: `bun changeset` (interactive — pick packages, bump type, write description)
+- **Changeset — version**: `bun run version-packages` (applies pending changesets, bumps versions, updates changelogs)
+- **Changeset — check status**: `bun changeset status`
 
 ## Critical Footguns
 
@@ -61,7 +65,15 @@ const agents = useMemo(() => deriveAgents(servers), [servers])
 
 Biome v2 cannot parse Tailwind v4 syntax. CSS linting/formatting is disabled. Do not try to enable it or add `css.parser.allowTailwindSyntax` (does not exist).
 
-### OpenCode SDK
+### Changesets — versioning workflow
+
+All three workspace packages are **linked** (version together). When making user-facing changes, run `bun changeset` before opening a PR. The changeset-check workflow warns (non-blocking) if a PR has no changeset. On merge to `master`, the release workflow creates a "Version Packages" PR; merging that PR triggers cross-platform release builds and publishes to GitHub Releases. You can also trigger a release manually by pushing a `v*` tag.
+
+### Packaging — macOS without code signing
+
+macOS builds fail by default if no signing identity is found. Always set `CSC_IDENTITY_AUTO_DISCOVERY=false` when building locally without an Apple Developer certificate. The CI workflows already set this. The `electron-builder.yml` has commented-out notarization config — uncomment it only after adding Apple credentials as GitHub secrets.
+
+### Claude Code SDK
 
 - Session timestamps are in **milliseconds**, not seconds
 - Messages endpoint returns `Array<{ info: Message, parts: Part[] }>` — not a flat `Message[]`
@@ -97,3 +109,30 @@ When adding routes to `apps/server`, you must run `cd apps/server && bun run bui
 ## agent-browser
 
 - Always use `--headed` flag: `agent-browser navigate --headed <url>`
+
+### Testing the desktop app
+
+**Browser mode (recommended for routine UI testing):**
+
+```bash
+# Start the backend server first
+cd apps/server && bun run dev   # port 3100
+
+# Then start the renderer as a plain web app
+cd apps/desktop && bun run dev:web   # port 1420
+
+# agent-browser can navigate directly
+agent-browser open --headed http://localhost:1420
+```
+
+No Electron window — the same React code runs in the browser via HTTP fallback. Simpler and doesn't require CDP.
+
+**Electron mode (for testing IPC/preload paths):**
+
+```bash
+# Start Electron with CDP remote debugging
+ELECTRON_REMOTE_DEBUGGING_PORT=9222 cd apps/desktop && bun run dev
+
+# Connect agent-browser via CDP
+agent-browser --cdp 9222 --headed snapshot
+```

@@ -1,0 +1,15 @@
+{
+	"$schema": "https://unpkg.com/@changesets/config@3.1.2/schema.json",
+	"changelog": ["@changesets/changelog-github", { "repo": "ItsWendell/codedeck" }],
+	"commit": false,
+	"fixed": [],
+	"linked": [["@codedeck/desktop", "@codedeck/ui", "@codedeck/server"]],
+	"access": "restricted",
+	"baseBranch": "master",
+	"updateInternalDependencies": "patch",
+	"ignore": [],
+	"privatePackages": {
+		"version": true,
+		"tag": true
+	}
+}

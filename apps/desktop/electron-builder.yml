@@ -8,7 +8,14 @@ directories:
 files:
   - "out/**/*"
 
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+
+# Inject version from package.json into the built app
+extraMetadata:
+  main: ./out/main/index.js
+
 mac:
+  icon: resources/icon.png
   target:
     - target: dmg
       arch: [arm64, x64]
@@ -17,13 +24,18 @@ mac:
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
+  # Notarization — uncomment when Apple credentials are configured
+  # notarize:
+  #   teamId: ${env.APPLE_TEAM_ID}
 
 win:
+  icon: resources/icon.ico
   target:
     - target: nsis
       arch: [x64, arm64]
 
 linux:
+  icon: resources/icon.png
   target:
     - target: AppImage
       arch: [x64]
@@ -33,6 +45,10 @@ linux:
       arch: [x64]
   category: Development
   maintainer: codedeck
+  desktop:
+    Name: Codedeck
+    Comment: AI-powered coding assistant
+    Categories: Development;IDE;
 
 nsis:
   oneClick: false

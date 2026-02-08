@@ -3,6 +3,14 @@ import { app, BrowserWindow, shell } from "electron"
 import { registerIpcHandlers } from "./ipc-handlers"
 import { stopServer } from "./opencode-manager"
 
+// Linux/Wayland: enable native Wayland rendering to avoid blurry XWayland scaling.
+// These flags must be set before app.whenReady().
+if (process.platform === "linux") {
+	app.commandLine.appendSwitch("ozone-platform-hint", "auto")
+	app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations")
+	app.commandLine.appendSwitch("enable-wayland-ime")
+}
+
 function createWindow(): BrowserWindow {
 	const win = new BrowserWindow({
 		width: 1200,

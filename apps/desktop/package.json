@@ -13,6 +13,7 @@
 		"package:linux": "electron-builder --linux --config electron-builder.yml",
 		"package:mac": "electron-builder --mac --config electron-builder.yml",
 		"package:win": "electron-builder --win --config electron-builder.yml",
+		"package:all": "electron-builder --linux --mac --win --config electron-builder.yml",
 		"lint": "biome check .",
 		"check-types": "tsgo --noEmit",
 		"clean": "rm -rf out release dist node_modules .turbo"
@@ -45,6 +46,7 @@
 		"electron": "^40.2.1",
 		"electron-builder": "^26.0.0",
 		"electron-vite": "^5.0.0",
+		"shiki": "^3.22.0",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.0",
 		"vite": "^6.1.0"

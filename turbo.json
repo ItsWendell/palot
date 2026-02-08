@@ -23,6 +23,11 @@
 		"check-types": {
 			"dependsOn": ["^build:types"]
 		},
+		"package": {
+			"dependsOn": ["build"],
+			"outputs": ["release/**"],
+			"cache": false
+		},
 		"clean": {
 			"cache": false
 		}
