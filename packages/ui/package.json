@@ -46,7 +46,7 @@
 		"react-hook-form": "^7.71.1",
 		"react-jsx-parser": "^2.4.1",
 		"react-resizable-panels": "^4",
-		"recharts": "2.15.4",
+		"recharts": "3.7.0",
 		"shiki": "^3.22.0",
 		"sonner": "^2.0.7",
 		"streamdown": "^2.1.0",
