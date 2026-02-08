@@ -47,8 +47,6 @@ jobs:
         env:
           # Skip code signing for CI builds (enable when certs are configured)
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # Disable publish on build workflow — only release workflow publishes
-          PUBLISH: "never"
 
       - name: Upload artifacts (Linux)
         if: matrix.platform == 'linux'
