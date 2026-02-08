@@ -144,6 +144,29 @@ export function resolveEffectiveModel(
 	return null
 }
 
+/**
+ * Looks up model capabilities for a given model reference.
+ * Returns the input capabilities (image, pdf, audio, video) or null if model not found.
+ */
+export function getModelInputCapabilities(
+	model: ModelRef | null,
+	providers: SdkProvider[],
+): { image: boolean; pdf: boolean; attachment: boolean } | null {
+	if (!model) return null
+	for (const provider of providers) {
+		if (provider.id !== model.providerID) continue
+		const m = provider.models[model.modelID]
+		if (m?.capabilities) {
+			return {
+				image: m.capabilities.input.image,
+				pdf: m.capabilities.input.pdf,
+				attachment: m.capabilities.attachment,
+			}
+		}
+	}
+	return null
+}
+
 // ============================================================
 // Hooks
 // ============================================================

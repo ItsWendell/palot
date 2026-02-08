@@ -6,6 +6,7 @@ import {
 	PlanTitle,
 	PlanTrigger,
 } from "@codedeck/ui/components/ai-elements/plan"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	ArrowRightIcon,
@@ -14,6 +15,7 @@ import {
 	EditIcon,
 	EyeIcon,
 	FileCodeIcon,
+	FileIcon,
 	GlobeIcon,
 	SearchIcon,
 	SquareCheckIcon,
@@ -22,7 +24,7 @@ import {
 	ZapIcon,
 } from "lucide-react"
 import { memo, useCallback } from "react"
-import type { ToolPart } from "../../lib/types"
+import type { FilePart, ToolPart, ToolStateCompleted } from "../../lib/types"
 
 /**
  * Tool info resolver — maps tool names to icon + display title.
@@ -245,26 +247,81 @@ export const ChatToolCall = memo(function ChatToolCall({
 	const isError = state === "output-error"
 	const isRunning = state === "input-available" || state === "input-streaming"
 
+	// Extract attachments from completed tool state
+	const attachments: FilePart[] =
+		part.state.status === "completed" ? ((part.state as ToolStateCompleted).attachments ?? []) : []
+
 	return (
-		<div className="flex items-center gap-2 py-0.5">
-			<Icon
-				className={`size-3.5 shrink-0 ${
-					isError
-						? "text-red-400"
-						: isRunning
-							? "text-muted-foreground animate-pulse"
-							: "text-muted-foreground"
-				}`}
-			/>
-			<span className={`truncate text-sm ${isError ? "text-red-400" : "text-muted-foreground"}`}>
-				{title}
-				{subtitle && (
-					<>
-						{" "}
-						<span className="text-muted-foreground/60">{subtitle}</span>
-					</>
-				)}
-			</span>
+		<div className="space-y-1">
+			<div className="flex items-center gap-2 py-0.5">
+				<Icon
+					className={`size-3.5 shrink-0 ${
+						isError
+							? "text-red-400"
+							: isRunning
+								? "text-muted-foreground animate-pulse"
+								: "text-muted-foreground"
+					}`}
+				/>
+				<span className={`truncate text-sm ${isError ? "text-red-400" : "text-muted-foreground"}`}>
+					{title}
+					{subtitle && (
+						<>
+							{" "}
+							<span className="text-muted-foreground/60">{subtitle}</span>
+						</>
+					)}
+				</span>
+			</div>
+			{attachments.length > 0 && <ToolAttachments attachments={attachments} />}
 		</div>
 	)
 })
+
+/**
+ * Renders inline attachment thumbnails for tool results (e.g. read tool returning an image).
+ */
+function ToolAttachments({ attachments }: { attachments: FilePart[] }) {
+	const imageAttachments = attachments.filter((a) => a.mime.startsWith("image/"))
+	const otherAttachments = attachments.filter((a) => !a.mime.startsWith("image/"))
+
+	if (imageAttachments.length === 0 && otherAttachments.length === 0) return null
+
+	return (
+		<div className="ml-5 flex flex-wrap gap-1.5">
+			{imageAttachments.map((file) => (
+				<Dialog key={file.id}>
+					<DialogTrigger asChild>
+						<button
+							type="button"
+							className="group/att relative size-12 shrink-0 overflow-hidden rounded border border-border bg-muted transition-colors hover:border-muted-foreground/30"
+						>
+							<img
+								src={file.url}
+								alt={file.filename ?? "Tool output image"}
+								className="size-full object-cover"
+							/>
+						</button>
+					</DialogTrigger>
+					<DialogContent className="max-h-[90vh] max-w-4xl overflow-auto p-0">
+						<DialogTitle className="sr-only">{file.filename ?? "Tool output preview"}</DialogTitle>
+						<img
+							src={file.url}
+							alt={file.filename ?? "Tool output image"}
+							className="max-h-[85vh] w-full object-contain"
+						/>
+					</DialogContent>
+				</Dialog>
+			))}
+			{otherAttachments.map((file) => (
+				<div
+					key={file.id}
+					className="flex items-center gap-1 rounded border border-border bg-muted px-2 py-1 text-[11px] text-muted-foreground"
+				>
+					<FileIcon className="size-3" />
+					<span className="max-w-[120px] truncate">{file.filename ?? file.mime}</span>
+				</div>
+			))}
+		</div>
+	)
+}

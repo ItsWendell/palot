@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useProjectList } from "../hooks/use-agents"
 import type { ModelRef } from "../hooks/use-opencode-data"
 import {
+	getModelInputCapabilities,
 	resolveEffectiveModel,
 	useConfig,
 	useModelState,
@@ -19,6 +20,8 @@ import {
 	useVcs,
 } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
+import type { FileAttachment } from "../lib/types"
+import { PromptAttachmentPreview } from "./chat/prompt-attachments"
 import { PromptToolbar, StatusBar } from "./chat/prompt-toolbar"
 
 const SUGGESTIONS = [
@@ -83,6 +86,12 @@ export function NewChat() {
 		[selectedModel, activeOpenCodeAgent, config?.model, providers, recentModels],
 	)
 
+	// Model input capabilities (for attachment warnings)
+	const modelCapabilities = useMemo(
+		() => getModelInputCapabilities(effectiveModel, providers?.providers ?? []),
+		[effectiveModel, providers],
+	)
+
 	useEffect(() => {
 		if (projects.length === 0) return
 
@@ -98,7 +107,7 @@ export function NewChat() {
 	}, [projectSlug, projects])
 
 	const handleLaunch = useCallback(
-		async (promptText: string) => {
+		async (promptText: string, files?: FileAttachment[]) => {
 			if (!selectedDirectory || !promptText) return
 			setLaunching(true)
 			setError(null)
@@ -109,6 +118,7 @@ export function NewChat() {
 						model: effectiveModel ?? undefined,
 						agent: selectedAgent ?? undefined,
 						variant: selectedVariant,
+						files,
 					})
 					const project = projects.find((p) => p.directory === selectedDirectory)
 					navigate({
@@ -235,10 +245,21 @@ export function NewChat() {
 					{/* Input card */}
 					<PromptInput
 						className="rounded-xl"
+						accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+						multiple
+						maxFileSize={10 * 1024 * 1024}
 						onSubmit={(message) => {
-							if (message.text.trim()) handleLaunch(message.text.trim())
+							if (message.text.trim())
+								handleLaunch(
+									message.text.trim(),
+									message.files.length > 0 ? message.files : undefined,
+								)
 						}}
 					>
+						<PromptAttachmentPreview
+							supportsImages={modelCapabilities?.image}
+							supportsPdf={modelCapabilities?.pdf}
+						/>
 						<PromptInputTextarea
 							placeholder="What should this session work on?"
 							autoFocus

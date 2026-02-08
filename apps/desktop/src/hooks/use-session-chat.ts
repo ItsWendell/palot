@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Message, Part } from "../lib/types"
+import { fetchSessionMessages } from "../services/codedeck-server"
 import { getProjectClient } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
+
+/** Sentinel empty array — stable reference to avoid creating new arrays */
+const EMPTY_PARTS: Part[] = []
+const EMPTY_PARTS_ARRAY: ReadonlyArray<Part[]> = []
 
 // ============================================================
 // Types — wrappers around SDK Message + Part
@@ -118,16 +123,28 @@ export function useSessionChat(
 
 	// Read from store — Zustand selector returns stable ref if unchanged
 	const storeMessages = useAppStore((s) => s.messages[sessionId ?? ""])
+
+	// Read the raw parts record from the store — this is a stable reference
+	// that only changes when parts are actually updated.
+	// IMPORTANT: Do NOT use a selector that derives/maps arrays — that creates
+	// new references on every getSnapshot call, causing infinite loops with
+	// React 19's strict useSyncExternalStore.
 	const storeParts = useAppStore((s) => s.parts)
+
+	// Derive per-session parts in useMemo to avoid creating new arrays in the selector
+	const sessionParts = useMemo(() => {
+		if (!storeMessages) return EMPTY_PARTS_ARRAY
+		return storeMessages.map((msg) => storeParts[msg.id] ?? EMPTY_PARTS)
+	}, [storeMessages, storeParts])
 
 	// Assemble ChatMessageEntry[] from store state
 	const entries: ChatMessageEntry[] = useMemo(() => {
 		if (!storeMessages) return []
-		return storeMessages.map((msg) => ({
+		return storeMessages.map((msg, i) => ({
 			info: msg,
-			parts: storeParts[msg.id] ?? [],
+			parts: sessionParts[i] ?? EMPTY_PARTS,
 		}))
-	}, [storeMessages, storeParts])
+	}, [storeMessages, sessionParts])
 
 	// Group into turns with structural sharing
 	const turns = useMemo(() => {
@@ -139,17 +156,24 @@ export function useSessionChat(
 	// One-time fetch to hydrate the store when session changes
 	const fetchAndHydrate = useCallback(
 		async (sid: string) => {
-			const client = directory ? getProjectClient(directory) : null
-			if (!client) return
-
 			setLoading(true)
 			setError(null)
 			try {
-				const result = await client.session.messages({
-					sessionID: sid,
-					limit: INITIAL_LIMIT,
-				})
-				const raw = (result.data ?? []) as Array<{ info: Message; parts: Part[] }>
+				let raw: Array<{ info: Message; parts: Part[] }>
+
+				// Try the live OpenCode server first (if we have a connection)
+				const client = directory ? getProjectClient(directory) : null
+				if (client) {
+					const result = await client.session.messages({
+						sessionID: sid,
+						limit: INITIAL_LIMIT,
+					})
+					raw = (result.data ?? []) as Array<{ info: Message; parts: Part[] }>
+				} else {
+					// Fallback: read from disk via the Codedeck backend server
+					const result = await fetchSessionMessages(sid)
+					raw = (result.messages ?? []) as unknown as Array<{ info: Message; parts: Part[] }>
+				}
 
 				// Hydrate the store
 				const messages = raw.map((m) => m.info)

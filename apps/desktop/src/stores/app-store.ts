@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import type { Event, Message, Part, Permission, Session, SessionStatus } from "../lib/types"
+import type { Event, Message, Part, Permission, Session, SessionStatus, Todo } from "../lib/types"
 
 // ============================================================
 // Store types
@@ -74,6 +74,8 @@ interface AppState {
 	messages: Record<string, Message[]>
 	/** Parts keyed by messageID, sorted by id */
 	parts: Record<string, Part[]>
+	/** Todos keyed by sessionID — latest task list per session */
+	todos: Record<string, Todo[]>
 	/** Discovered data from local OpenCode storage */
 	discovery: DiscoveryState
 	/** UI state */
@@ -101,6 +103,9 @@ interface AppState {
 	removeMessage: (sessionId: string, messageId: string) => void
 	upsertPart: (part: Part) => void
 	removePart: (messageId: string, partId: string) => void
+
+	// ========== Todo actions ==========
+	setTodos: (sessionId: string, todos: Todo[]) => void
 
 	// ========== Discovery actions ==========
 	setDiscoveryLoading: () => void
@@ -157,6 +162,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 	sessions: {},
 	messages: {},
 	parts: {},
+	todos: {},
 	discovery: {
 		loaded: false,
 		loading: false,
@@ -295,14 +301,27 @@ export const useAppStore = create<AppState>((set, get) => ({
 			}
 
 			const result = binarySearch(existing, message.id, (m) => m.id)
-			let updated: Message[]
+
 			if (result.found) {
-				updated = [...existing]
+				// Skip if reference-equal (no change)
+				if (existing[result.index] === message) return state
+
+				const updated = existing.slice()
 				updated[result.index] = message
-			} else {
-				updated = [...existing]
-				updated.splice(result.index, 0, message)
+				// Cap at 200 messages per session (remove oldest + clean up parts)
+				if (updated.length > 200) {
+					const removed = updated.shift()!
+					const { [removed.id]: _, ...restParts } = newParts
+					newParts = restParts
+				}
+				return {
+					messages: { ...state.messages, [sessionId]: updated },
+					parts: newParts,
+				}
 			}
+
+			const updated = existing.slice()
+			updated.splice(result.index, 0, message)
 			// Cap at 200 messages per session (remove oldest + clean up parts)
 			if (updated.length > 200) {
 				const removed = updated.shift()!
@@ -333,16 +352,32 @@ export const useAppStore = create<AppState>((set, get) => ({
 	upsertPart: (part) =>
 		set((state) => {
 			const messageId = part.messageID
-			const existing = state.parts[messageId] ?? []
-			const result = binarySearch(existing, part.id, (p) => p.id)
-			let updated: Part[]
-			if (result.found) {
-				updated = [...existing]
-				updated[result.index] = part
-			} else {
-				updated = [...existing]
-				updated.splice(result.index, 0, part)
+			const existing = state.parts[messageId]
+
+			// Fast path: no parts yet for this message — create a new single-element array
+			if (!existing) {
+				return {
+					parts: { ...state.parts, [messageId]: [part] },
+				}
 			}
+
+			const result = binarySearch(existing, part.id, (p) => p.id)
+
+			if (result.found) {
+				// Skip update entirely if the object is reference-equal (no change)
+				if (existing[result.index] === part) return state
+
+				// Replace in-place: copy only the array, reuse all other Part references
+				const updated = existing.slice()
+				updated[result.index] = part
+				return {
+					parts: { ...state.parts, [messageId]: updated },
+				}
+			}
+
+			// Insert at sorted position
+			const updated = existing.slice()
+			updated.splice(result.index, 0, part)
 			return {
 				parts: { ...state.parts, [messageId]: updated },
 			}
@@ -360,6 +395,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 				parts: { ...state.parts, [messageId]: updated },
 			}
 		}),
+
+	// ========== Todo actions ==========
+
+	setTodos: (sessionId, todos) =>
+		set((state) => ({
+			todos: { ...state.todos, [sessionId]: todos },
+		})),
 
 	// ========== Discovery actions ==========
 
@@ -439,6 +481,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 			case "message.part.removed":
 				state.removePart(event.properties.messageID, event.properties.partID)
+				break
+
+			case "todo.updated":
+				state.setTodos(event.properties.sessionID, event.properties.todos)
 				break
 		}
 	},

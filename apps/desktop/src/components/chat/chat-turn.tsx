@@ -6,10 +6,11 @@ import {
 	MessageResponse,
 } from "@codedeck/ui/components/ai-elements/message"
 import { Shimmer } from "@codedeck/ui/components/ai-elements/shimmer"
-import { CheckIcon, ChevronDownIcon, CopyIcon } from "lucide-react"
-import { memo, useCallback, useMemo, useState } from "react"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
+import { CheckIcon, ChevronDownIcon, CopyIcon, FileIcon } from "lucide-react"
+import { memo, useCallback, useDeferredValue, useMemo, useState } from "react"
 import type { ChatMessageEntry, ChatTurn as ChatTurnType } from "../../hooks/use-session-chat"
-import type { Part, TextPart, ToolPart } from "../../lib/types"
+import type { FilePart, Part, TextPart, ToolPart } from "../../lib/types"
 import { ChatToolCall } from "./chat-tool-call"
 
 /**
@@ -121,6 +122,81 @@ function getUserText(entry: ChatMessageEntry): string {
 }
 
 /**
+ * Extracts file parts (images, PDFs) from a message entry.
+ */
+function getFileParts(entry: ChatMessageEntry): FilePart[] {
+	return entry.parts.filter(
+		(p): p is FilePart =>
+			p.type === "file" && (p.mime.startsWith("image/") || p.mime === "application/pdf"),
+	)
+}
+
+/**
+ * Renders a grid of image/file attachment thumbnails with click-to-preview.
+ */
+const AttachmentGrid = memo(function AttachmentGrid({ files }: { files: FilePart[] }) {
+	if (files.length === 0) return null
+
+	return (
+		<div className="flex flex-wrap gap-2">
+			{files.map((file) => (
+				<AttachmentThumbnail key={file.id} file={file} />
+			))}
+		</div>
+	)
+})
+
+/**
+ * Single attachment thumbnail with dialog preview on click.
+ */
+function AttachmentThumbnail({ file }: { file: FilePart }) {
+	const isImage = file.mime.startsWith("image/")
+
+	return (
+		<Dialog>
+			<DialogTrigger asChild>
+				<button
+					type="button"
+					className="group/thumb relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted transition-colors hover:border-muted-foreground/30"
+				>
+					{isImage ? (
+						<img
+							src={file.url}
+							alt={file.filename ?? "Image attachment"}
+							className="size-full object-cover"
+						/>
+					) : (
+						<div className="flex size-full items-center justify-center">
+							<FileIcon className="size-6 text-muted-foreground" />
+						</div>
+					)}
+					{file.filename && (
+						<div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5 text-[9px] leading-tight text-white opacity-0 transition-opacity group-hover/thumb:opacity-100">
+							<span className="line-clamp-1">{file.filename}</span>
+						</div>
+					)}
+				</button>
+			</DialogTrigger>
+			<DialogContent className="max-h-[90vh] max-w-4xl overflow-auto p-0">
+				<DialogTitle className="sr-only">{file.filename ?? "Attachment preview"}</DialogTitle>
+				{isImage ? (
+					<img
+						src={file.url}
+						alt={file.filename ?? "Image attachment"}
+						className="max-h-[85vh] w-full object-contain"
+					/>
+				) : (
+					<div className="flex flex-col items-center justify-center gap-2 p-8">
+						<FileIcon className="size-12 text-muted-foreground" />
+						<p className="text-sm text-muted-foreground">{file.filename ?? "PDF attachment"}</p>
+					</div>
+				)}
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+/**
  * Extracts the final response text from assistant messages.
  */
 function getResponseText(assistantMessages: ChatMessageEntry[]): {
@@ -191,10 +267,15 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	const [copied, setCopied] = useState(false)
 
 	const userText = useMemo(() => getUserText(turn.userMessage), [turn.userMessage])
-	const { text: responseText } = useMemo(
+	const userFiles = useMemo(() => getFileParts(turn.userMessage), [turn.userMessage])
+	const { text: rawResponseText } = useMemo(
 		() => getResponseText(turn.assistantMessages),
 		[turn.assistantMessages],
 	)
+	// Defer the streaming text so React can interrupt long markdown re-renders
+	// for higher-priority updates (input handling, scroll, layout).
+	// When not streaming (isLast && isWorking is false), the value passes through immediately.
+	const responseText = useDeferredValue(rawResponseText)
 	const toolParts = useMemo(() => getToolParts(turn.assistantMessages), [turn.assistantMessages])
 	const errorText = useMemo(() => getError(turn.assistantMessages), [turn.assistantMessages])
 
@@ -226,6 +307,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 			{/* User message */}
 			<Message from="user">
 				<MessageContent>
+					{userFiles.length > 0 && <AttachmentGrid files={userFiles} />}
 					<p>{userText}</p>
 				</MessageContent>
 			</Message>

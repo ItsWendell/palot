@@ -75,6 +75,17 @@ export async function abortSession(client: OpencodeClient, sessionId: string): P
 }
 
 /**
+ * Rename a session (update its title).
+ */
+export async function renameSession(
+	client: OpencodeClient,
+	sessionId: string,
+	title: string,
+): Promise<void> {
+	await client.session.update({ sessionID: sessionId, title })
+}
+
+/**
  * Delete a session.
  */
 export async function deleteSession(client: OpencodeClient, sessionId: string): Promise<void> {

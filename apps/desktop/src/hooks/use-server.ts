@@ -1,5 +1,5 @@
 import { useCallback } from "react"
-import type { TextPart, UserMessage } from "../lib/types"
+import type { FileAttachment, FilePart, FilePartInput, TextPart, UserMessage } from "../lib/types"
 import { getProjectClient } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
 
@@ -35,6 +35,7 @@ export function useAgentActions() {
 				model?: { providerID: string; modelID: string }
 				agent?: string
 				variant?: string
+				files?: FileAttachment[]
 			},
 		) => {
 			const client = getProjectClient(directory)
@@ -50,20 +51,49 @@ export function useAgentActions() {
 				agent: options?.agent ?? "build",
 				model: options?.model ?? { providerID: "", modelID: "" },
 			}
-			const optimisticPart: TextPart = {
+			const store = useAppStore.getState()
+			store.upsertMessage(optimisticMessage)
+
+			// Optimistic text part
+			const optimisticTextPart: TextPart = {
 				id: `${optimisticId}-text`,
 				sessionID: sessionId,
 				messageID: optimisticId,
 				type: "text",
 				text,
 			}
-			const store = useAppStore.getState()
-			store.upsertMessage(optimisticMessage)
-			store.upsertPart(optimisticPart)
+			store.upsertPart(optimisticTextPart)
+
+			// Optimistic file parts (so images show immediately in the chat)
+			const files = options?.files ?? []
+			for (let i = 0; i < files.length; i++) {
+				const file = files[i]
+				const optimisticFilePart: FilePart = {
+					id: `${optimisticId}-file-${i}`,
+					sessionID: sessionId,
+					messageID: optimisticId,
+					type: "file",
+					mime: file.mediaType ?? "application/octet-stream",
+					filename: file.filename,
+					url: file.url,
+				}
+				store.upsertPart(optimisticFilePart)
+			}
+
+			// Build parts array for the API call
+			const parts: Array<{ type: "text"; text: string } | FilePartInput> = [{ type: "text", text }]
+			for (const file of files) {
+				parts.push({
+					type: "file",
+					mime: file.mediaType ?? "application/octet-stream",
+					filename: file.filename,
+					url: file.url,
+				})
+			}
 
 			await client.session.promptAsync({
 				sessionID: sessionId,
-				parts: [{ type: "text", text }],
+				parts,
 				model: options?.model
 					? { providerID: options.model.providerID, modelID: options.model.modelID }
 					: undefined,
@@ -84,6 +114,20 @@ export function useAgentActions() {
 			useAppStore.getState().setSession(session, directory)
 		}
 		return session
+	}, [])
+
+	const renameSession = useCallback(async (directory: string, sessionId: string, title: string) => {
+		const client = getProjectClient(directory)
+		if (!client) throw new Error("Not connected to OpenCode server")
+
+		// Optimistic update — change title in store immediately
+		const store = useAppStore.getState()
+		const entry = store.sessions[sessionId]
+		if (entry) {
+			store.setSession({ ...entry.session, title }, entry.directory)
+		}
+
+		await client.session.update({ sessionID: sessionId, title })
 	}, [])
 
 	const deleteSession = useCallback(async (directory: string, sessionId: string) => {
@@ -114,6 +158,7 @@ export function useAgentActions() {
 		abort,
 		sendPrompt,
 		createSession,
+		renameSession,
 		deleteSession,
 		respondToPermission,
 	}

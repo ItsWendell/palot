@@ -5,7 +5,7 @@ import type { ModelRef } from "../hooks/use-opencode-data"
 import { useConfig, useOpenCodeAgents, useProviders, useVcs } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import { useSessionChat } from "../hooks/use-session-chat"
-import type { Agent } from "../lib/types"
+import type { Agent, FileAttachment } from "../lib/types"
 import { AgentDetail } from "./agent-detail"
 
 export function SessionRoute() {
@@ -16,7 +16,7 @@ export function SessionRoute() {
 	}
 
 	const agents = useAgents()
-	const { abort, sendPrompt, respondToPermission } = useAgentActions()
+	const { abort, sendPrompt, renameSession, respondToPermission } = useAgentActions()
 
 	const selectedAgent = useMemo(
 		() => agents.find((a) => a.id === sessionId) ?? null,
@@ -73,16 +73,29 @@ export function SessionRoute() {
 		[respondToPermission],
 	)
 
+	const handleRenameSession = useCallback(
+		async (agent: Agent, title: string) => {
+			await renameSession(agent.directory, agent.sessionId, title)
+		},
+		[renameSession],
+	)
+
 	const handleSendMessage = useCallback(
 		async (
 			agent: Agent,
 			message: string,
-			options?: { model?: ModelRef; agentName?: string; variant?: string },
+			options?: {
+				model?: ModelRef
+				agentName?: string
+				variant?: string
+				files?: FileAttachment[]
+			},
 		) => {
 			await sendPrompt(agent.directory, agent.sessionId, message, {
 				model: options?.model,
 				agent: options?.agentName,
 				variant: options?.variant,
+				files: options?.files,
 			})
 		},
 		[sendPrompt],
@@ -114,6 +127,7 @@ export function SessionRoute() {
 			onApprove={handleApprovePermission}
 			onDeny={handleDenyPermission}
 			onSendMessage={handleSendMessage}
+			onRename={handleRenameSession}
 			parentSessionName={parentSessionName}
 			isConnected={true}
 			providers={providers}

@@ -5,12 +5,14 @@ import {
 } from "@codedeck/ui/components/ai-elements/conversation"
 import {
 	PromptInput,
+	PromptInputButton,
 	PromptInputFooter,
 	PromptInputSubmit,
 	PromptInputTextarea,
 	PromptInputTools,
+	usePromptInputAttachments,
 } from "@codedeck/ui/components/ai-elements/prompt-input"
-import { ChevronUpIcon, Loader2Icon } from "lucide-react"
+import { ChevronUpIcon, Loader2Icon, PlusIcon } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
 import type {
 	ConfigData,
@@ -19,11 +21,34 @@ import type {
 	SdkAgent,
 	VcsData,
 } from "../../hooks/use-opencode-data"
-import { resolveEffectiveModel, useModelState } from "../../hooks/use-opencode-data"
+import {
+	getModelInputCapabilities,
+	resolveEffectiveModel,
+	useModelState,
+} from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
-import type { Agent } from "../../lib/types"
+import type { Agent, FileAttachment } from "../../lib/types"
 import { ChatTurnComponent } from "./chat-turn"
+import { PromptAttachmentPreview } from "./prompt-attachments"
 import { PromptToolbar, StatusBar } from "./prompt-toolbar"
+import { SessionTaskList } from "./session-task-list"
+
+/**
+ * Small "+" button that opens the file picker for attachments.
+ * Must be rendered inside a <PromptInput> so the attachments context is available.
+ */
+function AttachButton({ disabled }: { disabled?: boolean }) {
+	const attachments = usePromptInputAttachments()
+	return (
+		<PromptInputButton
+			tooltip="Attach files"
+			onClick={() => attachments.openFileDialog()}
+			disabled={disabled}
+		>
+			<PlusIcon className="size-4" />
+		</PromptInputButton>
+	)
+}
 
 interface ChatViewProps {
 	turns: ChatTurn[]
@@ -39,7 +64,7 @@ interface ChatViewProps {
 	onSendMessage?: (
 		agent: Agent,
 		message: string,
-		options?: { model?: ModelRef; agentName?: string; variant?: string },
+		options?: { model?: ModelRef; agentName?: string; variant?: string; files?: FileAttachment[] },
 	) => Promise<void>
 	/** Provider data for model selector */
 	providers?: ProvidersData | null
@@ -101,8 +126,14 @@ export function ChatView({
 		[selectedModel, activeOpenCodeAgent, config?.model, providers, recentModels],
 	)
 
+	// Model input capabilities (for attachment warnings)
+	const modelCapabilities = useMemo(
+		() => getModelInputCapabilities(effectiveModel, providers?.providers ?? []),
+		[effectiveModel, providers],
+	)
+
 	const handleSend = useCallback(
-		async (text: string) => {
+		async (text: string, files?: FileAttachment[]) => {
 			if (!text.trim() || !onSendMessage || sending) return
 			setSending(true)
 			try {
@@ -110,6 +141,7 @@ export function ChatView({
 					model: effectiveModel ?? undefined,
 					agentName: selectedAgent ?? undefined,
 					variant: selectedVariant,
+					files,
 				})
 			} finally {
 				setSending(false)
@@ -182,16 +214,27 @@ export function ChatView({
 				/>
 			</div>
 
-			{/* Bottom input section — card + status bar */}
+			{/* Bottom input section — task list + card + status bar */}
 			<div className="px-4 pb-4 pt-2">
 				<div className="mx-auto w-full max-w-4xl">
+					{/* Session task list — collapsible todo progress */}
+					<SessionTaskList sessionId={agent.sessionId} />
+
 					{/* Input card — rounded container with textarea + toolbar inside */}
 					<PromptInput
 						className="rounded-xl"
+						accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+						multiple
+						maxFileSize={10 * 1024 * 1024}
 						onSubmit={(message) => {
-							if (message.text.trim() && canSend) handleSend(message.text)
+							if (message.text.trim() && canSend)
+								handleSend(message.text, message.files.length > 0 ? message.files : undefined)
 						}}
 					>
+						<PromptAttachmentPreview
+							supportsImages={modelCapabilities?.image}
+							supportsPdf={modelCapabilities?.pdf}
+						/>
 						<PromptInputTextarea
 							placeholder={
 								!isConnected
@@ -207,6 +250,7 @@ export function ChatView({
 						{/* Toolbar inside the card — agent + model + variant selectors + submit */}
 						<PromptInputFooter>
 							<PromptInputTools>
+								<AttachButton disabled={!isConnected} />
 								<PromptToolbar
 									agents={openCodeAgents ?? []}
 									selectedAgent={selectedAgent}

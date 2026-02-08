@@ -1,4 +1,5 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { Event } from "../lib/types"
 import { useAppStore } from "../stores/app-store"
 import {
 	connectToServer,
@@ -116,6 +117,101 @@ export function disconnect(): void {
 }
 
 // ============================================================
+// Event Batching (OpenCode-inspired 16ms flush with coalescing)
+// ============================================================
+
+/** Target frame interval — ~60fps */
+const FRAME_BUDGET_MS = 16
+
+/**
+ * Generates a coalescing key for events where only the latest matters.
+ * Returns `undefined` for events that must NOT be coalesced (every instance matters).
+ */
+function coalescingKey(event: Event): string | undefined {
+	switch (event.type) {
+		case "message.part.updated": {
+			const part = event.properties.part
+			return `part:${part.messageID}:${part.id}`
+		}
+		case "session.status":
+			return `status:${event.properties.sessionID}`
+		default:
+			return undefined
+	}
+}
+
+/**
+ * Batches and coalesces SSE events before dispatching to the Zustand store.
+ *
+ * Strategy (borrowed from OpenCode's TUI):
+ * - Incoming events are queued into a batch.
+ * - If the same coalescing key appears multiple times in the batch, only the
+ *   latest event is kept (e.g. rapid `message.part.updated` for the same part).
+ * - The batch is flushed at most every 16ms (~60fps).
+ * - The *first* event after a quiet period flushes immediately (no added latency).
+ */
+function createEventBatcher() {
+	/** Ordered queue of events (non-coalescable) */
+	let queue: Event[] = []
+	/** Coalescable events — only the latest per key is kept */
+	const coalesced = new Map<string, Event>()
+	let timer: ReturnType<typeof setTimeout> | undefined
+	let lastFlush = 0
+
+	function flush() {
+		// Merge coalesced events into the queue
+		const events = [...queue, ...coalesced.values()]
+		queue = []
+		coalesced.clear()
+		timer = undefined
+		lastFlush = Date.now()
+
+		if (events.length === 0) return
+
+		// Dispatch all events through the store in one synchronous pass.
+		// React 18+ automatically batches synchronous setState calls within
+		// the same microtask, so these will coalesce into one render.
+		const { processEvent } = useAppStore.getState()
+		for (const event of events) {
+			processEvent(event)
+		}
+	}
+
+	function enqueue(event: Event) {
+		const key = coalescingKey(event)
+		if (key) {
+			// Coalescable — overwrite any previous event with the same key
+			coalesced.set(key, event)
+		} else {
+			queue.push(event)
+		}
+
+		// If a timer is already scheduled, the event will be included in that flush
+		if (timer) return
+
+		const elapsed = Date.now() - lastFlush
+		if (elapsed < FRAME_BUDGET_MS) {
+			// Within the current frame budget — defer flush to next frame
+			timer = setTimeout(flush, FRAME_BUDGET_MS)
+		} else {
+			// Enough time has passed — flush immediately (keeps first-event latency low)
+			flush()
+		}
+	}
+
+	function dispose() {
+		if (timer) {
+			clearTimeout(timer)
+			timer = undefined
+		}
+		// Flush any remaining events
+		flush()
+	}
+
+	return { enqueue, dispose }
+}
+
+// ============================================================
 // SSE Event Loop
 // ============================================================
 
@@ -128,6 +224,8 @@ async function startEventLoop(client: OpencodeClient, signal: AbortSignal): Prom
 	let retryDelay = 1000
 
 	while (!signal.aborted) {
+		const batcher = createEventBatcher()
+
 		try {
 			const stream = await subscribeToGlobalEvents(client)
 			retryDelay = 1000 // Reset on successful connect
@@ -137,13 +235,15 @@ async function startEventLoop(client: OpencodeClient, signal: AbortSignal): Prom
 				// Global events wrap the payload with { directory, payload }
 				const event = globalEvent.payload
 				if (event) {
-					useAppStore.getState().processEvent(event)
+					batcher.enqueue(event)
 				}
 			}
 		} catch (err) {
 			if (signal.aborted) break
 			console.error("Event stream disconnected:", err)
 			useAppStore.getState().setOpenCodeConnected(false)
+		} finally {
+			batcher.dispose()
 		}
 
 		if (signal.aborted) break

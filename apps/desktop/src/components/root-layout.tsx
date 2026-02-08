@@ -10,7 +10,8 @@ import {
 	useToggleShowSubAgents,
 } from "../hooks/use-agents"
 import { useDiscovery } from "../hooks/use-discovery"
-import { useServerConnection } from "../hooks/use-server"
+import { useAgentActions, useServerConnection } from "../hooks/use-server"
+import type { Agent } from "../lib/types"
 import { CommandPalette } from "./command-palette"
 import { Sidebar } from "./sidebar"
 
@@ -34,6 +35,22 @@ export function RootLayout() {
 	}, [agents, showSubAgents])
 
 	const subAgentCount = useMemo(() => agents.filter((a) => a.parentId).length, [agents])
+
+	const { renameSession, deleteSession } = useAgentActions()
+
+	const handleRenameSession = useCallback(
+		async (agent: Agent, title: string) => {
+			await renameSession(agent.directory, agent.sessionId, title)
+		},
+		[renameSession],
+	)
+
+	const handleDeleteSession = useCallback(
+		async (agent: Agent) => {
+			await deleteSession(agent.directory, agent.sessionId)
+		},
+		[deleteSession],
+	)
 
 	// ========== Keyboard navigation ==========
 
@@ -105,6 +122,8 @@ export function RootLayout() {
 						showSubAgents={showSubAgents}
 						subAgentCount={subAgentCount}
 						onToggleSubAgents={toggleShowSubAgents}
+						onRenameSession={handleRenameSession}
+						onDeleteSession={handleDeleteSession}
 					/>
 				</div>
 				<div className="min-w-0 flex-1">

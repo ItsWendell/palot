@@ -60,6 +60,7 @@ export const MOCK_AGENTS: Agent[] = [
 			},
 		],
 		permissions: [],
+		createdAt: Date.now() - 12 * 60 * 1000,
 		lastActiveAt: Date.now(),
 	},
 	{
@@ -94,6 +95,7 @@ export const MOCK_AGENTS: Agent[] = [
 			},
 		],
 		permissions: [],
+		createdAt: Date.now() - 3 * 60 * 1000,
 		lastActiveAt: Date.now(),
 	},
 	{
@@ -129,6 +131,7 @@ export const MOCK_AGENTS: Agent[] = [
 			},
 		],
 		permissions: [],
+		createdAt: Date.now() - 3 * 60 * 60 * 1000,
 		lastActiveAt: Date.now() - 2 * 60 * 60 * 1000,
 	},
 	{
@@ -158,6 +161,7 @@ export const MOCK_AGENTS: Agent[] = [
 			},
 		],
 		permissions: [],
+		createdAt: Date.now() - 2 * 60 * 60 * 1000,
 		lastActiveAt: Date.now() - 1 * 60 * 60 * 1000,
 	},
 	{
@@ -186,6 +190,7 @@ export const MOCK_AGENTS: Agent[] = [
 			},
 		],
 		permissions: [],
+		createdAt: Date.now() - 5 * 60 * 1000,
 		lastActiveAt: Date.now(),
 	},
 	{
@@ -214,6 +219,7 @@ export const MOCK_AGENTS: Agent[] = [
 			},
 		],
 		permissions: [],
+		createdAt: Date.now() - 7 * 60 * 1000,
 		lastActiveAt: Date.now(),
 	},
 ]

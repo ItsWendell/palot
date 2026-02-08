@@ -1,5 +1,14 @@
 import { Badge } from "@codedeck/ui/components/badge"
 import { Button } from "@codedeck/ui/components/button"
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "@codedeck/ui/components/context-menu"
+import { Input } from "@codedeck/ui/components/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
 import { ScrollArea } from "@codedeck/ui/components/scroll-area"
 import { Separator } from "@codedeck/ui/components/separator"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
@@ -7,17 +16,24 @@ import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	AlertCircleIcon,
 	CheckCircle2Icon,
+	CheckIcon,
 	ChevronDownIcon,
 	ChevronRightIcon,
 	CircleDotIcon,
+	CopyIcon,
 	GitBranchIcon,
 	Loader2Icon,
 	NetworkIcon,
+	PencilIcon,
 	PlusIcon,
 	SearchIcon,
+	TerminalIcon,
 	TimerIcon,
+	TrashIcon,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { formatElapsed } from "../hooks/use-agents"
+import { useServerConnection } from "../hooks/use-server"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
 
 // ============================================================
@@ -59,6 +75,8 @@ interface SidebarProps {
 	showSubAgents: boolean
 	subAgentCount: number
 	onToggleSubAgents: () => void
+	onRenameSession?: (agent: Agent, title: string) => Promise<void>
+	onDeleteSession?: (agent: Agent) => Promise<void>
 }
 
 // ============================================================
@@ -72,6 +90,8 @@ export function Sidebar({
 	showSubAgents,
 	subAgentCount,
 	onToggleSubAgents,
+	onRenameSession,
+	onDeleteSession,
 }: SidebarProps) {
 	const navigate = useNavigate()
 	const routeParams = useParams({ strict: false }) as { sessionId?: string }
@@ -82,7 +102,7 @@ export function Sidebar({
 		() =>
 			agents
 				.filter((a) => a.status === "running" || a.status === "waiting" || a.status === "failed")
-				.sort((a, b) => b.lastActiveAt - a.lastActiveAt),
+				.sort((a, b) => b.createdAt - a.createdAt),
 		[agents],
 	)
 
@@ -124,6 +144,7 @@ export function Sidebar({
 							</TooltipContent>
 						</Tooltip>
 					)}
+					<GlobalAttachCommand />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -147,7 +168,7 @@ export function Sidebar({
 				</div>
 			</div>
 			{/* Scrollable content — override Radix ScrollArea's display:table inner div */}
-			<ScrollArea className="flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block">
+			<ScrollArea className="min-h-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block">
 				<nav className="space-y-1 overflow-hidden p-2">
 					{/* Active Now */}
 					{activeSessions.length > 0 && (
@@ -163,6 +184,8 @@ export function Sidebar({
 											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
 										})
 									}
+									onRename={onRenameSession}
+									onDelete={onDeleteSession}
 									showProject
 								/>
 							))}
@@ -183,6 +206,8 @@ export function Sidebar({
 											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
 										})
 									}
+									onRename={onRenameSession}
+									onDelete={onDeleteSession}
 									showProject
 								/>
 							))}
@@ -203,6 +228,8 @@ export function Sidebar({
 										agents={agents}
 										selectedSessionId={selectedSessionId}
 										navigate={navigate}
+										onRename={onRenameSession}
+										onDelete={onDeleteSession}
 									/>
 								))}
 							</SidebarSection>
@@ -227,6 +254,77 @@ export function Sidebar({
 }
 
 // ============================================================
+// Global attach command (sidebar header)
+// ============================================================
+
+function GlobalAttachCommand() {
+	const { url } = useServerConnection()
+	const [copied, setCopied] = useState(false)
+	const [open, setOpen] = useState(false)
+
+	const command = `opencode attach ${url ?? "http://127.0.0.1:4101"}`
+
+	const handleOpen = useCallback(
+		async (nextOpen: boolean) => {
+			if (nextOpen) {
+				await navigator.clipboard.writeText(command)
+				setCopied(true)
+				setTimeout(() => setCopied(false), 2000)
+			}
+			setOpen(nextOpen)
+		},
+		[command],
+	)
+
+	const handleCopy = useCallback(async () => {
+		await navigator.clipboard.writeText(command)
+		setCopied(true)
+		setTimeout(() => setCopied(false), 2000)
+	}, [command])
+
+	return (
+		<Popover open={open} onOpenChange={handleOpen}>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<PopoverTrigger asChild>
+						<button
+							type="button"
+							className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+						>
+							<TerminalIcon className="size-3.5" />
+						</button>
+					</PopoverTrigger>
+				</TooltipTrigger>
+				<TooltipContent>Attach from terminal</TooltipContent>
+			</Tooltip>
+			<PopoverContent align="start" className="w-auto max-w-sm p-3">
+				<div className="flex flex-col gap-2">
+					<div className="flex items-center gap-1.5">
+						<CheckIcon className="size-3 text-green-500" />
+						<p className="text-xs font-medium">Copied to clipboard</p>
+					</div>
+					<div className="flex items-center gap-1.5">
+						<code className="flex-1 rounded-md bg-muted px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-foreground select-all">
+							{command}
+						</code>
+						<Button size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0" onClick={handleCopy}>
+							{copied ? (
+								<CheckIcon className="size-3.5 text-green-500" />
+							) : (
+								<CopyIcon className="size-3.5" />
+							)}
+						</Button>
+					</div>
+					<p className="text-[11px] leading-normal text-muted-foreground">
+						Paste in your terminal to connect. New sessions will appear here automatically.
+					</p>
+				</div>
+			</PopoverContent>
+		</Popover>
+	)
+}
+
+// ============================================================
 // Sub-components
 // ============================================================
 
@@ -246,11 +344,15 @@ function ProjectFolder({
 	agents,
 	selectedSessionId,
 	navigate,
+	onRename,
+	onDelete,
 }: {
 	project: SidebarProject
 	agents: Agent[]
 	selectedSessionId: string | null
 	navigate: ReturnType<typeof useNavigate>
+	onRename?: (agent: Agent, title: string) => Promise<void>
+	onDelete?: (agent: Agent) => Promise<void>
 }) {
 	const [expanded, setExpanded] = useState(false)
 	const [showAll, setShowAll] = useState(false)
@@ -310,6 +412,8 @@ function ProjectFolder({
 											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
 										})
 									}
+									onRename={onRename}
+									onDelete={onDelete}
 									compact
 								/>
 							))}
@@ -330,27 +434,91 @@ function ProjectFolder({
 	)
 }
 
-function SessionItem({
+/**
+ * Hook that returns a live-updating duration string for active sessions.
+ * For active sessions (running/waiting), it ticks every second showing elapsed time.
+ * For inactive sessions, it returns the pre-computed relative time from the agent.
+ */
+function useLiveDuration(agent: Agent): string {
+	const isActive = agent.status === "running" || agent.status === "waiting"
+
+	const [elapsed, setElapsed] = useState(() =>
+		isActive ? formatElapsed(agent.createdAt) : agent.duration,
+	)
+
+	useEffect(() => {
+		if (!isActive) {
+			setElapsed(agent.duration)
+			return
+		}
+
+		// Immediately set, then tick every second
+		setElapsed(formatElapsed(agent.createdAt))
+		const id = setInterval(() => {
+			setElapsed(formatElapsed(agent.createdAt))
+		}, 1_000)
+		return () => clearInterval(id)
+	}, [isActive, agent.createdAt, agent.duration])
+
+	return elapsed
+}
+
+const SessionItem = memo(function SessionItem({
 	agent,
 	isSelected,
 	onSelect,
+	onRename,
+	onDelete,
 	showProject = false,
 	compact = false,
 }: {
 	agent: Agent
 	isSelected: boolean
 	onSelect: () => void
+	onRename?: (agent: Agent, title: string) => Promise<void>
+	onDelete?: (agent: Agent) => Promise<void>
 	showProject?: boolean
 	compact?: boolean
 }) {
 	const StatusIcon = STATUS_ICON[agent.status]
 	const statusColor = STATUS_COLOR[agent.status]
 	const isSubAgent = !!agent.parentId
+	const duration = useLiveDuration(agent)
+
+	const [isEditing, setIsEditing] = useState(false)
+	const [editValue, setEditValue] = useState(agent.name)
+	const inputRef = useRef<HTMLInputElement>(null)
+
+	const startEditing = useCallback(() => {
+		setEditValue(agent.name)
+		setIsEditing(true)
+	}, [agent.name])
+
+	const confirmRename = useCallback(async () => {
+		const trimmed = editValue.trim()
+		setIsEditing(false)
+		if (trimmed && trimmed !== agent.name && onRename) {
+			await onRename(agent, trimmed)
+		}
+	}, [editValue, agent, onRename])
+
+	const cancelEditing = useCallback(() => {
+		setIsEditing(false)
+		setEditValue(agent.name)
+	}, [agent.name])
+
+	// Auto-focus and select all text when entering edit mode
+	useEffect(() => {
+		if (isEditing && inputRef.current) {
+			inputRef.current.focus()
+			inputRef.current.select()
+		}
+	}, [isEditing])
 
 	const btn = (
 		<button
 			type="button"
-			onClick={onSelect}
+			onClick={isEditing ? undefined : onSelect}
 			className={`flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md text-left transition-colors ${
 				compact ? "px-2 py-1.5" : "px-2 py-2"
 			} ${isSelected ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"}`}
@@ -363,26 +531,64 @@ function SessionItem({
 				/>
 			)}
 
-			<span
-				className={`min-w-0 flex-1 truncate leading-tight ${compact ? "text-xs" : "text-[13px]"}`}
-			>
-				{agent.name}
-			</span>
+			{isEditing ? (
+				<Input
+					ref={inputRef}
+					value={editValue}
+					onChange={(e) => setEditValue(e.target.value)}
+					onKeyDown={(e) => {
+						e.stopPropagation()
+						if (e.key === "Enter") confirmRename()
+						if (e.key === "Escape") cancelEditing()
+					}}
+					onBlur={confirmRename}
+					onClick={(e) => e.stopPropagation()}
+					className={`h-auto min-w-0 flex-1 border-none bg-transparent p-0 shadow-none focus-visible:ring-0 ${compact ? "text-xs" : "text-[13px]"}`}
+				/>
+			) : (
+				<span
+					className={`min-w-0 flex-1 truncate leading-tight ${compact ? "text-xs" : "text-[13px]"}`}
+				>
+					{agent.name}
+				</span>
+			)}
 
-			<span className="shrink-0 text-xs tabular-nums text-muted-foreground">{agent.duration}</span>
+			{!isEditing && (
+				<span className="shrink-0 text-xs tabular-nums text-muted-foreground">{duration}</span>
+			)}
 		</button>
 	)
 
-	if (showProject || compact) {
-		return (
+	const wrappedBtn =
+		showProject || compact ? (
 			<Tooltip>
 				<TooltipTrigger asChild>{btn}</TooltipTrigger>
 				<TooltipContent side="right" align="center">
 					{showProject ? agent.project : agent.name}
 				</TooltipContent>
 			</Tooltip>
+		) : (
+			btn
 		)
-	}
 
-	return btn
-}
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>{wrappedBtn}</ContextMenuTrigger>
+			<ContextMenuContent>
+				{onRename && (
+					<ContextMenuItem onSelect={startEditing}>
+						<PencilIcon className="size-4" />
+						Rename
+					</ContextMenuItem>
+				)}
+				{onRename && onDelete && <ContextMenuSeparator />}
+				{onDelete && (
+					<ContextMenuItem variant="destructive" onSelect={() => onDelete(agent)}>
+						<TrashIcon className="size-4" />
+						Delete
+					</ContextMenuItem>
+				)}
+			</ContextMenuContent>
+		</ContextMenu>
+	)
+})

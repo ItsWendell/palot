@@ -7,16 +7,23 @@ import {
 } from "@codedeck/ui/components/ai-elements/confirmation"
 import { Badge } from "@codedeck/ui/components/badge"
 import { Button } from "@codedeck/ui/components/button"
+import { Input } from "@codedeck/ui/components/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	ArrowLeftIcon,
 	CheckCircle2Icon,
+	CheckIcon,
 	CircleDotIcon,
+	CopyIcon,
 	Loader2Icon,
+	PencilIcon,
 	SquareIcon,
+	TerminalIcon,
 	XIcon,
 } from "lucide-react"
-import { useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type {
 	ConfigData,
 	ModelRef,
@@ -24,8 +31,9 @@ import type {
 	SdkAgent,
 	VcsData,
 } from "../hooks/use-opencode-data"
+import { useServerConnection } from "../hooks/use-server"
 import type { ChatTurn } from "../hooks/use-session-chat"
-import type { Agent, AgentStatus } from "../lib/types"
+import type { Agent, AgentStatus, FileAttachment } from "../lib/types"
 import { ChatView } from "./chat"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
@@ -63,8 +71,9 @@ interface AgentDetailProps {
 	onSendMessage?: (
 		agent: Agent,
 		message: string,
-		options?: { model?: ModelRef; agentName?: string; variant?: string },
+		options?: { model?: ModelRef; agentName?: string; variant?: string; files?: FileAttachment[] },
 	) => Promise<void>
+	onRename?: (agent: Agent, title: string) => Promise<void>
 	/** Display name of the parent session (for breadcrumb) */
 	parentSessionName?: string
 	isConnected?: boolean
@@ -86,6 +95,7 @@ export function AgentDetail({
 	onApprove,
 	onDeny,
 	onSendMessage,
+	onRename,
 	parentSessionName,
 	isConnected,
 	providers,
@@ -98,6 +108,36 @@ export function AgentDetail({
 }: AgentDetailProps) {
 	const navigate = useNavigate()
 	const { projectSlug } = useParams({ strict: false }) as { projectSlug?: string }
+
+	const [isEditingTitle, setIsEditingTitle] = useState(false)
+	const [titleValue, setTitleValue] = useState(agent.name)
+	const titleInputRef = useRef<HTMLInputElement>(null)
+
+	const startEditingTitle = useCallback(() => {
+		if (!onRename) return
+		setTitleValue(agent.name)
+		setIsEditingTitle(true)
+	}, [agent.name, onRename])
+
+	const confirmTitle = useCallback(async () => {
+		const trimmed = titleValue.trim()
+		setIsEditingTitle(false)
+		if (trimmed && trimmed !== agent.name && onRename) {
+			await onRename(agent, trimmed)
+		}
+	}, [titleValue, agent, onRename])
+
+	const cancelEditingTitle = useCallback(() => {
+		setIsEditingTitle(false)
+		setTitleValue(agent.name)
+	}, [agent.name])
+
+	useEffect(() => {
+		if (isEditingTitle && titleInputRef.current) {
+			titleInputRef.current.focus()
+			titleInputRef.current.select()
+		}
+	}, [isEditingTitle])
 
 	return (
 		<div className="flex h-full flex-col">
@@ -125,8 +165,32 @@ export function AgentDetail({
 
 			{/* Compact top bar */}
 			<div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
-				{/* Session name */}
-				<h2 className="min-w-0 truncate text-sm font-semibold">{agent.name}</h2>
+				{/* Session name — click to edit */}
+				{isEditingTitle ? (
+					<Input
+						ref={titleInputRef}
+						value={titleValue}
+						onChange={(e) => setTitleValue(e.target.value)}
+						onKeyDown={(e) => {
+							e.stopPropagation()
+							if (e.key === "Enter") confirmTitle()
+							if (e.key === "Escape") cancelEditingTitle()
+						}}
+						onBlur={confirmTitle}
+						className="h-7 min-w-0 flex-shrink border-none bg-transparent p-0 text-sm font-semibold shadow-none focus-visible:ring-0"
+					/>
+				) : (
+					<button
+						type="button"
+						onClick={onRename ? startEditingTitle : undefined}
+						className={`group flex min-w-0 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
+					>
+						<h2 className="min-w-0 truncate text-sm font-semibold">{agent.name}</h2>
+						{onRename && (
+							<PencilIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+						)}
+					</button>
+				)}
 
 				{/* Project badge */}
 				<Badge variant="secondary" className="shrink-0 text-[11px] font-normal">
@@ -146,6 +210,9 @@ export function AgentDetail({
 					{agent.duration && (
 						<span className="text-xs text-muted-foreground/60">{agent.duration}</span>
 					)}
+
+					{/* Open in terminal */}
+					<AttachCommand sessionId={agent.sessionId} directory={agent.directory} />
 
 					{/* Stop button (when running) */}
 					{agent.status === "running" && (
@@ -207,6 +274,76 @@ export function AgentDetail({
 				</div>
 			)}
 		</div>
+	)
+}
+
+/**
+ * Popover with the `opencode attach` command for opening this session in a terminal.
+ */
+function AttachCommand({ sessionId, directory }: { sessionId: string; directory: string }) {
+	const { url } = useServerConnection()
+	const [copied, setCopied] = useState(false)
+	const [open, setOpen] = useState(false)
+
+	const command = `opencode attach ${url ?? "http://127.0.0.1:4101"} --session ${sessionId} --dir ${directory}`
+
+	const handleOpen = useCallback(
+		async (nextOpen: boolean) => {
+			if (nextOpen) {
+				await navigator.clipboard.writeText(command)
+				setCopied(true)
+				setTimeout(() => setCopied(false), 2000)
+			}
+			setOpen(nextOpen)
+		},
+		[command],
+	)
+
+	const handleCopy = useCallback(async () => {
+		await navigator.clipboard.writeText(command)
+		setCopied(true)
+		setTimeout(() => setCopied(false), 2000)
+	}, [command])
+
+	return (
+		<Popover open={open} onOpenChange={handleOpen}>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<PopoverTrigger asChild>
+						<button
+							type="button"
+							className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+						>
+							<TerminalIcon className="size-3.5" />
+						</button>
+					</PopoverTrigger>
+				</TooltipTrigger>
+				<TooltipContent>Open in terminal</TooltipContent>
+			</Tooltip>
+			<PopoverContent align="end" className="w-auto max-w-sm p-3">
+				<div className="flex flex-col gap-2">
+					<div className="flex items-center gap-1.5">
+						<CheckIcon className="size-3 text-green-500" />
+						<p className="text-xs font-medium">Copied to clipboard</p>
+					</div>
+					<div className="flex items-center gap-1.5">
+						<code className="flex-1 rounded-md bg-muted px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-foreground select-all">
+							{command}
+						</code>
+						<Button size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0" onClick={handleCopy}>
+							{copied ? (
+								<CheckIcon className="size-3.5 text-green-500" />
+							) : (
+								<CopyIcon className="size-3.5" />
+							)}
+						</Button>
+					</div>
+					<p className="text-[11px] leading-normal text-muted-foreground">
+						Paste in your terminal to attach. Both views will stay in sync.
+					</p>
+				</div>
+			</PopoverContent>
+		</Popover>
 	)
 }
 

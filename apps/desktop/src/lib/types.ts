@@ -13,6 +13,8 @@ export type {
 	EventSessionStatus,
 	EventSessionUpdated,
 	FileDiff,
+	FilePart,
+	FilePartInput,
 	Message,
 	Part,
 	Permission,
@@ -23,8 +25,24 @@ export type {
 	Todo,
 	ToolPart,
 	ToolState,
+	ToolStateCompleted,
 	UserMessage,
 } from "@opencode-ai/sdk"
+
+// ============================================================
+// File attachment types
+// ============================================================
+
+/**
+ * A file attachment ready to send — matches the shape returned by
+ * PromptInput's onSubmit callback (FileUIPart from the `ai` package).
+ */
+export interface FileAttachment {
+	type: "file"
+	url: string
+	mediaType?: string
+	filename?: string
+}
 
 // ============================================================
 // App-specific types
@@ -103,6 +121,8 @@ export interface Agent {
 	permissions: SdkPermission[]
 	/** If set, this is a sub-agent spawned by the parent session */
 	parentId?: string
+	/** Timestamp (ms) of session creation — stable, never changes */
+	createdAt: number
 	/** Timestamp (ms) of last activity — for sorting and relative time display */
 	lastActiveAt: number
 }

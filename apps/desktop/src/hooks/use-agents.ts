@@ -23,7 +23,7 @@ function deriveAgentStatus(status: SessionStatus, hasPermissions: boolean): Agen
 /**
  * Formats a timestamp as relative time ("just now", "5m ago", "2h ago", "3d ago").
  */
-function formatRelativeTime(timestampMs: number): string {
+export function formatRelativeTime(timestampMs: number): string {
 	const seconds = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000))
 	if (seconds < 60) return "now"
 	const minutes = Math.floor(seconds / 60)
@@ -39,7 +39,7 @@ function formatRelativeTime(timestampMs: number): string {
 /**
  * Formats elapsed working time for active sessions ("12s", "3m 24s").
  */
-function formatElapsed(startMs: number): string {
+export function formatElapsed(startMs: number): string {
 	const seconds = Math.max(0, Math.floor((Date.now() - startMs) / 1000))
 	if (seconds < 60) return `${seconds}s`
 	const minutes = Math.floor(seconds / 60)
@@ -162,7 +162,6 @@ export function useAgents(): Agent[] {
 
 			const created = session.time.created
 			const lastActiveAt = session.time.updated ?? session.time.created
-			const isActive = agentStatus === "running" || agentStatus === "waiting"
 
 			agents.push({
 				id: session.id,
@@ -174,7 +173,7 @@ export function useAgents(): Agent[] {
 				projectSlug: projectInfo?.slug ?? projectNameFromDir(directory),
 				directory,
 				branch: "",
-				duration: isActive ? formatElapsed(created) : formatRelativeTime(lastActiveAt),
+				duration: formatRelativeTime(lastActiveAt),
 				tokens: 0,
 				cost: 0,
 				currentActivity:
@@ -186,6 +185,7 @@ export function useAgents(): Agent[] {
 				activities: [],
 				permissions,
 				parentId: session.parentID,
+				createdAt: created,
 				lastActiveAt,
 			})
 		}
@@ -225,6 +225,7 @@ export function useAgents(): Agent[] {
 						activities: [],
 						permissions: [],
 						parentId: session.parentID,
+						createdAt: session.time.created,
 						lastActiveAt,
 					})
 				}
