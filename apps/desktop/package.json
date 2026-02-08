@@ -1,6 +1,14 @@
 {
 	"name": "@codedeck/desktop",
 	"version": "0.1.0",
+	"description": "AI-powered coding assistant desktop app",
+	"author": "Codedeck",
+	"homepage": "https://github.com/ItsWendell/codedeck",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/ItsWendell/codedeck.git",
+		"directory": "apps/desktop"
+	},
 	"private": true,
 	"type": "module",
 	"main": "./out/main/index.js",
