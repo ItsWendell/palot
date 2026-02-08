@@ -25,9 +25,17 @@ import type { BundledLanguage, BundledTheme, HighlighterGeneric, ThemedToken } f
 import { createHighlighter } from "shiki"
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
+// biome-ignore lint/suspicious/noBitwiseOperators: shiki bitflag check
+// eslint-disable-next-line no-bitwise -- shiki bitflag check
 const isItalic = (fontStyle: number | undefined) => fontStyle && fontStyle & 1
+// biome-ignore lint/suspicious/noBitwiseOperators: shiki bitflag check
+// eslint-disable-next-line no-bitwise -- shiki bitflag check
+// oxlint-disable-next-line eslint(no-bitwise)
 const isBold = (fontStyle: number | undefined) => fontStyle && fontStyle & 2
-const isUnderline = (fontStyle: number | undefined) => fontStyle && fontStyle & 4
+const isUnderline = (fontStyle: number | undefined) =>
+	// biome-ignore lint/suspicious/noBitwiseOperators: shiki bitflag check
+	// oxlint-disable-next-line eslint(no-bitwise)
+	fontStyle && fontStyle & 4
 
 // Transform tokens to include pre-computed keys to avoid noArrayIndexKey lint
 interface KeyedToken {
@@ -238,10 +246,13 @@ const CodeBlockBody = memo(
 	({
 		tokenized,
 		showLineNumbers,
+		startLine = 1,
 		className,
 	}: {
 		tokenized: TokenizedCode
 		showLineNumbers: boolean
+		/** First line number to display (default: 1) */
+		startLine?: number
 		className?: string
 	}) => {
 		const preStyle = useMemo(
@@ -254,6 +265,10 @@ const CodeBlockBody = memo(
 
 		const keyedLines = useMemo(() => addKeysToTokens(tokenized.tokens), [tokenized.tokens])
 
+		// CSS counter-reset sets the initial value; since counter-increment
+		// fires before display, we offset by -1 so the first line shows startLine.
+		const counterReset = startLine - 1
+
 		return (
 			<pre
 				className={cn(
@@ -263,10 +278,8 @@ const CodeBlockBody = memo(
 				style={preStyle}
 			>
 				<code
-					className={cn(
-						"font-mono text-sm",
-						showLineNumbers && "[counter-increment:line_0] [counter-reset:line]",
-					)}
+					className={cn("font-mono text-sm", showLineNumbers && "[counter-increment:line_0]")}
+					style={showLineNumbers ? { counterReset: `line ${counterReset}` } : undefined}
 				>
 					{keyedLines.map((keyedLine) => (
 						<LineSpan key={keyedLine.key} keyedLine={keyedLine} showLineNumbers={showLineNumbers} />
@@ -278,6 +291,7 @@ const CodeBlockBody = memo(
 	(prevProps, nextProps) =>
 		prevProps.tokenized === nextProps.tokenized &&
 		prevProps.showLineNumbers === nextProps.showLineNumbers &&
+		prevProps.startLine === nextProps.startLine &&
 		prevProps.className === nextProps.className,
 )
 
@@ -291,7 +305,7 @@ export const CodeBlockContainer = ({
 }: HTMLAttributes<HTMLDivElement> & { language: string }) => (
 	<div
 		className={cn(
-			"group relative w-full overflow-hidden rounded-md border bg-background text-foreground",
+			"group relative flex w-full flex-col overflow-hidden rounded-md border bg-background text-foreground",
 			className,
 		)}
 		data-language={language}
@@ -354,10 +368,13 @@ export const CodeBlockContent = ({
 	code,
 	language,
 	showLineNumbers = false,
+	startLine = 1,
 }: {
 	code: string
 	language: BundledLanguage
 	showLineNumbers?: boolean
+	/** First line number to display (default: 1) */
+	startLine?: number
 }) => {
 	// Memoized raw tokens for immediate display
 	const rawTokens = useMemo(() => createRawTokens(code), [code])
@@ -386,8 +403,15 @@ export const CodeBlockContent = ({
 	}, [code, language, rawTokens])
 
 	return (
-		<div className="relative overflow-auto">
-			<CodeBlockBody showLineNumbers={showLineNumbers} tokenized={tokenized} />
+		<div
+			className="relative min-h-0 flex-1 overflow-auto"
+			style={{ scrollbarWidth: "thin", scrollbarColor: "var(--color-border) transparent" }}
+		>
+			<CodeBlockBody
+				showLineNumbers={showLineNumbers}
+				startLine={startLine}
+				tokenized={tokenized}
+			/>
 		</div>
 	)
 }
@@ -405,8 +429,9 @@ export const CodeBlock = ({
 	return (
 		<CodeBlockContext.Provider value={contextValue}>
 			<CodeBlockContainer className={className} language={language} {...props}>
-				{children}
-				<CodeBlockContent code={code} language={language} showLineNumbers={showLineNumbers} />
+				{children ?? (
+					<CodeBlockContent code={code} language={language} showLineNumbers={showLineNumbers} />
+				)}
 			</CodeBlockContainer>
 		</CodeBlockContext.Provider>
 	)

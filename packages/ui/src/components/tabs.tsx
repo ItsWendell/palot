@@ -1,3 +1,5 @@
+"use client"
+
 import { cn } from "@codedeck/ui/lib/utils"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Tabs as TabsPrimitive } from "radix-ui"

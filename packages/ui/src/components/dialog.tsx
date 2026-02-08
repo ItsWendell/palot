@@ -1,3 +1,5 @@
+"use client"
+
 import { Button } from "@codedeck/ui/components/button"
 import { cn } from "@codedeck/ui/lib/utils"
 import { XIcon } from "lucide-react"

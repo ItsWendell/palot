@@ -14,17 +14,9 @@ import { code } from "@streamdown/code"
 import { math } from "@streamdown/math"
 import { mermaid } from "@streamdown/mermaid"
 import type { UIMessage } from "ai"
-import {
-	CheckIcon,
-	ChevronLeftIcon,
-	ChevronRightIcon,
-	CopyIcon,
-	ExternalLinkIcon,
-	XIcon,
-} from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react"
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from "react"
-import type { LinkSafetyConfig, LinkSafetyModalProps } from "streamdown"
 import { Streamdown } from "streamdown"
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
@@ -282,109 +274,11 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>
 
 const streamdownPlugins = { cjk, code, math, mermaid }
 
-/**
- * Compact link safety modal that replaces streamdown's full-viewport default.
- */
-function CompactLinkSafetyModal({ url, isOpen, onClose, onConfirm }: LinkSafetyModalProps) {
-	const [copied, setCopied] = useState(false)
-
-	const handleCopy = useCallback(async () => {
-		try {
-			await navigator.clipboard.writeText(url)
-			setCopied(true)
-			setTimeout(() => setCopied(false), 2000)
-		} catch {}
-	}, [url])
-
-	const handleConfirm = useCallback(() => {
-		onConfirm()
-		onClose()
-	}, [onConfirm, onClose])
-
-	useEffect(() => {
-		if (!isOpen) return
-		const handleKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose()
-		}
-		document.addEventListener("keydown", handleKey)
-		return () => document.removeEventListener("keydown", handleKey)
-	}, [isOpen, onClose])
-
-	if (!isOpen) return null
-
-	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay dismiss
-		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-			onClick={onClose}
-			onKeyDown={(e) => {
-				if (e.key === "Escape") onClose()
-			}}
-		>
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: stop-propagation wrapper */}
-			<div
-				className="relative mx-4 flex w-full max-w-sm flex-col gap-3 rounded-lg border bg-background p-4 shadow-lg"
-				onClick={(e) => e.stopPropagation()}
-				onKeyDown={(e) => e.stopPropagation()}
-			>
-				<button
-					className="absolute top-3 right-3 rounded-md p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-					onClick={onClose}
-					title="Close"
-					type="button"
-				>
-					<XIcon className="size-4" />
-				</button>
-
-				<div className="flex items-center gap-2 pr-6">
-					<ExternalLinkIcon className="size-4 shrink-0 text-muted-foreground" />
-					<span className="text-sm font-medium">Open external link?</span>
-				</div>
-
-				<div
-					className={cn(
-						"break-all rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground",
-						url.length > 100 && "max-h-24 overflow-y-auto",
-					)}
-				>
-					{url}
-				</div>
-
-				<div className="flex gap-2">
-					<Button variant="outline" size="sm" className="flex-1 gap-1.5" onClick={handleCopy}>
-						{copied ? (
-							<>
-								<CheckIcon className="size-3" />
-								Copied
-							</>
-						) : (
-							<>
-								<CopyIcon className="size-3" />
-								Copy link
-							</>
-						)}
-					</Button>
-					<Button size="sm" className="flex-1 gap-1.5" onClick={handleConfirm}>
-						<ExternalLinkIcon className="size-3" />
-						Open link
-					</Button>
-				</div>
-			</div>
-		</div>
-	)
-}
-
-const linkSafetyConfig: LinkSafetyConfig = {
-	enabled: true,
-	renderModal: (props) => <CompactLinkSafetyModal {...props} />,
-}
-
 export const MessageResponse = memo(
 	({ className, ...props }: MessageResponseProps) => (
 		<Streamdown
 			className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
 			plugins={streamdownPlugins}
-			linkSafety={linkSafetyConfig}
 			{...props}
 		/>
 	),

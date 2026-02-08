@@ -1,5 +1,3 @@
-"use client"
-
 import { Button } from "@codedeck/ui/components/button"
 import { Input } from "@codedeck/ui/components/input"
 import { Textarea } from "@codedeck/ui/components/textarea"

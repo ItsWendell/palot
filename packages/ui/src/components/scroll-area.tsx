@@ -1,5 +1,3 @@
-"use client"
-
 import { cn } from "@codedeck/ui/lib/utils"
 import { ScrollArea as ScrollAreaPrimitive } from "radix-ui"
 import type * as React from "react"

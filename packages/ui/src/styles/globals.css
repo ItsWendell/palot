@@ -38,6 +38,10 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-diff-addition: var(--diff-addition);
+  --color-diff-addition-foreground: var(--diff-addition-foreground);
+  --color-diff-deletion: var(--diff-deletion);
+  --color-diff-deletion-foreground: var(--diff-deletion-foreground);
   --font-sans: "Inter", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
   --text-xs: 0.8125rem;
@@ -97,6 +101,12 @@
   --sidebar-accent-foreground: #211e1e;
   --sidebar-border: #e5e3e3;
   --sidebar-ring: #b0aeae;
+
+  /* Diff colors — warm-tinted to match the palette */
+  --diff-addition: #2a9d5c;
+  --diff-addition-foreground: #1a7a42;
+  --diff-deletion: #d94a3a;
+  --diff-deletion-foreground: #b83a2e;
 }
 
 .dark {
@@ -134,6 +144,12 @@
   --sidebar-accent-foreground: #efeded;
   --sidebar-border: #251f1f;
   --sidebar-ring: #4a4242;
+
+  /* Diff colors — warm-tinted to match the palette */
+  --diff-addition: #4cc9a5;
+  --diff-addition-foreground: #5ecc71;
+  --diff-deletion: #e8655c;
+  --diff-deletion-foreground: #ff6762;
 }
 
 @layer base {
@@ -146,6 +162,22 @@
   }
   code, kbd, samp, pre {
     font-feature-settings: "ss01" 1;
+  }
+}
+
+/* @pierre/diffs — override diff highlight colors with theme palette */
+@layer base {
+  :root {
+    --diffs-addition-color-override: var(--diff-addition);
+    --diffs-deletion-color-override: var(--diff-deletion);
+    --diffs-bg-addition-override: color-mix(in srgb, var(--diff-addition) 10%, var(--background));
+    --diffs-bg-addition-number-override: color-mix(in srgb, var(--diff-addition) 14%, var(--background));
+    --diffs-bg-addition-hover-override: color-mix(in srgb, var(--diff-addition) 18%, var(--background));
+    --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--diff-addition) 20%, transparent);
+    --diffs-bg-deletion-override: color-mix(in srgb, var(--diff-deletion) 10%, var(--background));
+    --diffs-bg-deletion-number-override: color-mix(in srgb, var(--diff-deletion) 14%, var(--background));
+    --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--diff-deletion) 18%, var(--background));
+    --diffs-bg-deletion-emphasis-override: color-mix(in srgb, var(--diff-deletion) 20%, transparent);
   }
 }
 

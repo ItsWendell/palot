@@ -1,5 +1,3 @@
-"use client"
-
 import { Button } from "@codedeck/ui/components/button"
 import { cn } from "@codedeck/ui/lib/utils"
 import useEmblaCarousel, { type UseEmblaCarouselType } from "embla-carousel-react"
