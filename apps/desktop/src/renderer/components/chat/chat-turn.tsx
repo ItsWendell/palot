@@ -317,9 +317,17 @@ function getLastResponseText(orderedParts: RenderablePart[]): string | undefined
 function getError(assistantMessages: ChatMessageEntry[]): string | undefined {
 	for (const msg of assistantMessages) {
 		if (msg.info.role === "assistant" && msg.info.error) {
-			const errorData = msg.info.error.data
-			const message = "message" in errorData ? errorData.message : undefined
-			if (message) return typeof message === "string" ? message : String(message)
+			const error = msg.info.error
+			const errorData = error.data
+			// Most error types have a `message` string in data
+			if ("message" in errorData && errorData.message) {
+				return typeof errorData.message === "string" ? errorData.message : String(errorData.message)
+			}
+			// Fallback: use the error name (e.g. "MessageOutputLengthError") +
+			// any stringifiable data for types like MessageOutputLengthError
+			// whose data is { [key: string]: unknown }
+			const dataStr = Object.keys(errorData).length > 0 ? JSON.stringify(errorData) : undefined
+			return dataStr ? `${error.name}: ${dataStr}` : error.name
 		}
 	}
 	return undefined
@@ -537,7 +545,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 			)}
 
 			{/* Error */}
-			{errorText && !showToolsExpanded && (
+			{errorText && (
 				<div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
 					{errorText.length > 300 ? `${errorText.slice(0, 300)}...` : errorText}
 				</div>

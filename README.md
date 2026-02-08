@@ -14,6 +14,10 @@
 
 > **Alpha Software** -- Codedeck is under active development. Expect breaking changes, missing features, and rough edges. Feedback and contributions are welcome.
 
+<p align="center">
+  <img src="apps/desktop/resources/brand/screenshot.jpg" alt="Codedeck screenshot" width="900">
+</p>
+
 ---
 
 Codedeck is an Electron-based desktop application that wraps [OpenCode](https://opencode.ai) with a visual interface for managing AI coding agent sessions across multiple projects. It spawns and manages the OpenCode server automatically, streams responses in real time, and renders tool calls with syntax-highlighted diffs, file previews, and terminal output.

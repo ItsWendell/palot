@@ -31,6 +31,7 @@ import {
 } from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
 import type { Agent, FileAttachment, QuestionAnswer } from "../../lib/types"
+import { useAppStore } from "../../stores/app-store"
 import { PermissionItem } from "./chat-permission"
 import { ChatQuestionCard } from "./chat-question"
 import { ChatTurnComponent } from "./chat-turn"
@@ -137,6 +138,9 @@ export function ChatView({
 }: ChatViewProps) {
 	const isWorking = agent.status === "running"
 	const [sending, setSending] = useState(false)
+
+	// Session-level error from session.error events
+	const sessionError = useAppStore((s) => s.sessions[agent.sessionId]?.error)
 
 	// Stable callbacks for question/permission handlers — agent is stable
 	// per render, but wrapping in useCallback avoids creating new inline
@@ -286,6 +290,15 @@ export function ChatView({
 							) : (
 								<div className="flex items-center justify-center py-8">
 									<p className="text-sm text-muted-foreground">No messages yet</p>
+								</div>
+							)}
+
+							{/* Session-level error from session.error events */}
+							{sessionError && (
+								<div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
+									{"message" in sessionError.data && sessionError.data.message
+										? String(sessionError.data.message)
+										: `${sessionError.name}: ${JSON.stringify(sessionError.data)}`}
 								</div>
 							)}
 						</div>

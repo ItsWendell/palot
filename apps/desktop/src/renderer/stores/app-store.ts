@@ -10,6 +10,12 @@ import type {
 	Todo,
 } from "../lib/types"
 
+// Error type from session.error events
+type SessionError = {
+	name: string
+	data: Record<string, unknown>
+}
+
 // ============================================================
 // Store types
 // ============================================================
@@ -23,6 +29,8 @@ export interface SessionEntry {
 	questions: QuestionRequest[]
 	/** Project directory this session belongs to */
 	directory: string
+	/** Last session-level error (from session.error events) */
+	error?: SessionError
 }
 
 /** Single OpenCode server connection state */
@@ -107,6 +115,8 @@ interface AppState {
 	setSession: (session: Session, directory: string) => void
 	removeSession: (sessionId: string) => void
 	setSessionStatus: (sessionId: string, status: SessionStatus) => void
+	setSessionError: (sessionId: string, error: SessionError) => void
+	clearSessionError: (sessionId: string) => void
 	addPermission: (sessionId: string, permission: Permission) => void
 	removePermission: (sessionId: string, permissionId: string) => void
 	addQuestion: (sessionId: string, question: QuestionRequest) => void
@@ -243,6 +253,30 @@ export const useAppStore = create<AppState>((set, get) => ({
 				sessions: {
 					...state.sessions,
 					[sessionId]: { ...entry, status },
+				},
+			}
+		}),
+
+	setSessionError: (sessionId, error) =>
+		set((state) => {
+			const entry = state.sessions[sessionId]
+			if (!entry) return state
+			return {
+				sessions: {
+					...state.sessions,
+					[sessionId]: { ...entry, error },
+				},
+			}
+		}),
+
+	clearSessionError: (sessionId) =>
+		set((state) => {
+			const entry = state.sessions[sessionId]
+			if (!entry || !entry.error) return state
+			return {
+				sessions: {
+					...state.sessions,
+					[sessionId]: { ...entry, error: undefined },
 				},
 			}
 		}),
@@ -579,7 +613,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 			case "session.status":
 				state.setSessionStatus(event.properties.sessionID, event.properties.status)
+				// Clear session-level error when the session starts working again
+				if (event.properties.status.type !== "idle") {
+					state.clearSessionError(event.properties.sessionID)
+				}
 				break
+
+			case "session.error": {
+				const sessionID = event.properties.sessionID
+				const error = event.properties.error
+				if (sessionID && error) {
+					state.setSessionError(sessionID, error as SessionError)
+				}
+				break
+			}
 
 			case "permission.updated":
 				state.addPermission(event.properties.sessionID, event.properties as Permission)
