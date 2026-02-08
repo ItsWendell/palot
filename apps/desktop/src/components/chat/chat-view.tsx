@@ -3,146 +3,232 @@ import {
 	ConversationContent,
 	ConversationScrollButton,
 } from "@codedeck/ui/components/ai-elements/conversation"
-import { Button } from "@codedeck/ui/components/button"
-import { Loader2Icon, SendIcon } from "lucide-react"
-import { useCallback, useRef, useState } from "react"
+import {
+	PromptInput,
+	PromptInputFooter,
+	PromptInputSubmit,
+	PromptInputTextarea,
+	PromptInputTools,
+} from "@codedeck/ui/components/ai-elements/prompt-input"
+import { ChevronUpIcon, Loader2Icon } from "lucide-react"
+import { useCallback, useMemo, useState } from "react"
+import type {
+	ConfigData,
+	ModelRef,
+	ProvidersData,
+	SdkAgent,
+	VcsData,
+} from "../../hooks/use-opencode-data"
+import { resolveEffectiveModel, useModelState } from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
 import type { Agent } from "../../lib/types"
 import { ChatTurnComponent } from "./chat-turn"
+import { PromptToolbar, StatusBar } from "./prompt-toolbar"
 
 interface ChatViewProps {
 	turns: ChatTurn[]
 	loading: boolean
+	/** Whether earlier messages are currently being loaded */
+	loadingEarlier: boolean
+	/** Whether there are earlier messages that can be loaded */
+	hasEarlierMessages: boolean
+	/** Callback to load earlier messages */
+	onLoadEarlier?: () => void
 	agent: Agent
 	isConnected: boolean
-	onSendMessage?: (agent: Agent, message: string) => Promise<void>
+	onSendMessage?: (
+		agent: Agent,
+		message: string,
+		options?: { model?: ModelRef; agentName?: string; variant?: string },
+	) => Promise<void>
+	/** Provider data for model selector */
+	providers?: ProvidersData | null
+	/** Config data (default model, default agent) */
+	config?: ConfigData | null
+	/** VCS data for status bar */
+	vcs?: VcsData | null
+	/** Available OpenCode agents */
+	openCodeAgents?: SdkAgent[]
 }
 
 /**
  * Main chat view component.
  * Renders the full conversation as turns with auto-scroll,
- * plus a message input at the bottom.
- *
- * Uses the AI Elements Conversation component for stick-to-bottom scrolling.
+ * plus a card-style input with agent/model/variant toolbar and status bar.
  */
-export function ChatView({ turns, loading, agent, isConnected, onSendMessage }: ChatViewProps) {
+export function ChatView({
+	turns,
+	loading,
+	loadingEarlier,
+	hasEarlierMessages,
+	onLoadEarlier,
+	agent,
+	isConnected,
+	onSendMessage,
+	providers,
+	config,
+	vcs,
+	openCodeAgents,
+}: ChatViewProps) {
 	const isWorking = agent.status === "running"
+	const [sending, setSending] = useState(false)
+
+	// Toolbar state
+	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null)
+	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
+
+	// Recent models from model.json (for matching TUI's default model resolution)
+	const { recentModels } = useModelState()
+
+	// Resolve which OpenCode agent is active (for model resolution)
+	const activeOpenCodeAgent = useMemo(() => {
+		const agentName = selectedAgent ?? config?.defaultAgent
+		return openCodeAgents?.find((a) => a.name === agentName) ?? null
+	}, [selectedAgent, config?.defaultAgent, openCodeAgents])
+
+	// Resolve effective model (user override > agent model > config > recent > provider default)
+	const effectiveModel = useMemo(
+		() =>
+			resolveEffectiveModel(
+				selectedModel,
+				activeOpenCodeAgent,
+				config?.model,
+				providers?.defaults ?? {},
+				providers?.providers ?? [],
+				recentModels,
+			),
+		[selectedModel, activeOpenCodeAgent, config?.model, providers, recentModels],
+	)
+
+	const handleSend = useCallback(
+		async (text: string) => {
+			if (!text.trim() || !onSendMessage || sending) return
+			setSending(true)
+			try {
+				await onSendMessage(agent, text.trim(), {
+					model: effectiveModel ?? undefined,
+					agentName: selectedAgent ?? undefined,
+					variant: selectedVariant,
+				})
+			} finally {
+				setSending(false)
+			}
+		},
+		[onSendMessage, sending, agent, effectiveModel, selectedAgent, selectedVariant],
+	)
+
+	const canSend = isConnected && !isWorking && !sending
 
 	return (
 		<div className="flex h-full flex-col">
-			<Conversation className="min-h-0 flex-1">
-				<ConversationContent className="px-4 py-4">
-					{loading ? (
-						<div className="flex items-center justify-center py-8">
-							<Loader2Icon className="size-5 animate-spin text-muted-foreground" />
-							<span className="ml-2 text-sm text-muted-foreground">Loading chat...</span>
+			{/* Chat messages — constrained width for readability */}
+			<div className="relative min-h-0 flex-1">
+				<Conversation className="h-full [&>div]:scrollbar-thin">
+					<ConversationContent className="gap-10 px-4 py-6">
+						<div className="mx-auto w-full max-w-4xl">
+							{/* Load earlier messages button */}
+							{hasEarlierMessages && (
+								<div className="flex justify-center pb-4">
+									<button
+										type="button"
+										onClick={onLoadEarlier}
+										disabled={loadingEarlier}
+										className="flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+									>
+										{loadingEarlier ? (
+											<Loader2Icon className="size-3 animate-spin" />
+										) : (
+											<ChevronUpIcon className="size-3" />
+										)}
+										{loadingEarlier ? "Loading..." : "Load earlier messages"}
+									</button>
+								</div>
+							)}
+
+							{loading ? (
+								<div className="flex items-center justify-center py-8">
+									<Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+									<span className="ml-2 text-sm text-muted-foreground">Loading chat...</span>
+								</div>
+							) : turns.length > 0 ? (
+								turns.map((turn, index) => (
+									<ChatTurnComponent
+										key={turn.id}
+										turn={turn}
+										isLast={index === turns.length - 1}
+										isWorking={isWorking}
+									/>
+								))
+							) : (
+								<div className="flex items-center justify-center py-8">
+									<p className="text-sm text-muted-foreground">No messages yet</p>
+								</div>
+							)}
 						</div>
-					) : turns.length > 0 ? (
-						turns.map((turn, index) => (
-							<ChatTurnComponent
-								key={turn.id}
-								turn={turn}
-								isLast={index === turns.length - 1}
-								isWorking={isWorking}
-							/>
-						))
-					) : (
-						<div className="flex items-center justify-center py-8">
-							<p className="text-sm text-muted-foreground">No messages yet</p>
-						</div>
-					)}
-				</ConversationContent>
-				<ConversationScrollButton />
-			</Conversation>
+					</ConversationContent>
+					<ConversationScrollButton />
+				</Conversation>
 
-			<ChatInput
-				agent={agent}
-				isConnected={isConnected}
-				isWorking={isWorking}
-				onSendMessage={onSendMessage}
-			/>
-		</div>
-	)
-}
-
-/**
- * Chat message input — textarea with send button.
- * Simpler than OpenCode's contenteditable approach but functional.
- */
-function ChatInput({
-	agent,
-	isConnected,
-	isWorking,
-	onSendMessage,
-}: {
-	agent: Agent
-	isConnected: boolean
-	isWorking: boolean
-	onSendMessage?: (agent: Agent, message: string) => Promise<void>
-}) {
-	const [message, setMessage] = useState("")
-	const [sending, setSending] = useState(false)
-	const inputRef = useRef<HTMLTextAreaElement>(null)
-
-	const handleSend = useCallback(async () => {
-		const text = message.trim()
-		if (!text || !onSendMessage || sending) return
-		setSending(true)
-		try {
-			await onSendMessage(agent, text)
-			setMessage("")
-			// Re-focus input after sending
-			inputRef.current?.focus()
-		} finally {
-			setSending(false)
-		}
-	}, [message, onSendMessage, sending, agent])
-
-	const canSend = isConnected && !isWorking && message.trim().length > 0 && !sending
-
-	return (
-		<div className="border-t border-border p-3">
-			<div className="flex items-end gap-2">
-				<textarea
-					ref={inputRef}
-					value={message}
-					onChange={(e) => setMessage(e.target.value)}
-					onKeyDown={(e) => {
-						if (e.key === "Enter" && !e.shiftKey) {
-							e.preventDefault()
-							if (canSend) handleSend()
-						}
-					}}
-					placeholder={
-						!isConnected
-							? "Connect to server to send messages..."
-							: isWorking
-								? "Waiting for response..."
-								: "Send a message... (Enter to send, Shift+Enter for newline)"
-					}
-					disabled={!isConnected}
-					rows={1}
-					className="min-h-[36px] max-h-[120px] flex-1 resize-none rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+				{/* Top fade */}
+				<div
+					aria-hidden="true"
+					className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-background to-transparent"
 				/>
-				<Button
-					size="sm"
-					variant="ghost"
-					onClick={handleSend}
-					disabled={!canSend}
-					className="shrink-0"
-				>
-					{sending ? (
-						<Loader2Icon className="size-4 animate-spin" />
-					) : (
-						<SendIcon className="size-4" />
-					)}
-				</Button>
+				{/* Bottom fade */}
+				<div
+					aria-hidden="true"
+					className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-6 bg-gradient-to-t from-background to-transparent"
+				/>
 			</div>
-			{!isConnected && (
-				<p className="mt-1.5 text-[11px] text-muted-foreground">
-					No server connection. Start the OpenCode server to interact with this session.
-				</p>
-			)}
+
+			{/* Bottom input section — card + status bar */}
+			<div className="px-4 pb-4 pt-2">
+				<div className="mx-auto w-full max-w-4xl">
+					{/* Input card — rounded container with textarea + toolbar inside */}
+					<PromptInput
+						className="rounded-xl"
+						onSubmit={(message) => {
+							if (message.text.trim() && canSend) handleSend(message.text)
+						}}
+					>
+						<PromptInputTextarea
+							placeholder={
+								!isConnected
+									? "Connect to server to send messages..."
+									: isWorking
+										? "Waiting for response..."
+										: "Ask for follow-up changes"
+							}
+							disabled={!isConnected}
+							className="min-h-[80px]"
+						/>
+
+						{/* Toolbar inside the card — agent + model + variant selectors + submit */}
+						<PromptInputFooter>
+							<PromptInputTools>
+								<PromptToolbar
+									agents={openCodeAgents ?? []}
+									selectedAgent={selectedAgent}
+									defaultAgent={config?.defaultAgent}
+									onSelectAgent={setSelectedAgent}
+									providers={providers ?? null}
+									effectiveModel={effectiveModel}
+									hasModelOverride={!!selectedModel}
+									onSelectModel={setSelectedModel}
+									selectedVariant={selectedVariant}
+									onSelectVariant={setSelectedVariant}
+									disabled={!isConnected}
+								/>
+							</PromptInputTools>
+							<PromptInputSubmit disabled={!canSend} status={isWorking ? "streaming" : undefined} />
+						</PromptInputFooter>
+					</PromptInput>
+
+					{/* Status bar — outside the card */}
+					<StatusBar vcs={vcs ?? null} isConnected={isConnected} />
+				</div>
+			</div>
 		</div>
 	)
 }

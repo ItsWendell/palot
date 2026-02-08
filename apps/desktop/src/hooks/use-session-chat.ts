@@ -1,63 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { fetchSessionMessages } from "../services/codedeck-server"
-import { getClient } from "../services/connection-manager"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { Message, Part } from "../lib/types"
+import { getProjectClient } from "../services/connection-manager"
+import { useAppStore } from "../stores/app-store"
 
 // ============================================================
-// Types — mirrors OpenCode's message/part structure
+// Types — wrappers around SDK Message + Part
 // ============================================================
 
-export interface ChatMessageInfo {
-	id: string
-	role: "user" | "assistant"
-	parentID?: string
-	sessionID?: string
-	time: {
-		created: number
-		completed?: number
-	}
-	modelID?: string
-	providerID?: string
-	cost?: number
-	tokens?: {
-		input: number
-		output: number
-		reasoning: number
-		cache: { read: number; write: number }
-	}
-	error?: {
-		data?: {
-			message?: string
-		}
-	}
-	summary?: {
-		title?: string
-		body?: string
-		diffs?: unknown[]
-	}
-}
-
-export interface ChatPart {
-	id: string
-	type: string // "text" | "tool" | "reasoning" | "step-start" | "step-finish" | "file"
-	text?: string
-	tool?: string
-	callID?: string
-	synthetic?: boolean
-	state?: {
-		status?: string
-		input?: Record<string, unknown>
-		output?: string
-		title?: string
-		error?: string
-		metadata?: Record<string, unknown>
-		time?: { start?: number; end?: number }
-	}
-	time?: { start?: number; end?: number }
-}
-
+/** A message with its associated parts — mirrors the API response shape */
 export interface ChatMessageEntry {
-	info: ChatMessageInfo
-	parts: ChatPart[]
+	info: Message
+	parts: Part[]
 }
 
 /**
@@ -70,11 +23,41 @@ export interface ChatTurn {
 	assistantMessages: ChatMessageEntry[]
 }
 
+// ============================================================
+// Turn grouping with structural sharing
+// ============================================================
+
 /**
- * Groups messages into turns: each user message + subsequent assistant messages
- * that have matching parentID.
+ * Creates a fingerprint for a message entry based on its ID,
+ * completion time, and part count. Used for cheap equality checks.
  */
-function groupIntoTurns(entries: ChatMessageEntry[]): ChatTurn[] {
+function messageFingerprint(entry: ChatMessageEntry): string {
+	const lastPart = entry.parts.at(-1)
+	const completed = entry.info.role === "assistant" ? (entry.info.time.completed ?? 0) : 0
+	return `${entry.info.id}:${completed}:${entry.parts.length}:${lastPart?.id ?? ""}`
+}
+
+/**
+ * Creates a fingerprint for a turn. If the fingerprint matches,
+ * the turn hasn't changed and the previous object can be reused.
+ */
+function turnFingerprint(turn: ChatTurn): string {
+	const assistantFps = turn.assistantMessages.map(messageFingerprint).join("|")
+	return `${messageFingerprint(turn.userMessage)}>${assistantFps}`
+}
+
+/**
+ * Groups messages into turns: each user message + subsequent assistant messages.
+ * Uses structural sharing with `prevTurns` to preserve object references
+ * for unchanged turns, so React.memo() can skip re-renders.
+ */
+function groupIntoTurns(entries: ChatMessageEntry[], prevTurns: ChatTurn[]): ChatTurn[] {
+	// Build a map of previous fingerprints -> turn objects for reuse
+	const prevMap = new Map<string, ChatTurn>()
+	for (const t of prevTurns) {
+		prevMap.set(turnFingerprint(t), t)
+	}
+
 	const turns: ChatTurn[] = []
 
 	for (let i = 0; i < entries.length; i++) {
@@ -86,136 +69,130 @@ function groupIntoTurns(entries: ChatMessageEntry[]): ChatTurn[] {
 			const next = entries[j]
 			if (next.info.role === "user") break
 			if (next.info.role === "assistant") {
-				// Include if parentID matches or if there's no parentID tracking
 				if (!next.info.parentID || next.info.parentID === entry.info.id) {
 					assistantMessages.push(next)
 				}
 			}
 		}
 
-		turns.push({
+		const newTurn: ChatTurn = {
 			id: entry.info.id,
 			userMessage: entry,
 			assistantMessages,
-		})
+		}
+
+		// Reuse previous turn object if fingerprint matches
+		const fp = turnFingerprint(newTurn)
+		const prevTurn = prevMap.get(fp)
+		turns.push(prevTurn ?? newTurn)
 	}
 
 	return turns
 }
 
-/** Polling interval for active sessions (ms) */
-const ACTIVE_POLL_INTERVAL = 2000
-/** Polling interval for idle sessions after first load (ms) — disabled */
-const IDLE_POLL_INTERVAL = 0
+// ============================================================
+// Hook
+// ============================================================
+
+/** How many messages to fetch on initial load */
+const INITIAL_LIMIT = 100
 
 /**
- * Hook to load full chat data for a session.
- * Returns structured turns (user + assistant messages with parts)
- * instead of flattened activities.
+ * Hook to load chat data for a session.
  *
- * When `isActive` is true (session is running/waiting), polls for updates
- * every 2 seconds to provide near-real-time chat updates.
+ * - Reads messages/parts from the Zustand store (populated by SSE events)
+ * - Does a one-time initial fetch to hydrate the store
+ * - Uses structural sharing in `groupIntoTurns` to preserve React.memo()
+ * - No polling — SSE keeps data up to date
  */
 export function useSessionChat(
-	serverId: string | null,
+	directory: string | null,
 	sessionId: string | null,
-	isActive = false,
+	_isActive = false,
 ) {
-	const [turns, setTurns] = useState<ChatTurn[]>([])
-	const [rawMessages, setRawMessages] = useState<ChatMessageEntry[]>([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	const abortRef = useRef<AbortController | null>(null)
-	const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+	/** Track which sessions we've already synced */
+	const syncedRef = useRef<Set<string>>(new Set())
+	const turnsRef = useRef<ChatTurn[]>([])
 
-	const loadMessages = useCallback(
-		async (showLoading = true) => {
-			if (!sessionId) {
-				setTurns([])
-				setRawMessages([])
-				return
-			}
+	// Read from store — Zustand selector returns stable ref if unchanged
+	const storeMessages = useAppStore((s) => s.messages[sessionId ?? ""])
+	const storeParts = useAppStore((s) => s.parts)
 
-			abortRef.current?.abort()
-			const abort = new AbortController()
-			abortRef.current = abort
+	// Assemble ChatMessageEntry[] from store state
+	const entries: ChatMessageEntry[] = useMemo(() => {
+		if (!storeMessages) return []
+		return storeMessages.map((msg) => ({
+			info: msg,
+			parts: storeParts[msg.id] ?? [],
+		}))
+	}, [storeMessages, storeParts])
 
-			if (showLoading) {
-				setLoading(true)
-			}
+	// Group into turns with structural sharing
+	const turns = useMemo(() => {
+		const result = groupIntoTurns(entries, turnsRef.current)
+		turnsRef.current = result
+		return result
+	}, [entries])
+
+	// One-time fetch to hydrate the store when session changes
+	const fetchAndHydrate = useCallback(
+		async (sid: string) => {
+			const client = directory ? getProjectClient(directory) : null
+			if (!client) return
+
+			setLoading(true)
 			setError(null)
-
 			try {
-				let messages: ChatMessageEntry[]
+				const result = await client.session.messages({
+					sessionID: sid,
+					limit: INITIAL_LIMIT,
+				})
+				const raw = (result.data ?? []) as Array<{ info: Message; parts: Part[] }>
 
-				// Try the live OpenCode server first
-				const client = serverId ? getClient(serverId) : null
-				if (client) {
-					const result = await client.session.messages({
-						path: { id: sessionId },
-					})
-					messages = (result.data as unknown as ChatMessageEntry[]) ?? []
-				} else {
-					// Fallback: read from disk via codedeck backend
-					const result = await fetchSessionMessages(sessionId)
-					messages = (result.messages as unknown as ChatMessageEntry[]) ?? []
+				// Hydrate the store
+				const messages = raw.map((m) => m.info)
+				const parts: Record<string, Part[]> = {}
+				for (const m of raw) {
+					parts[m.info.id] = m.parts
 				}
-
-				if (abort.signal.aborted) return
-
-				setRawMessages(messages)
-				setTurns(groupIntoTurns(messages))
+				useAppStore.getState().setMessages(sid, messages, parts)
 			} catch (err) {
-				if (abort.signal.aborted) return
-				console.error("Failed to load chat messages:", err)
+				console.error("Failed to fetch session messages:", err)
 				setError(err instanceof Error ? err.message : "Failed to load messages")
-				setTurns([])
-				setRawMessages([])
 			} finally {
-				if (!abort.signal.aborted) {
-					setLoading(false)
-				}
+				setLoading(false)
 			}
 		},
-		[serverId, sessionId],
+		[directory],
 	)
 
-	// Initial load when session changes
+	// Trigger initial fetch when session changes (only once per session)
 	useEffect(() => {
-		loadMessages(true)
-		return () => {
-			abortRef.current?.abort()
-		}
-	}, [loadMessages])
+		if (!sessionId) return
+		if (syncedRef.current.has(sessionId)) return
+		syncedRef.current.add(sessionId)
+		fetchAndHydrate(sessionId)
+	}, [sessionId, fetchAndHydrate])
 
-	// Polling for active sessions — provides near-real-time updates
-	// without requiring a full store-based SSE event system
+	// Reset when session changes
 	useEffect(() => {
-		if (!isActive || !sessionId) {
-			if (pollTimerRef.current) {
-				clearTimeout(pollTimerRef.current)
-				pollTimerRef.current = undefined
-			}
-			return
+		if (!sessionId) {
+			turnsRef.current = []
 		}
+	}, [sessionId])
 
-		const interval = isActive ? ACTIVE_POLL_INTERVAL : IDLE_POLL_INTERVAL
-		if (interval <= 0) return
-
-		const poll = () => {
-			loadMessages(false) // Don't show loading spinner on polls
-			pollTimerRef.current = setTimeout(poll, interval)
-		}
-
-		pollTimerRef.current = setTimeout(poll, interval)
-
-		return () => {
-			if (pollTimerRef.current) {
-				clearTimeout(pollTimerRef.current)
-				pollTimerRef.current = undefined
-			}
-		}
-	}, [isActive, sessionId, loadMessages])
-
-	return { turns, rawMessages, loading, error, reload: loadMessages }
+	return {
+		turns,
+		rawMessages: entries,
+		loading,
+		loadingEarlier: false,
+		error,
+		/** Whether there are earlier messages that haven't been loaded */
+		hasEarlierMessages: false,
+		/** Load the full message history (no-op for now, could be implemented later) */
+		loadEarlier: async () => {},
+		reload: fetchAndHydrate,
+	}
 }

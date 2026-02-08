@@ -99,8 +99,6 @@ export interface Agent {
 	activities: Activity[]
 	/** The underlying OpenCode session ID */
 	sessionId: string
-	/** The server instance this agent belongs to */
-	serverId: string
 	/** Pending permission requests for this agent */
 	permissions: SdkPermission[]
 	/** If set, this is a sub-agent spawned by the parent session */

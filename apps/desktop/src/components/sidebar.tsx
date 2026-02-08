@@ -269,7 +269,7 @@ function ProjectFolder({
 
 	return (
 		<div>
-			<div className="group/project flex items-center overflow-hidden">
+			<div className="flex items-center overflow-hidden">
 				<button
 					type="button"
 					onClick={() => {
@@ -290,17 +290,6 @@ function ProjectFolder({
 					<Badge variant="secondary" className="ml-auto shrink-0 px-1.5 py-0 text-[10px]">
 						{project.agentCount}
 					</Badge>
-				</button>
-				<button
-					type="button"
-					onClick={(e) => {
-						e.stopPropagation()
-						navigate({ to: "/project/$projectSlug", params: { projectSlug: project.slug } })
-					}}
-					className="mr-1 shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar-accent hover:text-foreground group-hover/project:opacity-100"
-					aria-label={`New session for ${project.name}`}
-				>
-					<PlusIcon className="size-3" />
 				</button>
 			</div>
 

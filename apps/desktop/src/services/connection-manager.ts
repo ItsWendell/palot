@@ -1,138 +1,149 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/client"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { useAppStore } from "../stores/app-store"
-import { startServerForProject } from "./codedeck-server"
-import { connectToServer, getSessionStatuses, listSessions, subscribeToEvents } from "./opencode"
+import {
+	connectToServer,
+	getSessionStatuses,
+	listSessions,
+	subscribeToGlobalEvents,
+} from "./opencode"
 
-/** Active connections, keyed by server ID */
-const connections = new Map<
-	string,
-	{
-		client: OpencodeClient
-		abortController: AbortController
-	}
->()
+// ============================================================
+// State — single server connection + per-project clients
+// ============================================================
+
+/** The single OpenCode server connection */
+let connection: {
+	url: string
+	/** Base client (no directory) — used for SSE subscription */
+	baseClient: OpencodeClient
+	abortController: AbortController
+} | null = null
+
+/** Per-project SDK clients, keyed by directory path */
+const projectClients = new Map<string, OpencodeClient>()
+
+// ============================================================
+// Public API
+// ============================================================
 
 /**
- * Connect to an OpenCode server and start listening for events.
- * This is called once per server when the app starts or when a new server is added.
+ * Connect to the single OpenCode server.
+ * Starts SSE subscription for all-project events.
  */
-export async function connectAndSubscribe(
-	serverId: string,
-	url: string,
-	directory: string,
-): Promise<OpencodeClient> {
+export async function connectToOpenCode(url: string): Promise<void> {
+	// Disconnect existing connection if any
+	if (connection) {
+		connection.abortController.abort()
+		projectClients.clear()
+	}
+
 	const store = useAppStore.getState()
+	store.setOpenCodeUrl(url)
 
-	// Register server in store
-	store.addServer(serverId, url, directory)
-
-	// Create client
-	const client = connectToServer(url, directory)
+	// Base client has no directory — used for SSE events (which cover all projects)
+	const baseClient = connectToServer(url)
 	const abortController = new AbortController()
 
-	connections.set(serverId, { client, abortController })
+	connection = { url, baseClient, abortController }
 
-	// Load initial data
+	// Start SSE event loop in the background
+	startEventLoop(baseClient, abortController.signal)
+
+	store.setOpenCodeConnected(true)
+}
+
+/**
+ * Load sessions for a specific project directory from the server.
+ * Merges them into the flat store.
+ */
+export async function loadProjectSessions(directory: string): Promise<void> {
+	const client = getProjectClient(directory)
+	if (!client) return
+
+	const store = useAppStore.getState()
 	try {
 		const [sessions, statuses] = await Promise.all([
 			listSessions(client),
 			getSessionStatuses(client),
 		])
-		store.setSessions(serverId, sessions, statuses)
-		store.setServerConnected(serverId, true)
+		store.setSessions(sessions, statuses, directory)
 	} catch (err) {
-		console.error(`Failed to load initial data for server ${serverId}:`, err)
+		console.error(`Failed to load sessions for ${directory}:`, err)
 	}
+}
 
-	// Start event subscription in background
-	startEventLoop(serverId, client, abortController.signal)
+/**
+ * Get or create a project-scoped SDK client.
+ * All project clients point at the same URL but send different
+ * `x-opencode-directory` headers.
+ */
+export function getProjectClient(directory: string): OpencodeClient | null {
+	if (!connection) return null
 
+	let client = projectClients.get(directory)
+	if (!client) {
+		client = connectToServer(connection.url, directory)
+		projectClients.set(directory, client)
+	}
 	return client
 }
 
 /**
- * Disconnect from a server and stop listening.
+ * Check if we're connected to the OpenCode server.
  */
-export function disconnect(serverId: string): void {
-	const conn = connections.get(serverId)
-	if (conn) {
-		conn.abortController.abort()
-		connections.delete(serverId)
+export function isConnected(): boolean {
+	return connection !== null
+}
+
+/**
+ * Get the server URL, or null if not connected.
+ */
+export function getServerUrl(): string | null {
+	return connection?.url ?? null
+}
+
+/**
+ * Disconnect from the OpenCode server.
+ */
+export function disconnect(): void {
+	if (connection) {
+		connection.abortController.abort()
+		connection = null
+		projectClients.clear()
 	}
-	useAppStore.getState().removeServer(serverId)
+	const store = useAppStore.getState()
+	store.setOpenCodeConnected(false)
 }
 
-/**
- * Get the client for a server.
- */
-export function getClient(serverId: string): OpencodeClient | undefined {
-	return connections.get(serverId)?.client
-}
+// ============================================================
+// SSE Event Loop
+// ============================================================
 
 /**
- * Find an already-connected server for a given project directory.
- * Returns the server ID or null if no server is connected for that directory.
- */
-export function findServerForDirectory(directory: string): string | null {
-	const servers = useAppStore.getState().servers
-	for (const server of Object.values(servers)) {
-		if (server.connected && server.directory === directory) {
-			return server.id
-		}
-	}
-	return null
-}
-
-/** Auto-incrementing ID for servers started via ensureServerForProject */
-let nextAutoServerId = 1
-
-/**
- * Ensures a server is running and connected for a given project directory.
- * - If already connected, returns the existing server ID immediately.
- * - If not, starts the server via the codedeck backend, connects to it, and returns the new server ID.
- *
- * This is the main entry point for the "invisible server" UX — the user never
- * thinks about servers, they just interact with projects and sessions.
- */
-export async function ensureServerForProject(directory: string): Promise<string> {
-	// Check if we already have a connected server for this directory
-	const existingId = findServerForDirectory(directory)
-	if (existingId) return existingId
-
-	// Start the server via the codedeck backend (waits for it to be ready)
-	const { server } = await startServerForProject(directory)
-
-	// Connect to the new server and subscribe to events
-	const serverId = server.id ?? `auto-${nextAutoServerId++}`
-	await connectAndSubscribe(serverId, server.url, server.directory)
-
-	return serverId
-}
-
-/**
- * Background event loop that processes SSE events.
+ * Background event loop that processes SSE events from the single server.
+ * Events from ALL projects come through one stream.
  * Reconnects on disconnect with exponential backoff.
  */
-async function startEventLoop(
-	serverId: string,
-	client: OpencodeClient,
-	signal: AbortSignal,
-): Promise<void> {
+async function startEventLoop(client: OpencodeClient, signal: AbortSignal): Promise<void> {
 	let retryDelay = 1000
 
 	while (!signal.aborted) {
 		try {
-			const stream = await subscribeToEvents(client)
+			const stream = await subscribeToGlobalEvents(client)
 			retryDelay = 1000 // Reset on successful connect
 
-			for await (const event of stream) {
+			for await (const globalEvent of stream) {
 				if (signal.aborted) break
-				useAppStore.getState().processEvent(serverId, event)
+				// Global events wrap the payload with { directory, payload }
+				const event = globalEvent.payload
+				if (event) {
+					useAppStore.getState().processEvent(event)
+				}
 			}
 		} catch (err) {
 			if (signal.aborted) break
-			console.error(`Event stream for server ${serverId} disconnected:`, err)
-			useAppStore.getState().setServerConnected(serverId, false)
+			console.error("Event stream disconnected:", err)
+			useAppStore.getState().setOpenCodeConnected(false)
 		}
 
 		if (signal.aborted) break
@@ -140,5 +151,10 @@ async function startEventLoop(
 		// Exponential backoff: 1s, 2s, 4s, 8s, max 30s
 		await new Promise((resolve) => setTimeout(resolve, retryDelay))
 		retryDelay = Math.min(retryDelay * 2, 30000)
+
+		// Mark as connected again on reconnect attempt
+		if (connection) {
+			useAppStore.getState().setOpenCodeConnected(true)
+		}
 	}
 }

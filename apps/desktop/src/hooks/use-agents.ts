@@ -25,15 +25,15 @@ function deriveAgentStatus(status: SessionStatus, hasPermissions: boolean): Agen
  */
 function formatRelativeTime(timestampMs: number): string {
 	const seconds = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000))
-	if (seconds < 60) return "just now"
+	if (seconds < 60) return "now"
 	const minutes = Math.floor(seconds / 60)
-	if (minutes < 60) return `${minutes}m ago`
+	if (minutes < 60) return `${minutes}m`
 	const hours = Math.floor(minutes / 60)
-	if (hours < 24) return `${hours}h ago`
+	if (hours < 24) return `${hours}h`
 	const days = Math.floor(hours / 24)
-	if (days < 30) return `${days}d ago`
+	if (days < 30) return `${days}d`
 	const months = Math.floor(days / 30)
-	return `${months}mo ago`
+	return `${months}mo`
 }
 
 /**
@@ -92,11 +92,11 @@ function buildProjectSlugMap(projects: ProjectEntry[]): Map<string, { id: string
 }
 
 /**
- * Collects all unique project entries from servers and discovery.
+ * Collects all unique project entries from sessions and discovery.
  * Used as input to buildProjectSlugMap.
  */
 function collectAllProjects(
-	servers: Record<string, { directory: string }>,
+	sessions: Record<string, { directory: string }>,
 	discovery: { loaded: boolean; projects: DiscoveredProject[] },
 ): ProjectEntry[] {
 	const entries: ProjectEntry[] = []
@@ -114,19 +114,19 @@ function collectAllProjects(
 		}
 	}
 
-	// Live server projects — use directory hash as fallback ID
-	for (const server of Object.values(servers)) {
-		if (seenDirs.has(server.directory)) continue
-		seenDirs.add(server.directory)
-		// Simple hash of directory as fallback ID
+	// Live session directories — use directory hash as fallback ID
+	for (const entry of Object.values(sessions)) {
+		if (seenDirs.has(entry.directory)) continue
+		if (!entry.directory) continue
+		seenDirs.add(entry.directory)
 		let hash = 0
-		for (let i = 0; i < server.directory.length; i++) {
-			hash = (hash * 31 + server.directory.charCodeAt(i)) | 0
+		for (let i = 0; i < entry.directory.length; i++) {
+			hash = (hash * 31 + entry.directory.charCodeAt(i)) | 0
 		}
 		entries.push({
 			id: `dir-${Math.abs(hash).toString(16).padStart(8, "0")}`,
-			name: projectNameFromDir(server.directory),
-			directory: server.directory,
+			name: projectNameFromDir(entry.directory),
+			directory: entry.directory,
 		})
 	}
 
@@ -140,58 +140,54 @@ function collectAllProjects(
  * This avoids the "getSnapshot must be cached" infinite loop with React 19.
  */
 export function useAgents(): Agent[] {
-	const servers = useAppStore((s) => s.servers)
+	const sessions = useAppStore((s) => s.sessions ?? {})
 	const discovery = useAppStore((s) => s.discovery)
 
 	return useMemo(() => {
 		const agents: Agent[] = []
 
 		// Build project slug map for all projects
-		const allProjects = collectAllProjects(servers, discovery)
+		const allProjects = collectAllProjects(sessions, discovery)
 		const slugMap = buildProjectSlugMap(allProjects)
 
-		// Collect IDs of sessions that are live (connected to a server)
+		// Collect IDs of sessions that are live (from the store)
 		const liveSessionIds = new Set<string>()
 
-		// 1. Live server sessions — these take priority
-		for (const server of Object.values(servers)) {
-			const projectInfo = slugMap.get(server.directory)
+		// 1. Live sessions — these take priority
+		for (const entry of Object.values(sessions)) {
+			const { session, status, permissions, directory } = entry
+			liveSessionIds.add(session.id)
+			const projectInfo = slugMap.get(directory)
+			const agentStatus = deriveAgentStatus(status, permissions.length > 0)
 
-			for (const entry of Object.values(server.sessions)) {
-				const { session, status, permissions } = entry
-				liveSessionIds.add(session.id)
-				const agentStatus = deriveAgentStatus(status, permissions.length > 0)
+			const created = session.time.created
+			const lastActiveAt = session.time.updated ?? session.time.created
+			const isActive = agentStatus === "running" || agentStatus === "waiting"
 
-				const created = session.time.created
-				const lastActiveAt = session.time.updated ?? session.time.created
-				const isActive = agentStatus === "running" || agentStatus === "waiting"
-
-				agents.push({
-					id: session.id,
-					sessionId: session.id,
-					serverId: server.id,
-					name: session.title || "Untitled",
-					status: agentStatus,
-					environment: "local" as const,
-					project: projectNameFromDir(server.directory),
-					projectSlug: projectInfo?.slug ?? projectNameFromDir(server.directory),
-					directory: server.directory,
-					branch: "",
-					duration: isActive ? formatElapsed(created) : formatRelativeTime(lastActiveAt),
-					tokens: 0,
-					cost: 0,
-					currentActivity:
-						permissions.length > 0
-							? `Waiting for approval: ${permissions[0].title}`
-							: status.type === "busy"
-								? "Working..."
-								: undefined,
-					activities: [],
-					permissions,
-					parentId: session.parentID,
-					lastActiveAt,
-				})
-			}
+			agents.push({
+				id: session.id,
+				sessionId: session.id,
+				name: session.title || "Untitled",
+				status: agentStatus,
+				environment: "local" as const,
+				project: projectNameFromDir(directory),
+				projectSlug: projectInfo?.slug ?? projectNameFromDir(directory),
+				directory,
+				branch: "",
+				duration: isActive ? formatElapsed(created) : formatRelativeTime(lastActiveAt),
+				tokens: 0,
+				cost: 0,
+				currentActivity:
+					permissions.length > 0
+						? `Waiting for approval: ${permissions[0].title}`
+						: status.type === "busy"
+							? "Working..."
+							: undefined,
+				activities: [],
+				permissions,
+				parentId: session.parentID,
+				lastActiveAt,
+			})
 		}
 
 		// 2. Discovered (offline) sessions — only if not already live
@@ -201,13 +197,13 @@ export function useAgents(): Agent[] {
 				projectMap.set(project.id, project)
 			}
 
-			for (const [projectId, sessions] of Object.entries(discovery.sessions)) {
+			for (const [projectId, discoverySessions] of Object.entries(discovery.sessions)) {
 				const project = projectMap.get(projectId)
 				if (!project) continue
 
 				const projectInfo = slugMap.get(project.worktree)
 
-				for (const session of sessions) {
+				for (const session of discoverySessions) {
 					if (liveSessionIds.has(session.id)) continue
 
 					const lastActiveAt = session.time.updated ?? session.time.created
@@ -215,7 +211,6 @@ export function useAgents(): Agent[] {
 					agents.push({
 						id: session.id,
 						sessionId: session.id,
-						serverId: "", // No live server
 						name: session.title || "Untitled",
 						status: "completed" as const,
 						environment: "local" as const,
@@ -237,7 +232,7 @@ export function useAgents(): Agent[] {
 		}
 
 		return agents
-	}, [servers, discovery])
+	}, [sessions, discovery])
 }
 
 /**
@@ -248,63 +243,55 @@ export function useAgents(): Agent[] {
  * are excluded from counts.
  */
 export function useProjectList(): SidebarProject[] {
-	const servers = useAppStore((s) => s.servers)
+	const sessions = useAppStore((s) => s.sessions ?? {})
 	const discovery = useAppStore((s) => s.discovery)
-	const showSubAgents = useAppStore((s) => s.ui.showSubAgents)
+	const showSubAgents = useAppStore((s) => s.ui?.showSubAgents ?? false)
 
 	return useMemo(() => {
 		// Build project slug map for all projects
-		const allProjects = collectAllProjects(servers, discovery)
+		const allProjects = collectAllProjects(sessions, discovery)
 		const slugMap = buildProjectSlugMap(allProjects)
 
 		// Key by directory (which is unique per project)
 		const projects = new Map<string, SidebarProject>()
 
-		// Live server projects
-		for (const server of Object.values(servers)) {
-			const projectInfo = slugMap.get(server.directory)
-			const name = projectNameFromDir(server.directory)
-			const existing = projects.get(server.directory)
-			let sessionCount = 0
-			let lastActiveAt = existing?.lastActiveAt ?? 0
-			for (const entry of Object.values(server.sessions)) {
-				if (!showSubAgents && entry.session.parentID) continue
-				sessionCount++
-				const t = entry.session.time.updated ?? entry.session.time.created ?? 0
-				if (t > lastActiveAt) lastActiveAt = t
-			}
+		// Live sessions grouped by directory
+		const liveSessionIds = new Set<string>()
+		for (const entry of Object.values(sessions)) {
+			liveSessionIds.add(entry.session.id)
+			if (!showSubAgents && entry.session.parentID) continue
+			if (!entry.directory) continue
+
+			const dir = entry.directory
+			const projectInfo = slugMap.get(dir)
+			const name = projectNameFromDir(dir)
+			const t = entry.session.time.updated ?? entry.session.time.created ?? 0
+
+			const existing = projects.get(dir)
 			if (existing) {
-				existing.agentCount += sessionCount
-				if (lastActiveAt > existing.lastActiveAt) existing.lastActiveAt = lastActiveAt
+				existing.agentCount += 1
+				if (t > existing.lastActiveAt) existing.lastActiveAt = t
 			} else {
-				projects.set(server.directory, {
-					id: projectInfo?.id ?? server.directory,
+				projects.set(dir, {
+					id: projectInfo?.id ?? dir,
 					slug: projectInfo?.slug ?? name,
 					name,
-					directory: server.directory,
-					agentCount: sessionCount,
-					lastActiveAt,
+					directory: dir,
+					agentCount: 1,
+					lastActiveAt: t,
 				})
 			}
 		}
 
-		// Discovered projects — add sessions not already counted from live servers
+		// Discovered projects — add sessions not already counted from live sessions
 		if (discovery.loaded) {
-			// Build set of live session IDs
-			const liveSessionIds = new Set<string>()
-			for (const server of Object.values(servers)) {
-				for (const sessionId of Object.keys(server.sessions)) {
-					liveSessionIds.add(sessionId)
-				}
-			}
-
 			for (const project of discovery.projects) {
 				const projectInfo = slugMap.get(project.worktree)
 				const name = projectNameFromDir(project.worktree)
-				const sessions = discovery.sessions[project.id] ?? []
+				const discoverySessions = discovery.sessions[project.id] ?? []
 				let offlineCount = 0
 				let lastActiveAt = projects.get(project.worktree)?.lastActiveAt ?? 0
-				for (const s of sessions) {
+				for (const s of discoverySessions) {
 					if (liveSessionIds.has(s.id)) continue
 					if (!showSubAgents && s.parentID) continue
 					offlineCount++
@@ -332,7 +319,7 @@ export function useProjectList(): SidebarProject[] {
 		}
 
 		return Array.from(projects.values()).sort((a, b) => b.lastActiveAt - a.lastActiveAt)
-	}, [servers, discovery, showSubAgents])
+	}, [sessions, discovery, showSubAgents])
 }
 
 /**

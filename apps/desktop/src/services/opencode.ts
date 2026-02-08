@@ -1,5 +1,5 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/client"
-import { createOpencodeClient } from "@opencode-ai/sdk/client"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
 import type { Event, Session, SessionStatus } from "../lib/types"
 
 export type { OpencodeClient }
@@ -37,7 +37,7 @@ export async function getSessionStatuses(
  * Create a new session (= new agent).
  */
 export async function createSession(client: OpencodeClient, title?: string): Promise<Session> {
-	const result = await client.session.create({ body: { title } })
+	const result = await client.session.create({ title })
 	return result.data as Session
 }
 
@@ -51,14 +51,19 @@ export async function sendPrompt(
 	options?: {
 		providerID?: string
 		modelID?: string
+		agent?: string
+		variant?: string
 	},
 ): Promise<void> {
 	await client.session.promptAsync({
-		path: { id: sessionId },
-		body: {
-			parts: [{ type: "text", text }],
-			model: options ? { providerID: options.providerID!, modelID: options.modelID! } : undefined,
-		},
+		sessionID: sessionId,
+		parts: [{ type: "text", text }],
+		model:
+			options?.providerID && options?.modelID
+				? { providerID: options.providerID, modelID: options.modelID }
+				: undefined,
+		agent: options?.agent,
+		variant: options?.variant,
 	})
 }
 
@@ -66,21 +71,21 @@ export async function sendPrompt(
  * Abort a running session.
  */
 export async function abortSession(client: OpencodeClient, sessionId: string): Promise<void> {
-	await client.session.abort({ path: { id: sessionId } })
+	await client.session.abort({ sessionID: sessionId })
 }
 
 /**
  * Delete a session.
  */
 export async function deleteSession(client: OpencodeClient, sessionId: string): Promise<void> {
-	await client.session.delete({ path: { id: sessionId } })
+	await client.session.delete({ sessionID: sessionId })
 }
 
 /**
  * Get file diffs for a session.
  */
 export async function getSessionDiff(client: OpencodeClient, sessionId: string) {
-	const result = await client.session.diff({ path: { id: sessionId } })
+	const result = await client.session.diff({ sessionID: sessionId })
 	return result.data ?? []
 }
 
@@ -93,19 +98,33 @@ export async function respondToPermission(
 	permissionId: string,
 	response: "once" | "always" | "reject",
 ): Promise<void> {
-	await client.postSessionIdPermissionsPermissionId({
-		path: { id: sessionId, permissionID: permissionId },
-		body: { response },
+	await client.permission.respond({
+		sessionID: sessionId,
+		permissionID: permissionId,
+		response,
 	})
 }
 
 /**
- * Subscribe to SSE events from a server.
- * Returns an async iterable of events.
+ * Global event from the /global/event SSE endpoint.
+ * Wraps each Event with the directory it belongs to.
  */
-export async function subscribeToEvents(client: OpencodeClient): Promise<AsyncIterable<Event>> {
-	const result = await client.event.subscribe()
-	return result.stream as AsyncIterable<Event>
+export interface GlobalEvent {
+	directory: string
+	payload: Event
+}
+
+/**
+ * Subscribe to global SSE events from the server.
+ * Uses `/global/event` which streams events from ALL projects,
+ * each tagged with their directory. This avoids the per-directory
+ * scoping issue where `/event` only returns events for one Instance.
+ */
+export async function subscribeToGlobalEvents(
+	client: OpencodeClient,
+): Promise<AsyncIterable<GlobalEvent>> {
+	const result = await client.global.event()
+	return result.stream as AsyncIterable<GlobalEvent>
 }
 
 /**
@@ -113,7 +132,7 @@ export async function subscribeToEvents(client: OpencodeClient): Promise<AsyncIt
  */
 export async function getSessionMessages(client: OpencodeClient, sessionId: string) {
 	const result = await client.session.messages({
-		path: { id: sessionId },
+		sessionID: sessionId,
 	})
 	return result.data ?? []
 }

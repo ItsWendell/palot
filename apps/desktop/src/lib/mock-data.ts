@@ -10,7 +10,7 @@ export const MOCK_AGENTS: Agent[] = [
 	{
 		id: "1",
 		sessionId: "mock-session-1",
-		serverId: "mock-server",
+
 		name: "Add OAuth2 login flow",
 		status: "running",
 		environment: "cloud",
@@ -65,7 +65,7 @@ export const MOCK_AGENTS: Agent[] = [
 	{
 		id: "2",
 		sessionId: "mock-session-2",
-		serverId: "mock-server",
+
 		name: "Fix CI pipeline",
 		status: "running",
 		environment: "local",
@@ -99,7 +99,7 @@ export const MOCK_AGENTS: Agent[] = [
 	{
 		id: "3",
 		sessionId: "mock-session-3",
-		serverId: "mock-server",
+
 		name: "Update dependencies",
 		status: "completed",
 		environment: "cloud",
@@ -134,7 +134,7 @@ export const MOCK_AGENTS: Agent[] = [
 	{
 		id: "4",
 		sessionId: "mock-session-4",
-		serverId: "mock-server",
+
 		name: "Refactor database layer",
 		status: "failed",
 		environment: "local",
@@ -163,7 +163,7 @@ export const MOCK_AGENTS: Agent[] = [
 	{
 		id: "5",
 		sessionId: "mock-session-5",
-		serverId: "mock-server",
+
 		name: "Add dark mode support",
 		status: "waiting",
 		environment: "cloud",
@@ -191,7 +191,7 @@ export const MOCK_AGENTS: Agent[] = [
 	{
 		id: "6",
 		sessionId: "mock-session-6",
-		serverId: "mock-server",
+
 		name: "Implement search API",
 		status: "running",
 		environment: "cloud",

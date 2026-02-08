@@ -38,81 +38,102 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: "Inter", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.375rem;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/*
+ * Color palette derived from the OpenCode design system.
+ * Uses warm grays (slight red/brown tint) instead of neutral grays.
+ *
+ * Light: warm near-whites (#fdfcfc) with dark text (#211e1e)
+ * Dark:  warm near-blacks (#131010) with light text (#efeded)
+ *
+ * OpenCode uses alpha-based colors for borders/text in dark mode.
+ * Below are opaque approximations computed against the background.
+ */
+
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.714);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Light mode — derived from OpenCode "smoke-light" scale */
+  --background: #f8f7f7;
+  --foreground: #211e1e;
+  --card: #fdfcfc;
+  --card-foreground: #211e1e;
+  --popover: #fdfcfc;
+  --popover-foreground: #211e1e;
+  --primary: #211e1e;
+  --primary-foreground: #fdfcfc;
+  --secondary: #f1f0f0;
+  --secondary-foreground: #211e1e;
+  --muted: #f1f0f0;
+  --muted-foreground: #8e8b8b;
+  --accent: #eae8e8;
+  --accent-foreground: #211e1e;
+  --destructive: #fc533a;
+  --destructive-foreground: #fdfcfc;
+  --border: #dcd9d9;
+  --input: #dcd9d9;
+  --ring: #b0aeae;
+  --chart-1: #dc6b40;
+  --chart-2: #3ba58b;
+  --chart-3: #3a6ee0;
+  --chart-4: #d4b93c;
+  --chart-5: #c75dbd;
+  --sidebar: #f1f0f0;
+  --sidebar-foreground: #211e1e;
+  --sidebar-primary: #211e1e;
+  --sidebar-primary-foreground: #fdfcfc;
+  --sidebar-accent: #eae8e8;
+  --sidebar-accent-foreground: #211e1e;
+  --sidebar-border: #e5e3e3;
+  --sidebar-ring: #b0aeae;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.145 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.145 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
-  --border: oklch(0.269 0 0);
-  --input: oklch(0.269 0 0);
-  --ring: oklch(0.439 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.175 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.269 0 0);
-  --sidebar-ring: oklch(0.439 0 0);
+  /* Dark mode — derived from OpenCode "smoke-dark" scale
+   * Opaque equivalents of their alpha colors computed on #131010 bg */
+  --background: #131010;
+  --foreground: #efeded;
+  --card: #151313;
+  --card-foreground: #efeded;
+  --popover: #1c1717;
+  --popover-foreground: #efeded;
+  --primary: #f1ecec;
+  --primary-foreground: #131010;
+  --secondary: #1c1717;
+  --secondary-foreground: #efeded;
+  --muted: #221d1d;
+  --muted-foreground: #6f6c6b;
+  --accent: #271f1f;
+  --accent-foreground: #efeded;
+  --destructive: #fc533a;
+  --destructive-foreground: #fdfcfc;
+  --border: #2d2626;
+  --input: #2d2626;
+  --ring: #4a4242;
+  --chart-1: #e88a5e;
+  --chart-2: #4cc9a5;
+  --chart-3: #6b98e8;
+  --chart-4: #e8d570;
+  --chart-5: #d880cf;
+  --sidebar: #0f0d0d;
+  --sidebar-foreground: #efeded;
+  --sidebar-primary: #f1ecec;
+  --sidebar-primary-foreground: #131010;
+  --sidebar-accent: #1c1717;
+  --sidebar-accent-foreground: #efeded;
+  --sidebar-border: #251f1f;
+  --sidebar-ring: #4a4242;
 }
 
 @layer base {
@@ -121,6 +142,33 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: "ss03" 1, "rlig" 1, "calt" 1;
+  }
+  code, kbd, samp, pre {
+    font-feature-settings: "ss01" 1;
+  }
+}
+
+/* Thin scrollbar — matches shadcn/ui ScrollArea appearance */
+@layer base {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: var(--ring);
   }
 }

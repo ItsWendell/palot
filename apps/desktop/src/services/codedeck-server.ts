@@ -39,29 +39,14 @@ export async function fetchServers() {
 }
 
 /**
- * Starts an OpenCode server for a project directory.
- * Returns the server info once it's ready to accept connections.
+ * Ensures the single OpenCode server is running and returns its URL.
+ * Calls `GET /api/servers/opencode` on the Codedeck backend.
  */
-export async function startServerForProject(directory: string) {
-	const res = await client.api.servers.start.$post({
-		json: { directory },
-	})
+export async function fetchOpenCodeUrl(): Promise<{ url: string }> {
+	const res = await client.api.servers.opencode.$get()
 	if (!res.ok) {
 		const data = await res.json()
-		throw new Error("error" in data ? data.error : "Failed to start server")
-	}
-	return res.json()
-}
-
-/**
- * Stops a managed OpenCode server for a project directory.
- */
-export async function stopServerForProject(directory: string) {
-	const res = await client.api.servers.stop.$post({
-		json: { directory },
-	})
-	if (!res.ok) {
-		throw new Error("Failed to stop server")
+		throw new Error("error" in data ? data.error : "Failed to get OpenCode server URL")
 	}
 	return res.json()
 }
@@ -76,6 +61,22 @@ export async function fetchSessionMessages(sessionId: string) {
 	})
 	if (!res.ok) {
 		throw new Error(`Messages fetch failed: ${res.status} ${res.statusText}`)
+	}
+	return res.json()
+}
+
+/**
+ * Fetches the OpenCode model state (recent models, favorites, variants)
+ * from the backend, which reads ~/.local/state/opencode/model.json.
+ */
+export async function fetchModelState(): Promise<{
+	recent: { providerID: string; modelID: string }[]
+	favorite: { providerID: string; modelID: string }[]
+	variant: Record<string, string | undefined>
+}> {
+	const res = await client.api["model-state"].$get()
+	if (!res.ok) {
+		throw new Error(`Model state fetch failed: ${res.status} ${res.statusText}`)
 	}
 	return res.json()
 }

@@ -1,13 +1,14 @@
 import { useEffect } from "react"
-import { fetchDiscovery, fetchServers } from "../services/codedeck-server"
-import { connectAndSubscribe } from "../services/connection-manager"
+import { fetchDiscovery, fetchOpenCodeUrl } from "../services/codedeck-server"
+import { connectToOpenCode, loadProjectSessions } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
 
 /**
  * On mount:
  * 1. Fetches discovered projects/sessions from disk (via Codedeck server)
- * 2. Detects running OpenCode servers
- * 3. Auto-connects to all running servers for live status + SSE events
+ * 2. Ensures the single OpenCode server is running (via Codedeck backend)
+ * 3. Connects to the OpenCode server (SSE events for all projects)
+ * 4. Loads live sessions for all discovered projects
  *
  * Only runs once — subsequent calls are no-ops if already loaded.
  */
@@ -23,24 +24,29 @@ export function useDiscovery() {
 
 		setLoading()
 
-		Promise.all([fetchDiscovery(), fetchServers()])
-			.then(async ([discoveryData, serversData]) => {
-				// Store discovered projects/sessions
+		;(async () => {
+			try {
+				// 1. Discover projects/sessions from disk
+				const discoveryData = await fetchDiscovery()
 				setResult(discoveryData.projects, discoveryData.sessions)
 
-				// Auto-connect to each running OpenCode server
-				for (const server of serversData.servers) {
-					try {
-						await connectAndSubscribe(server.id, server.url, server.directory)
-						console.log(`Auto-connected to ${server.name} at ${server.url}`)
-					} catch (err) {
-						console.error(`Failed to connect to ${server.name}:`, err)
-					}
-				}
-			})
-			.catch((err) => {
+				// 2. Ensure the single OpenCode server is running
+				const { url } = await fetchOpenCodeUrl()
+
+				// 3. Connect to the single server (starts SSE)
+				await connectToOpenCode(url)
+
+				// 4. Load live sessions for all discovered projects in parallel
+				const directories = discoveryData.projects.map((p) => p.worktree)
+				await Promise.allSettled(directories.map((dir) => loadProjectSessions(dir)))
+
+				console.log(
+					`Connected to OpenCode at ${url}, loaded sessions for ${directories.length} projects`,
+				)
+			} catch (err) {
 				console.error("Discovery failed:", err)
 				setError(err instanceof Error ? err.message : "Discovery failed")
-			})
+			}
+		})()
 	}, [loaded, loading, setLoading, setResult, setError])
 }

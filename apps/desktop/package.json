@@ -13,6 +13,8 @@
 	},
 	"dependencies": {
 		"@codedeck/ui": "workspace:*",
+		"@fontsource-variable/inter": "^5.2.8",
+		"@fontsource/ibm-plex-mono": "^5.2.7",
 		"@opencode-ai/sdk": "^1.1.53",
 		"@tanstack/react-query": "^5.90.20",
 		"@tanstack/react-router": "^1.158.4",

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Activity } from "../lib/types"
 import { fetchSessionMessages } from "../services/codedeck-server"
-import { getClient } from "../services/connection-manager"
+import { getProjectClient } from "../services/connection-manager"
 
 /**
  * SDK returns messages as { info: Message, parts: Part[] }
@@ -130,9 +130,9 @@ function messagesToActivities(entries: MessageEntry[]): Activity[] {
 
 /**
  * Hook to load messages for a selected session.
- * Fetches on-demand when serverId/sessionId changes.
+ * Fetches on-demand when directory/sessionId changes.
  */
-export function useSessionMessages(serverId: string | null, sessionId: string | null) {
+export function useSessionMessages(directory: string | null, sessionId: string | null) {
 	const [activities, setActivities] = useState<Activity[]>([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
@@ -156,10 +156,10 @@ export function useSessionMessages(serverId: string | null, sessionId: string | 
 			let messages: MessageEntry[]
 
 			// Try the live OpenCode server first (if we have a connection)
-			const client = serverId ? getClient(serverId) : null
+			const client = directory ? getProjectClient(directory) : null
 			if (client) {
 				const result = await client.session.messages({
-					path: { id: sessionId },
+					sessionID: sessionId,
 				})
 				messages = (result.data as unknown as MessageEntry[]) ?? []
 			} else {
@@ -182,7 +182,7 @@ export function useSessionMessages(serverId: string | null, sessionId: string | 
 				setLoading(false)
 			}
 		}
-	}, [serverId, sessionId])
+	}, [directory, sessionId])
 
 	useEffect(() => {
 		loadMessages()

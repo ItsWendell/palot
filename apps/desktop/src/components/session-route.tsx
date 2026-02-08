@@ -1,11 +1,11 @@
 import { useParams } from "@tanstack/react-router"
 import { useCallback, useMemo } from "react"
 import { useAgents } from "../hooks/use-agents"
+import type { ModelRef } from "../hooks/use-opencode-data"
+import { useConfig, useOpenCodeAgents, useProviders, useVcs } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import { useSessionChat } from "../hooks/use-session-chat"
-import { useSessionMessages } from "../hooks/use-session-messages"
 import type { Agent } from "../lib/types"
-import { ensureServerForProject } from "../services/connection-manager"
 import { AgentDetail } from "./agent-detail"
 
 export function SessionRoute() {
@@ -30,49 +30,60 @@ export function SessionRoute() {
 		return parent?.name
 	}, [agents, selectedAgent?.parentId])
 
-	// Load messages for the selected session
-	const { activities, loading: activitiesLoading } = useSessionMessages(
-		selectedAgent?.serverId ?? null,
-		selectedAgent?.sessionId ?? null,
-	)
+	// Load chat turns for the selected session
 	const isSessionActive = selectedAgent?.status === "running" || selectedAgent?.status === "waiting"
-	const { turns: chatTurns, loading: chatLoading } = useSessionChat(
-		selectedAgent?.serverId ?? null,
+	const {
+		turns: chatTurns,
+		loading: chatLoading,
+		loadingEarlier: chatLoadingEarlier,
+		hasEarlierMessages: chatHasEarlier,
+		loadEarlier: chatLoadEarlier,
+	} = useSessionChat(
+		selectedAgent?.directory ?? null,
 		selectedAgent?.sessionId ?? null,
 		isSessionActive,
 	)
 
-	const detailActivities = activities.length > 0 ? activities : (selectedAgent?.activities ?? [])
+	// Toolbar data — providers, config, VCS, and OpenCode agents
+	const directory = selectedAgent?.directory ?? null
+	const { data: providers } = useProviders(directory)
+	const { data: config } = useConfig(directory)
+	const { data: vcs } = useVcs(directory)
+	const { agents: openCodeAgents } = useOpenCodeAgents(directory)
 
 	// Handlers
 	const handleStopAgent = useCallback(
 		async (agent: Agent) => {
-			await abort(agent.serverId, agent.sessionId)
+			await abort(agent.directory, agent.sessionId)
 		},
 		[abort],
 	)
 
 	const handleApprovePermission = useCallback(
 		async (agent: Agent, permissionId: string) => {
-			await respondToPermission(agent.serverId, agent.sessionId, permissionId, "once")
+			await respondToPermission(agent.directory, agent.sessionId, permissionId, "once")
 		},
 		[respondToPermission],
 	)
 
 	const handleDenyPermission = useCallback(
 		async (agent: Agent, permissionId: string) => {
-			await respondToPermission(agent.serverId, agent.sessionId, permissionId, "reject")
+			await respondToPermission(agent.directory, agent.sessionId, permissionId, "reject")
 		},
 		[respondToPermission],
 	)
 
 	const handleSendMessage = useCallback(
-		async (agent: Agent, message: string) => {
-			let { serverId } = agent
-			if (!serverId) {
-				serverId = await ensureServerForProject(agent.directory)
-			}
-			await sendPrompt(serverId, agent.sessionId, message)
+		async (
+			agent: Agent,
+			message: string,
+			options?: { model?: ModelRef; agentName?: string; variant?: string },
+		) => {
+			await sendPrompt(agent.directory, agent.sessionId, message, {
+				model: options?.model,
+				agent: options?.agentName,
+				variant: options?.variant,
+			})
 		},
 		[sendPrompt],
 	)
@@ -94,16 +105,21 @@ export function SessionRoute() {
 	return (
 		<AgentDetail
 			agent={selectedAgent}
-			activities={detailActivities}
-			activitiesLoading={activitiesLoading}
 			chatTurns={chatTurns}
 			chatLoading={chatLoading}
+			chatLoadingEarlier={chatLoadingEarlier}
+			chatHasEarlier={chatHasEarlier}
+			onLoadEarlier={chatLoadEarlier}
 			onStop={handleStopAgent}
 			onApprove={handleApprovePermission}
 			onDeny={handleDenyPermission}
 			onSendMessage={handleSendMessage}
 			parentSessionName={parentSessionName}
 			isConnected={true}
+			providers={providers}
+			config={config}
+			vcs={vcs}
+			openCodeAgents={openCodeAgents}
 		/>
 	)
 }

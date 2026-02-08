@@ -1,24 +1,23 @@
 import { create } from "zustand"
-import type { Event, Permission, Session, SessionStatus } from "../lib/types"
+import type { Event, Message, Part, Permission, Session, SessionStatus } from "../lib/types"
 
 // ============================================================
 // Store types
 // ============================================================
 
-interface SessionEntry {
+export interface SessionEntry {
 	session: Session
 	status: SessionStatus
 	/** Pending permission requests */
 	permissions: Permission[]
+	/** Project directory this session belongs to */
+	directory: string
 }
 
-interface ServerConnection {
-	id: string
-	url: string
-	directory: string
+/** Single OpenCode server connection state */
+interface OpenCodeState {
+	url: string | null
 	connected: boolean
-	/** Session data keyed by session ID */
-	sessions: Record<string, SessionEntry>
 }
 
 /** A project discovered from OpenCode's local storage */
@@ -54,15 +53,10 @@ export interface DiscoveredSession {
 
 /** State for discovered (offline) data from local storage */
 interface DiscoveryState {
-	/** Whether discovery has been loaded */
 	loaded: boolean
-	/** Whether discovery is currently loading */
 	loading: boolean
-	/** Error message if discovery failed */
 	error: string | null
-	/** Discovered projects */
 	projects: DiscoveredProject[]
-	/** Discovered sessions, keyed by project ID */
 	sessions: Record<string, DiscoveredSession[]>
 }
 
@@ -72,29 +66,41 @@ interface UIState {
 }
 
 interface AppState {
-	/** Connected OpenCode server instances */
-	servers: Record<string, ServerConnection>
+	/** Single OpenCode server state */
+	opencode: OpenCodeState
+	/** All sessions (flat, not nested under servers) */
+	sessions: Record<string, SessionEntry>
+	/** Messages keyed by sessionID, sorted by id */
+	messages: Record<string, Message[]>
+	/** Parts keyed by messageID, sorted by id */
+	parts: Record<string, Part[]>
 	/** Discovered data from local OpenCode storage */
 	discovery: DiscoveryState
 	/** UI state */
 	ui: UIState
 
 	// ========== Server actions ==========
-	addServer: (id: string, url: string, directory: string) => void
-	removeServer: (id: string) => void
-	setServerConnected: (id: string, connected: boolean) => void
+	setOpenCodeUrl: (url: string) => void
+	setOpenCodeConnected: (connected: boolean) => void
 
 	// ========== Session actions ==========
-	setSession: (serverId: string, session: Session) => void
-	removeSession: (serverId: string, sessionId: string) => void
-	setSessionStatus: (serverId: string, sessionId: string, status: SessionStatus) => void
-	addPermission: (serverId: string, sessionId: string, permission: Permission) => void
-	removePermission: (serverId: string, sessionId: string, permissionId: string) => void
+	setSession: (session: Session, directory: string) => void
+	removeSession: (sessionId: string) => void
+	setSessionStatus: (sessionId: string, status: SessionStatus) => void
+	addPermission: (sessionId: string, permission: Permission) => void
+	removePermission: (sessionId: string, permissionId: string) => void
 	setSessions: (
-		serverId: string,
 		sessions: Session[],
 		statuses: Record<string, SessionStatus>,
+		directory: string,
 	) => void
+
+	// ========== Message/Part actions ==========
+	setMessages: (sessionId: string, messages: Message[], parts: Record<string, Part[]>) => void
+	upsertMessage: (message: Message) => void
+	removeMessage: (sessionId: string, messageId: string) => void
+	upsertPart: (part: Part) => void
+	removePart: (messageId: string, partId: string) => void
 
 	// ========== Discovery actions ==========
 	setDiscoveryLoading: () => void
@@ -110,7 +116,33 @@ interface AppState {
 	toggleShowSubAgents: () => void
 
 	// ========== Event processing ==========
-	processEvent: (serverId: string, event: Event) => void
+	processEvent: (event: Event) => void
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
+/**
+ * Binary search for sorted arrays. Returns { found, index }.
+ * If found, index is the position of the match.
+ * If not found, index is where the item should be inserted.
+ */
+function binarySearch<T>(
+	arr: T[],
+	target: string,
+	key: (item: T) => string,
+): { found: boolean; index: number } {
+	let lo = 0
+	let hi = arr.length
+	while (lo < hi) {
+		const mid = (lo + hi) >>> 1
+		const cmp = key(arr[mid]).localeCompare(target)
+		if (cmp < 0) lo = mid + 1
+		else if (cmp > 0) hi = mid
+		else return { found: true, index: mid }
+	}
+	return { found: false, index: lo }
 }
 
 // ============================================================
@@ -118,7 +150,13 @@ interface AppState {
 // ============================================================
 
 export const useAppStore = create<AppState>((set, get) => ({
-	servers: {},
+	opencode: {
+		url: null,
+		connected: false,
+	},
+	sessions: {},
+	messages: {},
+	parts: {},
 	discovery: {
 		loaded: false,
 		loading: false,
@@ -133,153 +171,193 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 	// ========== Server actions ==========
 
-	addServer: (id, url, directory) =>
+	setOpenCodeUrl: (url) =>
 		set((state) => ({
-			servers: {
-				...state.servers,
-				[id]: { id, url, directory, connected: false, sessions: {} },
-			},
+			opencode: { ...state.opencode, url },
 		})),
 
-	removeServer: (id) =>
-		set((state) => {
-			const { [id]: _, ...rest } = state.servers
-			return { servers: rest }
-		}),
-
-	setServerConnected: (id, connected) =>
-		set((state) => {
-			const server = state.servers[id]
-			if (!server) return state
-			return {
-				servers: {
-					...state.servers,
-					[id]: { ...server, connected },
-				},
-			}
-		}),
+	setOpenCodeConnected: (connected) =>
+		set((state) => ({
+			opencode: { ...state.opencode, connected },
+		})),
 
 	// ========== Session actions ==========
 
-	setSession: (serverId, session) =>
+	setSession: (session, directory) =>
 		set((state) => {
-			const server = state.servers[serverId]
-			if (!server) return state
-			const existing = server.sessions[session.id]
+			const existing = state.sessions[session.id]
 			return {
-				servers: {
-					...state.servers,
-					[serverId]: {
-						...server,
-						sessions: {
-							...server.sessions,
-							[session.id]: {
-								session,
-								status: existing?.status ?? { type: "idle" },
-								permissions: existing?.permissions ?? [],
-							},
-						},
+				sessions: {
+					...state.sessions,
+					[session.id]: {
+						session,
+						status: existing?.status ?? { type: "idle" },
+						permissions: existing?.permissions ?? [],
+						directory: existing?.directory ?? directory,
 					},
 				},
 			}
 		}),
 
-	removeSession: (serverId, sessionId) =>
+	removeSession: (sessionId) =>
 		set((state) => {
-			const server = state.servers[serverId]
-			if (!server) return state
-			const { [sessionId]: _, ...rest } = server.sessions
-			return {
-				servers: {
-					...state.servers,
-					[serverId]: { ...server, sessions: rest },
-				},
-			}
+			const { [sessionId]: _, ...rest } = state.sessions
+			return { sessions: rest }
 		}),
 
-	setSessionStatus: (serverId, sessionId, status) =>
+	setSessionStatus: (sessionId, status) =>
 		set((state) => {
-			const server = state.servers[serverId]
-			if (!server) return state
-			const entry = server.sessions[sessionId]
+			const entry = state.sessions[sessionId]
 			if (!entry) return state
 			return {
-				servers: {
-					...state.servers,
-					[serverId]: {
-						...server,
-						sessions: {
-							...server.sessions,
-							[sessionId]: { ...entry, status },
-						},
-					},
+				sessions: {
+					...state.sessions,
+					[sessionId]: { ...entry, status },
 				},
 			}
 		}),
 
-	addPermission: (serverId, sessionId, permission) =>
+	addPermission: (sessionId, permission) =>
 		set((state) => {
-			const server = state.servers[serverId]
-			if (!server) return state
-			const entry = server.sessions[sessionId]
+			const entry = state.sessions[sessionId]
 			if (!entry) return state
 			return {
-				servers: {
-					...state.servers,
-					[serverId]: {
-						...server,
-						sessions: {
-							...server.sessions,
-							[sessionId]: {
-								...entry,
-								permissions: [...entry.permissions, permission],
-							},
-						},
+				sessions: {
+					...state.sessions,
+					[sessionId]: {
+						...entry,
+						permissions: [...entry.permissions, permission],
 					},
 				},
 			}
 		}),
 
-	removePermission: (serverId, sessionId, permissionId) =>
+	removePermission: (sessionId, permissionId) =>
 		set((state) => {
-			const server = state.servers[serverId]
-			if (!server) return state
-			const entry = server.sessions[sessionId]
+			const entry = state.sessions[sessionId]
 			if (!entry) return state
 			return {
-				servers: {
-					...state.servers,
-					[serverId]: {
-						...server,
-						sessions: {
-							...server.sessions,
-							[sessionId]: {
-								...entry,
-								permissions: entry.permissions.filter((p) => p.id !== permissionId),
-							},
-						},
+				sessions: {
+					...state.sessions,
+					[sessionId]: {
+						...entry,
+						permissions: entry.permissions.filter((p) => p.id !== permissionId),
 					},
 				},
 			}
 		}),
 
-	setSessions: (serverId, sessions, statuses) =>
+	setSessions: (sessions, statuses, directory) =>
 		set((state) => {
-			const server = state.servers[serverId]
-			if (!server) return state
-			const sessionEntries: Record<string, SessionEntry> = {}
+			const newSessions = { ...state.sessions }
 			for (const session of sessions) {
-				sessionEntries[session.id] = {
+				const existing = newSessions[session.id]
+				newSessions[session.id] = {
 					session,
-					status: statuses[session.id] ?? { type: "idle" },
-					permissions: server.sessions[session.id]?.permissions ?? [],
+					status: statuses[session.id] ?? existing?.status ?? { type: "idle" },
+					permissions: existing?.permissions ?? [],
+					directory,
 				}
 			}
+			return { sessions: newSessions }
+		}),
+
+	// ========== Message/Part actions ==========
+
+	setMessages: (sessionId, messages, messageParts) =>
+		set((state) => ({
+			messages: { ...state.messages, [sessionId]: messages },
+			parts: { ...state.parts, ...messageParts },
+		})),
+
+	upsertMessage: (message) =>
+		set((state) => {
+			const sessionId = message.sessionID
+			let existing = state.messages[sessionId] ?? []
+			let newParts = state.parts
+
+			// When a real user message arrives, remove any optimistic placeholder
+			if (message.role === "user" && !message.id.startsWith("optimistic-")) {
+				const hasOptimistic = existing.some(
+					(m) => m.id.startsWith("optimistic-") && m.role === "user",
+				)
+				if (hasOptimistic) {
+					const cleaned: Record<string, Part[]> = { ...state.parts }
+					existing = existing.filter((m) => {
+						if (m.id.startsWith("optimistic-")) {
+							delete cleaned[m.id]
+							return false
+						}
+						return true
+					})
+					newParts = cleaned
+				}
+			}
+
+			const result = binarySearch(existing, message.id, (m) => m.id)
+			let updated: Message[]
+			if (result.found) {
+				updated = [...existing]
+				updated[result.index] = message
+			} else {
+				updated = [...existing]
+				updated.splice(result.index, 0, message)
+			}
+			// Cap at 200 messages per session (remove oldest + clean up parts)
+			if (updated.length > 200) {
+				const removed = updated.shift()!
+				const { [removed.id]: _, ...restParts } = newParts
+				newParts = restParts
+			}
 			return {
-				servers: {
-					...state.servers,
-					[serverId]: { ...server, sessions: sessionEntries },
-				},
+				messages: { ...state.messages, [sessionId]: updated },
+				parts: newParts,
+			}
+		}),
+
+	removeMessage: (sessionId, messageId) =>
+		set((state) => {
+			const existing = state.messages[sessionId]
+			if (!existing) return state
+			const result = binarySearch(existing, messageId, (m) => m.id)
+			if (!result.found) return state
+			const updated = [...existing]
+			updated.splice(result.index, 1)
+			const { [messageId]: _, ...restParts } = state.parts
+			return {
+				messages: { ...state.messages, [sessionId]: updated },
+				parts: restParts,
+			}
+		}),
+
+	upsertPart: (part) =>
+		set((state) => {
+			const messageId = part.messageID
+			const existing = state.parts[messageId] ?? []
+			const result = binarySearch(existing, part.id, (p) => p.id)
+			let updated: Part[]
+			if (result.found) {
+				updated = [...existing]
+				updated[result.index] = part
+			} else {
+				updated = [...existing]
+				updated.splice(result.index, 0, part)
+			}
+			return {
+				parts: { ...state.parts, [messageId]: updated },
+			}
+		}),
+
+	removePart: (messageId, partId) =>
+		set((state) => {
+			const existing = state.parts[messageId]
+			if (!existing) return state
+			const result = binarySearch(existing, partId, (p) => p.id)
+			if (!result.found) return state
+			const updated = [...existing]
+			updated.splice(result.index, 1)
+			return {
+				parts: { ...state.parts, [messageId]: updated },
 			}
 		}),
 
@@ -312,40 +390,60 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 	// ========== Event processing ==========
 
-	processEvent: (serverId, event) => {
+	processEvent: (event) => {
 		const state = get()
 		switch (event.type) {
 			case "server.connected":
-				state.setServerConnected(serverId, true)
+				state.setOpenCodeConnected(true)
 				break
 
-			case "session.created":
-				state.setSession(serverId, event.properties.info)
+			case "session.created": {
+				const info = event.properties.info
+				state.setSession(info, info.directory ?? "")
 				break
+			}
 
-			case "session.updated":
-				state.setSession(serverId, event.properties.info)
+			case "session.updated": {
+				const info = event.properties.info
+				state.setSession(info, info.directory ?? "")
 				break
+			}
 
 			case "session.deleted":
-				state.removeSession(serverId, event.properties.info.id)
+				state.removeSession(event.properties.info.id)
 				break
 
 			case "session.status":
-				state.setSessionStatus(serverId, event.properties.sessionID, event.properties.status)
+				state.setSessionStatus(event.properties.sessionID, event.properties.status)
 				break
 
 			case "permission.updated":
-				state.addPermission(serverId, event.properties.sessionID, event.properties as Permission)
+				state.addPermission(event.properties.sessionID, event.properties as Permission)
 				break
 
 			case "permission.replied":
-				state.removePermission(serverId, event.properties.sessionID, event.properties.permissionID)
+				state.removePermission(event.properties.sessionID, event.properties.permissionID)
+				break
+
+			case "message.updated":
+				state.upsertMessage(event.properties.info)
+				break
+
+			case "message.removed":
+				state.removeMessage(event.properties.sessionID, event.properties.messageID)
+				break
+
+			case "message.part.updated":
+				state.upsertPart(event.properties.part)
+				break
+
+			case "message.part.removed":
+				state.removePart(event.properties.messageID, event.properties.partID)
 				break
 		}
 	},
 }))
 
 // Derived selectors have been moved to hooks/use-agents.ts
-// They use `useAppStore((s) => s.servers)` + `useMemo` to avoid
-// the "getSnapshot must be cached" infinite loop issue.
+// They use `useAppStore((s) => s.sessions)` and `useAppStore((s) => s.discovery)`
+// + `useMemo` to avoid the "getSnapshot must be cached" infinite loop issue.

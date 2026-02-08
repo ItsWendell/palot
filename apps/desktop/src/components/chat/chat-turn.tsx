@@ -5,13 +5,11 @@ import {
 	MessageContent,
 	MessageResponse,
 } from "@codedeck/ui/components/ai-elements/message"
-import { CheckIcon, ChevronDownIcon, CopyIcon, Loader2Icon } from "lucide-react"
+import { Shimmer } from "@codedeck/ui/components/ai-elements/shimmer"
+import { CheckIcon, ChevronDownIcon, CopyIcon } from "lucide-react"
 import { memo, useCallback, useMemo, useState } from "react"
-import type {
-	ChatMessageEntry,
-	ChatPart,
-	ChatTurn as ChatTurnType,
-} from "../../hooks/use-session-chat"
+import type { ChatMessageEntry, ChatTurn as ChatTurnType } from "../../hooks/use-session-chat"
+import type { Part, TextPart, ToolPart } from "../../lib/types"
 import { ChatToolCall } from "./chat-tool-call"
 
 /**
@@ -36,9 +34,8 @@ function computeDuration(start: number, end?: number): string {
 
 /**
  * Computes a status string from the last active part.
- * Follows OpenCode's computeStatusFromPart pattern.
  */
-function computeStatus(parts: ChatPart[]): string {
+function computeStatus(parts: Part[]): string {
 	for (let i = parts.length - 1; i >= 0; i--) {
 		const part = parts[i]
 		if (part.type === "tool") {
@@ -73,18 +70,58 @@ function computeStatus(parts: ChatPart[]): string {
 }
 
 /**
+ * Generates a compact summary of tool calls, e.g., "Explored 3 files"
+ */
+function getToolSummary(toolParts: ToolPart[]): string {
+	if (toolParts.length === 0) return ""
+
+	const counts: Record<string, number> = {}
+	for (const part of toolParts) {
+		const tool = part.tool
+		// Group related tools
+		if (tool === "read" || tool === "glob" || tool === "grep" || tool === "list") {
+			counts.explored = (counts.explored ?? 0) + 1
+		} else if (tool === "edit" || tool === "write" || tool === "apply_patch") {
+			counts.edited = (counts.edited ?? 0) + 1
+		} else if (tool === "bash") {
+			counts.ran = (counts.ran ?? 0) + 1
+		} else if (tool === "task") {
+			counts.delegated = (counts.delegated ?? 0) + 1
+		} else if (tool === "webfetch") {
+			counts.fetched = (counts.fetched ?? 0) + 1
+		} else if (tool === "todowrite" || tool === "todoread") {
+			// skip — rendered separately
+		} else {
+			counts.used = (counts.used ?? 0) + 1
+		}
+	}
+
+	const parts: string[] = []
+	if (counts.explored)
+		parts.push(`Explored ${counts.explored} ${counts.explored === 1 ? "file" : "files"}`)
+	if (counts.edited) parts.push(`Edited ${counts.edited} ${counts.edited === 1 ? "file" : "files"}`)
+	if (counts.ran) parts.push(`Ran ${counts.ran} ${counts.ran === 1 ? "command" : "commands"}`)
+	if (counts.delegated)
+		parts.push(`Delegated ${counts.delegated} ${counts.delegated === 1 ? "task" : "tasks"}`)
+	if (counts.fetched)
+		parts.push(`Fetched ${counts.fetched} ${counts.fetched === 1 ? "page" : "pages"}`)
+	if (counts.used) parts.push(`Used ${counts.used} ${counts.used === 1 ? "tool" : "tools"}`)
+
+	return parts.join(", ")
+}
+
+/**
  * Extracts the user message text from parts.
  */
 function getUserText(entry: ChatMessageEntry): string {
 	return entry.parts
-		.filter((p) => p.type === "text" && p.text)
-		.map((p) => p.text!)
+		.filter((p): p is TextPart => p.type === "text")
+		.map((p) => p.text)
 		.join("\n")
 }
 
 /**
  * Extracts the final response text from assistant messages.
- * Follows OpenCode's pattern: find the last text part across all assistant messages.
  */
 function getResponseText(assistantMessages: ChatMessageEntry[]): {
 	text: string | undefined
@@ -105,8 +142,8 @@ function getResponseText(assistantMessages: ChatMessageEntry[]): {
 /**
  * Collects all tool parts across assistant messages.
  */
-function getToolParts(assistantMessages: ChatMessageEntry[]): ChatPart[] {
-	const tools: ChatPart[] = []
+function getToolParts(assistantMessages: ChatMessageEntry[]): ToolPart[] {
+	const tools: ToolPart[] = []
 	for (const msg of assistantMessages) {
 		for (const part of msg.parts) {
 			if (part.type === "tool") {
@@ -122,8 +159,11 @@ function getToolParts(assistantMessages: ChatMessageEntry[]): ChatPart[] {
  */
 function getError(assistantMessages: ChatMessageEntry[]): string | undefined {
 	for (const msg of assistantMessages) {
-		const error = msg.info.error?.data?.message
-		if (error) return typeof error === "string" ? error : String(error)
+		if (msg.info.role === "assistant" && msg.info.error) {
+			const errorData = msg.info.error.data
+			const message = "message" in errorData ? errorData.message : undefined
+			if (message) return typeof message === "string" ? message : String(message)
+		}
 	}
 	return undefined
 }
@@ -136,11 +176,11 @@ interface ChatTurnProps {
 
 /**
  * Renders a single turn: user message + assistant response.
- * Follows OpenCode's SessionTurn pattern:
- * - User message (sticky-ish at top)
- * - Collapsible steps trigger with status
- * - Tool call details (when expanded)
- * - Final response (always visible)
+ * Codex-inspired layout:
+ * - User message
+ * - Compact tool summary ("Explored 3 files") with expand toggle
+ * - Thinking shimmer when working
+ * - Final response
  */
 export const ChatTurnComponent = memo(function ChatTurnComponent({
 	turn,
@@ -163,13 +203,16 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 		[turn.assistantMessages],
 	)
 	const statusText = useMemo(() => computeStatus(allAssistantParts), [allAssistantParts])
+	const toolSummary = useMemo(() => getToolSummary(toolParts), [toolParts])
 
 	const working = isLast && isWorking
 	const hasSteps = toolParts.length > 0
 	const lastAssistant = turn.assistantMessages.at(-1)
 	const duration = useMemo(() => {
-		return computeDuration(turn.userMessage.info.time.created, lastAssistant?.info.time?.completed)
-	}, [turn.userMessage.info.time.created, lastAssistant?.info.time?.completed])
+		const lastInfo = lastAssistant?.info
+		const completed = lastInfo?.role === "assistant" ? lastInfo.time.completed : undefined
+		return computeDuration(turn.userMessage.info.time.created, completed)
+	}, [turn.userMessage.info.time.created, lastAssistant?.info])
 
 	const handleCopyResponse = useCallback(async () => {
 		if (!responseText) return
@@ -179,38 +222,37 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	}, [responseText])
 
 	return (
-		<div className="group/turn space-y-3">
+		<div className="group/turn space-y-4">
 			{/* User message */}
 			<Message from="user">
 				<MessageContent>
-					{userText.length > 300 ? <ExpandableText text={userText} /> : <p>{userText}</p>}
+					<p>{userText}</p>
 				</MessageContent>
 			</Message>
 
-			{/* Steps trigger + tool calls — keep custom */}
+			{/* Compact tool summary — Codex-style */}
 			{(working || hasSteps) && (
-				<div className="mb-3">
-					{/* Collapsible trigger — like OpenCode's step trigger */}
+				<div className="space-y-1">
+					{/* Summary line */}
 					<button
 						type="button"
 						onClick={() => setStepsExpanded((prev) => !prev)}
-						className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50"
+						className="flex items-center gap-1.5 text-xs text-green-400/80 transition-colors hover:text-green-400"
 					>
+						<ChevronDownIcon
+							className={`size-3 transition-transform ${stepsExpanded ? "" : "-rotate-90"}`}
+						/>
 						{working ? (
-							<Loader2Icon className="size-3 animate-spin" />
+							<span className="text-muted-foreground">{statusText}</span>
 						) : (
-							<ChevronDownIcon
-								className={`size-3 transition-transform ${stepsExpanded ? "" : "-rotate-90"}`}
-							/>
+							<span>{toolSummary || `${toolParts.length} steps`}</span>
 						)}
-						<span>{working ? statusText : stepsExpanded ? "Hide steps" : "Show steps"}</span>
-						<span className="text-muted-foreground/60">&middot;</span>
-						<span>{duration}</span>
+						{!working && <span className="text-muted-foreground/50">{duration}</span>}
 					</button>
 
-					{/* Expanded tool calls */}
-					{(stepsExpanded || working) && (
-						<div className="mt-1 ml-1 border-l border-border pl-2.5 space-y-0.5">
+					{/* Expanded — individual tool calls */}
+					{stepsExpanded && (
+						<div className="ml-1 space-y-0.5 border-l border-border pl-3">
 							{toolParts.map((part) => (
 								<ChatToolCall key={part.id} part={part} defaultOpen={part.tool === "todowrite"} />
 							))}
@@ -223,6 +265,13 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 			{errorText && !stepsExpanded && (
 				<div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
 					{errorText.length > 300 ? `${errorText.slice(0, 300)}...` : errorText}
+				</div>
+			)}
+
+			{/* Thinking shimmer — shown when working and no response text yet */}
+			{working && !responseText && (
+				<div className="py-1">
+					<Shimmer className="text-sm">{statusText}</Shimmer>
 				</div>
 			)}
 
@@ -254,30 +303,3 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 		</div>
 	)
 })
-
-/**
- * Expandable user message text — follows OpenCode's pattern
- * of max-height constraint with gradient fade and expand button.
- */
-function ExpandableText({ text }: { text: string }) {
-	const [expanded, setExpanded] = useState(false)
-
-	return (
-		<div className="relative">
-			<div className={`overflow-hidden ${expanded ? "" : "max-h-16"}`}>
-				<MessageResponse>{text}</MessageResponse>
-			</div>
-			{!expanded && (
-				<div className="absolute inset-x-0 bottom-0 flex items-end justify-center bg-gradient-to-t from-background to-transparent pt-6 pb-0">
-					<button
-						type="button"
-						onClick={() => setExpanded(true)}
-						className="text-[11px] text-muted-foreground hover:text-foreground"
-					>
-						Show more
-					</button>
-				</div>
-			)}
-		</div>
-	)
-}
