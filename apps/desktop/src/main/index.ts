@@ -2,6 +2,7 @@ import path from "node:path"
 import { app, BrowserWindow, shell } from "electron"
 import { registerIpcHandlers } from "./ipc-handlers"
 import { stopServer } from "./opencode-manager"
+import { initAutoUpdater, stopAutoUpdater } from "./updater"
 
 // Linux/Wayland: enable native Wayland rendering to avoid blurry XWayland scaling.
 // These flags must be set before app.whenReady().
@@ -57,6 +58,7 @@ if (!gotLock) {
 	app.whenReady().then(() => {
 		registerIpcHandlers()
 		createWindow()
+		initAutoUpdater()
 
 		app.on("activate", () => {
 			if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -64,8 +66,9 @@ if (!gotLock) {
 	})
 
 	app.on("window-all-closed", () => {
-		// Clean up the managed opencode server
+		// Clean up the managed opencode server and auto-updater
 		stopServer()
+		stopAutoUpdater()
 		if (process.platform !== "darwin") app.quit()
 	})
 }

@@ -15,6 +15,7 @@ import { useWaitingIndicator } from "../hooks/use-waiting-indicator"
 import type { Agent } from "../lib/types"
 import { CommandPalette } from "./command-palette"
 import { Sidebar } from "./sidebar"
+import { UpdateBanner } from "./update-banner"
 
 export function RootLayout() {
 	useDiscovery()
@@ -115,7 +116,9 @@ export function RootLayout() {
 
 	return (
 		<TooltipProvider>
-			<div className="flex h-screen bg-background text-foreground">
+			<div className="flex h-screen flex-col bg-background text-foreground">
+				<UpdateBanner />
+				<div className="flex min-h-0 flex-1">
 				<div className="w-[280px] shrink-0 border-r border-border">
 					<Sidebar
 						agents={visibleAgents}
@@ -130,6 +133,7 @@ export function RootLayout() {
 				</div>
 				<div className="min-w-0 flex-1">
 					<Outlet />
+				</div>
 				</div>
 			</div>
 			<CommandPalette

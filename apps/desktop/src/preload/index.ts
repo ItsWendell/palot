@@ -24,4 +24,27 @@ contextBridge.exposeInMainWorld("codedeck", {
 
 	/** Reads model state (recent models, favorites, variants). */
 	getModelState: () => ipcRenderer.invoke("model-state"),
+
+	// --- Auto-updater ---
+
+	/** Gets the current auto-updater state. */
+	getUpdateState: () => ipcRenderer.invoke("updater:state"),
+
+	/** Manually triggers an update check. */
+	checkForUpdates: () => ipcRenderer.invoke("updater:check"),
+
+	/** Starts downloading the available update. */
+	downloadUpdate: () => ipcRenderer.invoke("updater:download"),
+
+	/** Quits the app and installs the downloaded update. */
+	installUpdate: () => ipcRenderer.invoke("updater:install"),
+
+	/** Subscribes to update state changes pushed from the main process. */
+	onUpdateStateChanged: (callback: (state: unknown) => void) => {
+		const listener = (_event: unknown, state: unknown) => callback(state)
+		ipcRenderer.on("updater:state-changed", listener)
+		return () => {
+			ipcRenderer.removeListener("updater:state-changed", listener)
+		}
+	},
 })
