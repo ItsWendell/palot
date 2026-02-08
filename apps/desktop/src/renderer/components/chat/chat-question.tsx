@@ -85,13 +85,13 @@ function QuestionSection({
 							aria-pressed={isSelected}
 							onClick={() => onToggle(index, option.label)}
 							disabled={disabled}
-							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+							className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
 								isSelected ? "bg-muted" : "hover:bg-muted/50"
 							} ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
 						>
 							{/* Radio / checkbox indicator */}
 							<span
-								className={`flex size-3.5 shrink-0 items-center justify-center border transition-colors ${
+								className={`mt-1 flex size-3.5 shrink-0 items-center justify-center border transition-colors ${
 									isMultiple ? "rounded" : "rounded-full"
 								} ${isSelected ? "border-foreground bg-foreground" : "border-muted-foreground/40"}`}
 								aria-hidden="true"
@@ -118,11 +118,13 @@ function QuestionSection({
 								)}
 							</span>
 
-							{/* Label + description inline */}
-							<span className="min-w-0 flex-1 truncate">
+							{/* Label + description */}
+							<span className="min-w-0 flex-1">
 								<span className="text-foreground">{option.label}</span>
 								{option.description && (
-									<span className="text-muted-foreground"> — {option.description}</span>
+									<span className="block text-muted-foreground text-xs mt-0.5 line-clamp-2">
+										{option.description}
+									</span>
 								)}
 							</span>
 						</button>

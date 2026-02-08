@@ -200,9 +200,9 @@ export function ChatView({
 		<div className="flex h-full flex-col">
 			{/* Chat messages — constrained width for readability */}
 			<div className="relative min-h-0 flex-1">
-				<Conversation className="h-full [&>div]:scrollbar-thin">
+				<Conversation className="h-full">
 					<ConversationContent className="gap-10 px-4 py-6">
-						<div className="mx-auto w-full max-w-4xl">
+						<div className="mx-auto w-full max-w-4xl space-y-10">
 							{/* Load earlier messages button */}
 							{hasEarlierMessages && (
 								<div className="flex justify-center pb-4">

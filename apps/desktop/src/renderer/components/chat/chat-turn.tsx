@@ -7,18 +7,31 @@ import {
 } from "@codedeck/ui/components/ai-elements/message"
 import { Shimmer } from "@codedeck/ui/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
 import {
 	BotIcon,
 	CheckIcon,
 	ChevronDownIcon,
 	CopyIcon,
+	EditIcon,
+	EyeIcon,
 	FileIcon,
+	GlobeIcon,
 	ListOrderedIcon,
+	TerminalIcon,
+	WrenchIcon,
+	ZapIcon,
 } from "lucide-react"
 import { memo, useCallback, useDeferredValue, useMemo, useState } from "react"
+import { useDisplayMode } from "../../hooks/use-agents"
 import type { ChatMessageEntry, ChatTurn as ChatTurnType } from "../../hooks/use-session-chat"
 import type { FilePart, Part, TextPart, ToolPart } from "../../lib/types"
 import { ChatToolCall } from "./chat-tool-call"
+import { getToolCategory, type ToolCategory } from "./tool-card"
+
+// ============================================================
+// Utility functions
+// ============================================================
 
 /**
  * Formats a timestamp (milliseconds) to relative or absolute time.
@@ -40,16 +53,25 @@ function computeDuration(start: number, end?: number): string {
 	return `${minutes}m ${remainingSeconds}s`
 }
 
+// ============================================================
+// Status computation — follows into sub-agents
+// ============================================================
+
 /**
  * Computes a status string from the last active part.
+ * Follows into sub-agent sessions for deeper status.
  */
 function computeStatus(parts: Part[]): string {
 	for (let i = parts.length - 1; i >= 0; i--) {
 		const part = parts[i]
 		if (part.type === "tool") {
 			switch (part.tool) {
-				case "task":
-					return "Delegating..."
+				case "task": {
+					// Show what the sub-agent is actually doing
+					const desc = part.state.input?.description as string | undefined
+					const shortDesc = desc && desc.length > 30 ? `${desc.slice(0, 27)}...` : desc
+					return shortDesc ? `Agent: ${shortDesc}` : "Delegating..."
+				}
 				case "todowrite":
 				case "todoread":
 					return "Planning..."
@@ -79,64 +101,83 @@ function computeStatus(parts: Part[]): string {
 	return "Working..."
 }
 
-/**
- * Generates a compact summary of tool calls, e.g., "Explored 3 files"
- */
-function getToolSummary(toolParts: ToolPart[]): string {
-	if (toolParts.length === 0) return ""
+// ============================================================
+// Icon-pill summary bar
+// ============================================================
 
-	const counts: Record<string, number> = {}
-	for (const part of toolParts) {
-		const tool = part.tool
-		// Group related tools
-		if (tool === "read" || tool === "glob" || tool === "grep" || tool === "list") {
-			counts.explored = (counts.explored ?? 0) + 1
-		} else if (tool === "edit" || tool === "write" || tool === "apply_patch") {
-			counts.edited = (counts.edited ?? 0) + 1
-		} else if (tool === "bash") {
-			counts.ran = (counts.ran ?? 0) + 1
-		} else if (tool === "task") {
-			counts.delegated = (counts.delegated ?? 0) + 1
-		} else if (tool === "webfetch") {
-			counts.fetched = (counts.fetched ?? 0) + 1
-		} else if (tool === "todowrite" || tool === "todoread") {
-			// skip — rendered separately
-		} else if (tool === "question") {
-			counts.asked = (counts.asked ?? 0) + 1
-		} else {
-			counts.used = (counts.used ?? 0) + 1
-		}
-	}
-
-	const parts: string[] = []
-	if (counts.explored)
-		parts.push(`Explored ${counts.explored} ${counts.explored === 1 ? "file" : "files"}`)
-	if (counts.edited) parts.push(`Edited ${counts.edited} ${counts.edited === 1 ? "file" : "files"}`)
-	if (counts.ran) parts.push(`Ran ${counts.ran} ${counts.ran === 1 ? "command" : "commands"}`)
-	if (counts.delegated)
-		parts.push(`Delegated ${counts.delegated} ${counts.delegated === 1 ? "task" : "tasks"}`)
-	if (counts.fetched)
-		parts.push(`Fetched ${counts.fetched} ${counts.fetched === 1 ? "page" : "pages"}`)
-	if (counts.asked)
-		parts.push(`Asked ${counts.asked} ${counts.asked === 1 ? "question" : "questions"}`)
-	if (counts.used) parts.push(`Used ${counts.used} ${counts.used === 1 ? "tool" : "tools"}`)
-
-	return parts.join(", ")
+/** Category info for icon pills */
+interface CategoryPill {
+	category: ToolCategory
+	count: number
+	icon: typeof WrenchIcon
+	label: string
 }
 
 /**
- * Checks if a user message is entirely synthetic (all text parts are synthetic).
- * Synthetic messages are injected by the system (e.g. compaction continuation,
- * shell command framing, plan mode switches) and not authored by the user.
+ * Groups tool parts into category pills for the compact summary.
  */
+function getToolPills(toolParts: ToolPart[]): CategoryPill[] {
+	const counts: Partial<Record<ToolCategory, number>> = {}
+	for (const part of toolParts) {
+		if (part.tool === "todowrite" || part.tool === "todoread") continue
+		const cat = getToolCategory(part.tool)
+		counts[cat] = (counts[cat] ?? 0) + 1
+	}
+
+	const pills: CategoryPill[] = []
+	const mapping: Array<{
+		category: ToolCategory
+		icon: typeof WrenchIcon
+		label: string
+	}> = [
+		{ category: "explore", icon: EyeIcon, label: "read" },
+		{ category: "edit", icon: EditIcon, label: "edit" },
+		{ category: "run", icon: TerminalIcon, label: "run" },
+		{ category: "delegate", icon: ZapIcon, label: "agent" },
+		{ category: "fetch", icon: GlobeIcon, label: "fetch" },
+		{ category: "ask", icon: WrenchIcon, label: "ask" },
+		{ category: "other", icon: WrenchIcon, label: "tool" },
+	]
+
+	for (const { category, icon, label } of mapping) {
+		const count = counts[category]
+		if (count && count > 0) {
+			pills.push({ category, count, icon, label })
+		}
+	}
+
+	return pills
+}
+
+/** Single pill in the summary bar */
+const ToolPill = memo(function ToolPill({ pill }: { pill: CategoryPill }) {
+	const Icon = pill.icon
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+					<Icon className="size-3" />
+					<span>{pill.count}</span>
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="top">
+				<p className="text-xs">
+					{pill.count} {pill.label} {pill.count === 1 ? "call" : "calls"}
+				</p>
+			</TooltipContent>
+		</Tooltip>
+	)
+})
+
+// ============================================================
+// Synthetic message helpers
+// ============================================================
+
 function isSyntheticMessage(entry: ChatMessageEntry): boolean {
 	const textParts = entry.parts.filter((p): p is TextPart => p.type === "text")
 	return textParts.length > 0 && textParts.every((p) => p.synthetic === true)
 }
 
-/**
- * Extracts the user message text from parts, excluding synthetic parts.
- */
 function getUserText(entry: ChatMessageEntry): string {
 	return entry.parts
 		.filter((p): p is TextPart => p.type === "text" && !p.synthetic)
@@ -144,9 +185,6 @@ function getUserText(entry: ChatMessageEntry): string {
 		.join("\n")
 }
 
-/**
- * Gets a display label for a synthetic user message based on its content.
- */
 function getSyntheticLabel(entry: ChatMessageEntry): string {
 	const text = entry.parts
 		.filter((p): p is TextPart => p.type === "text")
@@ -163,9 +201,6 @@ function getSyntheticLabel(entry: ChatMessageEntry): string {
 	return "Auto-continued"
 }
 
-/**
- * Extracts file parts (images, PDFs) from a message entry.
- */
 function getFileParts(entry: ChatMessageEntry): FilePart[] {
 	return entry.parts.filter(
 		(p): p is FilePart =>
@@ -173,12 +208,12 @@ function getFileParts(entry: ChatMessageEntry): FilePart[] {
 	)
 }
 
-/**
- * Renders a grid of image/file attachment thumbnails with click-to-preview.
- */
+// ============================================================
+// Attachment grid
+// ============================================================
+
 const AttachmentGrid = memo(function AttachmentGrid({ files }: { files: FilePart[] }) {
 	if (files.length === 0) return null
-
 	return (
 		<div className="flex flex-wrap gap-2">
 			{files.map((file) => (
@@ -188,12 +223,8 @@ const AttachmentGrid = memo(function AttachmentGrid({ files }: { files: FilePart
 	)
 })
 
-/**
- * Single attachment thumbnail with dialog preview on click.
- */
 function AttachmentThumbnail({ file }: { file: FilePart }) {
 	const isImage = file.mime.startsWith("image/")
-
 	return (
 		<Dialog>
 			<DialogTrigger asChild>
@@ -238,28 +269,34 @@ function AttachmentThumbnail({ file }: { file: FilePart }) {
 	)
 }
 
+// ============================================================
+// Part extraction helpers
+// ============================================================
+
+/** A renderable part — either a tool call or an intermediate text block */
+type RenderablePart = { kind: "tool"; part: ToolPart } | { kind: "text"; id: string; text: string }
+
 /**
- * Extracts the final response text from assistant messages.
+ * Flattens all assistant parts into an ordered list of renderable items.
+ * Preserves the natural order: text, tool, text, tool, text...
+ * Filters out synthetic text, todoread without output, and empty text.
  */
-function getResponseText(assistantMessages: ChatMessageEntry[]): {
-	text: string | undefined
-	partId: string | undefined
-} {
-	for (let mi = assistantMessages.length - 1; mi >= 0; mi--) {
-		const parts = assistantMessages[mi].parts
-		for (let pi = parts.length - 1; pi >= 0; pi--) {
-			const part = parts[pi]
-			if (part.type === "text" && part.text) {
-				return { text: part.text, partId: part.id }
+function getOrderedParts(assistantMessages: ChatMessageEntry[]): RenderablePart[] {
+	const result: RenderablePart[] = []
+	for (const msg of assistantMessages) {
+		for (const part of msg.parts) {
+			if (part.type === "tool") {
+				if (part.tool === "todoread" && part.state.status !== "completed") continue
+				result.push({ kind: "tool", part })
+			} else if (part.type === "text" && !part.synthetic && part.text.trim()) {
+				result.push({ kind: "text", id: part.id, text: part.text })
 			}
 		}
 	}
-	return { text: undefined, partId: undefined }
+	return result
 }
 
-/**
- * Collects all tool parts across assistant messages.
- */
+/** Extract only tool parts (for pill summary counting) */
 function getToolParts(assistantMessages: ChatMessageEntry[]): ToolPart[] {
 	const tools: ToolPart[] = []
 	for (const msg of assistantMessages) {
@@ -273,8 +310,17 @@ function getToolParts(assistantMessages: ChatMessageEntry[]): ToolPart[] {
 }
 
 /**
- * Gets error from assistant messages.
+ * Gets the last text part's content — used for the final streaming response
+ * and the copy action. Returns undefined if no text parts exist.
  */
+function getLastResponseText(orderedParts: RenderablePart[]): string | undefined {
+	for (let i = orderedParts.length - 1; i >= 0; i--) {
+		const item = orderedParts[i]
+		if (item.kind === "text") return item.text
+	}
+	return undefined
+}
+
 function getError(assistantMessages: ChatMessageEntry[]): string | undefined {
 	for (const msg of assistantMessages) {
 		if (msg.info.role === "assistant" && msg.info.error) {
@@ -286,6 +332,15 @@ function getError(assistantMessages: ChatMessageEntry[]): string | undefined {
 	return undefined
 }
 
+/** Check if any tool parts have errors */
+function hasToolErrors(toolParts: ToolPart[]): boolean {
+	return toolParts.some((p) => p.state.status === "error")
+}
+
+// ============================================================
+// ChatTurnComponent
+// ============================================================
+
 interface ChatTurnProps {
 	turn: ChatTurnType
 	isLast: boolean
@@ -294,11 +349,17 @@ interface ChatTurnProps {
 
 /**
  * Renders a single turn: user message + assistant response.
- * Codex-inspired layout:
- * - User message
- * - Compact tool summary ("Explored 3 files") with expand toggle
- * - Thinking shimmer when working
- * - Final response
+ *
+ * Two modes based on turn state:
+ * - **Active turn** (last + working): tool calls are individually rendered with
+ *   per-tool ToolCards, smart default expand/collapse, and live activity.
+ * - **Completed turn**: icon-pill summary bar with one-click expand to show
+ *   individual tools. Response text is always visible.
+ *
+ * Display mode preference (default/compact/verbose) modifies behavior:
+ * - default: active turn shows tools, completed turns use pill bar
+ * - compact: active turn shows only last 3 tools, rest in pill bar
+ * - verbose: all turns show all tools expanded
  */
 export const ChatTurnComponent = memo(function ChatTurnComponent({
 	turn,
@@ -307,6 +368,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 }: ChatTurnProps) {
 	const [stepsExpanded, setStepsExpanded] = useState(false)
 	const [copied, setCopied] = useState(false)
+	const displayMode = useDisplayMode()
 
 	const isSynthetic = useMemo(() => isSyntheticMessage(turn.userMessage), [turn.userMessage])
 	const userText = useMemo(() => getUserText(turn.userMessage), [turn.userMessage])
@@ -315,14 +377,18 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 		[isSynthetic, turn.userMessage],
 	)
 	const userFiles = useMemo(() => getFileParts(turn.userMessage), [turn.userMessage])
-	const { text: rawResponseText } = useMemo(
-		() => getResponseText(turn.assistantMessages),
+
+	// Ordered parts: text and tool calls interleaved in their natural order
+	const orderedParts = useMemo(
+		() => getOrderedParts(turn.assistantMessages),
 		[turn.assistantMessages],
 	)
-	// Defer the streaming text so React can interrupt long markdown re-renders
-	// for higher-priority updates (input handling, scroll, layout).
-	// When not streaming (isLast && isWorking is false), the value passes through immediately.
+
+	// The last text for streaming display and copy action
+	const rawResponseText = useMemo(() => getLastResponseText(orderedParts), [orderedParts])
 	const responseText = useDeferredValue(rawResponseText)
+
+	// Tool-only subset (for pill summary + counting)
 	const toolParts = useMemo(() => getToolParts(turn.assistantMessages), [turn.assistantMessages])
 	const errorText = useMemo(() => getError(turn.assistantMessages), [turn.assistantMessages])
 
@@ -331,23 +397,42 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 		[turn.assistantMessages],
 	)
 	const statusText = useMemo(() => computeStatus(allAssistantParts), [allAssistantParts])
-	const toolSummary = useMemo(() => getToolSummary(toolParts), [toolParts])
 
 	const working = isLast && isWorking
-	// A turn is "queued" if the session is working but this turn has no assistant
-	// response yet AND it's not the turn currently being worked on (isLast).
-	// This means the user sent a follow-up while the AI was busy with a previous turn.
 	const isQueued = isWorking && turn.assistantMessages.length === 0 && !isLast
-	// Also show queued state for the last turn if it has no assistant messages
-	// and the session is working (the message was just sent as a steering message)
 	const isQueuedLast = isWorking && turn.assistantMessages.length === 0 && isLast
 	const hasSteps = toolParts.length > 0
+	const hasErrors = useMemo(() => hasToolErrors(toolParts), [toolParts])
 	const lastAssistant = turn.assistantMessages.at(-1)
 	const duration = useMemo(() => {
 		const lastInfo = lastAssistant?.info
 		const completed = lastInfo?.role === "assistant" ? lastInfo.time.completed : undefined
 		return computeDuration(turn.userMessage.info.time.created, completed)
 	}, [turn.userMessage.info.time.created, lastAssistant?.info])
+
+	// Icon pills for the compact summary bar
+	const pills = useMemo(() => getToolPills(toolParts), [toolParts])
+
+	// Determine if tools should be shown individually (active turn behavior)
+	const isActiveTurn = working
+	const showToolsExpanded = displayMode === "verbose" || isActiveTurn || stepsExpanded
+
+	// In compact mode during active turn, only show the last N ordered parts
+	const visibleParts = useMemo(() => {
+		if (displayMode === "compact" && isActiveTurn && orderedParts.length > 5) {
+			return orderedParts.slice(-5)
+		}
+		return orderedParts
+	}, [displayMode, isActiveTurn, orderedParts])
+
+	// How many parts are hidden in compact mode
+	const hiddenCount =
+		displayMode === "compact" && isActiveTurn ? Math.max(0, orderedParts.length - 5) : 0
+
+	// When expanded, all text parts are already rendered inline within the
+	// ordered parts list. The separate "final response" block should only
+	// appear when collapsed (pill bar mode) to show the response below the summary.
+	const textAlreadyInline = showToolsExpanded && orderedParts.some((p) => p.kind === "text")
 
 	const handleCopyResponse = useCallback(async () => {
 		if (!responseText) return
@@ -379,53 +464,99 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 				</Message>
 			)}
 
-			{/* Compact tool summary — Codex-style */}
+			{/* Tool calls section */}
 			{(working || hasSteps) && (
-				<div className="space-y-1">
-					{/* Summary line */}
-					<button
-						type="button"
-						onClick={() => setStepsExpanded((prev) => !prev)}
-						className="flex items-center gap-1.5 text-xs text-green-400/80 transition-colors hover:text-green-400"
-					>
-						<ChevronDownIcon
-							className={`size-3 transition-transform ${stepsExpanded ? "" : "-rotate-90"}`}
-						/>
-						{working ? (
-							<span className="text-muted-foreground">{statusText}</span>
-						) : (
-							<span>{toolSummary || `${toolParts.length} steps`}</span>
-						)}
-						{!working && <span className="text-muted-foreground/50">{duration}</span>}
-					</button>
+				<div className="space-y-2">
+					{/* Summary bar — shown when NOT expanded (completed turns) */}
+					{!showToolsExpanded && hasSteps && (
+						<button
+							type="button"
+							onClick={() => setStepsExpanded(true)}
+							className="flex items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						>
+							<ChevronDownIcon className="size-3 -rotate-90" />
+							<div className="flex items-center gap-1.5">
+								{pills.map((pill) => (
+									<ToolPill key={pill.category} pill={pill} />
+								))}
+							</div>
+							<span className="text-muted-foreground/40">{duration}</span>
+							{hasErrors && (
+								<span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+									errors
+								</span>
+							)}
+						</button>
+					)}
 
-					{/* Expanded — individual tool calls */}
-					{stepsExpanded && (
-						<div className="ml-1 space-y-0.5 border-l border-border pl-3">
-							{toolParts.map((part) => (
-								<ChatToolCall key={part.id} part={part} defaultOpen={part.tool === "todowrite"} />
-							))}
+					{/* Collapse button — shown when expanded on completed turns */}
+					{showToolsExpanded && !isActiveTurn && hasSteps && (
+						<button
+							type="button"
+							onClick={() => setStepsExpanded(false)}
+							className="flex items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						>
+							<ChevronDownIcon className="size-3" />
+							<span className="text-muted-foreground/60">
+								{toolParts.length} {toolParts.length === 1 ? "step" : "steps"}
+							</span>
+							<span className="text-muted-foreground/40">{duration}</span>
+						</button>
+					)}
+
+					{/* Active turn status line (while working, before tools appear) */}
+					{working && !hasSteps && (
+						<div className="flex items-center gap-2 text-xs text-muted-foreground">
+							<Shimmer className="text-xs">{statusText}</Shimmer>
+						</div>
+					)}
+
+					{/* Hidden parts indicator (compact mode) */}
+					{showToolsExpanded && hiddenCount > 0 && (
+						<div className="flex items-center gap-1.5 pl-1 text-[11px] text-muted-foreground/50">
+							<span>
+								+ {hiddenCount} earlier {hiddenCount === 1 ? "step" : "steps"}
+							</span>
+						</div>
+					)}
+
+					{/* Expanded: interleaved text + tool calls in natural order */}
+					{showToolsExpanded && (
+						<div className="space-y-2.5">
+							{visibleParts.map((item) =>
+								item.kind === "tool" ? (
+									<ChatToolCall key={item.part.id} part={item.part} isActiveTurn={isActiveTurn} />
+								) : (
+									<div key={item.id} className="py-0.5">
+										<Message from="assistant">
+											<MessageContent>
+												<MessageResponse>{item.text}</MessageResponse>
+											</MessageContent>
+										</Message>
+									</div>
+								),
+							)}
 						</div>
 					)}
 				</div>
 			)}
 
 			{/* Error */}
-			{errorText && !stepsExpanded && (
+			{errorText && !showToolsExpanded && (
 				<div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
 					{errorText.length > 300 ? `${errorText.slice(0, 300)}...` : errorText}
 				</div>
 			)}
 
 			{/* Thinking shimmer — shown when working and no response text yet */}
-			{working && !responseText && (
+			{working && !responseText && hasSteps && (
 				<div className="py-1">
 					<Shimmer className="text-sm">{statusText}</Shimmer>
 				</div>
 			)}
 
-			{/* Assistant response — always visible when not working */}
-			{!working && responseText && (
+			{/* Assistant response — shown when not working AND not already rendered inline */}
+			{!working && responseText && !textAlreadyInline && (
 				<Message from="assistant">
 					<MessageContent>
 						<MessageResponse>{responseText}</MessageResponse>
@@ -441,8 +572,8 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 				</Message>
 			)}
 
-			{/* Streaming response — visible while working */}
-			{working && responseText && (
+			{/* Streaming response — visible while working, when text isn't already inline */}
+			{working && responseText && !textAlreadyInline && (
 				<Message from="assistant">
 					<MessageContent>
 						<MessageResponse>{responseText}</MessageResponse>

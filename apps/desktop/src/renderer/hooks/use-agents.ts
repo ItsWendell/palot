@@ -339,3 +339,5 @@ export const useCommandPaletteOpen = () => useAppStore((s) => s.ui.commandPalett
 export const useSetCommandPaletteOpen = () => useAppStore((s) => s.setCommandPaletteOpen)
 export const useShowSubAgents = () => useAppStore((s) => s.ui.showSubAgents)
 export const useToggleShowSubAgents = () => useAppStore((s) => s.toggleShowSubAgents)
+export const useDisplayMode = () => useAppStore((s) => s.ui.displayMode)
+export const useSetDisplayMode = () => useAppStore((s) => s.setDisplayMode)

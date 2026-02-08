@@ -8,8 +8,18 @@ import {
 	SelectValue,
 } from "@codedeck/ui/components/select"
 import { Separator } from "@codedeck/ui/components/separator"
-import { CheckIcon, ChevronDownIcon, GitBranchIcon, MonitorIcon, SparklesIcon } from "lucide-react"
+import {
+	CheckIcon,
+	ChevronDownIcon,
+	GitBranchIcon,
+	ListIcon,
+	MaximizeIcon,
+	MinimizeIcon,
+	MonitorIcon,
+	SparklesIcon,
+} from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useDisplayMode, useSetDisplayMode } from "../../hooks/use-agents"
 import type {
 	ModelRef,
 	ProvidersData,
@@ -18,6 +28,7 @@ import type {
 	VcsData,
 } from "../../hooks/use-opencode-data"
 import { getModelVariants, parseModelRef } from "../../hooks/use-opencode-data"
+import type { DisplayMode } from "../../stores/app-store"
 
 // ============================================================
 // Agent Selector
@@ -486,7 +497,30 @@ interface StatusBarProps {
 	interruptCount?: number
 }
 
+const DISPLAY_MODE_CYCLE: DisplayMode[] = ["default", "compact", "verbose"]
+const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
+	default: "Default",
+	compact: "Compact",
+	verbose: "Verbose",
+}
+const DISPLAY_MODE_ICONS: Record<DisplayMode, typeof ListIcon> = {
+	default: ListIcon,
+	compact: MinimizeIcon,
+	verbose: MaximizeIcon,
+}
+
 export function StatusBar({ vcs, isConnected, isWorking, interruptCount }: StatusBarProps) {
+	const displayMode = useDisplayMode()
+	const setDisplayMode = useSetDisplayMode()
+
+	const cycleDisplayMode = useCallback(() => {
+		const currentIndex = DISPLAY_MODE_CYCLE.indexOf(displayMode)
+		const nextIndex = (currentIndex + 1) % DISPLAY_MODE_CYCLE.length
+		setDisplayMode(DISPLAY_MODE_CYCLE[nextIndex])
+	}, [displayMode, setDisplayMode])
+
+	const DisplayModeIcon = DISPLAY_MODE_ICONS[displayMode]
+
 	return (
 		<div className="flex items-center gap-3 px-2 pt-2 text-[11px] text-muted-foreground/60">
 			{/* Left side — environment + connection + interrupt hint */}
@@ -518,13 +552,27 @@ export function StatusBar({ vcs, isConnected, isWorking, interruptCount }: Statu
 				)}
 			</div>
 
-			{/* Right side — git branch */}
-			{vcs?.branch && (
-				<div className="ml-auto flex items-center gap-1">
-					<GitBranchIcon className="size-3" />
-					<span className="max-w-[140px] truncate">{vcs.branch}</span>
-				</div>
-			)}
+			{/* Right side — display mode toggle + git branch */}
+			<div className="ml-auto flex items-center gap-3">
+				{/* Display mode toggle */}
+				<button
+					type="button"
+					onClick={cycleDisplayMode}
+					className="flex items-center gap-1 transition-colors hover:text-foreground"
+					title={`Display: ${DISPLAY_MODE_LABELS[displayMode]} (click to cycle)`}
+				>
+					<DisplayModeIcon className="size-3" />
+					<span>{DISPLAY_MODE_LABELS[displayMode]}</span>
+				</button>
+
+				{/* Git branch */}
+				{vcs?.branch && (
+					<div className="flex items-center gap-1">
+						<GitBranchIcon className="size-3" />
+						<span className="max-w-[140px] truncate">{vcs.branch}</span>
+					</div>
+				)}
+			</div>
 		</div>
 	)
 }
