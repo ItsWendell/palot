@@ -1,10 +1,6 @@
 name: Build Electron App
 
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
   workflow_dispatch:
 
 concurrency:
@@ -45,7 +41,6 @@ jobs:
         run: bun run package:${{ matrix.platform }}
         working-directory: apps/desktop
         env:
-          # Skip code signing for CI builds (enable when certs are configured)
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Upload artifacts (Linux)
@@ -58,7 +53,7 @@ jobs:
             apps/desktop/release/*.deb
             apps/desktop/release/*.rpm
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
       - name: Upload artifacts (macOS)
         if: matrix.platform == 'mac'
@@ -69,7 +64,7 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
       - name: Upload artifacts (Windows)
         if: matrix.platform == 'win'
@@ -79,4 +74,4 @@ jobs:
           path: |
             apps/desktop/release/*.exe
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
