@@ -7,13 +7,16 @@ import {
 	PromptInput,
 	PromptInputButton,
 	PromptInputFooter,
+	PromptInputProvider,
 	PromptInputSubmit,
 	PromptInputTextarea,
 	PromptInputTools,
 	usePromptInputAttachments,
+	usePromptInputController,
 } from "@codedeck/ui/components/ai-elements/prompt-input"
 import { ChevronUpIcon, Loader2Icon, PlusIcon } from "lucide-react"
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useDraft, useDraftActions } from "../../hooks/use-draft"
 import type {
 	ConfigData,
 	ModelRef,
@@ -50,6 +53,28 @@ function AttachButton({ disabled }: { disabled?: boolean }) {
 			<PlusIcon className="size-4" />
 		</PromptInputButton>
 	)
+}
+
+/**
+ * Bridge component that syncs the PromptInputProvider's text state
+ * to the persisted draft store (debounced). Must be rendered inside
+ * both a <PromptInputProvider> and receive draft actions for the session.
+ */
+function DraftSync({ setDraft }: { setDraft: (text: string) => void }) {
+	const controller = usePromptInputController()
+	const value = controller.textInput.value
+	const isFirstRender = useRef(true)
+
+	useEffect(() => {
+		// Skip the initial render — the provider was just hydrated from the draft
+		if (isFirstRender.current) {
+			isFirstRender.current = false
+			return
+		}
+		setDraft(value)
+	}, [value, setDraft])
+
+	return null
 }
 
 interface ChatViewProps {
@@ -113,6 +138,10 @@ export function ChatView({
 	const isWorking = agent.status === "running"
 	const [sending, setSending] = useState(false)
 
+	// Draft persistence — survives session switches and reloads
+	const draft = useDraft(agent.sessionId)
+	const { setDraft, clearDraft } = useDraftActions(agent.sessionId)
+
 	// Escape-to-abort: double-press within 3s
 	const [interruptCount, setInterruptCount] = useState(0)
 	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -162,11 +191,12 @@ export function ChatView({
 					variant: selectedVariant,
 					files,
 				})
+				clearDraft()
 			} finally {
 				setSending(false)
 			}
 		},
-		[onSendMessage, sending, agent, effectiveModel, selectedAgent, selectedVariant],
+		[onSendMessage, sending, agent, effectiveModel, selectedAgent, selectedVariant, clearDraft],
 	)
 
 	// Allow sending while the AI is working — the server queues follow-up messages
@@ -294,68 +324,71 @@ export function ChatView({
 					)}
 
 					{/* Input card — rounded container with textarea + toolbar inside */}
-					<PromptInput
-						className="rounded-xl"
-						accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
-						multiple
-						maxFileSize={10 * 1024 * 1024}
-						onSubmit={(message) => {
-							if (message.text.trim() && canSend)
-								handleSend(message.text, message.files.length > 0 ? message.files : undefined)
-						}}
-					>
-						<PromptAttachmentPreview
-							supportsImages={modelCapabilities?.image}
-							supportsPdf={modelCapabilities?.pdf}
-						/>
-						<PromptInputTextarea
-							placeholder={
-								!isConnected
-									? "Connect to server to send messages..."
-									: isWorking
-										? "Send a follow-up or correction..."
-										: "Ask for follow-up changes"
-							}
-							disabled={!isConnected}
-							className="min-h-[80px]"
-							onKeyDown={(e) => {
-								if (
-									e.key === "Escape" &&
-									isWorking &&
-									!(e.target as HTMLTextAreaElement).value.trim()
-								) {
-									e.preventDefault()
-									handleEscapeAbort()
-								}
+					<PromptInputProvider initialInput={draft}>
+						<DraftSync setDraft={setDraft} />
+						<PromptInput
+							className="rounded-xl"
+							accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+							multiple
+							maxFileSize={10 * 1024 * 1024}
+							onSubmit={(message) => {
+								if (message.text.trim() && canSend)
+									handleSend(message.text, message.files.length > 0 ? message.files : undefined)
 							}}
-						/>
-
-						{/* Toolbar inside the card — agent + model + variant selectors + submit */}
-						<PromptInputFooter>
-							<PromptInputTools>
-								<AttachButton disabled={!isConnected} />
-								<PromptToolbar
-									agents={openCodeAgents ?? []}
-									selectedAgent={selectedAgent}
-									defaultAgent={config?.defaultAgent}
-									onSelectAgent={setSelectedAgent}
-									providers={providers ?? null}
-									effectiveModel={effectiveModel}
-									hasModelOverride={!!selectedModel}
-									onSelectModel={setSelectedModel}
-									recentModels={recentModels}
-									selectedVariant={selectedVariant}
-									onSelectVariant={setSelectedVariant}
-									disabled={!isConnected}
-								/>
-							</PromptInputTools>
-							<PromptInputSubmit
-								disabled={!canSend}
-								status={isWorking ? "streaming" : undefined}
-								onStop={handleStop}
+						>
+							<PromptAttachmentPreview
+								supportsImages={modelCapabilities?.image}
+								supportsPdf={modelCapabilities?.pdf}
 							/>
-						</PromptInputFooter>
-					</PromptInput>
+							<PromptInputTextarea
+								placeholder={
+									!isConnected
+										? "Connect to server to send messages..."
+										: isWorking
+											? "Send a follow-up or correction..."
+											: "Ask for follow-up changes"
+								}
+								disabled={!isConnected}
+								className="min-h-[80px]"
+								onKeyDown={(e) => {
+									if (
+										e.key === "Escape" &&
+										isWorking &&
+										!(e.target as HTMLTextAreaElement).value.trim()
+									) {
+										e.preventDefault()
+										handleEscapeAbort()
+									}
+								}}
+							/>
+
+							{/* Toolbar inside the card — agent + model + variant selectors + submit */}
+							<PromptInputFooter>
+								<PromptInputTools>
+									<AttachButton disabled={!isConnected} />
+									<PromptToolbar
+										agents={openCodeAgents ?? []}
+										selectedAgent={selectedAgent}
+										defaultAgent={config?.defaultAgent}
+										onSelectAgent={setSelectedAgent}
+										providers={providers ?? null}
+										effectiveModel={effectiveModel}
+										hasModelOverride={!!selectedModel}
+										onSelectModel={setSelectedModel}
+										recentModels={recentModels}
+										selectedVariant={selectedVariant}
+										onSelectVariant={setSelectedVariant}
+										disabled={!isConnected}
+									/>
+								</PromptInputTools>
+								<PromptInputSubmit
+									disabled={!canSend}
+									status={isWorking ? "streaming" : undefined}
+									onStop={handleStop}
+								/>
+							</PromptInputFooter>
+						</PromptInput>
+					</PromptInputProvider>
 
 					{/* Status bar — outside the card */}
 					<StatusBar

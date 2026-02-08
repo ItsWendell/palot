@@ -28,7 +28,7 @@ import type {
 	VcsData,
 } from "../../hooks/use-opencode-data"
 import { getModelVariants, parseModelRef } from "../../hooks/use-opencode-data"
-import type { DisplayMode } from "../../stores/app-store"
+import type { DisplayMode } from "../../stores/persisted-store"
 
 // ============================================================
 // Agent Selector

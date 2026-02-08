@@ -1,14 +1,17 @@
 import {
 	PromptInput,
 	PromptInputFooter,
+	PromptInputProvider,
 	PromptInputTextarea,
 	PromptInputTools,
+	usePromptInputController,
 } from "@codedeck/ui/components/ai-elements/prompt-input"
 import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { ChevronDownIcon, CodeIcon, FileTextIcon, GitPullRequestIcon } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useProjectList } from "../hooks/use-agents"
+import { NEW_CHAT_DRAFT_KEY, useDraft, useDraftActions } from "../hooks/use-draft"
 import type { ModelRef } from "../hooks/use-opencode-data"
 import {
 	getModelInputCapabilities,
@@ -39,6 +42,26 @@ const SUGGESTIONS = [
 	},
 ]
 
+/**
+ * Syncs PromptInputProvider text to persisted drafts (debounced).
+ * Must be rendered inside a <PromptInputProvider>.
+ */
+function DraftSync({ setDraft }: { setDraft: (text: string) => void }) {
+	const controller = usePromptInputController()
+	const value = controller.textInput.value
+	const isFirstRender = useRef(true)
+
+	useEffect(() => {
+		if (isFirstRender.current) {
+			isFirstRender.current = false
+			return
+		}
+		setDraft(value)
+	}, [value, setDraft])
+
+	return null
+}
+
 export function NewChat() {
 	const { projectSlug } = useParams({ strict: false })
 	const projects = useProjectList()
@@ -48,6 +71,10 @@ export function NewChat() {
 	const [selectedDirectory, setSelectedDirectory] = useState<string>("")
 	const [launching, setLaunching] = useState(false)
 	const [error, setError] = useState<string | null>(null)
+
+	// Draft persistence — survives page reloads
+	const draft = useDraft(NEW_CHAT_DRAFT_KEY)
+	const { setDraft, clearDraft } = useDraftActions(NEW_CHAT_DRAFT_KEY)
 	const [projectPickerOpen, setProjectPickerOpen] = useState(false)
 
 	// Toolbar state
@@ -120,6 +147,7 @@ export function NewChat() {
 						variant: selectedVariant,
 						files,
 					})
+					clearDraft()
 					const project = projects.find((p) => p.directory === selectedDirectory)
 					navigate({
 						to: "/project/$projectSlug/session/$sessionId",
@@ -144,6 +172,7 @@ export function NewChat() {
 			effectiveModel,
 			selectedAgent,
 			selectedVariant,
+			clearDraft,
 		],
 	)
 
@@ -243,51 +272,54 @@ export function NewChat() {
 			<div className="shrink-0 px-6 pb-5 pt-3">
 				<div className="mx-auto w-full max-w-4xl">
 					{/* Input card */}
-					<PromptInput
-						className="rounded-xl"
-						accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
-						multiple
-						maxFileSize={10 * 1024 * 1024}
-						onSubmit={(message) => {
-							if (message.text.trim())
-								handleLaunch(
-									message.text.trim(),
-									message.files.length > 0 ? message.files : undefined,
-								)
-						}}
-					>
-						<PromptAttachmentPreview
-							supportsImages={modelCapabilities?.image}
-							supportsPdf={modelCapabilities?.pdf}
-						/>
-						<PromptInputTextarea
-							placeholder="What should this session work on?"
-							autoFocus
-							disabled={launching || !selectedDirectory || projects.length === 0}
-							className="min-h-[80px]"
-						/>
+					<PromptInputProvider initialInput={draft}>
+						<DraftSync setDraft={setDraft} />
+						<PromptInput
+							className="rounded-xl"
+							accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+							multiple
+							maxFileSize={10 * 1024 * 1024}
+							onSubmit={(message) => {
+								if (message.text.trim())
+									handleLaunch(
+										message.text.trim(),
+										message.files.length > 0 ? message.files : undefined,
+									)
+							}}
+						>
+							<PromptAttachmentPreview
+								supportsImages={modelCapabilities?.image}
+								supportsPdf={modelCapabilities?.pdf}
+							/>
+							<PromptInputTextarea
+								placeholder="What should this session work on?"
+								autoFocus
+								disabled={launching || !selectedDirectory || projects.length === 0}
+								className="min-h-[80px]"
+							/>
 
-						{/* Toolbar inside the card — agent + model + variant selectors */}
-						{hasToolbar && (
-							<PromptInputFooter>
-								<PromptInputTools>
-									<PromptToolbar
-										agents={openCodeAgents ?? []}
-										selectedAgent={selectedAgent}
-										defaultAgent={config?.defaultAgent}
-										onSelectAgent={setSelectedAgent}
-										providers={providers}
-										effectiveModel={effectiveModel}
-										hasModelOverride={!!selectedModel}
-										onSelectModel={setSelectedModel}
-										recentModels={recentModels}
-										selectedVariant={selectedVariant}
-										onSelectVariant={setSelectedVariant}
-									/>
-								</PromptInputTools>
-							</PromptInputFooter>
-						)}
-					</PromptInput>
+							{/* Toolbar inside the card — agent + model + variant selectors */}
+							{hasToolbar && (
+								<PromptInputFooter>
+									<PromptInputTools>
+										<PromptToolbar
+											agents={openCodeAgents ?? []}
+											selectedAgent={selectedAgent}
+											defaultAgent={config?.defaultAgent}
+											onSelectAgent={setSelectedAgent}
+											providers={providers}
+											effectiveModel={effectiveModel}
+											hasModelOverride={!!selectedModel}
+											onSelectModel={setSelectedModel}
+											recentModels={recentModels}
+											selectedVariant={selectedVariant}
+											onSelectVariant={setSelectedVariant}
+										/>
+									</PromptInputTools>
+								</PromptInputFooter>
+							)}
+						</PromptInput>
+					</PromptInputProvider>
 
 					{/* Status bar — outside the card */}
 					{providers && <StatusBar vcs={vcs ?? null} isConnected={true} />}

@@ -71,14 +71,9 @@ interface DiscoveryState {
 	sessions: Record<string, DiscoveredSession[]>
 }
 
-/** Controls how tool calls are displayed in chat turns */
-export type DisplayMode = "default" | "compact" | "verbose"
-
 interface UIState {
 	commandPaletteOpen: boolean
 	showSubAgents: boolean
-	/** Chat display density: default, compact, or verbose */
-	displayMode: DisplayMode
 }
 
 interface AppState {
@@ -137,7 +132,6 @@ interface AppState {
 	setCommandPaletteOpen: (open: boolean) => void
 	setShowSubAgents: (show: boolean) => void
 	toggleShowSubAgents: () => void
-	setDisplayMode: (mode: DisplayMode) => void
 
 	// ========== Event processing ==========
 	processEvent: (event: Event) => void
@@ -192,7 +186,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 	ui: {
 		commandPaletteOpen: false,
 		showSubAgents: false,
-		displayMode: "default" as DisplayMode,
 	},
 
 	// ========== Server actions ==========
@@ -481,8 +474,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 	toggleShowSubAgents: () =>
 		set((state) => ({ ui: { ...state.ui, showSubAgents: !state.ui.showSubAgents } })),
-
-	setDisplayMode: (mode) => set((state) => ({ ui: { ...state.ui, displayMode: mode } })),
 
 	// ========== Event processing ==========
 
