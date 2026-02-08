@@ -46,9 +46,10 @@ linux:
   category: Development
   maintainer: codedeck
   desktop:
-    Name: Codedeck
-    Comment: AI-powered coding assistant
-    Categories: Development;IDE;
+    entry:
+      Name: Codedeck
+      Comment: AI-powered coding assistant
+      Categories: Development;IDE;
 
 nsis:
   oneClick: false
