@@ -100,6 +100,16 @@ When adding routes to `apps/server`, you must run `cd apps/server && bun run bui
 
 `electron.vite.config.ts` has three sections: `main`, `preload`, `renderer`. Each produces separate output in `out/`. The renderer section is a normal Vite config. Main and preload use `externalizeDepsPlugin()` to keep Node.js deps external.
 
+### OpenCode source repository
+
+The OpenCode server/TUI source is often checked out locally at `../opencode` (i.e., `/Users/wmisiedjan/Projects/opencode`). When investigating how a server API works, how the TUI implements a feature, or what SDK types look like, it is often worth exploring that repository directly rather than guessing from SDK `.d.ts` files alone. Key paths:
+
+- **Server routes**: `packages/opencode/src/server/routes/` (Hono HTTP handlers)
+- **Session logic**: `packages/opencode/src/session/` (revert, prompt, message, fork)
+- **TUI components**: `packages/opencode/src/cli/cmd/tui/` (SolidJS + @opentui)
+- **SDK types**: `packages/opencode/src/server/routes/` (request/response schemas define the SDK types)
+- **Config/keybinds**: `packages/opencode/src/config/config.ts`
+
 ## Style Rules
 
 - Tabs for indentation, double quotes, no semicolons, trailing commas (enforced by Biome)

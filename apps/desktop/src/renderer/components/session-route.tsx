@@ -1,6 +1,7 @@
 import { useParams } from "@tanstack/react-router"
 import { useCallback, useMemo } from "react"
 import { useAgents } from "../hooks/use-agents"
+import { useSessionRevert } from "../hooks/use-commands"
 import type { ModelRef } from "../hooks/use-opencode-data"
 import { useConfig, useOpenCodeAgents, useProviders, useVcs } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
@@ -43,6 +44,12 @@ export function SessionRoute() {
 		selectedAgent?.directory ?? null,
 		selectedAgent?.sessionId ?? null,
 		isSessionActive,
+	)
+
+	// Undo/redo for this session
+	const { canUndo, canRedo, undo, redo, isReverted, revertToMessage } = useSessionRevert(
+		selectedAgent?.directory ?? null,
+		selectedAgent?.sessionId ?? null,
 	)
 
 	// Toolbar data — providers, config, VCS, and OpenCode agents
@@ -151,6 +158,12 @@ export function SessionRoute() {
 			config={config}
 			vcs={vcs}
 			openCodeAgents={openCodeAgents}
+			canUndo={canUndo}
+			canRedo={canRedo}
+			onUndo={undo}
+			onRedo={redo}
+			isReverted={isReverted}
+			onRevertToMessage={revertToMessage}
 		/>
 	)
 }

@@ -20,6 +20,7 @@ export type {
 	Part,
 	Permission,
 	Project as OpenCodeProject,
+	ReasoningPart,
 	Session,
 	SessionStatus,
 	TextPart,

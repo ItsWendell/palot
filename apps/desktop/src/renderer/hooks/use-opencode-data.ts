@@ -4,8 +4,9 @@ import type {
 	Model as SdkModel,
 	Provider as SdkProvider,
 } from "@opencode-ai/sdk/v2/client"
-import { useCallback, useEffect, useRef, useState } from "react"
-import { fetchModelState } from "../services/backend"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useCallback } from "react"
+import { fetchModelState, updateModelRecent } from "../services/backend"
 import { getProjectClient } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
 
@@ -168,12 +169,28 @@ export function getModelInputCapabilities(
 }
 
 // ============================================================
-// Hooks
+// Query Key Factories
+// ============================================================
+
+/** Centralized query keys — avoids typo-based cache misses and makes invalidation easy. */
+export const queryKeys = {
+	providers: (directory: string) => ["providers", directory] as const,
+	config: (directory: string) => ["config", directory] as const,
+	vcs: (directory: string) => ["vcs", directory] as const,
+	agents: (directory: string) => ["agents", directory] as const,
+	commands: (directory: string) => ["commands", directory] as const,
+	modelState: ["modelState"] as const,
+}
+
+// ============================================================
+// Hooks (TanStack Query)
 // ============================================================
 
 /**
  * Fetches connected providers and their models from an OpenCode server.
  * Uses `GET /config/providers` which returns resolved Provider objects.
+ *
+ * Cached per directory — switching between sessions in the same project is free.
  */
 export function useProviders(directory: string | null): {
 	data: ProvidersData | null
@@ -182,51 +199,45 @@ export function useProviders(directory: string | null): {
 	reload: () => void
 } {
 	const connected = useAppStore((s) => s.opencode?.connected ?? false)
-	const [data, setData] = useState<ProvidersData | null>(null)
-	const [loading, setLoading] = useState(false)
-	const [error, setError] = useState<string | null>(null)
+	const queryClient = useQueryClient()
 
-	const load = useCallback(async () => {
-		if (!directory) {
-			setData(null)
-			return
-		}
-		const client = getProjectClient(directory)
-		if (!client) {
-			setData(null)
-			return
-		}
-
-		setLoading(true)
-		setError(null)
-		try {
+	const { data, isLoading, error } = useQuery({
+		queryKey: queryKeys.providers(directory ?? ""),
+		queryFn: async (): Promise<ProvidersData> => {
+			const client = getProjectClient(directory!)
+			if (!client) throw new Error("No client for directory")
 			const result = await client.config.providers()
 			const raw = result.data as {
 				providers: SdkProvider[]
 				default: Record<string, string>
 			}
-			setData({
+			return {
 				providers: raw.providers ?? [],
 				defaults: raw.default ?? {},
-			})
-		} catch (err) {
-			console.error("Failed to load providers:", err)
-			setError(err instanceof Error ? err.message : "Failed to load providers")
-		} finally {
-			setLoading(false)
+			}
+		},
+		enabled: !!directory && connected,
+	})
+
+	const reload = useCallback(() => {
+		if (directory) {
+			queryClient.invalidateQueries({ queryKey: queryKeys.providers(directory) })
 		}
-	}, [directory, connected])
+	}, [directory, queryClient])
 
-	useEffect(() => {
-		load()
-	}, [load])
-
-	return { data, loading, error, reload: load }
+	return {
+		data: data ?? null,
+		loading: isLoading,
+		error: error ? (error instanceof Error ? error.message : "Failed to load providers") : null,
+		reload,
+	}
 }
 
 /**
  * Fetches the current config from an OpenCode server.
  * Uses `GET /config`.
+ *
+ * Cached per directory — rarely changes during a session.
  */
 export function useConfig(directory: string | null): {
 	data: ConfigData | null
@@ -235,50 +246,44 @@ export function useConfig(directory: string | null): {
 	reload: () => void
 } {
 	const connected = useAppStore((s) => s.opencode?.connected ?? false)
-	const [data, setData] = useState<ConfigData | null>(null)
-	const [loading, setLoading] = useState(false)
-	const [error, setError] = useState<string | null>(null)
+	const queryClient = useQueryClient()
 
-	const load = useCallback(async () => {
-		if (!directory) {
-			setData(null)
-			return
-		}
-		const client = getProjectClient(directory)
-		if (!client) {
-			setData(null)
-			return
-		}
-
-		setLoading(true)
-		setError(null)
-		try {
+	const { data, isLoading, error } = useQuery({
+		queryKey: queryKeys.config(directory ?? ""),
+		queryFn: async (): Promise<ConfigData> => {
+			const client = getProjectClient(directory!)
+			if (!client) throw new Error("No client for directory")
 			const result = await client.config.get()
 			const raw = result.data as SdkConfig
-			setData({
+			return {
 				model: raw.model,
 				smallModel: raw.small_model,
 				defaultAgent: raw.default_agent,
-			})
-		} catch (err) {
-			console.error("Failed to load config:", err)
-			setError(err instanceof Error ? err.message : "Failed to load config")
-		} finally {
-			setLoading(false)
+			}
+		},
+		enabled: !!directory && connected,
+	})
+
+	const reload = useCallback(() => {
+		if (directory) {
+			queryClient.invalidateQueries({ queryKey: queryKeys.config(directory) })
 		}
-	}, [directory, connected])
+	}, [directory, queryClient])
 
-	useEffect(() => {
-		load()
-	}, [load])
-
-	return { data, loading, error, reload: load }
+	return {
+		data: data ?? null,
+		loading: isLoading,
+		error: error ? (error instanceof Error ? error.message : "Failed to load config") : null,
+		reload,
+	}
 }
 
 /**
  * Fetches VCS (git) info from an OpenCode server.
- * Uses `GET /vcs`. Also listens for `vcs.branch.updated` events
- * via the SSE stream (handled in the store event processor).
+ * Uses `GET /vcs` with a 60s polling interval (doubled from 30s — sufficient
+ * since manual reload and SSE events provide near-instant updates when needed).
+ *
+ * Cached per directory — switching between sessions in the same project is free.
  */
 export function useVcs(directory: string | null): {
 	data: VcsData | null
@@ -287,61 +292,43 @@ export function useVcs(directory: string | null): {
 	reload: () => void
 } {
 	const connected = useAppStore((s) => s.opencode?.connected ?? false)
-	const [data, setData] = useState<VcsData | null>(null)
-	const [loading, setLoading] = useState(false)
-	const [error, setError] = useState<string | null>(null)
-	const pollRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+	const queryClient = useQueryClient()
 
-	const load = useCallback(async () => {
-		if (!directory) {
-			setData(null)
-			return
-		}
-		const client = getProjectClient(directory)
-		if (!client) {
-			setData(null)
-			return
-		}
-
-		setLoading(true)
-		setError(null)
-		try {
+	const { data, isLoading, error } = useQuery({
+		queryKey: queryKeys.vcs(directory ?? ""),
+		queryFn: async (): Promise<VcsData> => {
+			const client = getProjectClient(directory!)
+			if (!client) throw new Error("No client for directory")
 			const result = await client.vcs.get()
 			const raw = result.data as { branch: string }
-			setData({ branch: raw.branch ?? "" })
-		} catch (err) {
-			console.error("Failed to load VCS info:", err)
-			setError(err instanceof Error ? err.message : "Failed to load VCS info")
-		} finally {
-			setLoading(false)
+			return { branch: raw.branch ?? "" }
+		},
+		enabled: !!directory && connected,
+		// VCS data changes more often (branch switches) — shorter stale time + polling.
+		staleTime: 30_000,
+		refetchInterval: 60_000,
+	})
+
+	const reload = useCallback(() => {
+		if (directory) {
+			queryClient.invalidateQueries({ queryKey: queryKeys.vcs(directory) })
 		}
-	}, [directory, connected])
+	}, [directory, queryClient])
 
-	useEffect(() => {
-		load()
-
-		// Poll VCS every 30s to catch branch changes
-		// (supplements SSE events which may not always arrive)
-		const poll = () => {
-			pollRef.current = setTimeout(() => {
-				load()
-				poll()
-			}, 30_000)
-		}
-		poll()
-
-		return () => {
-			if (pollRef.current) clearTimeout(pollRef.current)
-		}
-	}, [load])
-
-	return { data, loading, error, reload: load }
+	return {
+		data: data ?? null,
+		loading: isLoading,
+		error: error ? (error instanceof Error ? error.message : "Failed to load VCS info") : null,
+		reload,
+	}
 }
 
 /**
  * Fetches available agents from an OpenCode server.
  * Uses `GET /agent` via `client.app.agents()`.
  * Filters to only primary, non-hidden agents (the ones cycleable in the TUI).
+ *
+ * Cached per directory — agent configuration almost never changes at runtime.
  */
 export function useOpenCodeAgents(directory: string | null): {
 	agents: SdkAgent[]
@@ -350,42 +337,33 @@ export function useOpenCodeAgents(directory: string | null): {
 	reload: () => void
 } {
 	const connected = useAppStore((s) => s.opencode?.connected ?? false)
-	const [agents, setAgents] = useState<SdkAgent[]>([])
-	const [loading, setLoading] = useState(false)
-	const [error, setError] = useState<string | null>(null)
+	const queryClient = useQueryClient()
 
-	const load = useCallback(async () => {
-		if (!directory) {
-			setAgents([])
-			return
-		}
-		const client = getProjectClient(directory)
-		if (!client) {
-			setAgents([])
-			return
-		}
-
-		setLoading(true)
-		setError(null)
-		try {
+	const { data, isLoading, error } = useQuery({
+		queryKey: queryKeys.agents(directory ?? ""),
+		queryFn: async (): Promise<SdkAgent[]> => {
+			const client = getProjectClient(directory!)
+			if (!client) throw new Error("No client for directory")
 			const result = await client.app.agents()
 			const raw = (result.data ?? []) as SdkAgent[]
 			// Only keep primary/all agents that aren't hidden
-			const visible = raw.filter((a) => (a.mode === "primary" || a.mode === "all") && !a.hidden)
-			setAgents(visible)
-		} catch (err) {
-			console.error("Failed to load agents:", err)
-			setError(err instanceof Error ? err.message : "Failed to load agents")
-		} finally {
-			setLoading(false)
+			return raw.filter((a) => (a.mode === "primary" || a.mode === "all") && !a.hidden)
+		},
+		enabled: !!directory && connected,
+	})
+
+	const reload = useCallback(() => {
+		if (directory) {
+			queryClient.invalidateQueries({ queryKey: queryKeys.agents(directory) })
 		}
-	}, [directory, connected])
+	}, [directory, queryClient])
 
-	useEffect(() => {
-		load()
-	}, [load])
-
-	return { agents, loading, error, reload: load }
+	return {
+		agents: data ?? [],
+		loading: isLoading,
+		error: error ? (error instanceof Error ? error.message : "Failed to load agents") : null,
+		reload,
+	}
 }
 
 /**
@@ -395,34 +373,89 @@ export function useOpenCodeAgents(directory: string | null): {
  * This is the same file the TUI uses for its "recent models" resolution.
  * The first recent model that exists in a connected provider becomes the
  * default when no explicit model is configured.
+ *
+ * Also exposes `addRecent()` to persist model selections to model.json
+ * (matching the TUI's `model.set(model, { recent: true })` behavior).
  */
 export function useModelState(): {
 	recentModels: ModelRef[]
 	loading: boolean
 	error: string | null
+	/** Adds a model to the front of the recent list and persists to model.json. */
+	addRecent: (model: ModelRef) => void
 } {
 	const connected = useAppStore((s) => s.opencode?.connected ?? false)
-	const [recentModels, setRecentModels] = useState<ModelRef[]>([])
-	const [loading, setLoading] = useState(false)
-	const [error, setError] = useState<string | null>(null)
+	const queryClient = useQueryClient()
 
-	const load = useCallback(async () => {
-		setLoading(true)
-		setError(null)
-		try {
-			const data = await fetchModelState()
-			setRecentModels(data.recent ?? [])
-		} catch (err) {
-			console.error("Failed to load model state:", err)
-			setError(err instanceof Error ? err.message : "Failed to load model state")
-		} finally {
-			setLoading(false)
-		}
-	}, [connected])
+	const { data, isLoading, error } = useQuery({
+		queryKey: queryKeys.modelState,
+		queryFn: async (): Promise<ModelRef[]> => {
+			const result = await fetchModelState()
+			return result.recent ?? []
+		},
+		enabled: connected,
+		// Model state can change when user selects a model in another session —
+		// keep it relatively fresh but still avoid redundant fetches on navigation.
+		staleTime: 60_000,
+	})
 
-	useEffect(() => {
-		load()
-	}, [load])
+	const addRecent = useCallback(
+		(model: ModelRef) => {
+			// Optimistic update — mutate the query cache directly
+			queryClient.setQueryData<ModelRef[]>(queryKeys.modelState, (prev) => {
+				const key = (m: ModelRef) => `${m.providerID}/${m.modelID}`
+				const seen = new Set<string>()
+				const updated: ModelRef[] = []
+				for (const entry of [model, ...(prev ?? [])]) {
+					const k = key(entry)
+					if (!seen.has(k) && updated.length < 10) {
+						seen.add(k)
+						updated.push(entry)
+					}
+				}
+				return updated
+			})
 
-	return { recentModels, loading, error }
+			// Persist to model.json in the background
+			updateModelRecent(model).catch((err) => {
+				console.error("Failed to persist model to recent:", err)
+			})
+		},
+		[queryClient],
+	)
+
+	return {
+		recentModels: data ?? [],
+		loading: isLoading,
+		error: error ? (error instanceof Error ? error.message : "Failed to load model state") : null,
+		addRecent,
+	}
+}
+
+/**
+ * Fetches available server-side slash commands.
+ * Uses `GET /command` via `client.command.list()`.
+ *
+ * Cached per directory — shared between useCommands and SlashCommandPopover,
+ * eliminating the duplicate request that previously occurred.
+ */
+export function useServerCommands(directory: string | null): {
+	name: string
+	description?: string
+	agent?: string
+}[] {
+	const connected = useAppStore((s) => s.opencode?.connected ?? false)
+
+	const { data } = useQuery({
+		queryKey: queryKeys.commands(directory ?? ""),
+		queryFn: async () => {
+			const client = getProjectClient(directory!)
+			if (!client) throw new Error("No client for directory")
+			const result = await client.command.list()
+			return (result.data ?? []) as { name: string; description?: string; agent?: string }[]
+		},
+		enabled: !!directory && connected,
+	})
+
+	return data ?? []
 }

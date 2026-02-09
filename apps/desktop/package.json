@@ -42,6 +42,7 @@
 		"react-resizable-panels": "^4.6.2",
 		"react-syntax-highlighter": "^16.1.0",
 		"remark-gfm": "^4.0.1",
+		"simple-git": "^3.30.0",
 		"zustand": "^5.0.11"
 	},
 	"devDependencies": {

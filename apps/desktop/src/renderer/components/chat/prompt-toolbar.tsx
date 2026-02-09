@@ -1,5 +1,14 @@
-import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
-import { ScrollArea } from "@codedeck/ui/components/scroll-area"
+import {
+	SearchableListPopover,
+	SearchableListPopoverContent,
+	SearchableListPopoverEmpty,
+	SearchableListPopoverGroup,
+	SearchableListPopoverItem,
+	SearchableListPopoverList,
+	SearchableListPopoverSearch,
+	SearchableListPopoverTrigger,
+	useSearchableListPopoverSearch,
+} from "@codedeck/ui/components/searchable-list-popover"
 import {
 	Select,
 	SelectContent,
@@ -18,7 +27,7 @@ import {
 	MonitorIcon,
 	SparklesIcon,
 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { useDisplayMode, useSetDisplayMode } from "../../hooks/use-agents"
 import type {
 	ModelRef,
@@ -183,35 +192,6 @@ export function ModelSelector({
 	)
 
 	const [open, setOpen] = useState(false)
-	const [search, setSearch] = useState("")
-	const inputRef = useRef<HTMLInputElement>(null)
-
-	// Reset search when popover closes
-	useEffect(() => {
-		if (!open) setSearch("")
-	}, [open])
-
-	// Auto-focus search input when popover opens
-	useEffect(() => {
-		if (open) {
-			// Small delay to let the popover render before focusing
-			const timer = setTimeout(() => inputRef.current?.focus(), 0)
-			return () => clearTimeout(timer)
-		}
-	}, [open])
-
-	const filteredModels = useMemo(() => {
-		if (!search) return models
-		const q = search.toLowerCase()
-		return models.filter(
-			(m) =>
-				m.displayName.toLowerCase().includes(q) ||
-				m.providerName.toLowerCase().includes(q) ||
-				m.modelID.toLowerCase().includes(q),
-		)
-	}, [models, search])
-
-	const grouped = useMemo(() => groupByProvider(filteredModels), [filteredModels])
 
 	const handleSelect = useCallback(
 		(value: string) => {
@@ -234,8 +214,8 @@ export function ModelSelector({
 	}
 
 	return (
-		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger
+		<SearchableListPopover open={open} onOpenChange={setOpen}>
+			<SearchableListPopoverTrigger
 				className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-colors hover:bg-muted disabled:opacity-50"
 				disabled={disabled}
 			>
@@ -248,94 +228,101 @@ export function ModelSelector({
 					<span className="text-muted-foreground">Select model...</span>
 				)}
 				<ChevronDownIcon className="size-3 text-muted-foreground/60" />
-			</PopoverTrigger>
-			<PopoverContent
-				side="top"
-				align="start"
-				className="w-72 p-0"
-				onOpenAutoFocus={(e) => e.preventDefault()}
-			>
-				{/* Search input */}
-				<div className="border-b px-3 py-2">
-					<input
-						ref={inputRef}
-						type="text"
-						placeholder="Search models..."
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
-						className="h-6 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
-					/>
-				</div>
+			</SearchableListPopoverTrigger>
+			<SearchableListPopoverContent side="top" align="start">
+				<SearchableListPopoverSearch placeholder="Search models..." />
+				<ModelSelectorList
+					models={models}
+					lastUsedModels={lastUsedModels}
+					activeValue={activeValue}
+					onSelect={handleSelect}
+				/>
+			</SearchableListPopoverContent>
+		</SearchableListPopover>
+	)
+}
 
-				{/* Model list with ScrollArea */}
-				<ScrollArea className="max-h-64 overflow-hidden [&>[data-radix-scroll-area-viewport]]:max-h-[inherit]">
-					{filteredModels.length === 0 ? (
-						<div className="py-4 text-center text-sm text-muted-foreground">No models found</div>
-					) : (
-						<>
-							{/* Last used group — only shown when not searching */}
-							{!search && lastUsedModels.length > 0 && (
-								<div>
-									<div className="sticky top-0 z-10 border-b bg-popover px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-										Last used
-									</div>
-									{lastUsedModels.map((model) => (
-										<button
-											key={`recent-${model.value}`}
-											type="button"
-											onClick={() => handleSelect(model.value)}
-											className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted"
-										>
-											<span className="flex-1 truncate">{model.displayName}</span>
-											<span className="shrink-0 text-[10px] text-muted-foreground/40">
-												{model.providerName}
-											</span>
-											{model.reasoning && (
-												<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground/60">
-													reasoning
-												</span>
-											)}
-											{model.value === activeValue && (
-												<CheckIcon className="size-3.5 shrink-0 text-primary" />
-											)}
-										</button>
-									))}
-								</div>
-							)}
+/** Inner list component — reads search from context */
+function ModelSelectorList({
+	models,
+	lastUsedModels,
+	activeValue,
+	onSelect,
+}: {
+	models: ModelOption[]
+	lastUsedModels: ModelOption[]
+	activeValue: string | null
+	onSelect: (value: string) => void
+}) {
+	const search = useSearchableListPopoverSearch()
 
-							{/* Provider-grouped models */}
-							{Array.from(grouped.entries()).map(([providerName, providerModels]) => (
-								<div key={providerName}>
-									{/* Sticky provider header */}
-									<div className="sticky top-0 z-10 border-b bg-popover px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-										{providerName}
+	const filteredModels = useMemo(() => {
+		if (!search) return models
+		const q = search.toLowerCase()
+		return models.filter(
+			(m) =>
+				m.displayName.toLowerCase().includes(q) ||
+				m.providerName.toLowerCase().includes(q) ||
+				m.modelID.toLowerCase().includes(q),
+		)
+	}, [models, search])
+
+	const grouped = useMemo(() => groupByProvider(filteredModels), [filteredModels])
+
+	return (
+		<SearchableListPopoverList>
+			{filteredModels.length === 0 ? (
+				<SearchableListPopoverEmpty>No models found</SearchableListPopoverEmpty>
+			) : (
+				<>
+					{/* Last used group — only shown when not searching */}
+					{!search && lastUsedModels.length > 0 && (
+						<SearchableListPopoverGroup label="Last used">
+							{lastUsedModels.map((model) => (
+								<SearchableListPopoverItem
+									key={`recent-${model.value}`}
+									onSelect={() => onSelect(model.value)}
+								>
+									<div className="min-w-0 flex-1">
+										<div className="truncate">{model.displayName}</div>
+										<div className="truncate text-[10px] text-muted-foreground/40">
+											{model.providerName}
+										</div>
 									</div>
-									{/* Models in this provider group */}
-									{providerModels.map((model) => (
-										<button
-											key={model.value}
-											type="button"
-											onClick={() => handleSelect(model.value)}
-											className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted"
-										>
-											<span className="flex-1 truncate">{model.displayName}</span>
-											{model.reasoning && (
-												<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground/60">
-													reasoning
-												</span>
-											)}
-											{model.value === activeValue && (
-												<CheckIcon className="size-3.5 shrink-0 text-primary" />
-											)}
-										</button>
-									))}
-								</div>
+									{model.reasoning && (
+										<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground/60">
+											reasoning
+										</span>
+									)}
+									{model.value === activeValue && (
+										<CheckIcon className="size-3.5 shrink-0 text-primary" />
+									)}
+								</SearchableListPopoverItem>
 							))}
-						</>
+						</SearchableListPopoverGroup>
 					)}
-				</ScrollArea>
-			</PopoverContent>
-		</Popover>
+
+					{/* Provider-grouped models */}
+					{Array.from(grouped.entries()).map(([providerName, providerModels]) => (
+						<SearchableListPopoverGroup key={providerName} label={providerName}>
+							{providerModels.map((model) => (
+								<SearchableListPopoverItem key={model.value} onSelect={() => onSelect(model.value)}>
+									<span className="min-w-0 flex-1 truncate">{model.displayName}</span>
+									{model.reasoning && (
+										<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground/60">
+											reasoning
+										</span>
+									)}
+									{model.value === activeValue && (
+										<CheckIcon className="size-3.5 shrink-0 text-primary" />
+									)}
+								</SearchableListPopoverItem>
+							))}
+						</SearchableListPopoverGroup>
+					))}
+				</>
+			)}
+		</SearchableListPopoverList>
 	)
 }
 
@@ -495,6 +482,8 @@ interface StatusBarProps {
 	isWorking?: boolean
 	/** Number of Escape presses toward abort (0 = none, 1 = first press) */
 	interruptCount?: number
+	/** Optional slot to replace the default branch display (e.g. interactive BranchPicker) */
+	branchSlot?: React.ReactNode
 }
 
 const DISPLAY_MODE_CYCLE: DisplayMode[] = ["default", "compact", "verbose"]
@@ -509,7 +498,13 @@ const DISPLAY_MODE_ICONS: Record<DisplayMode, typeof ListIcon> = {
 	verbose: MaximizeIcon,
 }
 
-export function StatusBar({ vcs, isConnected, isWorking, interruptCount }: StatusBarProps) {
+export function StatusBar({
+	vcs,
+	isConnected,
+	isWorking,
+	interruptCount,
+	branchSlot,
+}: StatusBarProps) {
 	const displayMode = useDisplayMode()
 	const setDisplayMode = useSetDisplayMode()
 
@@ -565,13 +560,15 @@ export function StatusBar({ vcs, isConnected, isWorking, interruptCount }: Statu
 					<span>{DISPLAY_MODE_LABELS[displayMode]}</span>
 				</button>
 
-				{/* Git branch */}
-				{vcs?.branch && (
-					<div className="flex items-center gap-1">
-						<GitBranchIcon className="size-3" />
-						<span className="max-w-[140px] truncate">{vcs.branch}</span>
-					</div>
-				)}
+				{/* Git branch — interactive picker or read-only display */}
+				{branchSlot
+					? branchSlot
+					: vcs?.branch && (
+							<div className="flex items-center gap-1">
+								<GitBranchIcon className="size-3" />
+								<span className="max-w-[140px] truncate">{vcs.branch}</span>
+							</div>
+						)}
 			</div>
 		</div>
 	)

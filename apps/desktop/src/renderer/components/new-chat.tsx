@@ -10,7 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { ChevronDownIcon, CodeIcon, FileTextIcon, GitPullRequestIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useProjectList } from "../hooks/use-agents"
+import { useAgents, useProjectList } from "../hooks/use-agents"
 import { NEW_CHAT_DRAFT_KEY, useDraft, useDraftActions } from "../hooks/use-draft"
 import type { ModelRef } from "../hooks/use-opencode-data"
 import {
@@ -24,6 +24,9 @@ import {
 } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import type { FileAttachment } from "../lib/types"
+import { getProjectClient } from "../services/connection-manager"
+import { useAppStore } from "../stores/app-store"
+import { BranchPicker } from "./branch-picker"
 import { PromptAttachmentPreview } from "./chat/prompt-attachments"
 import { PromptToolbar, StatusBar } from "./chat/prompt-toolbar"
 
@@ -89,9 +92,113 @@ export function NewChat() {
 
 	const { data: providers } = useProviders(selectedDirectory || null)
 	const { data: config } = useConfig(selectedDirectory || null)
-	const { data: vcs } = useVcs(selectedDirectory || null)
+	const { data: vcs, reload: reloadVcs } = useVcs(selectedDirectory || null)
 	const { agents: openCodeAgents } = useOpenCodeAgents(selectedDirectory || null)
-	const { recentModels } = useModelState()
+	const { recentModels, addRecent: addRecentModel } = useModelState()
+
+	// Derive the last-used model for this project from existing session messages.
+	// This gives new chats project-scoped continuity instead of using the global recent list.
+	//
+	// Strategy: first check the Zustand store (fast, synchronous) for any loaded messages.
+	// If no messages are in the store (common on fresh app start), fetch the most recent
+	// session's messages from the server asynchronously.
+	const sessions = useAppStore((s) => s.sessions)
+	const storeMessages = useAppStore((s) => s.messages)
+	const [projectLastModel, setProjectLastModel] = useState<ModelRef | null>(null)
+
+	useEffect(() => {
+		if (!selectedDirectory) {
+			setProjectLastModel(null)
+			return
+		}
+
+		// First, try to find the model from messages already in the store
+		const dirSessions = Object.values(sessions)
+			.filter((e) => e.directory === selectedDirectory)
+			.sort((a, b) => {
+				const aTime = a.session.time.updated ?? a.session.time.created
+				const bTime = b.session.time.updated ?? b.session.time.created
+				return bTime - aTime
+			})
+
+		for (const entry of dirSessions) {
+			const msgs = storeMessages[entry.session.id]
+			if (!msgs) continue
+			for (let i = msgs.length - 1; i >= 0; i--) {
+				const msg = msgs[i]
+				if (msg.role === "user" && "model" in msg && msg.model) {
+					const model = msg.model as { providerID: string; modelID: string }
+					if (model.providerID && model.modelID) {
+						setProjectLastModel(model)
+						return
+					}
+				}
+			}
+		}
+
+		// No messages in store — fetch from the most recent session via SDK.
+		// Only need the last few messages to find the model field on the last user message.
+		if (dirSessions.length > 0) {
+			const mostRecent = dirSessions[0]
+			const client = getProjectClient(selectedDirectory)
+			if (client) {
+				let cancelled = false
+				client.session
+					.messages({ sessionID: mostRecent.session.id, limit: 5 })
+					.then((result) => {
+						if (cancelled) return
+						const raw = (result.data ?? []) as Array<{
+							info: { role: string; model?: { providerID: string; modelID: string } }
+						}>
+						// Find the last user message with a model
+						for (let i = raw.length - 1; i >= 0; i--) {
+							const msg = raw[i].info
+							if (msg.role === "user" && msg.model?.providerID && msg.model?.modelID) {
+								setProjectLastModel(msg.model)
+								return
+							}
+						}
+					})
+					.catch(() => {
+						// Silently fail — will fall back to global recent list
+					})
+				return () => {
+					cancelled = true
+				}
+			}
+		}
+
+		setProjectLastModel(null)
+	}, [selectedDirectory, sessions, storeMessages])
+
+	// Handle model selection — set local state + persist to model.json
+	const handleModelSelect = useCallback(
+		(model: ModelRef | null) => {
+			setSelectedModel(model)
+			if (model) addRecentModel(model)
+		},
+		[addRecentModel],
+	)
+
+	// Count active sessions on the selected directory (for branch switch warnings)
+	const allAgents = useAgents()
+	const activeSessionCount = useMemo(() => {
+		if (!selectedDirectory) return 0
+		return allAgents.filter(
+			(a) =>
+				a.directory === selectedDirectory && (a.status === "running" || a.status === "waiting"),
+		).length
+	}, [allAgents, selectedDirectory])
+
+	// Callback when branch is switched via the BranchPicker — forces VCS reload
+	const handleBranchChanged = useCallback(
+		(_branch: string) => {
+			// VCS hook polls every 30s, but we want immediate UI update.
+			// The SSE vcs.branch.updated event will also fire eventually.
+			reloadVcs()
+		},
+		[reloadVcs],
+	)
 
 	// Resolve active agent for model resolution
 	const activeOpenCodeAgent = useMemo(() => {
@@ -99,7 +206,15 @@ export function NewChat() {
 		return openCodeAgents?.find((a) => a.name === agentName) ?? null
 	}, [selectedAgent, config?.defaultAgent, openCodeAgents])
 
-	// Resolve effective model
+	// Resolve effective model — project's last-used model takes priority over global recent list
+	const projectRecentModels = useMemo(() => {
+		if (!projectLastModel) return recentModels
+		// Prepend the project's last-used model so it wins over the global list
+		const key = `${projectLastModel.providerID}/${projectLastModel.modelID}`
+		const filtered = recentModels.filter((m) => `${m.providerID}/${m.modelID}` !== key)
+		return [projectLastModel, ...filtered]
+	}, [projectLastModel, recentModels])
+
 	const effectiveModel = useMemo(
 		() =>
 			resolveEffectiveModel(
@@ -108,9 +223,9 @@ export function NewChat() {
 				config?.model,
 				providers?.defaults ?? {},
 				providers?.providers ?? [],
-				recentModels,
+				projectRecentModels,
 			),
-		[selectedModel, activeOpenCodeAgent, config?.model, providers, recentModels],
+		[selectedModel, activeOpenCodeAgent, config?.model, providers, projectRecentModels],
 	)
 
 	// Model input capabilities (for attachment warnings)
@@ -141,6 +256,12 @@ export function NewChat() {
 			try {
 				const session = await createSession(selectedDirectory)
 				if (session) {
+					// Capture the current branch at session creation time
+					const currentBranch = vcs?.branch ?? ""
+					if (currentBranch) {
+						useAppStore.getState().setSessionBranch(session.id, currentBranch)
+					}
+
 					await sendPrompt(selectedDirectory, session.id, promptText, {
 						model: effectiveModel ?? undefined,
 						agent: selectedAgent ?? undefined,
@@ -173,6 +294,7 @@ export function NewChat() {
 			selectedAgent,
 			selectedVariant,
 			clearDraft,
+			vcs,
 		],
 	)
 
@@ -310,7 +432,7 @@ export function NewChat() {
 											providers={providers}
 											effectiveModel={effectiveModel}
 											hasModelOverride={!!selectedModel}
-											onSelectModel={setSelectedModel}
+											onSelectModel={handleModelSelect}
 											recentModels={recentModels}
 											selectedVariant={selectedVariant}
 											onSelectVariant={setSelectedVariant}
@@ -322,7 +444,22 @@ export function NewChat() {
 					</PromptInputProvider>
 
 					{/* Status bar — outside the card */}
-					{providers && <StatusBar vcs={vcs ?? null} isConnected={true} />}
+					{providers && (
+						<StatusBar
+							vcs={vcs ?? null}
+							isConnected={true}
+							branchSlot={
+								selectedDirectory ? (
+									<BranchPicker
+										directory={selectedDirectory}
+										currentBranch={vcs?.branch}
+										onBranchChanged={handleBranchChanged}
+										activeSessionCount={activeSessionCount}
+									/>
+								) : undefined
+							}
+						/>
+					)}
 
 					{/* Error */}
 					{error && (

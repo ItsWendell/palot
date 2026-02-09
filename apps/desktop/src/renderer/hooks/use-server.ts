@@ -1,4 +1,5 @@
 import { useCallback } from "react"
+import { createLogger } from "../lib/logger"
 import type {
 	FileAttachment,
 	FilePart,
@@ -9,6 +10,8 @@ import type {
 } from "../lib/types"
 import { getProjectClient } from "../services/connection-manager"
 import { useAppStore } from "../stores/app-store"
+
+const log = createLogger("use-server")
 
 /**
  * Hook for OpenCode server connection state.
@@ -30,7 +33,13 @@ export function useAgentActions() {
 	const abort = useCallback(async (directory: string, sessionId: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")
-		await client.session.abort({ sessionID: sessionId })
+		log.debug("abort", { sessionId })
+		try {
+			await client.session.abort({ sessionID: sessionId })
+		} catch (err) {
+			log.error("abort failed", { sessionId }, err)
+			throw err
+		}
 	}, [])
 
 	const sendPrompt = useCallback(
@@ -98,15 +107,21 @@ export function useAgentActions() {
 				})
 			}
 
-			await client.session.promptAsync({
-				sessionID: sessionId,
-				parts,
-				model: options?.model
-					? { providerID: options.model.providerID, modelID: options.model.modelID }
-					: undefined,
-				agent: options?.agent,
-				variant: options?.variant,
-			})
+			log.debug("sendPrompt", { sessionId, agent: options?.agent, model: options?.model })
+			try {
+				await client.session.promptAsync({
+					sessionID: sessionId,
+					parts,
+					model: options?.model
+						? { providerID: options.model.providerID, modelID: options.model.modelID }
+						: undefined,
+					agent: options?.agent,
+					variant: options?.variant,
+				})
+			} catch (err) {
+				log.error("sendPrompt failed", { sessionId, agent: options?.agent }, err)
+				throw err
+			}
 		},
 		[],
 	)
@@ -114,18 +129,26 @@ export function useAgentActions() {
 	const createSession = useCallback(async (directory: string, title?: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")
-		const result = await client.session.create({ title })
-		const session = result.data
-		// Add to store immediately so navigation finds it before SSE arrives
-		if (session) {
-			useAppStore.getState().setSession(session, directory)
+		log.debug("createSession", { directory, title })
+		try {
+			const result = await client.session.create({ title })
+			const session = result.data
+			// Add to store immediately so navigation finds it before SSE arrives
+			if (session) {
+				useAppStore.getState().setSession(session, directory)
+			}
+			log.debug("createSession succeeded", { sessionId: session?.id })
+			return session
+		} catch (err) {
+			log.error("createSession failed", { directory, title }, err)
+			throw err
 		}
-		return session
 	}, [])
 
 	const renameSession = useCallback(async (directory: string, sessionId: string, title: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")
+		log.debug("renameSession", { sessionId, title })
 
 		// Optimistic update — change title in store immediately
 		const store = useAppStore.getState()
@@ -134,13 +157,24 @@ export function useAgentActions() {
 			store.setSession({ ...entry.session, title }, entry.directory)
 		}
 
-		await client.session.update({ sessionID: sessionId, title })
+		try {
+			await client.session.update({ sessionID: sessionId, title })
+		} catch (err) {
+			log.error("renameSession failed", { sessionId, title }, err)
+			throw err
+		}
 	}, [])
 
 	const deleteSession = useCallback(async (directory: string, sessionId: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")
-		await client.session.delete({ sessionID: sessionId })
+		log.debug("deleteSession", { sessionId })
+		try {
+			await client.session.delete({ sessionID: sessionId })
+		} catch (err) {
+			log.error("deleteSession failed", { sessionId }, err)
+			throw err
+		}
 	}, [])
 
 	const respondToPermission = useCallback(
@@ -152,11 +186,17 @@ export function useAgentActions() {
 		) => {
 			const client = getProjectClient(directory)
 			if (!client) throw new Error("Not connected to OpenCode server")
-			await client.permission.respond({
-				sessionID: sessionId,
-				permissionID: permissionId,
-				response,
-			})
+			log.debug("respondToPermission", { sessionId, permissionId, response })
+			try {
+				await client.permission.respond({
+					sessionID: sessionId,
+					permissionID: permissionId,
+					response,
+				})
+			} catch (err) {
+				log.error("respondToPermission failed", { sessionId, permissionId, response }, err)
+				throw err
+			}
 		},
 		[],
 	)
@@ -165,7 +205,13 @@ export function useAgentActions() {
 		async (directory: string, requestId: string, answers: QuestionAnswer[]) => {
 			const client = getProjectClient(directory)
 			if (!client) throw new Error("Not connected to OpenCode server")
-			await client.question.reply({ requestID: requestId, answers })
+			log.debug("replyToQuestion", { requestId })
+			try {
+				await client.question.reply({ requestID: requestId, answers })
+			} catch (err) {
+				log.error("replyToQuestion failed", { requestId }, err)
+				throw err
+			}
 		},
 		[],
 	)
@@ -173,7 +219,88 @@ export function useAgentActions() {
 	const rejectQuestion = useCallback(async (directory: string, requestId: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")
-		await client.question.reject({ requestID: requestId })
+		log.debug("rejectQuestion", { requestId })
+		try {
+			await client.question.reject({ requestID: requestId })
+		} catch (err) {
+			log.error("rejectQuestion failed", { requestId }, err)
+			throw err
+		}
+	}, [])
+
+	/**
+	 * Revert (undo) a session to a specific message.
+	 * If the session is busy, aborts it first (matching TUI behavior).
+	 */
+	const revert = useCallback(async (directory: string, sessionId: string, messageId: string) => {
+		const client = getProjectClient(directory)
+		if (!client) throw new Error("Not connected to OpenCode server")
+		log.debug("revert", { sessionId, messageId })
+		try {
+			// Abort if busy (matching TUI behavior)
+			const entry = useAppStore.getState().sessions[sessionId]
+			if (entry?.status?.type === "busy") {
+				log.debug("revert: aborting busy session first", { sessionId })
+				await client.session.abort({ sessionID: sessionId })
+			}
+
+			await client.session.revert({ sessionID: sessionId, messageID: messageId })
+		} catch (err) {
+			log.error("revert failed", { sessionId, messageId }, err)
+			throw err
+		}
+	}, [])
+
+	/**
+	 * Unrevert (redo) a session — restores previously reverted messages.
+	 */
+	const unrevert = useCallback(async (directory: string, sessionId: string) => {
+		const client = getProjectClient(directory)
+		if (!client) throw new Error("Not connected to OpenCode server")
+		log.debug("unrevert", { sessionId })
+		try {
+			await client.session.unrevert({ sessionID: sessionId })
+		} catch (err) {
+			log.error("unrevert failed", { sessionId }, err)
+			throw err
+		}
+	}, [])
+
+	/**
+	 * Execute a named command on a session (server-side slash commands).
+	 */
+	const executeCommand = useCallback(
+		async (directory: string, sessionId: string, command: string, args: string) => {
+			const client = getProjectClient(directory)
+			if (!client) throw new Error("Not connected to OpenCode server")
+			log.debug("executeCommand", { sessionId, command })
+			try {
+				await client.session.command({
+					sessionID: sessionId,
+					command,
+					arguments: args,
+				})
+			} catch (err) {
+				log.error("executeCommand failed", { sessionId, command }, err)
+				throw err
+			}
+		},
+		[],
+	)
+
+	/**
+	 * Summarize/compact a session conversation.
+	 */
+	const summarize = useCallback(async (directory: string, sessionId: string) => {
+		const client = getProjectClient(directory)
+		if (!client) throw new Error("Not connected to OpenCode server")
+		log.debug("summarize", { sessionId })
+		try {
+			await client.session.summarize({ sessionID: sessionId })
+		} catch (err) {
+			log.error("summarize failed", { sessionId }, err)
+			throw err
+		}
 	}, [])
 
 	return {
@@ -185,5 +312,9 @@ export function useAgentActions() {
 		respondToPermission,
 		replyToQuestion,
 		rejectQuestion,
+		revert,
+		unrevert,
+		executeCommand,
+		summarize,
 	}
 }

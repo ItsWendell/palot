@@ -1,4 +1,5 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { createLogger } from "../lib/logger"
 import type { Event, Part } from "../lib/types"
 import { useAppStore } from "../stores/app-store"
 import {
@@ -12,6 +13,8 @@ import {
 	listSessions,
 	subscribeToGlobalEvents,
 } from "./opencode"
+
+const log = createLogger("connection-manager")
 
 // ============================================================
 // State — single server connection + per-project clients
@@ -28,6 +31,16 @@ let connection: {
 /** Per-project SDK clients, keyed by directory path */
 const projectClients = new Map<string, OpencodeClient>()
 
+/**
+ * Monotonically increasing ID for event loop instances.
+ * Each call to `startEventLoop` gets a unique ID. Before processing events
+ * or reconnecting, the loop checks if it's still the "current" loop — if not
+ * (because `connectToOpenCode` was called again), it exits immediately.
+ * This prevents duplicate event streams when connections are rapidly recycled
+ * (e.g., HMR, Vite reconnect, or React StrictMode double-effects).
+ */
+let eventLoopGeneration = 0
+
 // ============================================================
 // Public API
 // ============================================================
@@ -39,9 +52,14 @@ const projectClients = new Map<string, OpencodeClient>()
 export async function connectToOpenCode(url: string): Promise<void> {
 	// Disconnect existing connection if any
 	if (connection) {
+		log.info("Disconnecting previous connection", { url: connection.url })
 		connection.abortController.abort()
 		projectClients.clear()
 	}
+
+	// Bump generation — any previous event loop will see it's stale and exit
+	eventLoopGeneration++
+	const gen = eventLoopGeneration
 
 	const store = useAppStore.getState()
 	store.setOpenCodeUrl(url)
@@ -52,8 +70,10 @@ export async function connectToOpenCode(url: string): Promise<void> {
 
 	connection = { url, baseClient, abortController }
 
+	log.info("Connecting to OpenCode server", { url, generation: gen })
+
 	// Start SSE event loop in the background
-	startEventLoop(baseClient, abortController.signal)
+	startEventLoop(baseClient, abortController.signal, gen)
 
 	store.setOpenCodeConnected(true)
 }
@@ -72,9 +92,10 @@ export async function loadProjectSessions(directory: string): Promise<void> {
 			listSessions(client),
 			getSessionStatuses(client),
 		])
+		log.debug("Loaded sessions for project", { directory, count: sessions.length })
 		store.setSessions(sessions, statuses, directory)
 	} catch (err) {
-		console.error(`Failed to load sessions for ${directory}:`, err)
+		log.error("Failed to load sessions", { directory }, err)
 	}
 }
 
@@ -82,9 +103,29 @@ export async function loadProjectSessions(directory: string): Promise<void> {
  * Get or create a project-scoped SDK client.
  * All project clients point at the same URL but send different
  * `x-opencode-directory` headers.
+ *
+ * If the module-level connection was lost (e.g. Vite HMR wiped it) but
+ * the Zustand store still knows the server URL, we transparently
+ * reconnect so callers don't hit "Not connected" errors.
  */
 export function getProjectClient(directory: string): OpencodeClient | null {
-	if (!connection) return null
+	if (!connection) {
+		// HMR recovery: module state is gone but the store remembers the URL
+		const storeUrl = useAppStore.getState().opencode?.url
+		if (storeUrl) {
+			log.warn("Connection lost (likely HMR), reconnecting to", { url: storeUrl })
+			// Re-establish connection synchronously for the base client + SSE,
+			// then return a project client immediately below
+			const baseClient = connectToServer(storeUrl)
+			const abortController = new AbortController()
+			eventLoopGeneration++
+			connection = { url: storeUrl, baseClient, abortController }
+			startEventLoop(baseClient, abortController.signal, eventLoopGeneration)
+			useAppStore.getState().setOpenCodeConnected(true)
+		} else {
+			return null
+		}
+	}
 
 	let client = projectClients.get(directory)
 	if (!client) {
@@ -112,11 +153,14 @@ export function getServerUrl(): string | null {
  * Disconnect from the OpenCode server.
  */
 export function disconnect(): void {
+	log.info("Disconnecting from OpenCode server")
 	if (connection) {
 		connection.abortController.abort()
 		connection = null
 		projectClients.clear()
 	}
+	// Bump generation so any in-flight event loop exits
+	eventLoopGeneration++
 	const store = useAppStore.getState()
 	store.setOpenCodeConnected(false)
 }
@@ -267,42 +311,66 @@ function createEventBatcher() {
  * Background event loop that processes SSE events from the single server.
  * Events from ALL projects come through one stream.
  * Reconnects on disconnect with exponential backoff.
+ *
+ * The `generation` parameter prevents duplicate streams: if `connectToOpenCode`
+ * is called again (bumping eventLoopGeneration), any older event loop will
+ * detect the mismatch and exit, even if its AbortSignal hasn't propagated yet.
  */
-async function startEventLoop(client: OpencodeClient, signal: AbortSignal): Promise<void> {
+async function startEventLoop(
+	client: OpencodeClient,
+	signal: AbortSignal,
+	generation: number,
+): Promise<void> {
 	let retryDelay = 1000
 
-	while (!signal.aborted) {
+	const isStale = () => signal.aborted || generation !== eventLoopGeneration
+
+	log.info("SSE event loop started", { generation })
+
+	while (!isStale()) {
 		const batcher = createEventBatcher()
 
 		try {
+			log.debug("Opening SSE stream", { generation })
 			const stream = await subscribeToGlobalEvents(client)
 			retryDelay = 1000 // Reset on successful connect
+			log.info("SSE stream connected", { generation })
 
 			for await (const globalEvent of stream) {
-				if (signal.aborted) break
+				if (isStale()) break
 				// Global events wrap the payload with { directory, payload }
 				const event = globalEvent.payload
 				if (event) {
 					batcher.enqueue(event)
 				}
 			}
+			// Stream ended cleanly (server closed it)
+			if (!isStale()) {
+				log.warn("SSE stream ended (server closed connection)", { generation })
+			}
 		} catch (err) {
-			if (signal.aborted) break
-			console.error("Event stream disconnected:", err)
+			if (isStale()) break
+			log.error("SSE stream disconnected", { generation, retryDelay }, err)
 			useAppStore.getState().setOpenCodeConnected(false)
 		} finally {
 			batcher.dispose()
 		}
 
-		if (signal.aborted) break
+		if (isStale()) break
 
 		// Exponential backoff: 1s, 2s, 4s, 8s, max 30s
+		log.info("Reconnecting SSE in", { delayMs: retryDelay, generation })
 		await new Promise((resolve) => setTimeout(resolve, retryDelay))
 		retryDelay = Math.min(retryDelay * 2, 30000)
+
+		// Check again after sleeping — a new connection may have started
+		if (isStale()) break
 
 		// Mark as connected again on reconnect attempt
 		if (connection) {
 			useAppStore.getState().setOpenCodeConnected(true)
 		}
 	}
+
+	log.info("SSE event loop exited", { generation, stale: generation !== eventLoopGeneration })
 }

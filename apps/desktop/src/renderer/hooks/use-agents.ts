@@ -59,7 +59,7 @@ export function formatElapsed(startMs: number): string {
  * Extracts the project name from a directory path.
  */
 function projectNameFromDir(directory: string): string {
-	return directory.split("/").pop() || directory
+	return directory.split("/").pop() || "/"
 }
 
 // ============================================================
@@ -102,7 +102,11 @@ function buildProjectSlugMap(projects: ProjectEntry[]): Map<string, { id: string
  */
 function collectAllProjects(
 	sessions: Record<string, { directory: string }>,
-	discovery: { loaded: boolean; projects: DiscoveredProject[] },
+	discovery: {
+		loaded: boolean
+		projects: DiscoveredProject[]
+		sessions: Record<string, import("../stores/app-store").DiscoveredSession[]>
+	},
 ): ProjectEntry[] {
 	const entries: ProjectEntry[] = []
 	const seenDirs = new Set<string>()
@@ -110,12 +114,27 @@ function collectAllProjects(
 	// Discovery projects have real IDs (root commit hash)
 	if (discovery.loaded) {
 		for (const project of discovery.projects) {
-			entries.push({
-				id: project.id,
-				name: projectNameFromDir(project.worktree),
-				directory: project.worktree,
-			})
-			seenDirs.add(project.worktree)
+			if (project.id === "global") {
+				// Global project: derive entries from each session's actual directory
+				const discoverySessions = discovery.sessions[project.id] ?? []
+				for (const s of discoverySessions) {
+					const dir = s.directory || project.worktree
+					if (seenDirs.has(dir)) continue
+					seenDirs.add(dir)
+					entries.push({
+						id: project.id,
+						name: projectNameFromDir(dir),
+						directory: dir,
+					})
+				}
+			} else {
+				entries.push({
+					id: project.id,
+					name: projectNameFromDir(project.worktree),
+					directory: project.worktree,
+				})
+				seenDirs.add(project.worktree)
+			}
 		}
 	}
 
@@ -177,7 +196,7 @@ export function useAgents(): Agent[] {
 				project: projectNameFromDir(directory),
 				projectSlug: projectInfo?.slug ?? projectNameFromDir(directory),
 				directory,
-				branch: "",
+				branch: entry.branch ?? "",
 				duration: formatRelativeTime(lastActiveAt),
 				tokens: 0,
 				cost: 0,
@@ -215,6 +234,8 @@ export function useAgents(): Agent[] {
 					if (liveSessionIds.has(session.id)) continue
 
 					const lastActiveAt = session.time.updated ?? session.time.created
+					const dir = session.directory || project.worktree
+					const sessionProjectInfo = slugMap.get(dir) ?? projectInfo
 
 					agents.push({
 						id: session.id,
@@ -222,9 +243,9 @@ export function useAgents(): Agent[] {
 						name: session.title || "Untitled",
 						status: "completed" as const,
 						environment: "local" as const,
-						project: projectNameFromDir(project.worktree),
-						projectSlug: projectInfo?.slug ?? projectNameFromDir(project.worktree),
-						directory: project.worktree,
+						project: projectNameFromDir(dir),
+						projectSlug: sessionProjectInfo?.slug ?? projectNameFromDir(dir),
+						directory: dir,
 						branch: "",
 						duration: formatRelativeTime(lastActiveAt),
 						tokens: 0,
@@ -296,34 +317,70 @@ export function useProjectList(): SidebarProject[] {
 		// Discovered projects — add sessions not already counted from live sessions
 		if (discovery.loaded) {
 			for (const project of discovery.projects) {
-				const projectInfo = slugMap.get(project.worktree)
-				const name = projectNameFromDir(project.worktree)
 				const discoverySessions = discovery.sessions[project.id] ?? []
-				let offlineCount = 0
-				let lastActiveAt = projects.get(project.worktree)?.lastActiveAt ?? 0
-				for (const s of discoverySessions) {
-					if (liveSessionIds.has(s.id)) continue
-					if (!showSubAgents && s.parentID) continue
-					offlineCount++
-					const t = s.time.updated ?? s.time.created ?? 0
-					if (t > lastActiveAt) lastActiveAt = t
-				}
+				const isGlobal = project.id === "global"
 
-				if (offlineCount === 0 && !projects.has(project.worktree)) continue
-
-				const existing = projects.get(project.worktree)
-				if (existing) {
-					existing.agentCount += offlineCount
-					if (lastActiveAt > existing.lastActiveAt) existing.lastActiveAt = lastActiveAt
+				if (isGlobal) {
+					// Global project: group sessions by their actual directory
+					const byDir = new Map<string, { count: number; lastActiveAt: number }>()
+					for (const s of discoverySessions) {
+						if (liveSessionIds.has(s.id)) continue
+						if (!showSubAgents && s.parentID) continue
+						const dir = s.directory || project.worktree
+						const entry = byDir.get(dir) ?? { count: 0, lastActiveAt: 0 }
+						entry.count++
+						const t = s.time.updated ?? s.time.created ?? 0
+						if (t > entry.lastActiveAt) entry.lastActiveAt = t
+						byDir.set(dir, entry)
+					}
+					for (const [dir, info] of byDir) {
+						const projectInfo = slugMap.get(dir)
+						const name = projectNameFromDir(dir)
+						const existing = projects.get(dir)
+						if (existing) {
+							existing.agentCount += info.count
+							if (info.lastActiveAt > existing.lastActiveAt)
+								existing.lastActiveAt = info.lastActiveAt
+						} else if (info.count > 0) {
+							projects.set(dir, {
+								id: projectInfo?.id ?? project.id,
+								slug: projectInfo?.slug ?? name,
+								name,
+								directory: dir,
+								agentCount: info.count,
+								lastActiveAt: info.lastActiveAt,
+							})
+						}
+					}
 				} else {
-					projects.set(project.worktree, {
-						id: projectInfo?.id ?? project.id,
-						slug: projectInfo?.slug ?? name,
-						name,
-						directory: project.worktree,
-						agentCount: offlineCount,
-						lastActiveAt,
-					})
+					const projectInfo = slugMap.get(project.worktree)
+					const name = projectNameFromDir(project.worktree)
+					let offlineCount = 0
+					let lastActiveAt = projects.get(project.worktree)?.lastActiveAt ?? 0
+					for (const s of discoverySessions) {
+						if (liveSessionIds.has(s.id)) continue
+						if (!showSubAgents && s.parentID) continue
+						offlineCount++
+						const t = s.time.updated ?? s.time.created ?? 0
+						if (t > lastActiveAt) lastActiveAt = t
+					}
+
+					if (offlineCount === 0 && !projects.has(project.worktree)) continue
+
+					const existing = projects.get(project.worktree)
+					if (existing) {
+						existing.agentCount += offlineCount
+						if (lastActiveAt > existing.lastActiveAt) existing.lastActiveAt = lastActiveAt
+					} else {
+						projects.set(project.worktree, {
+							id: projectInfo?.id ?? project.id,
+							slug: projectInfo?.slug ?? name,
+							name,
+							directory: project.worktree,
+							agentCount: offlineCount,
+							lastActiveAt,
+						})
+					}
 				}
 			}
 		}

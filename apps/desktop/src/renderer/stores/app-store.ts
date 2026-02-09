@@ -29,6 +29,8 @@ export interface SessionEntry {
 	questions: QuestionRequest[]
 	/** Project directory this session belongs to */
 	directory: string
+	/** Git branch at the time this session was created */
+	branch?: string
 	/** Last session-level error (from session.error events) */
 	error?: SessionError
 }
@@ -115,6 +117,7 @@ interface AppState {
 	setSession: (session: Session, directory: string) => void
 	removeSession: (sessionId: string) => void
 	setSessionStatus: (sessionId: string, status: SessionStatus) => void
+	setSessionBranch: (sessionId: string, branch: string) => void
 	setSessionError: (sessionId: string, error: SessionError) => void
 	clearSessionError: (sessionId: string) => void
 	addPermission: (sessionId: string, permission: Permission) => void
@@ -257,6 +260,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 			}
 		}),
 
+	setSessionBranch: (sessionId, branch) =>
+		set((state) => {
+			const entry = state.sessions[sessionId]
+			if (!entry) return state
+			return {
+				sessions: {
+					...state.sessions,
+					[sessionId]: { ...entry, branch },
+				},
+			}
+		}),
+
 	setSessionError: (sessionId, error) =>
 		set((state) => {
 			const entry = state.sessions[sessionId]
@@ -362,10 +377,46 @@ export const useAppStore = create<AppState>((set, get) => ({
 	// ========== Message/Part actions ==========
 
 	setMessages: (sessionId, messages, messageParts) =>
-		set((state) => ({
-			messages: { ...state.messages, [sessionId]: messages },
-			parts: { ...state.parts, ...messageParts },
-		})),
+		set((state) => {
+			const existing = state.messages[sessionId]
+
+			// Fast path: no existing messages — just set everything
+			if (!existing || existing.length === 0) {
+				return {
+					messages: { ...state.messages, [sessionId]: messages },
+					parts: { ...state.parts, ...messageParts },
+				}
+			}
+
+			// Merge: build a combined sorted array. For messages that exist
+			// in both the fetched data and the SSE-accumulated store, prefer
+			// the SSE version (it's likely newer since SSE events arrive in
+			// real time while the fetch response may be stale).
+			const existingIds = new Set(existing.map((m) => m.id))
+			const merged = existing.slice()
+			for (const msg of messages) {
+				if (!existingIds.has(msg.id)) {
+					// Message from server that SSE hasn't delivered yet — insert sorted
+					const result = binarySearch(merged, msg.id, (m) => m.id)
+					merged.splice(result.index, 0, msg)
+				}
+			}
+
+			// Merge parts: fetched parts fill in gaps, SSE parts take priority
+			const mergedParts = { ...state.parts }
+			for (const [messageId, fetchedParts] of Object.entries(messageParts)) {
+				if (!mergedParts[messageId]) {
+					// No SSE parts yet for this message — use fetched
+					mergedParts[messageId] = fetchedParts
+				}
+				// Otherwise keep the SSE-accumulated parts (more recent)
+			}
+
+			return {
+				messages: { ...state.messages, [sessionId]: merged },
+				parts: mergedParts,
+			}
+		}),
 
 	upsertMessage: (message) =>
 		set((state) => {
