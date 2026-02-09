@@ -86,13 +86,62 @@ export interface UpdateState {
 	error?: string
 }
 
+// ============================================================
+// Git types
+// ============================================================
+
+export interface GitBranchInfo {
+	current: string
+	detached: boolean
+	local: string[]
+	remote: string[]
+}
+
+export interface GitStatusInfo {
+	isClean: boolean
+	staged: number
+	modified: number
+	untracked: number
+	conflicted: number
+	summary: string
+}
+
+export interface GitCheckoutResult {
+	success: boolean
+	error?: string
+}
+
+export interface GitStashResult {
+	success: boolean
+	stashed: boolean
+	error?: string
+}
+
+// ============================================================
+// CLI install types
+// ============================================================
+
+export interface CliInstallResult {
+	success: boolean
+	error?: string
+}
+
+export interface AppInfo {
+	version: string
+	isDev: boolean
+}
+
 export interface CodedeckAPI {
+	/** The host platform: "darwin", "win32", or "linux". */
+	platform: NodeJS.Platform
+	getAppInfo: () => Promise<AppInfo>
 	ensureOpenCode: () => Promise<OpenCodeServerInfo>
 	getServerUrl: () => Promise<string | null>
 	stopOpenCode: () => Promise<boolean>
 	discover: () => Promise<DiscoveryResult>
 	getSessionMessages: (sessionId: string) => Promise<MessagesResult>
 	getModelState: () => Promise<ModelState>
+	updateModelRecent: (model: ModelRef) => Promise<ModelState>
 
 	// Auto-updater
 	getUpdateState: () => Promise<UpdateState>
@@ -100,6 +149,38 @@ export interface CodedeckAPI {
 	downloadUpdate: () => Promise<void>
 	installUpdate: () => Promise<void>
 	onUpdateStateChanged: (callback: (state: UpdateState) => void) => () => void
+
+	// Git operations
+	git: {
+		listBranches: (directory: string) => Promise<GitBranchInfo>
+		getStatus: (directory: string) => Promise<GitStatusInfo>
+		checkout: (directory: string, branch: string) => Promise<GitCheckoutResult>
+		stashAndCheckout: (directory: string, branch: string) => Promise<GitStashResult>
+		stashPop: (directory: string) => Promise<GitStashResult>
+	}
+
+	// CLI install
+	cli: {
+		isInstalled: () => Promise<boolean>
+		install: () => Promise<CliInstallResult>
+		uninstall: () => Promise<CliInstallResult>
+	}
+
+	// Directory picker
+	pickDirectory: () => Promise<string | null>
+
+	// Fetch proxy (bypasses Chromium connection limits)
+	fetch: (req: {
+		url: string
+		method: string
+		headers: Record<string, string>
+		body: string | null
+	}) => Promise<{
+		status: number
+		statusText: string
+		headers: Record<string, string>
+		body: string | null
+	}>
 }
 
 declare global {

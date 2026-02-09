@@ -55,14 +55,27 @@
 }
 
 /*
- * Color palette derived from the OpenCode design system.
- * Uses warm grays (slight red/brown tint) instead of neutral grays.
+ * Default color palette: 1:1 clone of OpenCode's OC-1 theme.
+ * Uses the "smoke" warm gray scale (slight red/brown tint).
  *
  * Light: warm near-whites (#fdfcfc) with dark text (#211e1e)
  * Dark:  warm near-blacks (#131010) with light text (#efeded)
  *
- * OpenCode uses alpha-based colors for borders/text in dark mode.
- * Below are opaque approximations computed against the background.
+ * OpenCode's dark mode uses alpha-based colors (e.g. smoke-dark-alpha-11).
+ * Below are opaque approximations pre-computed against the #131010 background.
+ *
+ * Mapping from OpenCode tokens:
+ *   --background  ← --background-base (#f8f7f7 light / --smoke-dark-1 dark)
+ *   --foreground  ← --text-strong (--smoke-light-12 / --smoke-dark-alpha-12)
+ *   --card        ← --background-strong (--smoke-light-1 / --smoke-dark-2)
+ *   --muted       ← --background-weak (--smoke-light-3 / --smoke-dark-3)
+ *   --accent      ← --surface-weak (--smoke-light-4 / --smoke-dark-4)
+ *   --border      ← --border-base (--smoke-light-6 / --smoke-dark-alpha-7)
+ *   --ring        ← --border-active (--smoke-light-8 / --smoke-dark-alpha-8)
+ *   --destructive ← --ember-light-9 (#fc533a, same in both modes)
+ *
+ * These values serve as the baseline for the theme system.
+ * Named themes override these via dynamic <style> injection.
  */
 
 :root {

@@ -24,6 +24,7 @@ import type {
 import { useServerConnection } from "../hooks/use-server"
 import type { ChatTurn } from "../hooks/use-session-chat"
 import type { Agent, AgentStatus, FileAttachment, QuestionAnswer } from "../lib/types"
+import { useSetAppBarContent } from "./app-bar-context"
 import { ChatView } from "./chat"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
@@ -77,6 +78,18 @@ interface AgentDetailProps {
 	vcs?: VcsData | null
 	/** Available OpenCode agents for agent selector */
 	openCodeAgents?: SdkAgent[]
+	/** Whether undo is available */
+	canUndo?: boolean
+	/** Whether redo is available */
+	canRedo?: boolean
+	/** Undo handler — returns the undone user message text */
+	onUndo?: () => Promise<string | undefined>
+	/** Redo handler */
+	onRedo?: () => Promise<void>
+	/** Whether the session is in a reverted state */
+	isReverted?: boolean
+	/** Revert to a specific message (for per-turn undo) */
+	onRevertToMessage?: (messageId: string) => Promise<void>
 }
 
 export function AgentDetail({
@@ -99,9 +112,16 @@ export function AgentDetail({
 	chatLoadingEarlier,
 	chatHasEarlier,
 	onLoadEarlier,
+	canUndo,
+	canRedo,
+	onUndo,
+	onRedo,
+	isReverted,
+	onRevertToMessage,
 }: AgentDetailProps) {
 	const navigate = useNavigate()
 	const { projectSlug } = useParams({ strict: false }) as { projectSlug?: string }
+	const setAppBarContent = useSetAppBarContent()
 
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleValue, setTitleValue] = useState(agent.name)
@@ -133,6 +153,41 @@ export function AgentDetail({
 		}
 	}, [isEditingTitle])
 
+	// ===== Inject session info into AppBar right section =====
+	useEffect(() => {
+		setAppBarContent(
+			<SessionAppBarContent
+				agent={agent}
+				isEditingTitle={isEditingTitle}
+				titleValue={titleValue}
+				titleInputRef={titleInputRef}
+				onTitleValueChange={setTitleValue}
+				onStartEditing={startEditingTitle}
+				onConfirmTitle={confirmTitle}
+				onCancelEditing={cancelEditingTitle}
+				onStop={onStop}
+				onRename={onRename}
+				isConnected={isConnected}
+				projectSlug={projectSlug}
+			/>,
+		)
+
+		// Clean up when unmounting
+		return () => setAppBarContent(null)
+	}, [
+		agent,
+		isEditingTitle,
+		titleValue,
+		startEditingTitle,
+		confirmTitle,
+		cancelEditingTitle,
+		onStop,
+		onRename,
+		isConnected,
+		projectSlug,
+		setAppBarContent,
+	])
+
 	return (
 		<div className="flex h-full flex-col">
 			{/* Sub-agent breadcrumb — navigate back to parent */}
@@ -157,88 +212,7 @@ export function AgentDetail({
 				</button>
 			)}
 
-			{/* Compact top bar */}
-			<div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
-				{/* Session name — click to edit */}
-				{isEditingTitle ? (
-					<Input
-						ref={titleInputRef}
-						value={titleValue}
-						onChange={(e) => setTitleValue(e.target.value)}
-						onKeyDown={(e) => {
-							e.stopPropagation()
-							if (e.key === "Enter") confirmTitle()
-							if (e.key === "Escape") cancelEditingTitle()
-						}}
-						onBlur={confirmTitle}
-						className="h-7 min-w-0 flex-shrink border-none bg-transparent p-0 text-sm font-semibold shadow-none focus-visible:ring-0"
-					/>
-				) : (
-					<button
-						type="button"
-						onClick={onRename ? startEditingTitle : undefined}
-						className={`group flex min-w-0 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
-					>
-						<h2 className="min-w-0 truncate text-sm font-semibold">{agent.name}</h2>
-						{onRename && (
-							<PencilIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-						)}
-					</button>
-				)}
-
-				{/* Project badge */}
-				<Badge variant="secondary" className="shrink-0 text-[11px] font-normal">
-					{agent.project}
-				</Badge>
-
-				{/* Status dot + label */}
-				<div className="ml-auto flex items-center gap-3">
-					<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-						<span
-							className={`inline-block size-1.5 rounded-full ${STATUS_DOT_COLOR[agent.status]}`}
-						/>
-						{STATUS_LABEL[agent.status]}
-					</div>
-
-					{/* Duration / tokens */}
-					{agent.duration && (
-						<span className="text-xs text-muted-foreground/60">{agent.duration}</span>
-					)}
-
-					{/* Open in terminal */}
-					<AttachCommand sessionId={agent.sessionId} directory={agent.directory} />
-
-					{/* Stop button (when running) */}
-					{agent.status === "running" && (
-						<Button
-							size="sm"
-							variant="ghost"
-							className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-red-400"
-							onClick={() => onStop?.(agent)}
-							disabled={!isConnected}
-						>
-							<SquareIcon className="size-3" />
-							Stop
-						</Button>
-					)}
-
-					{/* Close button */}
-					<button
-						type="button"
-						onClick={() =>
-							navigate({
-								to: projectSlug ? "/project/$projectSlug" : "/",
-								params: projectSlug ? { projectSlug } : undefined,
-							})
-						}
-						className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-					>
-						<XIcon className="size-3.5" />
-					</button>
-				</div>
-			</div>
-
-			{/* Chat — full height, no tabs */}
+			{/* Chat — full height */}
 			<div className="min-h-0 flex-1">
 				<ChatView
 					turns={chatTurns}
@@ -258,7 +232,130 @@ export function AgentDetail({
 					onDeny={onDeny}
 					onReplyQuestion={onReplyQuestion}
 					onRejectQuestion={onRejectQuestion}
+					canUndo={canUndo}
+					canRedo={canRedo}
+					onUndo={onUndo}
+					onRedo={onRedo}
+					isReverted={isReverted}
+					onRevertToMessage={onRevertToMessage}
 				/>
+			</div>
+		</div>
+	)
+}
+
+// ============================================================
+// Session header content injected into the AppBar
+// ============================================================
+
+function SessionAppBarContent({
+	agent,
+	isEditingTitle,
+	titleValue,
+	titleInputRef,
+	onTitleValueChange,
+	onStartEditing,
+	onConfirmTitle,
+	onCancelEditing,
+	onStop,
+	onRename,
+	isConnected,
+	projectSlug,
+}: {
+	agent: Agent
+	isEditingTitle: boolean
+	titleValue: string
+	titleInputRef: React.RefObject<HTMLInputElement | null>
+	onTitleValueChange: (v: string) => void
+	onStartEditing: () => void
+	onConfirmTitle: () => void
+	onCancelEditing: () => void
+	onStop?: (agent: Agent) => Promise<void>
+	onRename?: (agent: Agent, title: string) => Promise<void>
+	isConnected?: boolean
+	projectSlug?: string
+}) {
+	const navigate = useNavigate()
+
+	return (
+		<div className="flex w-full items-center gap-2">
+			{/* Session name — click to edit */}
+			{isEditingTitle ? (
+				<Input
+					ref={titleInputRef}
+					value={titleValue}
+					onChange={(e) => onTitleValueChange(e.target.value)}
+					onKeyDown={(e) => {
+						e.stopPropagation()
+						if (e.key === "Enter") onConfirmTitle()
+						if (e.key === "Escape") onCancelEditing()
+					}}
+					onBlur={onConfirmTitle}
+					className="h-7 min-w-0 flex-shrink border-none bg-transparent p-0 text-sm font-semibold shadow-none focus-visible:ring-0"
+				/>
+			) : (
+				<button
+					type="button"
+					onClick={onRename ? onStartEditing : undefined}
+					className={`group flex min-w-0 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
+				>
+					<h2 className="min-w-0 truncate text-sm font-semibold">{agent.name}</h2>
+					{onRename && (
+						<PencilIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+					)}
+				</button>
+			)}
+
+			{/* Project badge */}
+			<Badge variant="secondary" className="shrink-0 text-[11px] font-normal">
+				{agent.project}
+			</Badge>
+
+			{/* Right-aligned items */}
+			<div className="ml-auto flex items-center gap-3">
+				{/* Status dot + label */}
+				<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+					<span
+						className={`inline-block size-1.5 rounded-full ${STATUS_DOT_COLOR[agent.status]}`}
+					/>
+					{STATUS_LABEL[agent.status]}
+				</div>
+
+				{/* Duration */}
+				{agent.duration && (
+					<span className="text-xs text-muted-foreground/60">{agent.duration}</span>
+				)}
+
+				{/* Open in terminal */}
+				<AttachCommand sessionId={agent.sessionId} directory={agent.directory} />
+
+				{/* Stop button (when running) */}
+				{agent.status === "running" && (
+					<Button
+						size="sm"
+						variant="ghost"
+						className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-red-400"
+						onClick={() => onStop?.(agent)}
+						disabled={!isConnected}
+					>
+						<SquareIcon className="size-3" />
+						Stop
+					</Button>
+				)}
+
+				{/* Close button */}
+				<button
+					type="button"
+					onClick={() =>
+						navigate({
+							to: projectSlug ? "/project/$projectSlug" : "/",
+							params: projectSlug ? { projectSlug } : undefined,
+						})
+					}
+					className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+				>
+					<XIcon className="size-3.5" />
+				</button>
 			</div>
 		</div>
 	)

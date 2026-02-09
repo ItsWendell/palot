@@ -82,6 +82,24 @@ export async function fetchModelState(): Promise<{
 }
 
 /**
+ * Updates the recent model list via the backend server.
+ * Adds the model to the front, deduplicates, caps at 10.
+ */
+export async function updateModelRecent(model: { providerID: string; modelID: string }): Promise<{
+	recent: { providerID: string; modelID: string }[]
+	favorite: { providerID: string; modelID: string }[]
+	variant: Record<string, string | undefined>
+}> {
+	const res = await client.api["model-state"].recent.$post({
+		json: model,
+	})
+	if (!res.ok) {
+		throw new Error(`Model state update failed: ${res.status} ${res.statusText}`)
+	}
+	return res.json()
+}
+
+/**
  * Checks if the Codedeck server is running.
  */
 export async function checkServerHealth() {

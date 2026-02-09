@@ -126,11 +126,9 @@ function groupIntoTurns(entries: ChatMessageEntry[], prevTurns: ChatTurn[]): Cha
 // Hook
 // ============================================================
 
-/** How many messages to fetch on initial load */
-const INITIAL_LIMIT = 100
-
-/** Stable no-op for the loadEarlier fallback (avoids new ref every render) */
-const NOOP_ASYNC = async () => {}
+/** How many messages to fetch on initial load.
+ * 30 covers most sessions entirely. Longer sessions get a "load earlier" button. */
+const INITIAL_LIMIT = 30
 
 /**
  * Hook to load chat data for a session.
@@ -146,10 +144,13 @@ export function useSessionChat(
 	_isActive = false,
 ) {
 	const [loading, setLoading] = useState(false)
+	const [loadingEarlier, setLoadingEarlier] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	/** Track which session we've already synced (no growing Set) */
 	const syncedRef = useRef<string | null>(null)
 	const turnsRef = useRef<ChatTurn[]>([])
+	/** Whether the server returned fewer messages than INITIAL_LIMIT (i.e. no more to load) */
+	const hasEarlierRef = useRef(false)
 
 	// Read from store — Zustand selector returns stable ref if unchanged
 	const storeMessages = useAppStore((s) => s.messages[sessionId ?? ""])
@@ -190,7 +191,20 @@ export function useSessionChat(
 			if (!overrides) return baseParts
 
 			// Overlay streaming parts on top of the base parts
-			return baseParts.map((part) => overrides[part.id] ?? part)
+			const overlaid = baseParts.map((part) => overrides[part.id] ?? part)
+
+			// Include streaming parts that don't exist in the base store yet.
+			// This happens when a new part arrives via SSE and reaches the streaming
+			// store (fast path) before the coalesced event is flushed to the main
+			// store via rAF. Without this, brand-new parts are invisible for ~1 frame.
+			const baseIds = new Set(baseParts.map((p) => p.id))
+			for (const partId in overrides) {
+				if (!baseIds.has(partId)) {
+					overlaid.push(overrides[partId])
+				}
+			}
+
+			return overlaid
 		})
 	}, [storeMessages, partsVersion, streamingVersion])
 
@@ -226,10 +240,13 @@ export function useSessionChat(
 						limit: INITIAL_LIMIT,
 					})
 					raw = (result.data ?? []) as Array<{ info: Message; parts: Part[] }>
+					// If the server returned exactly INITIAL_LIMIT messages, there may be more
+					hasEarlierRef.current = raw.length >= INITIAL_LIMIT
 				} else {
 					// Fallback: read from disk via the Codedeck backend server
 					const result = await fetchSessionMessages(sid)
 					raw = (result.messages ?? []) as unknown as Array<{ info: Message; parts: Part[] }>
+					hasEarlierRef.current = false // disk fallback returns all messages
 				}
 
 				// Hydrate the store
@@ -248,6 +265,38 @@ export function useSessionChat(
 		},
 		[directory],
 	)
+
+	// Load all messages for the session (the server API doesn't support cursor
+	// pagination, so "load earlier" fetches everything and replaces the store).
+	const loadEarlier = useCallback(async () => {
+		if (!sessionId || !directory || loadingEarlier) return
+		const client = getProjectClient(directory)
+		if (!client) return
+
+		setLoadingEarlier(true)
+		try {
+			// Fetch without limit — gets all messages
+			const result = await client.session.messages({
+				sessionID: sessionId,
+			})
+			const raw = (result.data ?? []) as Array<{ info: Message; parts: Part[] }>
+
+			// No more earlier messages to load after this
+			hasEarlierRef.current = false
+
+			// Replace the store with the full message set
+			const messages = raw.map((m) => m.info)
+			const parts: Record<string, Part[]> = {}
+			for (const m of raw) {
+				parts[m.info.id] = m.parts
+			}
+			useAppStore.getState().setMessages(sessionId, messages, parts)
+		} catch (err) {
+			console.error("Failed to load earlier messages:", err)
+		} finally {
+			setLoadingEarlier(false)
+		}
+	}, [sessionId, directory, loadingEarlier])
 
 	// Trigger initial fetch when session changes (only once per session)
 	useEffect(() => {
@@ -268,12 +317,12 @@ export function useSessionChat(
 		turns,
 		rawMessages: entries,
 		loading,
-		loadingEarlier: false,
+		loadingEarlier,
 		error,
 		/** Whether there are earlier messages that haven't been loaded */
-		hasEarlierMessages: false,
-		/** Load the full message history (no-op for now, could be implemented later) */
-		loadEarlier: NOOP_ASYNC,
+		hasEarlierMessages: hasEarlierRef.current,
+		/** Load earlier messages (prepend to conversation) */
+		loadEarlier,
 		reload: fetchAndHydrate,
 	}
 }

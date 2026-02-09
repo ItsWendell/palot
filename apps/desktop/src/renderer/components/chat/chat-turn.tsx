@@ -5,6 +5,11 @@ import {
 	MessageContent,
 	MessageResponse,
 } from "@codedeck/ui/components/ai-elements/message"
+import {
+	Reasoning,
+	ReasoningContent,
+	ReasoningTrigger,
+} from "@codedeck/ui/components/ai-elements/reasoning"
 import { Shimmer } from "@codedeck/ui/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
@@ -19,13 +24,14 @@ import {
 	GlobeIcon,
 	ListOrderedIcon,
 	TerminalIcon,
+	Undo2Icon,
 	WrenchIcon,
 	ZapIcon,
 } from "lucide-react"
 import { memo, useCallback, useDeferredValue, useMemo, useState } from "react"
 import { useDisplayMode } from "../../hooks/use-agents"
 import type { ChatMessageEntry, ChatTurn as ChatTurnType } from "../../hooks/use-session-chat"
-import type { FilePart, Part, TextPart, ToolPart } from "../../lib/types"
+import type { FilePart, Part, ReasoningPart, TextPart, ToolPart } from "../../lib/types"
 import { ChatToolCall } from "./chat-tool-call"
 import { getToolCategory, type ToolCategory } from "./tool-card"
 
@@ -273,14 +279,18 @@ function AttachmentThumbnail({ file }: { file: FilePart }) {
 // Part extraction helpers
 // ============================================================
 
-/** A renderable part — either a tool call or an intermediate text block */
-type RenderablePart = { kind: "tool"; part: ToolPart } | { kind: "text"; id: string; text: string }
+/** A renderable part — either a tool call, an intermediate text block, or reasoning */
+type RenderablePart =
+	| { kind: "tool"; part: ToolPart }
+	| { kind: "text"; id: string; text: string }
+	| { kind: "reasoning"; part: ReasoningPart }
 
 /**
  * Flattens all assistant parts into an ordered list of renderable items
  * AND extracts the tool-only subset in a single pass.
- * Preserves the natural order: text, tool, text, tool, text...
+ * Preserves the natural order: text, reasoning, tool, text, tool, text...
  * Filters out synthetic text, todoread without output, and empty text.
+ * Strips OpenRouter [REDACTED] chunks from reasoning and skips empty reasoning.
  */
 function getPartsAndTools(assistantMessages: ChatMessageEntry[]): {
 	ordered: RenderablePart[]
@@ -296,6 +306,12 @@ function getPartsAndTools(assistantMessages: ChatMessageEntry[]): {
 				ordered.push({ kind: "tool", part })
 			} else if (part.type === "text" && !part.synthetic && part.text.trim()) {
 				ordered.push({ kind: "text", id: part.id, text: part.text })
+			} else if (part.type === "reasoning") {
+				// Strip OpenRouter's encrypted [REDACTED] chunks
+				const cleaned = part.text.replace("[REDACTED]", "").trim()
+				if (cleaned) {
+					ordered.push({ kind: "reasoning", part })
+				}
 			}
 		}
 	}
@@ -346,6 +362,8 @@ interface ChatTurnProps {
 	turn: ChatTurnType
 	isLast: boolean
 	isWorking: boolean
+	/** Revert to this turn's user message (for per-turn undo) */
+	onRevertToMessage?: (messageId: string) => Promise<void>
 }
 
 /**
@@ -366,6 +384,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	turn,
 	isLast,
 	isWorking,
+	onRevertToMessage,
 }: ChatTurnProps) {
 	const [stepsExpanded, setStepsExpanded] = useState(false)
 	const [copied, setCopied] = useState(false)
@@ -405,6 +424,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	const isQueued = isWorking && turn.assistantMessages.length === 0 && !isLast
 	const isQueuedLast = isWorking && turn.assistantMessages.length === 0 && isLast
 	const hasSteps = toolParts.length > 0
+	const hasReasoning = orderedParts.some((p) => p.kind === "reasoning")
 	const hasErrors = useMemo(() => hasToolErrors(toolParts), [toolParts])
 	const lastAssistant = turn.assistantMessages.at(-1)
 	const duration = useMemo(() => {
@@ -444,6 +464,11 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 		setTimeout(() => setCopied(false), 2000)
 	}, [responseText])
 
+	const handleRevertHere = useCallback(async () => {
+		if (!onRevertToMessage) return
+		await onRevertToMessage(turn.userMessage.info.id)
+	}, [onRevertToMessage, turn.userMessage.info.id])
+
 	return (
 		<div className="group/turn space-y-4">
 			{/* User message */}
@@ -467,8 +492,8 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 				</Message>
 			)}
 
-			{/* Tool calls section */}
-			{(working || hasSteps) && (
+			{/* Tool calls + reasoning section */}
+			{(working || hasSteps || hasReasoning) && (
 				<div className="space-y-2">
 					{/* Summary bar — shown when NOT expanded (completed turns) */}
 					{!showToolsExpanded && hasSteps && (
@@ -492,6 +517,35 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 						</button>
 					)}
 
+					{/* Reasoning blocks — always visible (they have their own collapse) */}
+					{!showToolsExpanded && hasReasoning && (
+						<div className="space-y-2">
+							{orderedParts
+								.filter(
+									(p): p is Extract<RenderablePart, { kind: "reasoning" }> =>
+										p.kind === "reasoning",
+								)
+								.map((item) => {
+									const reasoningText = item.part.text.replace("[REDACTED]", "").trim()
+									if (!reasoningText) return null
+									const durationSec = item.part.time.end
+										? Math.ceil((item.part.time.end - item.part.time.start) / 1000)
+										: undefined
+									return (
+										<Reasoning
+											key={item.part.id}
+											isStreaming={false}
+											duration={durationSec}
+											defaultOpen={false}
+										>
+											<ReasoningTrigger />
+											<ReasoningContent>{reasoningText}</ReasoningContent>
+										</Reasoning>
+									)
+								})}
+						</div>
+					)}
+
 					{/* Collapse button — shown when expanded on completed turns */}
 					{showToolsExpanded && !isActiveTurn && hasSteps && (
 						<button
@@ -507,8 +561,8 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 						</button>
 					)}
 
-					{/* Active turn status line (while working, before tools appear) */}
-					{working && !hasSteps && (
+					{/* Active turn status line (while working, before tools/reasoning appear) */}
+					{working && !hasSteps && !hasReasoning && (
 						<div className="flex items-center gap-2 text-xs text-muted-foreground">
 							<Shimmer className="text-xs">{statusText}</Shimmer>
 						</div>
@@ -523,13 +577,35 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 						</div>
 					)}
 
-					{/* Expanded: interleaved text + tool calls in natural order */}
+					{/* Expanded: interleaved text + reasoning + tool calls in natural order */}
 					{showToolsExpanded && (
 						<div className="space-y-2.5">
-							{visibleParts.map((item) =>
-								item.kind === "tool" ? (
-									<ChatToolCall key={item.part.id} part={item.part} isActiveTurn={isActiveTurn} />
-								) : (
+							{visibleParts.map((item) => {
+								if (item.kind === "tool") {
+									return (
+										<ChatToolCall key={item.part.id} part={item.part} isActiveTurn={isActiveTurn} />
+									)
+								}
+								if (item.kind === "reasoning") {
+									const reasoningText = item.part.text.replace("[REDACTED]", "").trim()
+									if (!reasoningText) return null
+									const durationSec = item.part.time.end
+										? Math.ceil((item.part.time.end - item.part.time.start) / 1000)
+										: undefined
+									const isReasoningStreaming = !item.part.time.end && working
+									return (
+										<Reasoning
+											key={item.part.id}
+											isStreaming={isReasoningStreaming}
+											duration={durationSec}
+											defaultOpen={isReasoningStreaming ? undefined : false}
+										>
+											<ReasoningTrigger />
+											<ReasoningContent>{reasoningText}</ReasoningContent>
+										</Reasoning>
+									)
+								}
+								return (
 									<div key={item.id} className="py-0.5">
 										<Message from="assistant">
 											<MessageContent>
@@ -537,8 +613,8 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 											</MessageContent>
 										</Message>
 									</div>
-								),
-							)}
+								)
+							})}
 						</div>
 					)}
 				</div>
@@ -571,6 +647,11 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 						>
 							{copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
 						</MessageAction>
+						{onRevertToMessage && (
+							<MessageAction tooltip="Undo from here" onClick={handleRevertHere}>
+								<Undo2Icon className="size-3" />
+							</MessageAction>
+						)}
 					</MessageActions>
 				</Message>
 			)}

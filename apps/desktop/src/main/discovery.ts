@@ -63,7 +63,7 @@ async function discoverProjects(storagePath: string): Promise<DiscoveredProject[
 
 	try {
 		const files = await readdir(projectDir)
-		const jsonFiles = files.filter((f) => f.endsWith(".json") && f !== "global.json")
+		const jsonFiles = files.filter((f) => f.endsWith(".json"))
 
 		const results = await Promise.allSettled(
 			jsonFiles.map((file) => readJson<DiscoveredProject>(join(projectDir, file))),

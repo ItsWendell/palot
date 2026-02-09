@@ -8,6 +8,16 @@ directories:
 files:
   - "out/**/*"
 
+# Bundle the CLI launcher script into the app package.
+# macOS: Contents/Resources/bin/codedeck
+# Linux: resources/bin/codedeck
+# Windows: resources/bin/codedeck.cmd
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - "**/*"
+
 artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
 
 # Inject version from package.json into the built app

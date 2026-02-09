@@ -1,5 +1,4 @@
 import { Badge } from "@codedeck/ui/components/badge"
-import { Button } from "@codedeck/ui/components/button"
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -8,32 +7,37 @@ import {
 	ContextMenuTrigger,
 } from "@codedeck/ui/components/context-menu"
 import { Input } from "@codedeck/ui/components/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
-import { ScrollArea } from "@codedeck/ui/components/scroll-area"
-import { Separator } from "@codedeck/ui/components/separator"
+import {
+	Sidebar,
+	SidebarContent,
+	SidebarGroup,
+	SidebarGroupAction,
+	SidebarGroupContent,
+	SidebarGroupLabel,
+	SidebarMenu,
+	SidebarMenuButton,
+	SidebarMenuItem,
+	SidebarSeparator,
+} from "@codedeck/ui/components/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	AlertCircleIcon,
 	CheckCircle2Icon,
-	CheckIcon,
 	ChevronDownIcon,
-	ChevronRightIcon,
 	CircleDotIcon,
-	CopyIcon,
+	FolderIcon,
 	GitBranchIcon,
 	Loader2Icon,
 	NetworkIcon,
 	PencilIcon,
 	PlusIcon,
 	SearchIcon,
-	TerminalIcon,
 	TimerIcon,
 	TrashIcon,
 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { formatElapsed } from "../hooks/use-agents"
-import { useServerConnection } from "../hooks/use-server"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
 
 // ============================================================
@@ -68,10 +72,11 @@ const STATUS_COLOR: Record<AgentStatus, string> = {
 // Props
 // ============================================================
 
-interface SidebarProps {
+interface AppSidebarProps {
 	agents: Agent[]
 	projects: SidebarProject[]
 	onOpenCommandPalette: () => void
+	onAddProject?: () => void
 	showSubAgents: boolean
 	subAgentCount: number
 	onToggleSubAgents: () => void
@@ -83,16 +88,17 @@ interface SidebarProps {
 // Main component
 // ============================================================
 
-export function Sidebar({
+export function AppSidebar({
 	agents,
 	projects,
 	onOpenCommandPalette,
+	onAddProject,
 	showSubAgents,
 	subAgentCount,
 	onToggleSubAgents,
 	onRenameSession,
 	onDeleteSession,
-}: SidebarProps) {
+}: AppSidebarProps) {
 	const navigate = useNavigate()
 	const routeParams = useParams({ strict: false }) as { sessionId?: string }
 	const selectedSessionId = routeParams.sessionId ?? null
@@ -118,9 +124,9 @@ export function Sidebar({
 	)
 
 	return (
-		<aside className="flex h-full flex-col bg-sidebar">
-			{/* Header */}
-			<div className="flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border px-4">
+		<Sidebar collapsible="offcanvas">
+			{/* Sidebar header — compact row with title and quick actions */}
+			<div className="flex h-11 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
 				<h1 className="text-sm font-semibold tracking-tight">Codedeck</h1>
 				<div className="flex items-center gap-1">
 					{subAgentCount > 0 && (
@@ -144,7 +150,6 @@ export function Sidebar({
 							</TooltipContent>
 						</Tooltip>
 					)}
-					<GlobalAttachCommand />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -157,86 +162,119 @@ export function Sidebar({
 						</TooltipTrigger>
 						<TooltipContent>Search sessions (&#8984;K)</TooltipContent>
 					</Tooltip>
-					<Button
-						size="icon"
-						variant="ghost"
-						className="size-7"
-						onClick={() => navigate({ to: "/" })}
-					>
-						<PlusIcon className="size-3.5" />
-					</Button>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								onClick={() => navigate({ to: "/" })}
+								className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+							>
+								<PlusIcon className="size-3.5" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>New session (&#8984;N)</TooltipContent>
+					</Tooltip>
 				</div>
 			</div>
-			{/* Scrollable content — override Radix ScrollArea's display:table inner div */}
-			<ScrollArea className="min-h-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block">
-				<nav className="space-y-1 overflow-hidden p-2">
-					{/* Active Now */}
-					{activeSessions.length > 0 && (
-						<SidebarSection label="Active Now">
-							{activeSessions.map((agent) => (
-								<SessionItem
-									key={agent.id}
-									agent={agent}
-									isSelected={agent.id === selectedSessionId}
-									onSelect={() =>
-										navigate({
-											to: "/project/$projectSlug/session/$sessionId",
-											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
-										})
-									}
-									onRename={onRenameSession}
-									onDelete={onDeleteSession}
-									showProject
-								/>
-							))}
-						</SidebarSection>
-					)}
 
-					{/* Recent */}
-					{recentSessions.length > 0 && (
-						<SidebarSection label="Recent">
-							{recentSessions.map((agent) => (
-								<SessionItem
-									key={agent.id}
-									agent={agent}
-									isSelected={agent.id === selectedSessionId}
-									onSelect={() =>
-										navigate({
-											to: "/project/$projectSlug/session/$sessionId",
-											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
-										})
-									}
-									onRename={onRenameSession}
-									onDelete={onDeleteSession}
-									showProject
-								/>
-							))}
-						</SidebarSection>
-					)}
-
-					{/* Projects */}
-					{projects.length > 0 && (
-						<>
-							{(activeSessions.length > 0 || recentSessions.length > 0) && (
-								<Separator className="my-2" />
-							)}
-							<SidebarSection label="Projects">
-								{projects.map((project) => (
-									<ProjectFolder
-										key={project.id}
-										project={project}
-										agents={agents}
-										selectedSessionId={selectedSessionId}
-										navigate={navigate}
+			{/* Scrollable content */}
+			<SidebarContent>
+				{/* Active Now */}
+				{activeSessions.length > 0 && (
+					<SidebarGroup>
+						<SidebarGroupLabel>Active Now</SidebarGroupLabel>
+						<SidebarGroupContent>
+							<SidebarMenu>
+								{activeSessions.map((agent) => (
+									<SessionItem
+										key={agent.id}
+										agent={agent}
+										isSelected={agent.id === selectedSessionId}
+										onSelect={() =>
+											navigate({
+												to: "/project/$projectSlug/session/$sessionId",
+												params: {
+													projectSlug: agent.projectSlug,
+													sessionId: agent.id,
+												},
+											})
+										}
 										onRename={onRenameSession}
 										onDelete={onDeleteSession}
+										showProject
 									/>
 								))}
-							</SidebarSection>
-						</>
-					)}
-				</nav>
-			</ScrollArea>
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				)}
+
+				{/* Recent */}
+				{recentSessions.length > 0 && (
+					<SidebarGroup>
+						<SidebarGroupLabel>Recent</SidebarGroupLabel>
+						<SidebarGroupContent>
+							<SidebarMenu>
+								{recentSessions.map((agent) => (
+									<SessionItem
+										key={agent.id}
+										agent={agent}
+										isSelected={agent.id === selectedSessionId}
+										onSelect={() =>
+											navigate({
+												to: "/project/$projectSlug/session/$sessionId",
+												params: {
+													projectSlug: agent.projectSlug,
+													sessionId: agent.id,
+												},
+											})
+										}
+										onRename={onRenameSession}
+										onDelete={onDeleteSession}
+										showProject
+									/>
+								))}
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				)}
+
+				{/* Projects */}
+				{projects.length > 0 && (
+					<>
+						{(activeSessions.length > 0 || recentSessions.length > 0) && <SidebarSeparator />}
+						<SidebarGroup>
+							<SidebarGroupLabel>Projects</SidebarGroupLabel>
+							{onAddProject && (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<SidebarGroupAction onClick={onAddProject}>
+											<PlusIcon />
+											<span className="sr-only">Add Project</span>
+										</SidebarGroupAction>
+									</TooltipTrigger>
+									<TooltipContent side="right">Add project</TooltipContent>
+								</Tooltip>
+							)}
+							<SidebarGroupContent>
+								<SidebarMenu>
+									{projects.map((project) => (
+										<ProjectFolder
+											key={project.id}
+											project={project}
+											agents={agents}
+											selectedSessionId={selectedSessionId}
+											navigate={navigate}
+											onRename={onRenameSession}
+											onDelete={onDeleteSession}
+										/>
+									))}
+								</SidebarMenu>
+							</SidebarGroupContent>
+						</SidebarGroup>
+					</>
+				)}
+			</SidebarContent>
 
 			{/* Empty state */}
 			{agents.length === 0 && projects.length === 0 && (
@@ -249,96 +287,13 @@ export function Sidebar({
 					</div>
 				</div>
 			)}
-		</aside>
-	)
-}
-
-// ============================================================
-// Global attach command (sidebar header)
-// ============================================================
-
-function GlobalAttachCommand() {
-	const { url } = useServerConnection()
-	const [copied, setCopied] = useState(false)
-	const [open, setOpen] = useState(false)
-
-	const serverUrl = url ?? "http://127.0.0.1:4101"
-	const command = `opencode attach ${serverUrl} --dir .`
-
-	const handleOpen = useCallback(
-		async (nextOpen: boolean) => {
-			if (nextOpen) {
-				await navigator.clipboard.writeText(command)
-				setCopied(true)
-				setTimeout(() => setCopied(false), 2000)
-			}
-			setOpen(nextOpen)
-		},
-		[command],
-	)
-
-	const handleCopy = useCallback(async () => {
-		await navigator.clipboard.writeText(command)
-		setCopied(true)
-		setTimeout(() => setCopied(false), 2000)
-	}, [command])
-
-	return (
-		<Popover open={open} onOpenChange={handleOpen}>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<PopoverTrigger asChild>
-						<button
-							type="button"
-							className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-						>
-							<TerminalIcon className="size-3.5" />
-						</button>
-					</PopoverTrigger>
-				</TooltipTrigger>
-				<TooltipContent>Attach from terminal</TooltipContent>
-			</Tooltip>
-			<PopoverContent align="start" className="w-auto max-w-sm p-3">
-				<div className="flex flex-col gap-2">
-					<div className="flex items-center gap-1.5">
-						<CheckIcon className="size-3 text-green-500" />
-						<p className="text-xs font-medium">Copied to clipboard</p>
-					</div>
-					<div className="flex items-center gap-1.5">
-						<code className="flex-1 rounded-md bg-muted px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-foreground select-all">
-							{command}
-						</code>
-						<Button size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0" onClick={handleCopy}>
-							{copied ? (
-								<CheckIcon className="size-3.5 text-green-500" />
-							) : (
-								<CopyIcon className="size-3.5" />
-							)}
-						</Button>
-					</div>
-					<p className="text-[11px] leading-normal text-muted-foreground">
-						Run from your project directory. Sessions will appear here automatically.
-					</p>
-				</div>
-			</PopoverContent>
-		</Popover>
+		</Sidebar>
 	)
 }
 
 // ============================================================
 // Sub-components
 // ============================================================
-
-function SidebarSection({ label, children }: { label: string; children: React.ReactNode }) {
-	return (
-		<div className="space-y-0.5">
-			<h2 className="px-2 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-				{label}
-			</h2>
-			{children}
-		</div>
-	)
-}
 
 function ProjectFolder({
 	project,
@@ -358,7 +313,6 @@ function ProjectFolder({
 	const [expanded, setExpanded] = useState(false)
 	const [showAll, setShowAll] = useState(false)
 
-	// All sessions for this project (always shown, even if also in Active/Recent)
 	const projectSessions = useMemo(
 		() =>
 			agents
@@ -371,37 +325,34 @@ function ProjectFolder({
 	const hiddenCount = projectSessions.length - SESSIONS_PER_PROJECT
 
 	return (
-		<div>
-			<div className="flex items-center overflow-hidden">
-				<button
-					type="button"
-					onClick={() => {
-						setExpanded(!expanded)
-						navigate({
-							to: "/project/$projectSlug",
-							params: { projectSlug: project.slug },
-						})
-					}}
-					className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 overflow-hidden rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent/50"
-				>
-					{expanded ? (
-						<ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
-					) : (
-						<ChevronRightIcon className="size-3 shrink-0 text-muted-foreground" />
-					)}
-					<span className="truncate font-medium">{project.name}</span>
-					<Badge variant="secondary" className="ml-auto shrink-0 px-1.5 py-0 text-[10px]">
-						{project.agentCount}
-					</Badge>
-				</button>
-			</div>
+		<SidebarMenuItem>
+			<SidebarMenuButton
+				tooltip={project.name}
+				onClick={() => {
+					setExpanded(!expanded)
+					navigate({
+						to: "/project/$projectSlug",
+						params: { projectSlug: project.slug },
+					})
+				}}
+			>
+				{expanded ? (
+					<ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
+				) : (
+					<FolderIcon className="size-4 shrink-0" />
+				)}
+				<span className="truncate font-medium">{project.name}</span>
+				<Badge variant="secondary" className="ml-auto shrink-0 px-1.5 py-0 text-[10px]">
+					{project.agentCount}
+				</Badge>
+			</SidebarMenuButton>
 
 			{expanded && (
 				<div className="ml-3 border-l border-sidebar-border pl-1">
 					{projectSessions.length === 0 ? (
 						<p className="px-2 py-1.5 text-xs text-muted-foreground/60">No sessions yet</p>
 					) : (
-						<>
+						<SidebarMenu>
 							{visibleSessions.map((agent) => (
 								<SessionItem
 									key={agent.id}
@@ -410,7 +361,10 @@ function ProjectFolder({
 									onSelect={() =>
 										navigate({
 											to: "/project/$projectSlug/session/$sessionId",
-											params: { projectSlug: agent.projectSlug, sessionId: agent.id },
+											params: {
+												projectSlug: agent.projectSlug,
+												sessionId: agent.id,
+											},
 										})
 									}
 									onRename={onRename}
@@ -427,18 +381,16 @@ function ProjectFolder({
 									Show {hiddenCount} more...
 								</button>
 							)}
-						</>
+						</SidebarMenu>
 					)}
 				</div>
 			)}
-		</div>
+		</SidebarMenuItem>
 	)
 }
 
 /**
  * Hook that returns a live-updating duration string for active sessions.
- * For active sessions (running/waiting), it ticks every second showing elapsed time.
- * For inactive sessions, it returns the pre-computed relative time from the agent.
  */
 function useLiveDuration(agent: Agent): string {
 	const isActive = agent.status === "running" || agent.status === "waiting"
@@ -453,7 +405,6 @@ function useLiveDuration(agent: Agent): string {
 			return
 		}
 
-		// Immediately set, then tick every second
 		setElapsed(formatElapsed(agent.createdAt))
 		const id = setInterval(() => {
 			setElapsed(formatElapsed(agent.createdAt))
@@ -508,7 +459,6 @@ const SessionItem = memo(function SessionItem({
 		setEditValue(agent.name)
 	}, [agent.name])
 
-	// Auto-focus and select all text when entering edit mode
 	useEffect(() => {
 		if (isEditing && inputRef.current) {
 			inputRef.current.focus()
@@ -516,70 +466,67 @@ const SessionItem = memo(function SessionItem({
 		}
 	}, [isEditing])
 
+	const tooltipLabel = showProject ? agent.project : agent.name
+
 	const btn = (
-		<button
-			type="button"
-			onClick={isEditing ? undefined : onSelect}
-			className={`flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md text-left transition-colors ${
-				compact ? "px-2 py-1.5" : "px-2 py-2"
-			} ${isSelected ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"}`}
-		>
-			{isSubAgent ? (
-				<GitBranchIcon className={`size-4 shrink-0 ${statusColor}`} />
-			) : (
-				<StatusIcon
-					className={`size-4 shrink-0 ${statusColor} ${agent.status === "running" ? "animate-spin" : ""}`}
-				/>
-			)}
+		<SidebarMenuItem>
+			<SidebarMenuButton
+				isActive={isSelected}
+				tooltip={tooltipLabel}
+				size={compact ? "sm" : "default"}
+				onClick={isEditing ? undefined : onSelect}
+			>
+				{isSubAgent ? (
+					<GitBranchIcon className={`shrink-0 ${statusColor}`} />
+				) : (
+					<StatusIcon
+						className={`shrink-0 ${statusColor} ${agent.status === "running" ? "animate-spin" : ""}`}
+					/>
+				)}
 
-			{isEditing ? (
-				<Input
-					ref={inputRef}
-					value={editValue}
-					onChange={(e) => setEditValue(e.target.value)}
-					onKeyDown={(e) => {
-						e.stopPropagation()
-						if (e.key === "Enter") confirmRename()
-						if (e.key === "Escape") cancelEditing()
-					}}
-					onBlur={confirmRename}
-					onClick={(e) => e.stopPropagation()}
-					className={`h-auto min-w-0 flex-1 border-none bg-transparent p-0 shadow-none focus-visible:ring-0 ${compact ? "text-xs" : "text-[13px]"}`}
-				/>
-			) : (
-				<div className="min-w-0 flex-1">
-					<span className={`block truncate leading-tight ${compact ? "text-xs" : "text-[13px]"}`}>
-						{agent.name}
-					</span>
-					{agent.status === "waiting" && agent.currentActivity && (
-						<span className="block truncate text-[11px] leading-tight text-yellow-500">
-							{agent.currentActivity}
+				{isEditing ? (
+					<Input
+						ref={inputRef}
+						value={editValue}
+						onChange={(e) => setEditValue(e.target.value)}
+						onKeyDown={(e) => {
+							e.stopPropagation()
+							if (e.key === "Enter") confirmRename()
+							if (e.key === "Escape") cancelEditing()
+						}}
+						onBlur={confirmRename}
+						onClick={(e) => e.stopPropagation()}
+						className={`h-auto min-w-0 flex-1 border-none bg-transparent p-0 shadow-none focus-visible:ring-0 ${compact ? "text-xs" : "text-[13px]"}`}
+					/>
+				) : (
+					<div className="min-w-0 flex-1">
+						<span className={`block truncate leading-tight ${compact ? "text-xs" : "text-[13px]"}`}>
+							{agent.name}
 						</span>
-					)}
-				</div>
-			)}
+						{agent.branch && agent.status !== "waiting" && (
+							<span className="flex items-center gap-0.5 text-[10px] leading-tight text-muted-foreground/60">
+								<GitBranchIcon className="size-2.5" />
+								<span className="truncate">{agent.branch}</span>
+							</span>
+						)}
+						{agent.status === "waiting" && agent.currentActivity && (
+							<span className="block truncate text-[11px] leading-tight text-yellow-500">
+								{agent.currentActivity}
+							</span>
+						)}
+					</div>
+				)}
 
-			{!isEditing && (
-				<span className="shrink-0 text-xs tabular-nums text-muted-foreground">{duration}</span>
-			)}
-		</button>
+				{!isEditing && (
+					<span className="shrink-0 text-xs tabular-nums text-muted-foreground">{duration}</span>
+				)}
+			</SidebarMenuButton>
+		</SidebarMenuItem>
 	)
-
-	const wrappedBtn =
-		showProject || compact ? (
-			<Tooltip>
-				<TooltipTrigger asChild>{btn}</TooltipTrigger>
-				<TooltipContent side="right" align="center">
-					{showProject ? agent.project : agent.name}
-				</TooltipContent>
-			</Tooltip>
-		) : (
-			btn
-		)
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>{wrappedBtn}</ContextMenuTrigger>
+			<ContextMenuTrigger asChild>{btn}</ContextMenuTrigger>
 			<ContextMenuContent>
 				{onRename && (
 					<ContextMenuItem onSelect={startEditing}>

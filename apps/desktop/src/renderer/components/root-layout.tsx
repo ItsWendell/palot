@@ -1,3 +1,4 @@
+import { SidebarInset, SidebarProvider } from "@codedeck/ui/components/sidebar"
 import { TooltipProvider } from "@codedeck/ui/components/tooltip"
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { useCallback, useEffect, useMemo } from "react"
@@ -11,16 +12,22 @@ import {
 } from "../hooks/use-agents"
 import { useDiscovery } from "../hooks/use-discovery"
 import { useAgentActions, useServerConnection } from "../hooks/use-server"
+import { useThemeEffect } from "../hooks/use-theme"
 import { useWaitingIndicator } from "../hooks/use-waiting-indicator"
 import type { Agent } from "../lib/types"
+import { pickDirectory } from "../services/backend"
+import { loadProjectSessions } from "../services/connection-manager"
+import { AppBar } from "./app-bar"
+import { AppBarProvider } from "./app-bar-context"
 import { CommandPalette } from "./command-palette"
-import { Sidebar } from "./sidebar"
+import { AppSidebar } from "./sidebar"
 import { UpdateBanner } from "./update-banner"
 
 export function RootLayout() {
 	useDiscovery()
 	useServerConnection()
 	useWaitingIndicator()
+	useThemeEffect()
 
 	const agents = useAgents()
 	const projects = useProjectList()
@@ -55,6 +62,18 @@ export function RootLayout() {
 		[deleteSession],
 	)
 
+	// ========== Add project ==========
+
+	const handleAddProject = useCallback(async () => {
+		const directory = await pickDirectory()
+		if (!directory) return
+		// Load sessions for the new directory — this implicitly registers
+		// the project with the OpenCode server via the x-opencode-directory header
+		await loadProjectSessions(directory)
+		// Navigate to the new project's page (slug will be derived by useProjectList)
+		navigate({ to: "/" })
+	}, [navigate])
+
 	// ========== Keyboard navigation ==========
 
 	const handleKeyDown = useCallback(
@@ -70,7 +89,7 @@ export function RootLayout() {
 				return
 			}
 
-			if (e.key === "j" || e.key === "k") {
+			if ((e.key === "j" || e.key === "k") && !e.metaKey && !e.ctrlKey && !e.altKey) {
 				e.preventDefault()
 				const currentIndex = visibleAgents.findIndex((a) => a.id === sessionId)
 				let nextIndex: number
@@ -116,31 +135,43 @@ export function RootLayout() {
 
 	return (
 		<TooltipProvider>
-			<div className="flex h-screen flex-col bg-background text-foreground">
-				<UpdateBanner />
-				<div className="flex min-h-0 flex-1">
-					<div className="w-[280px] shrink-0 border-r border-border">
-						<Sidebar
-							agents={visibleAgents}
-							projects={projects}
+			<AppBarProvider>
+				<div className="flex h-screen flex-col bg-background text-foreground">
+					<UpdateBanner />
+					<SidebarProvider embedded defaultOpen={true} className="flex-col">
+						{/* Fixed app bar — spans full width, above sidebar + content */}
+						<AppBar
 							onOpenCommandPalette={() => setCommandPaletteOpen(true)}
 							showSubAgents={showSubAgents}
 							subAgentCount={subAgentCount}
 							onToggleSubAgents={toggleShowSubAgents}
-							onRenameSession={handleRenameSession}
-							onDeleteSession={handleDeleteSession}
 						/>
-					</div>
-					<div className="min-w-0 flex-1">
-						<Outlet />
-					</div>
+
+						{/* Sidebar + main content below the app bar */}
+						<div className="flex min-h-0 flex-1">
+							<AppSidebar
+								agents={visibleAgents}
+								projects={projects}
+								onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+								onAddProject={handleAddProject}
+								showSubAgents={showSubAgents}
+								subAgentCount={subAgentCount}
+								onToggleSubAgents={toggleShowSubAgents}
+								onRenameSession={handleRenameSession}
+								onDeleteSession={handleDeleteSession}
+							/>
+							<SidebarInset>
+								<Outlet />
+							</SidebarInset>
+						</div>
+					</SidebarProvider>
 				</div>
-			</div>
-			<CommandPalette
-				open={commandPaletteOpen}
-				onOpenChange={setCommandPaletteOpen}
-				agents={agents}
-			/>
+				<CommandPalette
+					open={commandPaletteOpen}
+					onOpenChange={setCommandPaletteOpen}
+					agents={agents}
+				/>
+			</AppBarProvider>
 		</TooltipProvider>
 	)
 }
