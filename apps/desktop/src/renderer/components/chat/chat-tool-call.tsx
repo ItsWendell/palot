@@ -177,6 +177,26 @@ export function getToolInfo(tool: string): {
 }
 
 /**
+ * Try to extract a field value from partial JSON in `state.raw`.
+ * During the `pending` state, `input` may be `{}` while the server is still
+ * streaming the tool-call arguments. The `raw` field (when available) contains
+ * the accumulated partial JSON string, so we can attempt to pull out early
+ * fields like `command` or `description` even before the server has finished
+ * parsing the full input.
+ */
+function extractFromRaw(state: ToolPart["state"], ...fields: string[]): string | undefined {
+	if (!("raw" in state) || typeof state.raw !== "string" || !state.raw) return undefined
+	const raw = state.raw
+	for (const field of fields) {
+		// Match "field": "value" — handles escaped quotes in the value
+		const pattern = new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`)
+		const match = raw.match(pattern)
+		if (match?.[1]) return match[1]
+	}
+	return undefined
+}
+
+/**
  * Extracts a human-readable subtitle from tool state.
  */
 export function getToolSubtitle(part: ToolPart): string | undefined {
@@ -186,23 +206,45 @@ export function getToolSubtitle(part: ToolPart): string | undefined {
 
 	switch (part.tool) {
 		case "read":
-			return shortenPath((input.filePath as string) ?? (input.path as string))
+			return (
+				shortenPath((input.filePath as string) ?? (input.path as string)) ??
+				shortenPath(extractFromRaw(state, "filePath", "path"))
+			)
 		case "glob":
-			return (input.pattern as string) ?? (input.path as string)
+			return (
+				(input.pattern as string) ??
+				(input.path as string) ??
+				extractFromRaw(state, "pattern", "path")
+			)
 		case "grep":
-			return (input.pattern as string) ?? (input.path as string)
+			return (
+				(input.pattern as string) ??
+				(input.path as string) ??
+				extractFromRaw(state, "pattern", "path")
+			)
 		case "bash":
-			return title ?? (input.description as string) ?? (input.command as string)
+			return (
+				title ??
+				(input.description as string) ??
+				(input.command as string) ??
+				extractFromRaw(state, "command", "description")
+			)
 		case "edit":
-			return shortenPath((input.filePath as string) ?? (input.path as string))
+			return (
+				shortenPath((input.filePath as string) ?? (input.path as string)) ??
+				shortenPath(extractFromRaw(state, "filePath", "path"))
+			)
 		case "write":
-			return shortenPath((input.filePath as string) ?? (input.path as string))
+			return (
+				shortenPath((input.filePath as string) ?? (input.path as string)) ??
+				shortenPath(extractFromRaw(state, "filePath", "path"))
+			)
 		case "apply_patch":
 			return title
 		case "webfetch":
-			return input.url as string
+			return (input.url as string) ?? extractFromRaw(state, "url")
 		case "task":
-			return (input.description as string) ?? title
+			return (input.description as string) ?? title ?? extractFromRaw(state, "description")
 		case "todowrite":
 		case "todoread": {
 			const todos = input?.todos as Array<{ status: string }> | undefined
