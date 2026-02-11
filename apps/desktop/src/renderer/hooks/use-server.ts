@@ -1,4 +1,10 @@
+import { useAtomValue } from "jotai"
 import { useCallback } from "react"
+import { connectionAtom } from "../atoms/connection"
+import { upsertMessageAtom } from "../atoms/messages"
+import { upsertPartAtom } from "../atoms/parts"
+import { sessionFamily, upsertSessionAtom } from "../atoms/sessions"
+import { appStore } from "../atoms/store"
 import { createLogger } from "../lib/logger"
 import type {
 	FileAttachment,
@@ -9,25 +15,22 @@ import type {
 	UserMessage,
 } from "../lib/types"
 import { getProjectClient } from "../services/connection-manager"
-import { useAppStore } from "../stores/app-store"
 
 const log = createLogger("use-server")
 
 /**
  * Hook for OpenCode server connection state.
- * With the single-server architecture, this is much simpler.
  */
 export function useServerConnection() {
-	const opencode = useAppStore((s) => s.opencode ?? { url: null, connected: false })
+	const conn = useAtomValue(connectionAtom)
 	return {
-		connected: opencode.connected,
-		url: opencode.url,
+		connected: conn.connected,
+		url: conn.url,
 	}
 }
 
 /**
  * Hook for agent actions (stop, approve, deny, etc.).
- * These operate on real OpenCode sessions via the SDK (v2).
  */
 export function useAgentActions() {
 	const abort = useCallback(async (directory: string, sessionId: string) => {
@@ -57,18 +60,20 @@ export function useAgentActions() {
 			const client = getProjectClient(directory)
 			if (!client) throw new Error("Not connected to OpenCode server")
 
-			// Optimistic user message — appears immediately in the chat
+			// Optimistic user message — include variant so it's available when
+			// re-initializing the session's toolbar state (the v1 UserMessage type
+			// doesn't have variant but the server stores it on user messages).
 			const optimisticId = `optimistic-${Date.now()}`
-			const optimisticMessage: UserMessage = {
+			const optimisticMessage: UserMessage & { variant?: string } = {
 				id: optimisticId,
 				sessionID: sessionId,
 				role: "user",
 				time: { created: Date.now() },
 				agent: options?.agent ?? "build",
 				model: options?.model ?? { providerID: "", modelID: "" },
+				variant: options?.variant,
 			}
-			const store = useAppStore.getState()
-			store.upsertMessage(optimisticMessage)
+			appStore.set(upsertMessageAtom, optimisticMessage as UserMessage)
 
 			// Optimistic text part
 			const optimisticTextPart: TextPart = {
@@ -78,9 +83,9 @@ export function useAgentActions() {
 				type: "text",
 				text,
 			}
-			store.upsertPart(optimisticTextPart)
+			appStore.set(upsertPartAtom, optimisticTextPart)
 
-			// Optimistic file parts (so images show immediately in the chat)
+			// Optimistic file parts
 			const files = options?.files ?? []
 			for (let i = 0; i < files.length; i++) {
 				const file = files[i]
@@ -93,7 +98,7 @@ export function useAgentActions() {
 					filename: file.filename,
 					url: file.url,
 				}
-				store.upsertPart(optimisticFilePart)
+				appStore.set(upsertPartAtom, optimisticFilePart)
 			}
 
 			// Build parts array for the API call
@@ -133,9 +138,8 @@ export function useAgentActions() {
 		try {
 			const result = await client.session.create({ title })
 			const session = result.data
-			// Add to store immediately so navigation finds it before SSE arrives
 			if (session) {
-				useAppStore.getState().setSession(session, directory)
+				appStore.set(upsertSessionAtom, { session, directory })
 			}
 			log.debug("createSession succeeded", { sessionId: session?.id })
 			return session
@@ -150,11 +154,13 @@ export function useAgentActions() {
 		if (!client) throw new Error("Not connected to OpenCode server")
 		log.debug("renameSession", { sessionId, title })
 
-		// Optimistic update — change title in store immediately
-		const store = useAppStore.getState()
-		const entry = store.sessions[sessionId]
+		// Optimistic update
+		const entry = appStore.get(sessionFamily(sessionId))
 		if (entry) {
-			store.setSession({ ...entry.session, title }, entry.directory)
+			appStore.set(upsertSessionAtom, {
+				session: { ...entry.session, title },
+				directory: entry.directory,
+			})
 		}
 
 		try {
@@ -228,22 +234,16 @@ export function useAgentActions() {
 		}
 	}, [])
 
-	/**
-	 * Revert (undo) a session to a specific message.
-	 * If the session is busy, aborts it first (matching TUI behavior).
-	 */
 	const revert = useCallback(async (directory: string, sessionId: string, messageId: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")
 		log.debug("revert", { sessionId, messageId })
 		try {
-			// Abort if busy (matching TUI behavior)
-			const entry = useAppStore.getState().sessions[sessionId]
+			const entry = appStore.get(sessionFamily(sessionId))
 			if (entry?.status?.type === "busy") {
 				log.debug("revert: aborting busy session first", { sessionId })
 				await client.session.abort({ sessionID: sessionId })
 			}
-
 			await client.session.revert({ sessionID: sessionId, messageID: messageId })
 		} catch (err) {
 			log.error("revert failed", { sessionId, messageId }, err)
@@ -251,9 +251,6 @@ export function useAgentActions() {
 		}
 	}, [])
 
-	/**
-	 * Unrevert (redo) a session — restores previously reverted messages.
-	 */
 	const unrevert = useCallback(async (directory: string, sessionId: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")
@@ -266,9 +263,6 @@ export function useAgentActions() {
 		}
 	}, [])
 
-	/**
-	 * Execute a named command on a session (server-side slash commands).
-	 */
 	const executeCommand = useCallback(
 		async (directory: string, sessionId: string, command: string, args: string) => {
 			const client = getProjectClient(directory)
@@ -288,9 +282,6 @@ export function useAgentActions() {
 		[],
 	)
 
-	/**
-	 * Summarize/compact a session conversation.
-	 */
 	const summarize = useCallback(async (directory: string, sessionId: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")

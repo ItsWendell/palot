@@ -13,6 +13,24 @@ contextBridge.exposeInMainWorld("codedeck", {
 	/** Returns app version and dev/production mode. */
 	getAppInfo: () => ipcRenderer.invoke("app:info"),
 
+	// --- Window chrome / liquid glass ---
+
+	/**
+	 * Subscribes to the window chrome tier notification from the main process.
+	 * Fired once after the window finishes loading.
+	 * Tier values: "liquid-glass" | "vibrancy" | "opaque"
+	 */
+	onChromeTier: (callback: (tier: string) => void) => {
+		const listener = (_event: unknown, tier: string) => callback(tier)
+		ipcRenderer.on("chrome-tier", listener)
+		return () => {
+			ipcRenderer.removeListener("chrome-tier", listener)
+		}
+	},
+
+	/** Get the current chrome tier (pull-based, avoids race with push event). */
+	getChromeTier: () => ipcRenderer.invoke("chrome-tier:get"),
+
 	/** Ensures the OpenCode server is running. Spawns it if not. */
 	ensureOpenCode: () => ipcRenderer.invoke("opencode:ensure"),
 
@@ -70,6 +88,17 @@ contextBridge.exposeInMainWorld("codedeck", {
 		stashPop: (directory: string) => ipcRenderer.invoke("git:stash-pop", directory),
 	},
 
+	// --- Window preferences (opaque windows / transparency) ---
+
+	/** Get the persisted opaque windows preference from the main process. */
+	getOpaqueWindows: () => ipcRenderer.invoke("prefs:get-opaque-windows"),
+
+	/** Set the opaque windows preference and persist it in the main process. */
+	setOpaqueWindows: (value: boolean) => ipcRenderer.invoke("prefs:set-opaque-windows", value),
+
+	/** Relaunch the app (used after toggling transparency, which requires a restart). */
+	relaunch: () => ipcRenderer.invoke("app:relaunch"),
+
 	// --- CLI install ---
 
 	cli: {
@@ -80,6 +109,20 @@ contextBridge.exposeInMainWorld("codedeck", {
 		/** Uninstalls the `codedeck` CLI command. */
 		uninstall: () => ipcRenderer.invoke("cli:uninstall"),
 	},
+
+	// --- Open in external app ---
+
+	openIn: {
+		getTargets: () => ipcRenderer.invoke("open-in:targets"),
+		open: (directory: string, targetId: string, persistPreferred?: boolean) =>
+			ipcRenderer.invoke("open-in:open", directory, targetId, persistPreferred),
+		setPreferred: (targetId: string) => ipcRenderer.invoke("open-in:set-preferred", targetId),
+	},
+
+	// --- Native theme (syncs macOS glass tint to app color scheme) ---
+
+	/** Set the native theme source to control macOS glass tint color. */
+	setNativeTheme: (source: string) => ipcRenderer.invoke("theme:set-native", source),
 
 	// --- Directory picker ---
 
@@ -100,4 +143,25 @@ contextBridge.exposeInMainWorld("codedeck", {
 		headers: Record<string, string>
 		body: string | null
 	}) => ipcRenderer.invoke("fetch:request", req),
+
+	// --- Notifications ---
+
+	/**
+	 * Subscribes to notification navigation events from the main process.
+	 * Fired when the user clicks a native OS notification — the renderer
+	 * should navigate to the specified session.
+	 */
+	onNotificationNavigate: (callback: (data: { sessionId: string }) => void) => {
+		const listener = (_event: unknown, data: { sessionId: string }) => callback(data)
+		ipcRenderer.on("notification:navigate", listener)
+		return () => {
+			ipcRenderer.removeListener("notification:navigate", listener)
+		}
+	},
+
+	/** Dismiss any active notification for a session (e.g. when the user navigates to it). */
+	dismissNotification: (sessionId: string) => ipcRenderer.invoke("notification:dismiss", sessionId),
+
+	/** Update the dock badge / app badge count. */
+	updateBadgeCount: (count: number) => ipcRenderer.invoke("notification:badge", count),
 })

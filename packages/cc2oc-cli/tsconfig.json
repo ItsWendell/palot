@@ -1,0 +1,20 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"noEmit": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"types": ["bun"],
+		"paths": {
+			"@codedeck/cc2oc": ["../cc2oc/src/index.ts"],
+			"@codedeck/cc2oc/*": ["../cc2oc/src/*"]
+		}
+	},
+	"include": ["src/**/*.ts"]
+}

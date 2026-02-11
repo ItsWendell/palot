@@ -130,6 +130,7 @@ function SidebarProvider({
 			<TooltipProvider delayDuration={0}>
 				<div
 					data-slot="sidebar-wrapper"
+					data-state={state}
 					style={
 						{
 							"--sidebar-width": SIDEBAR_WIDTH,
@@ -207,7 +208,15 @@ function Sidebar({
 
 	return (
 		<div
-			className={cn("group peer text-sidebar-foreground", embedded ? "block" : "hidden md:block")}
+			className={cn(
+				"group peer text-sidebar-foreground overflow-hidden",
+				embedded
+					? cn(
+							"w-(--sidebar-width) shrink-0 transition-[width] duration-250 ease-in-out",
+							"data-[collapsible=offcanvas]:data-[state=collapsed]:w-0",
+						)
+					: "hidden md:block",
+			)}
 			data-state={state}
 			data-collapsible={state === "collapsed" ? collapsible : ""}
 			data-variant={variant}
@@ -219,7 +228,7 @@ function Sidebar({
 				<div
 					data-slot="sidebar-gap"
 					className={cn(
-						"relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
+						"relative w-(--sidebar-width) bg-transparent transition-[width] duration-250 ease-in-out",
 						"group-data-[collapsible=offcanvas]:w-0",
 						"group-data-[side=right]:rotate-180",
 						variant === "floating" || variant === "inset"
@@ -232,14 +241,14 @@ function Sidebar({
 				data-slot="sidebar-container"
 				className={cn(
 					embedded
-						? "relative h-full w-(--sidebar-width) shrink-0 transition-[width] duration-200 ease-linear"
-						: "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
-					embedded
 						? cn(
-								"group-data-[collapsible=offcanvas]:w-0 group-data-[collapsible=offcanvas]:overflow-hidden",
+								"relative h-full w-(--sidebar-width) will-change-transform",
+								"transition-transform duration-250 ease-in-out",
+								"group-data-[collapsible=offcanvas]:group-data-[state=collapsed]:-translate-x-full",
 								"group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
 							)
 						: cn(
+								"fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-250 ease-in-out md:flex",
 								side === "left"
 									? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
 									: "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
@@ -250,6 +259,7 @@ function Sidebar({
 					!embedded && "group-data-[side=left]:border-r group-data-[side=right]:border-l",
 					className,
 				)}
+				style={{ contain: "strict" }}
 				{...props}
 			>
 				<div

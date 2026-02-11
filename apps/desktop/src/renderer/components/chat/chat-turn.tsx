@@ -181,7 +181,11 @@ const ToolPill = memo(function ToolPill({ pill }: { pill: CategoryPill }) {
 
 function isSyntheticMessage(entry: ChatMessageEntry): boolean {
 	const textParts = entry.parts.filter((p): p is TextPart => p.type === "text")
-	return textParts.length > 0 && textParts.every((p) => p.synthetic === true)
+	// All text parts are synthetic (e.g. compaction continuation, shell execution)
+	if (textParts.length > 0 && textParts.every((p) => p.synthetic === true)) return true
+	// No text parts at all — e.g. a user message with only a compaction part
+	if (textParts.length === 0 && entry.parts.length > 0) return true
+	return false
 }
 
 function getUserText(entry: ChatMessageEntry): string {
@@ -204,6 +208,8 @@ function getSyntheticLabel(entry: ChatMessageEntry): string {
 	if (text.includes("plan has been approved")) return "Plan approved"
 	if (text.includes("enter plan mode")) return "Entered plan mode"
 	if (text.includes("switch") && text.includes("plan")) return "Mode switched"
+	// No text parts — check for compaction part (user message that triggers compaction)
+	if (entry.parts.some((p) => p.type === "compaction")) return "Compacting conversation"
 	return "Auto-continued"
 }
 
@@ -455,7 +461,12 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 	// When expanded, all text parts are already rendered inline within the
 	// ordered parts list. The separate "final response" block should only
 	// appear when collapsed (pill bar mode) to show the response below the summary.
-	const textAlreadyInline = showToolsExpanded && orderedParts.some((p) => p.kind === "text")
+	// Note: text is only inline if the tools/steps section actually renders
+	// (requires working || hasSteps || hasReasoning), otherwise the inline
+	// rendering block is skipped and we must fall through to the standalone block.
+	const toolsSectionVisible = working || hasSteps || hasReasoning
+	const textAlreadyInline =
+		showToolsExpanded && toolsSectionVisible && orderedParts.some((p) => p.kind === "text")
 
 	const handleCopyResponse = useCallback(async () => {
 		if (!responseText) return
@@ -481,7 +492,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 				<Message from="user">
 					<MessageContent>
 						{userFiles.length > 0 && <AttachmentGrid files={userFiles} />}
-						<p>{userText}</p>
+						<p className="whitespace-pre-wrap">{userText}</p>
 						{(isQueued || isQueuedLast) && (
 							<span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/60">
 								<ListOrderedIcon className="size-3" />

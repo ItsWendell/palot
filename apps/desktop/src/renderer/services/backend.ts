@@ -17,6 +17,7 @@ import type {
 	GitStatusInfo,
 	MessagesResult,
 	ModelState,
+	OpenInTargetsResult,
 } from "../../preload/api"
 import { createLogger } from "../lib/logger"
 
@@ -208,4 +209,44 @@ export async function gitStashPop(directory: string): Promise<GitStashResult> {
 		return window.codedeck.git.stashPop(directory)
 	}
 	throw new Error("Git operations are only available in Electron mode")
+}
+
+// ============================================================
+// Open in external app — Electron-only (main process via IPC)
+// ============================================================
+
+/**
+ * Gets the list of available "Open in" targets (editors, terminals, file managers)
+ * with their availability status and the user's preferred target.
+ */
+export async function fetchOpenInTargets(): Promise<OpenInTargetsResult> {
+	if (isElectron) {
+		return window.codedeck.openIn.getTargets()
+	}
+	throw new Error("Open-in targets are only available in Electron mode")
+}
+
+/**
+ * Opens a directory in the specified target application.
+ * Optionally persists the target as the user's preferred choice.
+ */
+export async function openInTarget(
+	directory: string,
+	targetId: string,
+	persistPreferred?: boolean,
+): Promise<void> {
+	if (isElectron) {
+		return window.codedeck.openIn.open(directory, targetId, persistPreferred)
+	}
+	throw new Error("Open-in targets are only available in Electron mode")
+}
+
+/**
+ * Sets the user's preferred "Open in" target without opening anything.
+ */
+export async function setOpenInPreferred(targetId: string): Promise<{ success: boolean }> {
+	if (isElectron) {
+		return window.codedeck.openIn.setPreferred(targetId)
+	}
+	throw new Error("Open-in targets are only available in Electron mode")
 }

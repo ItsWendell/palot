@@ -7,6 +7,9 @@ directories:
 
 files:
   - "out/**/*"
+  # Native N-API addon for macOS liquid glass / vibrancy effects.
+  # Must be included because externalizeDepsPlugin keeps it external.
+  - "node_modules/electron-liquid-glass/**/*"
 
 # Bundle the CLI launcher script into the app package.
 # macOS: Contents/Resources/bin/codedeck

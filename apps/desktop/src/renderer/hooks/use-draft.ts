@@ -1,22 +1,22 @@
+import { useAtomValue } from "jotai"
 import { useCallback, useEffect, useRef } from "react"
-import { usePersistedStore } from "../stores/persisted-store"
+import { clearDraftAtom, draftsAtom, setDraftAtom } from "../atoms/preferences"
+import { appStore } from "../atoms/store"
 
 /** Key used for the new-chat (landing page) draft */
 export const NEW_CHAT_DRAFT_KEY = "__new_chat__"
 
 /**
- * Returns the current draft text for a given key (session ID or NEW_CHAT_DRAFT_KEY).
+ * Returns the current draft text for a given key.
  */
 export function useDraft(key: string): string {
-	return usePersistedStore((s) => s.drafts[key] ?? "")
+	const drafts = useAtomValue(draftsAtom)
+	return drafts[key] ?? ""
 }
 
 /**
  * Hook that returns a debounced setter for persisting draft text,
- * plus a clearDraft function for immediate cleanup (e.g. on send).
- *
- * The setter debounces writes by 500ms to avoid excessive localStorage churn.
- * Pending writes are flushed on unmount so drafts are never lost.
+ * plus a clearDraft function for immediate cleanup.
  */
 export function useDraftActions(key: string) {
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -32,11 +32,10 @@ export function useDraftActions(key: string) {
 		if (latestTextRef.current !== null) {
 			const text = latestTextRef.current
 			latestTextRef.current = null
-			const store = usePersistedStore.getState()
 			if (text) {
-				store.setDraft(keyRef.current, text)
+				appStore.set(setDraftAtom, { key: keyRef.current, text })
 			} else {
-				store.clearDraft(keyRef.current)
+				appStore.set(clearDraftAtom, keyRef.current)
 			}
 		}
 	}, [])
@@ -53,16 +52,15 @@ export function useDraftActions(key: string) {
 	)
 
 	const clearDraft = useCallback(() => {
-		// Cancel any pending debounced write
 		if (timerRef.current !== null) {
 			clearTimeout(timerRef.current)
 			timerRef.current = null
 		}
 		latestTextRef.current = null
-		usePersistedStore.getState().clearDraft(keyRef.current)
+		appStore.set(clearDraftAtom, keyRef.current)
 	}, [])
 
-	// Flush pending draft on unmount (e.g. switching sessions)
+	// Flush pending draft on unmount
 	useEffect(() => {
 		return () => {
 			flush()

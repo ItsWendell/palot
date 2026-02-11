@@ -28,6 +28,7 @@ import {
 	SparklesIcon,
 } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
+import type { DisplayMode } from "../../atoms/preferences"
 import { useDisplayMode, useSetDisplayMode } from "../../hooks/use-agents"
 import type {
 	ModelRef,
@@ -37,7 +38,6 @@ import type {
 	VcsData,
 } from "../../hooks/use-opencode-data"
 import { getModelVariants, parseModelRef } from "../../hooks/use-opencode-data"
-import type { DisplayMode } from "../../stores/persisted-store"
 
 // ============================================================
 // Agent Selector
@@ -347,8 +347,11 @@ export function VariantSelector({
 }: VariantSelectorProps) {
 	if (variants.length === 0) return null
 
-	// "default" is a sentinel for "no variant override"
-	const value = selectedVariant ?? "__default__"
+	// "default" is a sentinel for "no variant override".
+	// If the selected variant isn't in the available list (e.g. stale restore),
+	// fall back to default so the <Select> doesn't show an empty/broken state.
+	const value =
+		selectedVariant && variants.includes(selectedVariant) ? selectedVariant : "__default__"
 
 	return (
 		<Select
@@ -364,7 +367,7 @@ export function VariantSelector({
 			</SelectTrigger>
 			<SelectContent side="top" position="popper" className="min-w-[120px]">
 				<SelectItem value="__default__">
-					<span className="text-muted-foreground">default</span>
+					<span className="text-muted-foreground">Default variant</span>
 				</SelectItem>
 				{variants.map((variant) => (
 					<SelectItem key={variant} value={variant}>

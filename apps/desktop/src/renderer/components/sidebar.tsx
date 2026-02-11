@@ -11,9 +11,9 @@ import {
 	Sidebar,
 	SidebarContent,
 	SidebarGroup,
-	SidebarGroupAction,
 	SidebarGroupContent,
 	SidebarGroupLabel,
+	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
@@ -39,6 +39,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { formatElapsed } from "../hooks/use-agents"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
+import { APP_BAR_HEIGHT } from "./app-bar"
 
 // ============================================================
 // Constants
@@ -124,59 +125,19 @@ export function AppSidebar({
 	)
 
 	return (
-		<Sidebar collapsible="offcanvas">
-			{/* Sidebar header — compact row with title and quick actions */}
-			<div className="flex h-11 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
-				<h1 className="text-sm font-semibold tracking-tight">Codedeck</h1>
-				<div className="flex items-center gap-1">
-					{subAgentCount > 0 && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									onClick={onToggleSubAgents}
-									className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs transition-colors ${
-										showSubAgents
-											? "bg-accent text-accent-foreground"
-											: "text-muted-foreground hover:bg-muted hover:text-foreground"
-									}`}
-								>
-									<NetworkIcon className="size-3" />
-									<span>{subAgentCount}</span>
-								</button>
-							</TooltipTrigger>
-							<TooltipContent>
-								{showSubAgents ? "Hide" : "Show"} sub-agents ({subAgentCount})
-							</TooltipContent>
-						</Tooltip>
-					)}
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								type="button"
-								onClick={onOpenCommandPalette}
-								className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-							>
-								<SearchIcon className="size-3.5" />
-							</button>
-						</TooltipTrigger>
-						<TooltipContent>Search sessions (&#8984;K)</TooltipContent>
-					</Tooltip>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								type="button"
-								onClick={() => navigate({ to: "/" })}
-								className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-							>
-								<PlusIcon className="size-3.5" />
-							</button>
-						</TooltipTrigger>
-						<TooltipContent>New session (&#8984;N)</TooltipContent>
-					</Tooltip>
-				</div>
-			</div>
-
+		<Sidebar collapsible="offcanvas" variant="sidebar">
+			{/* Sidebar header — reserves space to match the app bar height so
+			 * sidebar content aligns with the main content area. Also clears
+			 * the traffic lights + the absolutely-positioned toggle button. */}
+			<SidebarHeader
+				className="flex-row items-center gap-1 shrink-0"
+				style={{
+					height: APP_BAR_HEIGHT,
+					// Make header draggable on Electron (acts as title bar above sidebar)
+					// @ts-expect-error -- vendor-prefixed CSS property
+					WebkitAppRegion: "drag",
+				}}
+			></SidebarHeader>
 			{/* Scrollable content */}
 			<SidebarContent>
 				{/* Active Now */}
@@ -239,44 +200,79 @@ export function AppSidebar({
 					</SidebarGroup>
 				)}
 
-				{/* Projects */}
-				{projects.length > 0 && (
-					<>
-						{(activeSessions.length > 0 || recentSessions.length > 0) && <SidebarSeparator />}
-						<SidebarGroup>
-							<SidebarGroupLabel>Projects</SidebarGroupLabel>
-							{onAddProject && (
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<SidebarGroupAction onClick={onAddProject}>
-											<PlusIcon />
-											<span className="sr-only">Add Project</span>
-										</SidebarGroupAction>
-									</TooltipTrigger>
-									<TooltipContent side="right">Add project</TooltipContent>
-								</Tooltip>
-							)}
-							<SidebarGroupContent>
-								<SidebarMenu>
-									{projects.map((project) => (
-										<ProjectFolder
-											key={project.id}
-											project={project}
-											agents={agents}
-											selectedSessionId={selectedSessionId}
-											navigate={navigate}
-											onRename={onRenameSession}
-											onDelete={onDeleteSession}
-										/>
-									))}
-								</SidebarMenu>
-							</SidebarGroupContent>
-						</SidebarGroup>
-					</>
-				)}
+				{/* Projects — always render so search/sub-agent actions are accessible */}
+				{(activeSessions.length > 0 || recentSessions.length > 0) && <SidebarSeparator />}
+				<SidebarGroup>
+					<SidebarGroupLabel>Projects</SidebarGroupLabel>
+					{/* Action buttons row — positioned like SidebarGroupAction but holds multiple icons */}
+					<div className="absolute top-3.5 right-3 flex items-center gap-0.5">
+						{subAgentCount > 0 && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										onClick={onToggleSubAgents}
+										className={`inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10px] transition-colors ${
+											showSubAgents
+												? "bg-sidebar-accent text-sidebar-accent-foreground"
+												: "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+										}`}
+									>
+										<NetworkIcon className="size-3.5" />
+										<span>{subAgentCount}</span>
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="bottom">
+									{showSubAgents ? "Hide" : "Show"} sub-agents ({subAgentCount})
+								</TooltipContent>
+							</Tooltip>
+						)}
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={onOpenCommandPalette}
+									className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
+								>
+									<SearchIcon className="size-4 shrink-0" />
+									<span className="sr-only">Search sessions</span>
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">Search sessions (&#8984;K)</TooltipContent>
+						</Tooltip>
+						{onAddProject && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										onClick={onAddProject}
+										className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
+									>
+										<PlusIcon className="size-4 shrink-0" />
+										<span className="sr-only">Add Project</span>
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="bottom">Add project</TooltipContent>
+							</Tooltip>
+						)}
+					</div>
+					<SidebarGroupContent>
+						<SidebarMenu>
+							{projects.map((project) => (
+								<ProjectFolder
+									key={project.id}
+									project={project}
+									agents={agents}
+									selectedSessionId={selectedSessionId}
+									navigate={navigate}
+									onRename={onRenameSession}
+									onDelete={onDeleteSession}
+								/>
+							))}
+						</SidebarMenu>
+					</SidebarGroupContent>
+				</SidebarGroup>
 			</SidebarContent>
-
-			{/* Empty state */}
 			{agents.length === 0 && projects.length === 0 && (
 				<div className="flex flex-1 items-center justify-center p-4">
 					<div className="space-y-2 text-center">
@@ -503,12 +499,7 @@ const SessionItem = memo(function SessionItem({
 						<span className={`block truncate leading-tight ${compact ? "text-xs" : "text-[13px]"}`}>
 							{agent.name}
 						</span>
-						{agent.branch && agent.status !== "waiting" && (
-							<span className="flex items-center gap-0.5 text-[10px] leading-tight text-muted-foreground/60">
-								<GitBranchIcon className="size-2.5" />
-								<span className="truncate">{agent.branch}</span>
-							</span>
-						)}
+
 						{agent.status === "waiting" && agent.currentActivity && (
 							<span className="block truncate text-[11px] leading-tight text-yellow-500">
 								{agent.currentActivity}

@@ -1,14 +1,55 @@
-import { app, dialog, ipcMain, net } from "electron"
+import path from "node:path"
+import { app, dialog, ipcMain, nativeTheme, net } from "electron"
 import { installCli, isCliInstalled, uninstallCli } from "./cli-install"
 import { discover } from "./discovery"
 import { checkout, getStatus, listBranches, stashAndCheckout, stashPop } from "./git-service"
+import { getResolvedChromeTier } from "./liquid-glass"
 import { createLogger } from "./logger"
 import { readSessionMessages } from "./messages"
 import { readModelState, updateModelRecent } from "./model-state"
+import { dismissNotification, updateBadgeCount } from "./notifications"
+import { getOpenInTargets, openInTarget, setPreferredTarget } from "./open-in-targets"
 import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from "./updater"
 
 const log = createLogger("ipc")
+
+// ============================================================
+// Simple JSON preferences file for main-process-readable settings.
+// Stored in userData (e.g. ~/Library/Application Support/Codedeck/preferences.json).
+// Only settings that the main process needs at window creation time go here.
+// ============================================================
+
+const PREFS_FILE = () => path.join(app.getPath("userData"), "preferences.json")
+
+interface MainPreferences {
+	opaqueWindows?: boolean
+}
+
+function readMainPreferences(): MainPreferences {
+	try {
+		const fs = require("node:fs") as typeof import("node:fs")
+		const data = fs.readFileSync(PREFS_FILE(), "utf-8")
+		return JSON.parse(data) as MainPreferences
+	} catch {
+		return {}
+	}
+}
+
+function writeMainPreferences(prefs: MainPreferences): void {
+	try {
+		const fs = require("node:fs") as typeof import("node:fs")
+		fs.mkdirSync(path.dirname(PREFS_FILE()), { recursive: true })
+		fs.writeFileSync(PREFS_FILE(), JSON.stringify(prefs, null, 2), "utf-8")
+	} catch (err) {
+		log.error("Failed to write preferences:", err)
+	}
+}
+
+/** Read the opaque windows preference for use at window creation time. */
+export function getOpaqueWindowsPref(): boolean {
+	return readMainPreferences().opaqueWindows === true
+}
 
 // ============================================================
 // Serialized fetch types — used to pass Request/Response over IPC
@@ -211,4 +252,64 @@ export function registerIpcHandlers(): void {
 	ipcMain.handle("cli:install", () => installCli())
 
 	ipcMain.handle("cli:uninstall", () => uninstallCli())
+
+	// --- Open in external app ---
+
+	ipcMain.handle("open-in:targets", () => getOpenInTargets())
+
+	ipcMain.handle(
+		"open-in:open",
+		withLogging(
+			"open-in:open",
+			async (_, directory: string, targetId: string, persistPreferred?: boolean) =>
+				await openInTarget(directory, targetId, { persistPreferred }),
+		),
+	)
+
+	ipcMain.handle("open-in:set-preferred", (_, targetId: string) => {
+		setPreferredTarget(targetId)
+		return { success: true }
+	})
+
+	// --- Chrome tier (pull-based, avoids race with push-based "chrome-tier" event) ---
+
+	ipcMain.handle("chrome-tier:get", () => getResolvedChromeTier())
+
+	// --- Window preferences (opaque windows) ---
+
+	ipcMain.handle("prefs:get-opaque-windows", () => {
+		return readMainPreferences().opaqueWindows === true
+	})
+
+	ipcMain.handle("prefs:set-opaque-windows", (_, value: boolean) => {
+		const prefs = readMainPreferences()
+		prefs.opaqueWindows = value
+		writeMainPreferences(prefs)
+		return { success: true }
+	})
+
+	ipcMain.handle("app:relaunch", () => {
+		app.relaunch()
+		app.exit(0)
+	})
+
+	// --- Notifications ---
+
+	ipcMain.handle("notification:dismiss", (_, sessionId: string) => {
+		dismissNotification(sessionId)
+	})
+
+	ipcMain.handle("notification:badge", (_, count: number) => {
+		updateBadgeCount(count)
+	})
+
+	// --- Native theme (controls macOS glass tint color) ---
+
+	ipcMain.handle("theme:set-native", (_, source: string) => {
+		if (source === "light" || source === "dark") {
+			nativeTheme.themeSource = source
+		} else {
+			nativeTheme.themeSource = "system"
+		}
+	})
 }

@@ -65,6 +65,31 @@ export interface ThemeDefinition {
 		"--text-sm"?: string
 		"--text-sm--line-height"?: string
 	}
+
+	/**
+	 * Glass transparency tuning. Only takes effect when the window has
+	 * native transparency (liquid glass or vibrancy). Themes can adjust
+	 * opacity per surface, blur intensity, or disable glass entirely.
+	 *
+	 * Values override the CSS custom properties defined in globals.css.
+	 * Unset fields inherit the defaults.
+	 */
+	glass?: {
+		/** Body background opacity (0–100). Default: 50 */
+		bodyOpacity?: number
+		/** Sidebar panel opacity (0–100). Default: 70 */
+		sidebarOpacity?: number
+		/** App bar / divider surface opacity (0–100). Default: 80 */
+		surfaceOpacity?: number
+		/** Floating panel opacity: popovers, dialogs, command palette (0–100). Default: 85 */
+		elevatedOpacity?: number
+		/** Card / inline panel opacity (0–100). Default: 92 */
+		cardOpacity?: number
+		/** Blur multiplier (1.0 = default, 0.5 = half, 2.0 = double). Default: 1.0 */
+		blurScale?: number
+		/** Disable glass for this theme entirely, forcing opaque even on macOS. Default: false */
+		disabled?: boolean
+	}
 }
 
 // ============================================================
@@ -89,13 +114,28 @@ export const openCodeTheme: ThemeDefinition = {
 	id: "default",
 	name: "OpenCode",
 	description: "Warm smoke grays, Inter + IBM Plex Mono — the OC-1 palette",
-	cssVars: { light: {}, dark: {} },
+	cssVars: {
+		light: {
+			/* Light mode: lower glass opacities so wallpaper bleeds through white */
+			"--glass-body": "35%",
+			"--glass-sidebar": "38%",
+			"--glass-elevated": "70%",
+		},
+		dark: {},
+	},
 	// Fonts, radius, density all come from globals.css defaults:
 	//   --font-sans: "Inter", "Inter Variable", ...
 	//   --font-mono: "IBM Plex Mono", ...
 	//   --radius: 0.625rem (10px)
 	//   --text-xs: 0.8125rem (13px)
 	//   --text-sm: 0.9375rem (15px)
+	glass: {
+		bodyOpacity: 40,
+		sidebarOpacity: 42,
+		surfaceOpacity: 55,
+		elevatedOpacity: 85,
+		cardOpacity: 90,
+	},
 }
 
 // ============================================================
@@ -120,38 +160,44 @@ export const codexTheme: ThemeDefinition = {
 			"--foreground": "#0d0d0d",
 			"--card": "#ffffff",
 			"--card-foreground": "#0d0d0d",
-			"--popover": "#ffffff",
+			"--popover": "#fcfcfc",
 			"--popover-foreground": "#0d0d0d",
 			"--primary": "#0d0d0d",
 			"--primary-foreground": "#ffffff",
 			"--secondary": "#f9f9f9",
 			"--secondary-foreground": "#0d0d0d",
 			"--muted": "#f9f9f9",
-			"--muted-foreground": "#5d5d5d",
+			"--muted-foreground": "#414141",
 			"--accent": "#ededed",
 			"--accent-foreground": "#0d0d0d",
 			"--destructive": "#fa423e",
 			"--destructive-foreground": "#ffffff",
 			"--border": "#ededed",
 			"--input": "#ededed",
-			"--ring": "#0285ff",
+			"--ring": "#0169cc",
 			"--chart-1": "#0285ff",
 			"--chart-2": "#04b84c",
 			"--chart-3": "#fb6a22",
 			"--chart-4": "#924ff7",
 			"--chart-5": "#ffc300",
-			"--sidebar": "#f9f9f9",
-			"--sidebar-foreground": "#0d0d0d",
+			"--sidebar": "#ffffff",
+			"--sidebar-foreground": "#212121",
 			"--sidebar-primary": "#0d0d0d",
 			"--sidebar-primary-foreground": "#ffffff",
-			"--sidebar-accent": "#ededed",
+			"--sidebar-accent": "#99ceff",
 			"--sidebar-accent-foreground": "#0d0d0d",
 			"--sidebar-border": "#ededed",
-			"--sidebar-ring": "#0285ff",
+			"--sidebar-ring": "#0169cc",
 			"--diff-addition": "#04b84c",
 			"--diff-addition-foreground": "#00a240",
 			"--diff-deletion": "#fa423e",
 			"--diff-deletion-foreground": "#e02e2a",
+			/* Light mode: match Codex — single 50% white tint on body,
+			   sidebar inherits (no separate tint), content card is solid */
+			"--glass-body": "50%",
+			"--glass-sidebar": "0%",
+			"--glass-elevated": "0%",
+			"--glass-sidebar-accent": "35%",
 		},
 		dark: {
 			"--background": "#181818",
@@ -182,14 +228,17 @@ export const codexTheme: ThemeDefinition = {
 			"--sidebar-foreground": "#ffffff",
 			"--sidebar-primary": "#ffffff",
 			"--sidebar-primary-foreground": "#0d0d0d",
-			"--sidebar-accent": "#212121",
+			"--sidebar-accent": "#000e1a",
 			"--sidebar-accent-foreground": "#ffffff",
-			"--sidebar-border": "#2e2e2e",
+			"--sidebar-border": "#0d0d0d",
 			"--sidebar-ring": "#99ceff",
 			"--diff-addition": "#40c977",
 			"--diff-addition-foreground": "#40c977",
 			"--diff-deletion": "#ff6764",
 			"--diff-deletion-foreground": "#ff6764",
+			/* Dark mode: nearly opaque elevated surfaces for readability */
+			"--glass-elevated": "95%",
+			"--glass-sidebar-accent": "35%",
 		},
 	},
 	fonts: {
@@ -202,6 +251,12 @@ export const codexTheme: ThemeDefinition = {
 		"--text-xs--line-height": "1.0625rem",
 		"--text-sm": "0.8125rem",
 		"--text-sm--line-height": "1.25rem",
+	},
+	glass: {
+		bodyOpacity: 38,
+		sidebarOpacity: 18,
+		surfaceOpacity: 55,
+		cardOpacity: 88,
 	},
 }
 

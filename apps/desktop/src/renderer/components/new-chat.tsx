@@ -8,13 +8,18 @@ import {
 } from "@codedeck/ui/components/ai-elements/prompt-input"
 import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
 import { useNavigate, useParams } from "@tanstack/react-router"
+import { useAtomValue } from "jotai"
 import { ChevronDownIcon, CodeIcon, FileTextIcon, GitPullRequestIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { projectModelsAtom, setProjectModelAtom } from "../atoms/preferences"
+import { setSessionBranchAtom } from "../atoms/sessions"
+import { appStore } from "../atoms/store"
 import { useAgents, useProjectList } from "../hooks/use-agents"
 import { NEW_CHAT_DRAFT_KEY, useDraft, useDraftActions } from "../hooks/use-draft"
 import type { ModelRef } from "../hooks/use-opencode-data"
 import {
 	getModelInputCapabilities,
+	getModelVariants,
 	resolveEffectiveModel,
 	useConfig,
 	useModelState,
@@ -24,8 +29,6 @@ import {
 } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import type { FileAttachment } from "../lib/types"
-import { getProjectClient } from "../services/connection-manager"
-import { useAppStore } from "../stores/app-store"
 import { BranchPicker } from "./branch-picker"
 import { PromptAttachmentPreview } from "./chat/prompt-attachments"
 import { PromptToolbar, StatusBar } from "./chat/prompt-toolbar"
@@ -85,6 +88,25 @@ export function NewChat() {
 	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
 	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
 
+	// Seed selectedModel from the persisted project model on first mount / project switch.
+	// This puts it at step 1 (user override) in resolveEffectiveModel, so it wins over
+	// config.model and global recent list — matching the user's expectation that the
+	// model they last used in this project sticks.
+	const projectModels = useAtomValue(projectModelsAtom)
+	const prevDirectoryRef = useRef<string>("")
+	useEffect(() => {
+		if (!selectedDirectory || selectedDirectory === prevDirectoryRef.current) return
+		prevDirectoryRef.current = selectedDirectory
+		const stored = projectModels[selectedDirectory]
+		if (stored?.providerID && stored?.modelID) {
+			setSelectedModel(stored)
+			setSelectedVariant(stored.variant)
+		} else {
+			setSelectedModel(null)
+			setSelectedVariant(undefined)
+		}
+	}, [selectedDirectory, projectModels])
+
 	const selectedProject = useMemo(
 		() => projects.find((p) => p.directory === selectedDirectory),
 		[projects, selectedDirectory],
@@ -96,85 +118,13 @@ export function NewChat() {
 	const { agents: openCodeAgents } = useOpenCodeAgents(selectedDirectory || null)
 	const { recentModels, addRecent: addRecentModel } = useModelState()
 
-	// Derive the last-used model for this project from existing session messages.
-	// This gives new chats project-scoped continuity instead of using the global recent list.
-	//
-	// Strategy: first check the Zustand store (fast, synchronous) for any loaded messages.
-	// If no messages are in the store (common on fresh app start), fetch the most recent
-	// session's messages from the server asynchronously.
-	const sessions = useAppStore((s) => s.sessions)
-	const storeMessages = useAppStore((s) => s.messages)
-	const [projectLastModel, setProjectLastModel] = useState<ModelRef | null>(null)
-
-	useEffect(() => {
-		if (!selectedDirectory) {
-			setProjectLastModel(null)
-			return
-		}
-
-		// First, try to find the model from messages already in the store
-		const dirSessions = Object.values(sessions)
-			.filter((e) => e.directory === selectedDirectory)
-			.sort((a, b) => {
-				const aTime = a.session.time.updated ?? a.session.time.created
-				const bTime = b.session.time.updated ?? b.session.time.created
-				return bTime - aTime
-			})
-
-		for (const entry of dirSessions) {
-			const msgs = storeMessages[entry.session.id]
-			if (!msgs) continue
-			for (let i = msgs.length - 1; i >= 0; i--) {
-				const msg = msgs[i]
-				if (msg.role === "user" && "model" in msg && msg.model) {
-					const model = msg.model as { providerID: string; modelID: string }
-					if (model.providerID && model.modelID) {
-						setProjectLastModel(model)
-						return
-					}
-				}
-			}
-		}
-
-		// No messages in store — fetch from the most recent session via SDK.
-		// Only need the last few messages to find the model field on the last user message.
-		if (dirSessions.length > 0) {
-			const mostRecent = dirSessions[0]
-			const client = getProjectClient(selectedDirectory)
-			if (client) {
-				let cancelled = false
-				client.session
-					.messages({ sessionID: mostRecent.session.id, limit: 5 })
-					.then((result) => {
-						if (cancelled) return
-						const raw = (result.data ?? []) as Array<{
-							info: { role: string; model?: { providerID: string; modelID: string } }
-						}>
-						// Find the last user message with a model
-						for (let i = raw.length - 1; i >= 0; i--) {
-							const msg = raw[i].info
-							if (msg.role === "user" && msg.model?.providerID && msg.model?.modelID) {
-								setProjectLastModel(msg.model)
-								return
-							}
-						}
-					})
-					.catch(() => {
-						// Silently fail — will fall back to global recent list
-					})
-				return () => {
-					cancelled = true
-				}
-			}
-		}
-
-		setProjectLastModel(null)
-	}, [selectedDirectory, sessions, storeMessages])
-
-	// Handle model selection — set local state + persist to model.json
+	// Handle model selection — set local state + persist to model.json.
+	// Reset variant when the model changes: the new model may have different
+	// (or no) variants, so carrying over a stale variant would be incorrect.
 	const handleModelSelect = useCallback(
 		(model: ModelRef | null) => {
 			setSelectedModel(model)
+			setSelectedVariant(undefined)
 			if (model) addRecentModel(model)
 		},
 		[addRecentModel],
@@ -206,15 +156,8 @@ export function NewChat() {
 		return openCodeAgents?.find((a) => a.name === agentName) ?? null
 	}, [selectedAgent, config?.defaultAgent, openCodeAgents])
 
-	// Resolve effective model — project's last-used model takes priority over global recent list
-	const projectRecentModels = useMemo(() => {
-		if (!projectLastModel) return recentModels
-		// Prepend the project's last-used model so it wins over the global list
-		const key = `${projectLastModel.providerID}/${projectLastModel.modelID}`
-		const filtered = recentModels.filter((m) => `${m.providerID}/${m.modelID}` !== key)
-		return [projectLastModel, ...filtered]
-	}, [projectLastModel, recentModels])
-
+	// Resolve effective model — selectedModel is seeded from the persisted project model
+	// on mount/project switch (above), so it already wins at step 1 of the resolution chain.
 	const effectiveModel = useMemo(
 		() =>
 			resolveEffectiveModel(
@@ -223,10 +166,25 @@ export function NewChat() {
 				config?.model,
 				providers?.defaults ?? {},
 				providers?.providers ?? [],
-				projectRecentModels,
+				recentModels,
 			),
-		[selectedModel, activeOpenCodeAgent, config?.model, providers, projectRecentModels],
+		[selectedModel, activeOpenCodeAgent, config?.model, providers, recentModels],
 	)
+
+	// Validate variant against the effective model's available variants.
+	// Clears the variant if the current model doesn't support it (e.g. restored
+	// from per-project preference but the model was changed, or provider updated).
+	useEffect(() => {
+		if (!selectedVariant || !effectiveModel || !providers) return
+		const available = getModelVariants(
+			effectiveModel.providerID,
+			effectiveModel.modelID,
+			providers.providers,
+		)
+		if (!available.includes(selectedVariant)) {
+			setSelectedVariant(undefined)
+		}
+	}, [selectedVariant, effectiveModel, providers])
 
 	// Model input capabilities (for attachment warnings)
 	const modelCapabilities = useMemo(
@@ -259,7 +217,15 @@ export function NewChat() {
 					// Capture the current branch at session creation time
 					const currentBranch = vcs?.branch ?? ""
 					if (currentBranch) {
-						useAppStore.getState().setSessionBranch(session.id, currentBranch)
+						appStore.set(setSessionBranchAtom, { sessionId: session.id, branch: currentBranch })
+					}
+
+					// Persist the model + variant for this project so new sessions remember it
+					if (effectiveModel) {
+						appStore.set(setProjectModelAtom, {
+							directory: selectedDirectory,
+							model: { ...effectiveModel, variant: selectedVariant },
+						})
 					}
 
 					await sendPrompt(selectedDirectory, session.id, promptText, {

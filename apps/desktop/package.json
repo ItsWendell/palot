@@ -33,8 +33,11 @@
 		"@opencode-ai/sdk": "^1.1.53",
 		"@tanstack/react-query": "^5.90.20",
 		"@tanstack/react-router": "^1.158.4",
+		"electron-liquid-glass": "^1.1.1",
 		"electron-updater": "^6.7.3",
 		"hono": "4.7.10",
+		"jotai": "^2.17.1",
+		"jotai-family": "^1.0.1",
 		"lucide-react": "^0.563.0",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0",
@@ -42,8 +45,7 @@
 		"react-resizable-panels": "^4.6.2",
 		"react-syntax-highlighter": "^16.1.0",
 		"remark-gfm": "^4.0.1",
-		"simple-git": "^3.30.0",
-		"zustand": "^5.0.11"
+		"simple-git": "^3.30.0"
 	},
 	"devDependencies": {
 		"@codedeck/server": "workspace:*",

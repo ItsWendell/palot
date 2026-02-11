@@ -1,6 +1,7 @@
 import path from "node:path"
 import { app, BrowserWindow, Menu, session, shell } from "electron"
-import { registerIpcHandlers } from "./ipc-handlers"
+import { getOpaqueWindowsPref, registerIpcHandlers } from "./ipc-handlers"
+import { installLiquidGlass, resolveWindowChrome } from "./liquid-glass"
 import { createLogger } from "./logger"
 import { stopServer } from "./opencode-manager"
 import { fixProcessEnv } from "./shell-env"
@@ -50,10 +51,14 @@ if (isDev) {
 	app.setPath("userData", path.join(app.getPath("appData"), "Codedeck Dev"))
 }
 
-function createWindow(): BrowserWindow {
+async function createWindow(): Promise<BrowserWindow> {
 	const title = isDev ? "Codedeck (Dev)" : "Codedeck"
 
 	const isMac = process.platform === "darwin"
+
+	// Resolve window chrome tier: liquid glass > vibrancy > opaque
+	const isOpaque = getOpaqueWindowsPref()
+	const chrome = await resolveWindowChrome(isOpaque)
 
 	const win = new BrowserWindow({
 		title,
@@ -61,12 +66,10 @@ function createWindow(): BrowserWindow {
 		height: 800,
 		minWidth: 900,
 		minHeight: 600,
-		// macOS: use custom title bar with hidden inset for a native-like app bar.
-		// Traffic lights are repositioned to align with our custom header.
-		...(isMac && {
-			titleBarStyle: "hiddenInset",
-			trafficLightPosition: { x: 15, y: 15 },
-		}),
+		// Fully transparent background — required for glass/vibrancy to show through
+		backgroundColor: "#00000000",
+		// Three-tier window chrome — options from resolveWindowChrome()
+		...chrome.options,
 		// Set window icon for dev mode on Linux/Windows (macOS uses the .app bundle icon)
 		...(!isMac && {
 			icon: path.join(__dirname, "../../resources/icon.png"),
@@ -79,6 +82,16 @@ function createWindow(): BrowserWindow {
 			spellcheck: false,
 			v8CacheOptions: "bypassHeatCheckAndEagerCompile",
 		},
+	})
+
+	// Install liquid glass effect after window creation (tier 1 only)
+	if (chrome.tier === "liquid-glass") {
+		await installLiquidGlass(win, isOpaque)
+	}
+
+	// Notify the renderer which chrome tier is active so it can adapt CSS
+	win.webContents.once("did-finish-load", () => {
+		win.webContents.send("chrome-tier", chrome.tier)
 	})
 
 	// Open external links in default browser instead of new Electron windows
