@@ -1,10 +1,18 @@
+import { useAtomValue } from "jotai"
 import { useEffect } from "react"
+import { discoveryAtom } from "../atoms/discovery"
+import { appStore } from "../atoms/store"
 import { createLogger } from "../lib/logger"
 import { fetchDiscovery, fetchOpenCodeUrl } from "../services/backend"
 import { connectToOpenCode, loadProjectSessions } from "../services/connection-manager"
-import { useAppStore } from "../stores/app-store"
 
 const log = createLogger("discovery")
+
+// Module-level guard to prevent concurrent discovery runs.
+// The Jotai atom guard (loaded/loading) depends on a React re-render
+// to propagate, which can race with React Strict Mode double-effects
+// or fast re-mounts.
+let discoveryInFlight = false
 
 /**
  * On mount:
@@ -12,45 +20,47 @@ const log = createLogger("discovery")
  * 2. Ensures the single OpenCode server is running (via Codedeck backend)
  * 3. Connects to the OpenCode server (SSE events for all projects)
  * 4. Loads live sessions for all discovered projects
- *
- * Only runs once — subsequent calls are no-ops if already loaded.
  */
 export function useDiscovery() {
-	const loaded = useAppStore((s) => s.discovery.loaded)
-	const loading = useAppStore((s) => s.discovery.loading)
-	const setLoading = useAppStore((s) => s.setDiscoveryLoading)
-	const setResult = useAppStore((s) => s.setDiscoveryResult)
-	const setError = useAppStore((s) => s.setDiscoveryError)
+	const discovery = useAtomValue(discoveryAtom)
+	const { loaded, loading } = discovery
 
 	useEffect(() => {
-		if (loaded || loading) return
+		if (loaded || loading || discoveryInFlight) return
+		discoveryInFlight = true
 
-		setLoading()
+		// Set loading
+		appStore.set(discoveryAtom, (prev) => ({
+			...prev,
+			loading: true,
+			error: null,
+		}))
 
 		;(async () => {
 			try {
-				// 1. Discover projects/sessions from disk
 				log.info("Starting discovery...")
 				const discoveryData = await fetchDiscovery()
 				log.info("Discovered projects", {
 					projects: discoveryData.projects.length,
 					sessionGroups: Object.keys(discoveryData.sessions).length,
 				})
-				setResult(discoveryData.projects, discoveryData.sessions)
+				appStore.set(discoveryAtom, {
+					loaded: true,
+					loading: false,
+					error: null,
+					projects: discoveryData.projects,
+					sessions: discoveryData.sessions,
+				})
 
-				// 2. Ensure the single OpenCode server is running
 				log.info("Ensuring OpenCode server is running...")
 				const { url } = await fetchOpenCodeUrl()
 
-				// 3. Connect to the single server (starts SSE)
 				log.info("Connecting to OpenCode server", { url })
 				await connectToOpenCode(url)
 
-				// 4. Load live sessions for all discovered projects in parallel
 				const directories = new Set<string>()
 				for (const project of discoveryData.projects) {
 					if (project.id === "global") {
-						// Global project: load by each session's actual directory
 						const sessions = discoveryData.sessions[project.id] ?? []
 						for (const s of sessions) {
 							if (s.directory) directories.add(s.directory)
@@ -76,8 +86,13 @@ export function useDiscovery() {
 				})
 			} catch (err) {
 				log.error("Discovery failed", err)
-				setError(err instanceof Error ? err.message : "Discovery failed")
+				discoveryInFlight = false
+				appStore.set(discoveryAtom, (prev) => ({
+					...prev,
+					loading: false,
+					error: err instanceof Error ? err.message : "Discovery failed",
+				}))
 			}
 		})()
-	}, [loaded, loading, setLoading, setResult, setError])
+	}, [loaded, loading])
 }

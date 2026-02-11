@@ -3,7 +3,7 @@
 	"changelog": ["@changesets/changelog-github", { "repo": "ItsWendell/codedeck" }],
 	"commit": false,
 	"fixed": [],
-	"linked": [["@codedeck/desktop", "@codedeck/ui", "@codedeck/server"]],
+	"linked": [["@codedeck/desktop", "@codedeck/ui", "@codedeck/server", "@codedeck/cc2oc", "cc2oc"]],
 	"access": "restricted",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",

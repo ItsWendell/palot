@@ -9,10 +9,13 @@ import {
 	CommandShortcut,
 } from "@codedeck/ui/components/command"
 import { useNavigate, useParams } from "@tanstack/react-router"
+import { useAtom } from "jotai"
 import {
 	CheckIcon,
 	CloudIcon,
 	ContainerIcon,
+	EyeIcon,
+	EyeOffIcon,
 	GitBranchIcon,
 	MonitorIcon,
 	MoonIcon,
@@ -24,7 +27,8 @@ import {
 	SunMoonIcon,
 	Undo2Icon,
 } from "lucide-react"
-import { useEffect, useMemo } from "react"
+import { useCallback, useEffect, useMemo } from "react"
+import { opaqueWindowsAtom } from "../atoms/preferences"
 import { useSessionRevert } from "../hooks/use-commands"
 import {
 	useAvailableThemes,
@@ -65,6 +69,26 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 	const availableThemes = useAvailableThemes()
 	const setTheme = useSetTheme()
 	const setColorScheme = useSetColorScheme()
+	const [opaqueWindows, setOpaqueWindows] = useAtom(opaqueWindowsAtom)
+
+	const isElectron = typeof window !== "undefined" && "codedeck" in window
+
+	const handleToggleTransparency = useCallback(async () => {
+		const newValue = !opaqueWindows
+		setOpaqueWindows(newValue)
+
+		// Persist to main process so the next window creation uses the correct chrome tier
+		if (isElectron) {
+			await window.codedeck.setOpaqueWindows(newValue)
+			// BrowserWindow.transparent is a creation-time option — prompt for restart
+			const shouldRestart = window.confirm(
+				"Transparency changes take effect after restarting the app.\n\nRestart now?",
+			)
+			if (shouldRestart) {
+				window.codedeck.relaunch()
+			}
+		}
+	}, [opaqueWindows, setOpaqueWindows, isElectron])
 
 	useEffect(() => {
 		function handleKeyDown(e: KeyboardEvent) {
@@ -140,6 +164,64 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 					)}
 				</CommandGroup>
 
+				<CommandSeparator />
+				<CommandGroup heading="Appearance">
+					{availableThemes.map((t) => (
+						<CommandItem
+							key={t.id}
+							onSelect={() => {
+								setTheme(t.id)
+								onOpenChange(false)
+							}}
+						>
+							<PaletteIcon />
+							<span>Theme: {t.name}</span>
+							{t.description && (
+								<span className="text-xs text-muted-foreground">{t.description}</span>
+							)}
+							{currentTheme.id === t.id && <CheckIcon className="ml-auto h-4 w-4" />}
+						</CommandItem>
+					))}
+				</CommandGroup>
+
+				<CommandSeparator />
+				<CommandGroup heading="Window">
+					<CommandItem
+						onSelect={() => {
+							onOpenChange(false)
+							// Small delay so the palette closes before the confirm dialog appears
+							setTimeout(handleToggleTransparency, 100)
+						}}
+					>
+						{opaqueWindows ? <EyeIcon /> : <EyeOffIcon />}
+						<span>{opaqueWindows ? "Enable Transparency" : "Disable Transparency"}</span>
+						{!opaqueWindows && <CheckIcon className="ml-auto h-4 w-4" />}
+					</CommandItem>
+				</CommandGroup>
+
+				<CommandSeparator />
+				<CommandGroup heading="Color Scheme">
+					{(
+						[
+							{ scheme: "dark" as ColorScheme, label: "Dark", icon: MoonIcon },
+							{ scheme: "light" as ColorScheme, label: "Light", icon: SunIcon },
+							{ scheme: "system" as ColorScheme, label: "System", icon: SunMoonIcon },
+						] as const
+					).map(({ scheme, label, icon: Icon }) => (
+						<CommandItem
+							key={scheme}
+							onSelect={() => {
+								setColorScheme(scheme)
+								onOpenChange(false)
+							}}
+						>
+							<Icon />
+							<span>{label}</span>
+							{colorScheme === scheme && <CheckIcon className="ml-auto h-4 w-4" />}
+						</CommandItem>
+					))}
+				</CommandGroup>
+
 				{activeSessions.length > 0 && (
 					<>
 						<CommandSeparator />
@@ -195,48 +277,6 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 						</CommandGroup>
 					</>
 				)}
-				<CommandSeparator />
-				<CommandGroup heading="Appearance">
-					{availableThemes.map((t) => (
-						<CommandItem
-							key={t.id}
-							onSelect={() => {
-								setTheme(t.id)
-								onOpenChange(false)
-							}}
-						>
-							<PaletteIcon />
-							<span>Theme: {t.name}</span>
-							{t.description && (
-								<span className="text-xs text-muted-foreground">{t.description}</span>
-							)}
-							{currentTheme.id === t.id && <CheckIcon className="ml-auto h-4 w-4" />}
-						</CommandItem>
-					))}
-				</CommandGroup>
-
-				<CommandSeparator />
-				<CommandGroup heading="Color Scheme">
-					{(
-						[
-							{ scheme: "dark" as ColorScheme, label: "Dark", icon: MoonIcon },
-							{ scheme: "light" as ColorScheme, label: "Light", icon: SunIcon },
-							{ scheme: "system" as ColorScheme, label: "System", icon: SunMoonIcon },
-						] as const
-					).map(({ scheme, label, icon: Icon }) => (
-						<CommandItem
-							key={scheme}
-							onSelect={() => {
-								setColorScheme(scheme)
-								onOpenChange(false)
-							}}
-						>
-							<Icon />
-							<span>{label}</span>
-							{colorScheme === scheme && <CheckIcon className="ml-auto h-4 w-4" />}
-						</CommandItem>
-					))}
-				</CommandGroup>
 			</CommandList>
 		</CommandDialog>
 	)

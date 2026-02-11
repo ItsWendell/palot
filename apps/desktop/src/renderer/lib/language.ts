@@ -178,3 +178,18 @@ export function detectContentLanguage(content: string): Lang | undefined {
 
 	return undefined
 }
+
+/**
+ * Pretty-print a JSON string if it's valid JSON and not already formatted.
+ * Returns the original string unchanged if it's not valid JSON.
+ */
+export function prettyPrintJson(content: string): string {
+	const trimmed = content.trimStart()
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return content
+	try {
+		const parsed = JSON.parse(content)
+		return JSON.stringify(parsed, null, 2)
+	} catch {
+		return content
+	}
+}

@@ -38,7 +38,7 @@ import {
 import type { ReactNode } from "react"
 import { memo, useMemo } from "react"
 import type { BundledLanguage } from "shiki"
-import { detectContentLanguage, detectLanguage } from "../../lib/language"
+import { detectContentLanguage, detectLanguage, prettyPrintJson } from "../../lib/language"
 import type { FilePart, ToolPart, ToolStateCompleted } from "../../lib/types"
 import { SubAgentCard } from "./sub-agent-card"
 import { getToolCategory, ToolCard } from "./tool-card"
@@ -590,6 +590,12 @@ function WebFetchContent({ part }: { part: ToolPart }) {
 		return undefined
 	}, [format, output]) as BundledLanguage | undefined
 
+	const displayOutput = useMemo(() => {
+		if (!output) return undefined
+		if (language === "json") return prettyPrintJson(output)
+		return output
+	}, [output, language])
+
 	return (
 		<div className="space-y-1.5">
 			{url && (
@@ -597,13 +603,13 @@ function WebFetchContent({ part }: { part: ToolPart }) {
 					{url}
 				</div>
 			)}
-			{output && language ? (
+			{displayOutput && language ? (
 				<CodeBlock
-					code={truncateOutput(output)}
+					code={truncateOutput(displayOutput)}
 					language={language}
 					className="max-h-96 border-0 shadow-none rounded-none text-[11px]"
 				>
-					<CodeBlockContent code={truncateOutput(output)} language={language} />
+					<CodeBlockContent code={truncateOutput(displayOutput)} language={language} />
 				</CodeBlock>
 			) : output ? (
 				<pre className="max-h-48 overflow-auto px-3.5 py-2.5 font-mono text-[11px] text-muted-foreground">
@@ -683,11 +689,17 @@ function GenericContent({ part }: { part: ToolPart }) {
 		return detectContentLanguage(output) as BundledLanguage | undefined
 	}, [output])
 
+	const displayOutput = useMemo(() => {
+		if (!output) return undefined
+		if (language === "json") return prettyPrintJson(output)
+		return output
+	}, [output, language])
+
 	return (
 		<div>
-			{output && language ? (
+			{displayOutput && language ? (
 				<CodeBlock
-					code={truncateOutput(output)}
+					code={truncateOutput(displayOutput)}
 					language={language}
 					className="max-h-96 border-0 shadow-none rounded-none text-[11px]"
 				>
@@ -699,7 +711,7 @@ function GenericContent({ part }: { part: ToolPart }) {
 							<CodeBlockCopyButton className="size-6" />
 						</CodeBlockActions>
 					</CodeBlockHeader>
-					<CodeBlockContent code={truncateOutput(output)} language={language} />
+					<CodeBlockContent code={truncateOutput(displayOutput)} language={language} />
 				</CodeBlock>
 			) : output ? (
 				<pre className="max-h-48 overflow-auto px-3.5 py-2.5 font-mono text-[11px] text-muted-foreground">

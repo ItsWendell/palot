@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import path from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 import { createLogger } from "./logger"
+import { startNotificationWatcher, stopNotificationWatcher } from "./notification-watcher"
 
 const log = createLogger("opencode-manager")
 
@@ -51,6 +52,7 @@ export async function ensureServer(): Promise<OpenCodeServer> {
 	if (existing) {
 		log.info("Detected existing server", { url: existing.url })
 		singleServer = { server: existing, process: null }
+		startNotificationWatcher(existing.url)
 		return existing
 	}
 
@@ -71,7 +73,7 @@ export async function ensureServer(): Promise<OpenCodeServer> {
 		{
 			cwd: homedir(),
 			stdio: "pipe",
-			env: { ...process.env, PATH: augmentedPath },
+			env: { ...process.env, PATH: augmentedPath, OPENCODE_INSPECT: "1" },
 		},
 	)
 
@@ -115,6 +117,7 @@ export async function ensureServer(): Promise<OpenCodeServer> {
 	await waitForReady(url, 15_000)
 
 	log.info("Server started successfully", { url, pid: proc.pid })
+	startNotificationWatcher(url)
 	return server
 }
 
@@ -129,6 +132,7 @@ export function getServerUrl(): string | null {
  * Stops the single server if we manage it.
  */
 export function stopServer(): boolean {
+	stopNotificationWatcher()
 	if (!singleServer?.process) {
 		log.debug("No managed server to stop")
 		return false

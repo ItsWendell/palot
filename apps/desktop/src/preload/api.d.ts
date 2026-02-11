@@ -118,6 +118,22 @@ export interface GitStashResult {
 }
 
 // ============================================================
+// Open-in-targets types
+// ============================================================
+
+export interface OpenInTarget {
+	id: string
+	label: string
+	available: boolean
+}
+
+export interface OpenInTargetsResult {
+	targets: OpenInTarget[]
+	availableTargets: string[]
+	preferredTarget: string | null
+}
+
+// ============================================================
 // CLI install types
 // ============================================================
 
@@ -131,10 +147,18 @@ export interface AppInfo {
 	isDev: boolean
 }
 
+export type WindowChromeTier = "liquid-glass" | "vibrancy" | "opaque"
+
 export interface CodedeckAPI {
 	/** The host platform: "darwin", "win32", or "linux". */
 	platform: NodeJS.Platform
 	getAppInfo: () => Promise<AppInfo>
+
+	/** Subscribe to chrome tier notification (fired once on load). */
+	onChromeTier: (callback: (tier: WindowChromeTier) => void) => () => void
+	/** Get the current chrome tier (pull-based, avoids race with push event). */
+	getChromeTier: () => Promise<WindowChromeTier>
+
 	ensureOpenCode: () => Promise<OpenCodeServerInfo>
 	getServerUrl: () => Promise<string | null>
 	stopOpenCode: () => Promise<boolean>
@@ -159,12 +183,31 @@ export interface CodedeckAPI {
 		stashPop: (directory: string) => Promise<GitStashResult>
 	}
 
+	// Window preferences (opaque windows / transparency)
+	/** Get the persisted opaque windows preference from the main process. */
+	getOpaqueWindows: () => Promise<boolean>
+	/** Set the opaque windows preference and persist it in the main process. */
+	setOpaqueWindows: (value: boolean) => Promise<{ success: boolean }>
+	/** Relaunch the app (used after toggling transparency). */
+	relaunch: () => Promise<void>
+
 	// CLI install
 	cli: {
 		isInstalled: () => Promise<boolean>
 		install: () => Promise<CliInstallResult>
 		uninstall: () => Promise<CliInstallResult>
 	}
+
+	// Open in external app
+	openIn: {
+		getTargets: () => Promise<OpenInTargetsResult>
+		open: (directory: string, targetId: string, persistPreferred?: boolean) => Promise<void>
+		setPreferred: (targetId: string) => Promise<{ success: boolean }>
+	}
+
+	// Native theme (syncs macOS glass tint to app color scheme)
+	/** Set the native theme source ("light" | "dark" | "system") to control macOS glass tint. */
+	setNativeTheme: (source: string) => Promise<void>
 
 	// Directory picker
 	pickDirectory: () => Promise<string | null>
@@ -181,6 +224,14 @@ export interface CodedeckAPI {
 		headers: Record<string, string>
 		body: string | null
 	}>
+
+	// Notifications
+	/** Subscribe to navigation events from native OS notification clicks. */
+	onNotificationNavigate: (callback: (data: { sessionId: string }) => void) => () => void
+	/** Dismiss any active notification for a session. */
+	dismissNotification: (sessionId: string) => Promise<void>
+	/** Update the dock badge / app badge count. */
+	updateBadgeCount: (count: number) => Promise<void>
 }
 
 declare global {

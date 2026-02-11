@@ -4,7 +4,9 @@ import {
 	createRoute,
 	createRouter,
 } from "@tanstack/react-router"
+import { ErrorPage } from "./components/error-page"
 import { NewChat } from "./components/new-chat"
+import { NotFoundPage } from "./components/not-found-page"
 import { RootLayout } from "./components/root-layout"
 import { SessionRoute } from "./components/session-route"
 
@@ -14,6 +16,8 @@ import { SessionRoute } from "./components/session-route"
 
 const rootRoute = createRootRoute({
 	component: RootLayout,
+	errorComponent: ErrorPage,
+	notFoundComponent: NotFoundPage,
 })
 
 const indexRoute = createRoute({
@@ -53,6 +57,8 @@ const hashHistory = createHashHistory()
 export const router = createRouter({
 	routeTree,
 	history: hashHistory,
+	defaultErrorComponent: ErrorPage,
+	defaultNotFoundComponent: NotFoundPage,
 })
 
 export type AppRouter = typeof router

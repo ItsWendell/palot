@@ -1,26 +1,12 @@
+import { useAtomValue, useSetAtom } from "jotai"
 import { useLayoutEffect, useMemo } from "react"
+import { colorSchemeAtom, themeAtom } from "../atoms/preferences"
 import { type ColorScheme, getTheme, type ThemeDefinition, themes } from "../lib/themes"
-import { usePersistedStore } from "../stores/persisted-store"
 
 // ============================================================
-// Selectors — pull raw primitives from the store so useMemo
-// can derive data without creating wrapper objects (avoids
-// Zustand + React 19 infinite render loops).
+// useThemeEffect — synchronises persisted store to <html> element
 // ============================================================
 
-const selectThemeId = (s: { theme: string }) => s.theme
-const selectColorScheme = (s: { colorScheme: ColorScheme }) => s.colorScheme
-const selectSetTheme = (s: { setTheme: (id: string) => void }) => s.setTheme
-const selectSetColorScheme = (s: { setColorScheme: (s: ColorScheme) => void }) => s.setColorScheme
-
-// ============================================================
-// useThemeEffect — the single effect that synchronises the
-// persisted store → <html> element classes & CSS variables.
-//
-// Must be called exactly once, in the root layout.
-// ============================================================
-
-/** Style element id for dynamic CSS var injection */
 const STYLE_ID = "codedeck-theme-vars"
 
 function getOrCreateStyleElement(): HTMLStyleElement {
@@ -33,9 +19,6 @@ function getOrCreateStyleElement(): HTMLStyleElement {
 	return el
 }
 
-/**
- * Resolve the effective dark/light mode class from a ColorScheme.
- */
 function resolveColorSchemeClass(scheme: ColorScheme): "dark" | "light" {
 	if (scheme === "system") {
 		return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
@@ -43,21 +26,35 @@ function resolveColorSchemeClass(scheme: ColorScheme): "dark" | "light" {
 	return scheme
 }
 
-/**
- * Build a CSS text block that sets custom properties on :root and .dark.
- */
+function buildGlassVars(theme: ThemeDefinition): [string, string][] {
+	const g = theme.glass
+	if (!g) return []
+	const vars: [string, string][] = []
+	if (g.bodyOpacity !== undefined) vars.push(["--glass-body", `${g.bodyOpacity}%`])
+	if (g.sidebarOpacity !== undefined) vars.push(["--glass-sidebar", `${g.sidebarOpacity}%`])
+	if (g.surfaceOpacity !== undefined) vars.push(["--glass-surface", `${g.surfaceOpacity}%`])
+	if (g.elevatedOpacity !== undefined) vars.push(["--glass-elevated", `${g.elevatedOpacity}%`])
+	if (g.cardOpacity !== undefined) vars.push(["--glass-card", `${g.cardOpacity}%`])
+	if (g.blurScale !== undefined) {
+		const s = g.blurScale
+		vars.push(["--blur-sm", `${8 * s}px`])
+		vars.push(["--blur-md", `${12 * s}px`])
+		vars.push(["--blur-lg", `${16 * s}px`])
+		vars.push(["--blur-xl", `${24 * s}px`])
+	}
+	return vars
+}
+
 function buildThemeCss(theme: ThemeDefinition): string {
 	const lightEntries = Object.entries(theme.cssVars.light)
 	const darkEntries = Object.entries(theme.cssVars.dark)
-
-	// Include density overrides in both light and dark
 	const densityEntries = theme.density ? Object.entries(theme.density) : []
-
-	// Include radius override
 	const radiusEntry = theme.radius ? [["--radius", theme.radius] as const] : []
+	const glassEntries = buildGlassVars(theme)
 
-	const allLight = [...lightEntries, ...densityEntries, ...radiusEntry]
-	const allDark = [...darkEntries, ...densityEntries, ...radiusEntry]
+	// Glass entries are defaults — cssVars entries override them (come last)
+	const allLight = [...glassEntries, ...densityEntries, ...radiusEntry, ...lightEntries]
+	const allDark = [...glassEntries, ...densityEntries, ...radiusEntry, ...darkEntries]
 
 	if (allLight.length === 0 && allDark.length === 0) return ""
 
@@ -72,22 +69,18 @@ function buildThemeCss(theme: ThemeDefinition): string {
 }
 
 export function useThemeEffect() {
-	const themeId = usePersistedStore(selectThemeId)
-	const colorScheme = usePersistedStore(selectColorScheme)
+	const themeId = useAtomValue(themeAtom)
+	const colorScheme = useAtomValue(colorSchemeAtom)
 
 	const theme = useMemo(() => getTheme(themeId), [themeId])
 
-	// Synchronous layout effect — prevents flash of wrong theme
 	useLayoutEffect(() => {
 		const root = document.documentElement
 
-		// ---- 1. Color scheme class (dark / light) ----
 		const cls = resolveColorSchemeClass(colorScheme)
 		root.classList.remove("dark", "light")
 		root.classList.add(cls)
 
-		// ---- 2. Theme class (theme-<id>) ----
-		// Remove any existing theme-* classes
 		for (const c of Array.from(root.classList)) {
 			if (c.startsWith("theme-")) root.classList.remove(c)
 		}
@@ -95,11 +88,22 @@ export function useThemeEffect() {
 			root.classList.add(`theme-${theme.id}`)
 		}
 
-		// ---- 3. CSS variable overrides via <style> element ----
+		// If the theme disables glass, force opaque regardless of platform tier
+		if (theme.glass?.disabled) {
+			root.classList.remove("electron-transparent", "electron-vibrancy")
+			root.classList.add("electron-opaque")
+		}
+
 		const styleEl = getOrCreateStyleElement()
 		styleEl.textContent = buildThemeCss(theme)
 
-		// ---- 4. Font overrides ----
+		// Sync native theme with macOS so the glass tint matches the CSS color scheme.
+		// Without this, macOS applies its system appearance (dark/light) to the native
+		// glass layer regardless of what the app's CSS says — causing mismatched tinting.
+		if ("codedeck" in window) {
+			window.codedeck.setNativeTheme(colorScheme === "system" ? "system" : cls)
+		}
+
 		if (theme.fonts?.sans) {
 			root.style.setProperty("--font-sans", theme.fonts.sans)
 		} else {
@@ -111,7 +115,6 @@ export function useThemeEffect() {
 			root.style.removeProperty("--font-mono")
 		}
 
-		// ---- 5. Listen for system color scheme changes ----
 		if (colorScheme === "system") {
 			const mq = window.matchMedia("(prefers-color-scheme: dark)")
 			const handler = (e: MediaQueryListEvent) => {
@@ -125,31 +128,26 @@ export function useThemeEffect() {
 }
 
 // ============================================================
-// Convenience hooks for components (command palette, etc.)
+// Convenience hooks
 // ============================================================
 
-/** Current theme definition (derived). */
 export function useCurrentTheme(): ThemeDefinition {
-	const themeId = usePersistedStore(selectThemeId)
+	const themeId = useAtomValue(themeAtom)
 	return useMemo(() => getTheme(themeId), [themeId])
 }
 
-/** Current color scheme preference. */
 export function useColorScheme(): ColorScheme {
-	return usePersistedStore(selectColorScheme)
+	return useAtomValue(colorSchemeAtom)
 }
 
-/** All available themes. */
 export function useAvailableThemes(): ThemeDefinition[] {
 	return themes
 }
 
-/** Set the active theme by id. */
 export function useSetTheme(): (id: string) => void {
-	return usePersistedStore(selectSetTheme)
+	return useSetAtom(themeAtom)
 }
 
-/** Set the color scheme. */
 export function useSetColorScheme(): (scheme: ColorScheme) => void {
-	return usePersistedStore(selectSetColorScheme)
+	return useSetAtom(colorSchemeAtom)
 }

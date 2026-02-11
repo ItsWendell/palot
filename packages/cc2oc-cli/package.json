@@ -1,0 +1,23 @@
+{
+	"name": "cc2oc",
+	"version": "0.1.0",
+	"private": false,
+	"type": "module",
+	"bin": {
+		"cc2oc": "./src/index.ts"
+	},
+	"scripts": {
+		"check-types": "tsc --noEmit",
+		"lint": "biome check .",
+		"clean": "rm -rf node_modules .turbo"
+	},
+	"dependencies": {
+		"@codedeck/cc2oc": "workspace:*",
+		"citty": "^0.1.6",
+		"consola": "^3.4.2"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"typescript": "^5.8.3"
+	}
+}

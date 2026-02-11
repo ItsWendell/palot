@@ -2,6 +2,7 @@ import {
 	Conversation,
 	ConversationContent,
 	ConversationScrollButton,
+	useStickToBottomContext,
 } from "@codedeck/ui/components/ai-elements/conversation"
 import {
 	PromptInput,
@@ -14,8 +15,21 @@ import {
 	usePromptInputAttachments,
 	usePromptInputController,
 } from "@codedeck/ui/components/ai-elements/prompt-input"
+import { useAtomValue } from "jotai"
 import { ChevronUpIcon, Loader2Icon, PlusIcon, Redo2Icon, Undo2Icon } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+	useCallback,
+	useEffect,
+	useImperativeHandle,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react"
+import { messagesFamily } from "../../atoms/messages"
+import { projectModelsAtom, setProjectModelAtom } from "../../atoms/preferences"
+import { sessionFamily } from "../../atoms/sessions"
+import { appStore } from "../../atoms/store"
 import { useDraft, useDraftActions } from "../../hooks/use-draft"
 import type {
 	ConfigData,
@@ -26,13 +40,13 @@ import type {
 } from "../../hooks/use-opencode-data"
 import {
 	getModelInputCapabilities,
+	getModelVariants,
 	resolveEffectiveModel,
 	useModelState,
 } from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
 import type { Agent, FileAttachment, QuestionAnswer } from "../../lib/types"
 import { getProjectClient } from "../../services/connection-manager"
-import { useAppStore } from "../../stores/app-store"
 import { PermissionItem } from "./chat-permission"
 import { ChatQuestionCard } from "./chat-question"
 import { ChatTurnComponent } from "./chat-turn"
@@ -56,6 +70,62 @@ function AttachButton({ disabled }: { disabled?: boolean }) {
 			<PlusIcon className="size-4" />
 		</PromptInputButton>
 	)
+}
+
+/**
+ * Instant-scroll when session content finishes loading.
+ *
+ * The `<Conversation>` (StickToBottom) uses `initial="instant"` for the first
+ * paint, but messages are fetched async — by the time they arrive and render,
+ * the library treats the content growth as a *resize* and applies
+ * `resize="smooth"`, causing a visible scroll animation from top → bottom.
+ *
+ * This component sits inside `<Conversation>` so it can access the
+ * StickToBottom context. It watches for the loading→loaded transition
+ * and forces an instant scroll-to-bottom.
+ */
+function ScrollOnLoad({ loading, sessionId }: { loading: boolean; sessionId: string }) {
+	const { scrollToBottom } = useStickToBottomContext()
+	const prevLoadingRef = useRef(loading)
+	const prevSessionRef = useRef(sessionId)
+
+	useLayoutEffect(() => {
+		const wasLoading = prevLoadingRef.current
+		const sessionChanged = prevSessionRef.current !== sessionId
+		prevLoadingRef.current = loading
+		prevSessionRef.current = sessionId
+
+		// Instant scroll when: loading just finished, or session changed while not loading
+		// (e.g. messages were already cached in the Jotai store)
+		if ((wasLoading && !loading) || (sessionChanged && !loading)) {
+			scrollToBottom("instant")
+		}
+	}, [loading, sessionId, scrollToBottom])
+
+	return null
+}
+
+/**
+ * Bridge that exposes the StickToBottom `scrollToBottom` to the parent
+ * via a ref so imperative callers (handleSend, question reply, etc.)
+ * can force a scroll-to-bottom even when the user has scrolled away.
+ */
+function ScrollBridge({
+	scrollRef,
+}: {
+	scrollRef: React.RefObject<{ scrollToBottom: (behavior?: "instant" | "smooth") => void } | null>
+}) {
+	const { scrollToBottom } = useStickToBottomContext()
+	useImperativeHandle(
+		scrollRef,
+		() => ({
+			scrollToBottom: (behavior?: "instant" | "smooth") => {
+				scrollToBottom(behavior ?? "smooth")
+			},
+		}),
+		[scrollToBottom],
+	)
+	return null
 }
 
 /**
@@ -250,8 +320,15 @@ export function ChatView({
 	const isWorking = agent.status === "running"
 	const [sending, setSending] = useState(false)
 
+	// Ref to imperatively scroll the conversation to bottom from outside the
+	// <Conversation> tree (e.g. after sending a message or answering a question).
+	const scrollRef = useRef<{ scrollToBottom: (behavior?: "instant" | "smooth") => void } | null>(
+		null,
+	)
+
 	// Session-level error from session.error events
-	const sessionError = useAppStore((s) => s.sessions[agent.sessionId]?.error)
+	const sessionEntry = useAtomValue(sessionFamily(agent.sessionId))
+	const sessionError = sessionEntry?.error
 
 	// Stable callbacks for question/permission handlers — agent is stable
 	// per render, but wrapping in useCallback avoids creating new inline
@@ -259,6 +336,11 @@ export function ChatView({
 	const handleReplyQuestion = useCallback(
 		async (requestId: string, answers: QuestionAnswer[]) => {
 			await onReplyQuestion?.(agent, requestId, answers)
+			// After answering, the question card disappears and the scroll viewport
+			// grows — force scroll so the latest content stays visible.
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollToBottom("smooth")
+			})
 		},
 		[onReplyQuestion, agent],
 	)
@@ -266,8 +348,32 @@ export function ChatView({
 	const handleRejectQuestion = useCallback(
 		async (requestId: string) => {
 			await onRejectQuestion?.(agent, requestId)
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollToBottom("smooth")
+			})
 		},
 		[onRejectQuestion, agent],
+	)
+
+	const handleApprovePermission = useCallback(
+		async (a: Agent, permissionId: string, response?: "once" | "always") => {
+			await onApprove?.(a, permissionId, response)
+			// Permission card disappears after approval — scroll to keep content visible.
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollToBottom("smooth")
+			})
+		},
+		[onApprove],
+	)
+
+	const handleDenyPermission = useCallback(
+		async (a: Agent, permissionId: string) => {
+			await onDeny?.(a, permissionId)
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollToBottom("smooth")
+			})
+		},
+		[onDeny],
 	)
 
 	// Draft persistence — survives session switches and reloads
@@ -283,27 +389,47 @@ export function ChatView({
 	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
 	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
 
-	// Initialize model/agent from the session's last user message (matches TUI behavior).
-	// This ensures returning to an existing session continues with the same model.
-	const sessionMessages = useAppStore((s) => s.messages[agent.sessionId])
+	// Initialize model + variant from the session's last user message.
+	// This ensures returning to an existing session continues with the same
+	// model AND variant, isolated from changes made in other sessions.
+	// Falls back to per-project preference only when the message has no variant.
+	const sessionMessages = useAtomValue(messagesFamily(agent.sessionId))
+	const projectModels = useAtomValue(projectModelsAtom)
 	const initializedRef = useRef(false)
 	useEffect(() => {
 		if (initializedRef.current) return
 		if (!sessionMessages || sessionMessages.length === 0) return
+		initializedRef.current = true
 
-		// Find the last user message (iterate backwards)
+		// Find the last user message (iterate backwards) for model + variant
+		let foundVariant = false
 		for (let i = sessionMessages.length - 1; i >= 0; i--) {
 			const msg = sessionMessages[i]
 			if (msg.role === "user" && "model" in msg && msg.model) {
 				const model = msg.model as { providerID: string; modelID: string }
 				if (model.providerID && model.modelID) {
 					setSelectedModel(model)
-					initializedRef.current = true
+					// variant is stored on user messages (v2 SDK type) but not
+					// in the v1 TypeScript type we import — access it dynamically.
+					const variant = (msg as Record<string, unknown>).variant as string | undefined
+					if (variant) {
+						setSelectedVariant(variant)
+						foundVariant = true
+					}
 					break
 				}
 			}
 		}
-	}, [sessionMessages])
+
+		// Fall back to per-project preference for variant when the session's
+		// messages don't have one (e.g. first message sent before variant persistence).
+		if (!foundVariant && agent.directory) {
+			const stored = projectModels[agent.directory]
+			if (stored?.variant) {
+				setSelectedVariant(stored.variant)
+			}
+		}
+	}, [sessionMessages, agent.directory, projectModels])
 
 	// Recent models from model.json (for matching TUI's default model resolution)
 	const { recentModels, addRecent: addRecentModel } = useModelState()
@@ -331,16 +457,34 @@ export function ChatView({
 		[selectedModel, activeOpenCodeAgent, config?.model, providers],
 	)
 
+	// Validate variant against the effective model's available variants.
+	// Clears the variant if the current model doesn't support it (e.g. restored
+	// from per-project preference but the model was changed, or provider updated).
+	useEffect(() => {
+		if (!selectedVariant || !effectiveModel || !providers) return
+		const available = getModelVariants(
+			effectiveModel.providerID,
+			effectiveModel.modelID,
+			providers.providers,
+		)
+		if (!available.includes(selectedVariant)) {
+			setSelectedVariant(undefined)
+		}
+	}, [selectedVariant, effectiveModel, providers])
+
 	// Model input capabilities (for attachment warnings)
 	const modelCapabilities = useMemo(
 		() => getModelInputCapabilities(effectiveModel, providers?.providers ?? []),
 		[effectiveModel, providers],
 	)
 
-	// Handle model selection — set local state + persist to model.json
+	// Handle model selection — set local state + persist to model.json.
+	// Reset variant when the model changes: the new model may have different
+	// (or no) variants, so carrying over a stale variant would be incorrect.
 	const handleModelSelect = useCallback(
 		(model: ModelRef | null) => {
 			setSelectedModel(model)
+			setSelectedVariant(undefined)
 			if (model) addRecentModel(model)
 		},
 		[addRecentModel],
@@ -423,6 +567,14 @@ export function ChatView({
 
 			setSending(true)
 			try {
+				// Persist the model + variant for this project so new sessions remember it
+				if (effectiveModel && agent.directory) {
+					appStore.set(setProjectModelAtom, {
+						directory: agent.directory,
+						model: { ...effectiveModel, variant: selectedVariant },
+					})
+				}
+
 				await onSendMessage(agent, text.trim(), {
 					model: effectiveModel ?? undefined,
 					agentName: selectedAgent ?? undefined,
@@ -430,6 +582,11 @@ export function ChatView({
 					files,
 				})
 				clearDraft()
+				// Force scroll to bottom after sending — the user just sent a message,
+				// so they always want to see it even if they had scrolled up.
+				requestAnimationFrame(() => {
+					scrollRef.current?.scrollToBottom("smooth")
+				})
 			} finally {
 				setSending(false)
 			}
@@ -514,7 +671,9 @@ export function ChatView({
 		<div className="flex h-full flex-col">
 			{/* Chat messages — constrained width for readability */}
 			<div className="relative min-h-0 flex-1">
-				<Conversation className="h-full">
+				<Conversation key={agent.sessionId} className="h-full">
+					<ScrollOnLoad loading={loading} sessionId={agent.sessionId} />
+					<ScrollBridge scrollRef={scrollRef} />
 					<ConversationContent className="gap-10 px-4 py-6">
 						<div className="mx-auto w-full max-w-4xl space-y-10">
 							{/* Load earlier messages button */}
@@ -625,8 +784,8 @@ export function ChatView({
 									key={permission.id}
 									agent={agent}
 									permission={permission}
-									onApprove={onApprove}
-									onDeny={onDeny}
+									onApprove={handleApprovePermission}
+									onDeny={handleDenyPermission}
 									isConnected={isConnected}
 								/>
 							))}

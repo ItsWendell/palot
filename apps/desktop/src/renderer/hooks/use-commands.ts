@@ -1,7 +1,11 @@
+import { useAtomValue } from "jotai"
 import { useCallback, useMemo } from "react"
+import { messagesFamily } from "../atoms/messages"
+import { partsFamily } from "../atoms/parts"
+import { sessionFamily } from "../atoms/sessions"
+import { appStore } from "../atoms/store"
 import type { Session, TextPart } from "../lib/types"
 import { getProjectClient } from "../services/connection-manager"
-import { useAppStore } from "../stores/app-store"
 import { useServerCommands } from "./use-opencode-data"
 
 // ============================================================
@@ -9,19 +13,12 @@ import { useServerCommands } from "./use-opencode-data"
 // ============================================================
 
 export interface AppCommand {
-	/** Unique command name (used as slash command: /undo, /redo, etc.) */
 	name: string
-	/** Human-readable label for UI display */
 	label: string
-	/** Short description */
 	description: string
-	/** Whether this command is currently available */
 	enabled: boolean
-	/** Keyboard shortcut label for display (e.g. "⌘Z") */
 	shortcut?: string
-	/** Execute the command */
 	execute: () => Promise<void>
-	/** Source: client-side or server-side */
 	source: "client" | "server"
 }
 
@@ -32,23 +29,17 @@ export interface ServerCommand {
 }
 
 // ============================================================
-// useSessionRevert — undo/redo logic for a session
+// useSessionRevert — undo/redo logic
 // ============================================================
 
-/**
- * Returns the last user message ID from a session's messages in the store,
- * optionally before a given revert point.
- */
 function findUndoTarget(sessionId: string, revertMessageId?: string): string | null {
-	const messages = useAppStore.getState().messages[sessionId]
+	const messages = appStore.get(messagesFamily(sessionId))
 	if (!messages || messages.length === 0) return null
 
-	// Find the last user message before the revert point (or absolute last if no revert)
 	let lastUserMsgId: string | null = null
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i]
 		if (msg.role !== "user") continue
-		// If there's a revert point, find the last user message BEFORE it
 		if (revertMessageId && msg.id >= revertMessageId) continue
 		lastUserMsgId = msg.id
 		break
@@ -56,11 +47,8 @@ function findUndoTarget(sessionId: string, revertMessageId?: string): string | n
 	return lastUserMsgId
 }
 
-/**
- * For redo: find the next user message after the current revert point.
- */
 function findRedoTarget(sessionId: string, revertMessageId: string): string | null {
-	const messages = useAppStore.getState().messages[sessionId]
+	const messages = appStore.get(messagesFamily(sessionId))
 	if (!messages) return null
 
 	let foundRevertPoint = false
@@ -76,11 +64,8 @@ function findRedoTarget(sessionId: string, revertMessageId: string): string | nu
 	return null
 }
 
-/**
- * Gets the text content from a user message's parts (for restoring to prompt input after undo).
- */
 function getUserMessageText(messageId: string): string {
-	const parts = useAppStore.getState().parts[messageId]
+	const parts = appStore.get(partsFamily(messageId))
 	if (!parts) return ""
 	return parts
 		.filter((p): p is TextPart => p.type === "text" && !("synthetic" in p && p.synthetic))
@@ -89,45 +74,32 @@ function getUserMessageText(messageId: string): string {
 }
 
 export interface UseSessionRevertResult {
-	/** Whether the session is currently in a reverted state */
 	isReverted: boolean
-	/** The revert info from the session, if any */
 	revertInfo: Session["revert"] | undefined
-	/** Whether undo is available */
 	canUndo: boolean
-	/** Whether redo is available */
 	canRedo: boolean
-	/** Undo the last turn. Returns the user message text that was undone (for restoring to input). */
 	undo: () => Promise<string | undefined>
-	/** Redo — restore previously reverted messages */
 	redo: () => Promise<void>
-	/** Revert to a specific user message by ID (for per-turn undo buttons). */
 	revertToMessage: (messageId: string) => Promise<void>
 }
 
-/**
- * Hook for undo/redo on a specific session.
- * Mirrors the TUI's undo/redo behavior from session/index.tsx.
- */
 export function useSessionRevert(
 	directory: string | null,
 	sessionId: string | null,
 ): UseSessionRevertResult {
-	const session = useAppStore((s) => (sessionId ? s.sessions[sessionId]?.session : undefined))
-	const messages = useAppStore((s) => (sessionId ? s.messages[sessionId] : undefined))
+	const entry = useAtomValue(sessionFamily(sessionId ?? ""))
+	const session = entry?.session
+	const messages = useAtomValue(messagesFamily(sessionId ?? ""))
 
 	const isReverted = !!session?.revert
 	const revertInfo = session?.revert
 
-	// Can undo if: connected, session exists, has user messages, not already fully reverted to start
 	const canUndo = useMemo(() => {
 		if (!directory || !sessionId || !messages || messages.length === 0) return false
-		// Find a user message to revert to
 		const target = findUndoTarget(sessionId, revertInfo?.messageID)
 		return target !== null
 	}, [directory, sessionId, messages, revertInfo])
 
-	// Can redo if: session is in a reverted state
 	const canRedo = isReverted
 
 	const undo = useCallback(async (): Promise<string | undefined> => {
@@ -135,21 +107,16 @@ export function useSessionRevert(
 		const client = getProjectClient(directory)
 		if (!client) return undefined
 
-		// If busy, abort first
-		const entry = useAppStore.getState().sessions[sessionId]
-		if (entry?.status?.type === "busy") {
+		const sessionEntry = appStore.get(sessionFamily(sessionId))
+		if (sessionEntry?.status?.type === "busy") {
 			await client.session.abort({ sessionID: sessionId })
 		}
 
-		// Find the undo target
 		const targetId = findUndoTarget(sessionId, revertInfo?.messageID)
 		if (!targetId) return undefined
 
-		// Get the user's text before reverting (to restore to prompt)
 		const userText = getUserMessageText(targetId)
-
 		await client.session.revert({ sessionID: sessionId, messageID: targetId })
-
 		return userText
 	}, [directory, sessionId, revertInfo])
 
@@ -158,8 +125,6 @@ export function useSessionRevert(
 		const client = getProjectClient(directory)
 		if (!client) return
 
-		// TUI logic: if there's a next user message after revert point, move revert forward.
-		// Otherwise, fully unrevert.
 		const nextTarget = findRedoTarget(sessionId, revertInfo.messageID)
 		if (nextTarget) {
 			await client.session.revert({ sessionID: sessionId, messageID: nextTarget })
@@ -174,9 +139,8 @@ export function useSessionRevert(
 			const client = getProjectClient(directory)
 			if (!client) return
 
-			// If busy, abort first
-			const entry = useAppStore.getState().sessions[sessionId]
-			if (entry?.status?.type === "busy") {
+			const sessionEntry = appStore.get(sessionFamily(sessionId))
+			if (sessionEntry?.status?.type === "busy") {
 				await client.session.abort({ sessionID: sessionId })
 			}
 
@@ -192,10 +156,6 @@ export function useSessionRevert(
 // useCommands — unified command registry
 // ============================================================
 
-/**
- * Builds the full list of available commands for a session,
- * including both client-side actions and server-side commands.
- */
 export function useCommands(
 	directory: string | null,
 	sessionId: string | null,
@@ -205,10 +165,10 @@ export function useCommands(
 ): AppCommand[] {
 	const { canUndo, canRedo, undo, redo } = useSessionRevert(directory, sessionId)
 	const serverCommands = useServerCommands(directory)
-	const sessionStatus = useAppStore((s) => (sessionId ? s.sessions[sessionId]?.status : undefined))
+	const entry = useAtomValue(sessionFamily(sessionId ?? ""))
+	const sessionStatus = entry?.status
 	const isIdle = sessionStatus?.type === "idle" || !sessionStatus
 
-	// Client-side commands
 	const clientCommands = useMemo<AppCommand[]>(() => {
 		const cmds: AppCommand[] = []
 
@@ -256,7 +216,6 @@ export function useCommands(
 		return cmds
 	}, [canUndo, canRedo, undo, redo, directory, sessionId, isIdle, options?.onUndoTextRestore])
 
-	// Server-side commands merged in
 	const allCommands = useMemo<AppCommand[]>(() => {
 		const serverCmds: AppCommand[] = serverCommands.map((cmd) => ({
 			name: cmd.name,

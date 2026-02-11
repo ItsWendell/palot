@@ -1,3 +1,4 @@
+import { useAtomValue } from "jotai"
 import {
 	CheckCircle2Icon,
 	ChevronDownIcon,
@@ -8,8 +9,12 @@ import {
 	XCircleIcon,
 } from "lucide-react"
 import { useMemo, useState } from "react"
+import { messagesFamily } from "../../atoms/messages"
+import { partsFamily } from "../../atoms/parts"
+import { appStore } from "../../atoms/store"
+import { streamingVersionAtom } from "../../atoms/streaming"
+import { todosFamily } from "../../atoms/todos"
 import type { Todo } from "../../lib/types"
-import { useAppStore } from "../../stores/app-store"
 
 /**
  * Derives the latest todo list for a session.
@@ -19,24 +24,21 @@ import { useAppStore } from "../../stores/app-store"
  * 2. Fallback: extract from the last `todowrite` tool part in messages (for page loads)
  */
 function useSessionTodos(sessionId: string | null): Todo[] {
-	const storeTodos = useAppStore((s) => (sessionId ? s.todos[sessionId] : undefined))
-	const storeMessages = useAppStore((s) => (sessionId ? s.messages[sessionId] : undefined))
-	// Subscribe to the per-session parts version counter instead of the entire
-	// parts record — avoids re-renders when other sessions' parts change.
-	const partsVersion = useAppStore((s) => (sessionId ? (s.partsVersion[sessionId] ?? 0) : 0))
+	const storeTodos = useAtomValue(todosFamily(sessionId ?? ""))
+	const storeMessages = useAtomValue(messagesFamily(sessionId ?? ""))
+	const streamingVersion = useAtomValue(streamingVersionAtom)
 
 	return useMemo(() => {
 		// If we have SSE-pushed todos, prefer those — they're the most up-to-date
 		if (storeTodos && storeTodos.length > 0) return storeTodos
 
 		// Fallback: walk messages backwards to find the last todowrite part
-		if (!storeMessages) return []
-		// partsVersion in deps triggers recomputation; read parts via getState()
-		void partsVersion
-		const allParts = useAppStore.getState().parts
+		if (!storeMessages || storeMessages.length === 0) return []
+		// streamingVersion in deps triggers recomputation when parts update
+		void streamingVersion
 		for (let i = storeMessages.length - 1; i >= 0; i--) {
 			const msg = storeMessages[i]
-			const parts = allParts[msg.id]
+			const parts = appStore.get(partsFamily(msg.id))
 			if (!parts) continue
 			for (let j = parts.length - 1; j >= 0; j--) {
 				const part = parts[j]
@@ -47,7 +49,7 @@ function useSessionTodos(sessionId: string | null): Todo[] {
 			}
 		}
 		return []
-	}, [storeTodos, storeMessages, partsVersion])
+	}, [storeTodos, storeMessages, streamingVersion])
 }
 
 /** Status icon for a todo item */

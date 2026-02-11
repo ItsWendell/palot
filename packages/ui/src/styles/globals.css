@@ -81,6 +81,15 @@
 :root {
   --radius: 0.625rem;
 
+  /* Motion — named easing curves inspired by Codex */
+  --ease-enter: cubic-bezier(0.19, 1, 0.22, 1);       /* aggressive decelerate — dialogs, overlays */
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);              /* standard ease-out */
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);        /* Material-style default */
+  --ease-bounce: cubic-bezier(0.175, 0.885, 0.32, 1);  /* slight overshoot — toasts, popovers */
+  --duration-fast: 0.15s;
+  --duration-normal: 0.2s;
+  --duration-relaxed: 0.3s;
+
   /* Light mode — derived from OpenCode "smoke-light" scale */
   --background: #f8f7f7;
   --foreground: #211e1e;
@@ -181,6 +190,375 @@
   }
 }
 
+/* ============================================================
+ * Liquid Glass / Transparency system
+ *
+ * Three-tier progressive transparency for macOS:
+ *   Tier 1 (.electron-transparent) — Liquid Glass (macOS 26+ Tahoe)
+ *     Native NSGlassEffectView provides system blur behind the window.
+ *     CSS adds semi-transparent backgrounds + backdrop-blur on floating panels.
+ *   Tier 2 (.electron-vibrancy) — Legacy vibrancy (older macOS)
+ *     Electron's built-in vibrancy:"menu" provides native blur.
+ *     CSS adds semi-transparent backgrounds but NO backdrop-blur.
+ *   Tier 3 (.electron-opaque / no class) — Solid backgrounds
+ *     Windows, Linux, browser-mode, or user preference.
+ *     Components render with their stock opaque backgrounds.
+ *
+ * All glass effects use data-slot selectors to target shadcn components
+ * without modifying their source. Custom app components use explicit
+ * data-slot attributes for the same pattern.
+ *
+ * Classes are toggled on <html> by the useChromeTier() hook.
+ * ============================================================ */
+
+/* Glass design tokens — themes can override these to tune intensity */
+@layer base {
+  :root {
+    /* Glass opacity scale (percentage for color-mix) */
+    --glass-body: 40%;
+    --glass-sidebar: 45%;
+    --glass-surface: 60%;
+    --glass-elevated: 82%;
+    --glass-card: 90%;
+    --glass-sidebar-accent: 50%;
+
+    /* Blur scale — backdrop-filter values */
+    --blur-sm: 8px;
+    --blur-md: 12px;
+    --blur-lg: 16px;
+    --blur-xl: 24px;
+  }
+}
+
+/* ============================================================
+ * Tier 1: Liquid Glass — macOS 26+ (Tahoe)
+ *
+ * Native NSGlassEffectView provides system-level blur behind
+ * the entire window. Surfaces are made semi-transparent so the
+ * glass bleeds through. Floating panels (popovers, dialogs)
+ * add CSS backdrop-blur for layered glass-on-glass depth.
+ * ============================================================ */
+@layer components {
+
+  /* --- Body background --- */
+  :root.electron-transparent body {
+    background: color-mix(in srgb, var(--background) var(--glass-body), transparent);
+  }
+
+  /* --- Sidebar (shadcn data-slot) ---
+   * Transparent here — the sidebar-wrapper carries the sidebar
+   * background instead, so the rounded-corner gaps of sidebar-inset
+   * see the same color as the sidebar area (no double-stacking). */
+  :root.electron-transparent [data-slot="sidebar"] {
+    background: transparent !important;
+  }
+
+  /* --- App bar (frosted glass — content scrolls behind, blurred) --- */
+  :root.electron-transparent [data-slot="app-bar"] {
+    background: transparent !important;
+    -webkit-backdrop-filter: saturate(180%) blur(var(--blur-md));
+    backdrop-filter: saturate(180%) blur(var(--blur-md));
+    border-color: color-mix(in srgb, var(--border) 20%, transparent);
+  }
+
+  /* --- Floating panels: popovers, dropdowns, context menus, selects ---
+   * These float above page content and need their own backdrop-blur
+   * to create layered glass depth. */
+  :root.electron-transparent [data-slot="dropdown-menu-content"],
+  :root.electron-transparent [data-slot="dropdown-menu-sub-content"],
+  :root.electron-transparent [data-slot="popover-content"],
+  :root.electron-transparent [data-slot="context-menu-content"],
+  :root.electron-transparent [data-slot="context-menu-sub-content"],
+  :root.electron-transparent [data-slot="select-content"] {
+    background: color-mix(in srgb, var(--popover) var(--glass-elevated), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-lg));
+    backdrop-filter: blur(var(--blur-lg));
+  }
+
+  /* --- Command palette --- */
+  :root.electron-transparent [data-slot="command"] {
+    background: color-mix(in srgb, var(--popover) var(--glass-elevated), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-xl));
+    backdrop-filter: blur(var(--blur-xl));
+  }
+
+  /* --- Dialogs --- */
+  :root.electron-transparent [data-slot="dialog-content"] {
+    background: color-mix(in srgb, var(--background) var(--glass-elevated), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-xl));
+    backdrop-filter: blur(var(--blur-xl));
+  }
+
+  /* --- Sheet (slide-over panel) --- */
+  :root.electron-transparent [data-slot="sheet-content"] {
+    background: color-mix(in srgb, var(--background) var(--glass-elevated), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-xl));
+    backdrop-filter: blur(var(--blur-xl));
+  }
+
+  /* --- Cards — subtle transparency, high opacity for readability --- */
+  :root.electron-transparent [data-slot="card"] {
+    background: color-mix(in srgb, var(--card) var(--glass-card), transparent);
+  }
+
+  /* --- Tabs list --- */
+  :root.electron-transparent [data-slot="tabs-list"] {
+    background: color-mix(in srgb, var(--muted) var(--glass-card), transparent);
+  }
+
+  /* --- Inset sidebar wrapper ---
+   * The wrapper sits behind the rounded corners of the content card.
+   * It must match the sidebar's own semi-transparent background so
+   * no raw glass bleeds through at the corner gaps. */
+  :root.electron-transparent [data-slot="sidebar-wrapper"] {
+    background-color: transparent !important;
+    background: color-mix(in srgb, var(--sidebar) var(--glass-sidebar), transparent) !important;
+  }
+  :root.electron-transparent [data-slot="sidebar-inner"] {
+    background-color: transparent !important;
+    background: transparent !important;
+    border-color: transparent !important;
+  }
+  :root.electron-transparent [data-slot="sidebar"] {
+    background-color: transparent !important;
+  }
+  :root.electron-transparent [data-slot="sidebar-container"] {
+    border-color: transparent !important;
+  }
+
+  /* --- Sidebar edge gradient divider ---
+   * Replaces the hard border-right with a vertical gradient line that
+   * fades in from top/bottom, providing organic visual separation. */
+  :root.electron-transparent [data-slot="sidebar-container"]::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      color-mix(in srgb, var(--border) 50%, transparent) 20%,
+      color-mix(in srgb, var(--border) 60%, transparent) 50%,
+      color-mix(in srgb, var(--border) 50%, transparent) 80%,
+      transparent 100%
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+}
+
+/* ============================================================
+ * Tier 2: Vibrancy — older macOS (pre-Tahoe)
+ *
+ * Electron's built-in vibrancy:"menu" provides native blur via
+ * NSVisualEffectView. We only make backgrounds semi-transparent.
+ * NO CSS backdrop-filter — the native layer already handles blur,
+ * and adding CSS blur would double-blur and look wrong.
+ * ============================================================ */
+@layer components {
+
+  :root.electron-vibrancy body {
+    background: color-mix(in srgb, var(--background) var(--glass-body), transparent);
+  }
+
+  /* Sidebar transparent — wrapper carries the background (see Tier 1 comment) */
+  :root.electron-vibrancy [data-slot="sidebar"] {
+    background: transparent !important;
+  }
+
+  /* --- App bar (frosted glass — content scrolls behind, blurred) --- */
+  :root.electron-vibrancy [data-slot="app-bar"] {
+    background: transparent !important;
+    -webkit-backdrop-filter: saturate(180%) blur(var(--blur-md));
+    backdrop-filter: saturate(180%) blur(var(--blur-md));
+    border-color: color-mix(in srgb, var(--border) 20%, transparent);
+  }
+
+  :root.electron-vibrancy [data-slot="dropdown-menu-content"],
+  :root.electron-vibrancy [data-slot="dropdown-menu-sub-content"],
+  :root.electron-vibrancy [data-slot="popover-content"],
+  :root.electron-vibrancy [data-slot="context-menu-content"],
+  :root.electron-vibrancy [data-slot="context-menu-sub-content"],
+  :root.electron-vibrancy [data-slot="select-content"],
+  :root.electron-vibrancy [data-slot="command"],
+  :root.electron-vibrancy [data-slot="dialog-content"],
+  :root.electron-vibrancy [data-slot="sheet-content"] {
+    background: color-mix(in srgb, var(--popover) var(--glass-elevated), transparent);
+  }
+
+  :root.electron-vibrancy [data-slot="card"] {
+    background: color-mix(in srgb, var(--card) var(--glass-card), transparent);
+  }
+
+  :root.electron-vibrancy [data-slot="tabs-list"] {
+    background: color-mix(in srgb, var(--muted) var(--glass-card), transparent);
+  }
+
+  /* --- Inset sidebar wrapper (vibrancy — see Tier 1 comment) --- */
+  :root.electron-vibrancy [data-slot="sidebar-wrapper"] {
+    background-color: transparent !important;
+    background: color-mix(in srgb, var(--sidebar) var(--glass-sidebar), transparent) !important;
+  }
+  :root.electron-vibrancy [data-slot="sidebar-inner"] {
+    background-color: transparent !important;
+    background: transparent !important;
+    border-color: transparent !important;
+  }
+  :root.electron-vibrancy [data-slot="sidebar"] {
+    background-color: transparent !important;
+  }
+  :root.electron-vibrancy [data-slot="sidebar-container"] {
+    border-color: transparent !important;
+  }
+
+  /* --- Sidebar edge gradient divider (vibrancy) --- */
+  :root.electron-vibrancy [data-slot="sidebar-container"]::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      color-mix(in srgb, var(--border) 50%, transparent) 20%,
+      color-mix(in srgb, var(--border) 60%, transparent) 50%,
+      color-mix(in srgb, var(--border) 50%, transparent) 80%,
+      transparent 100%
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+}
+
+/* Tier 3 (.electron-opaque / no class): no CSS changes needed.
+ * Components use their stock bg-popover, bg-card, bg-background
+ * Tailwind classes which resolve to solid CSS variables. */
+
+/* ============================================================
+ * Inset content card — raised surface for variant="inset"
+ *
+ * These rules are UNLAYERED (outside @layer) so they can
+ * override Tailwind utility classes from @layer utilities
+ * (e.g. peer-data-[variant=inset]:rounded-xl on SidebarInset).
+ *
+ * Matches Codex's layout: only left corners are rounded,
+ * content extends to the window edge on the right. A subtle
+ * shadow provides visual separation instead of a hard border.
+ * ============================================================ */
+
+/* Sidebar menu button — smooth hover fade for all themes */
+[data-slot="sidebar-menu-button"] {
+  transition: background 150ms ease;
+}
+
+/* Sidebar menu button hover/active — semi-transparent on glass.
+ * Must be UNLAYERED to override Tailwind's hover:bg-sidebar-accent
+ * utility class which lives in @layer utilities. */
+:root.electron-transparent [data-slot="sidebar-menu-button"]:hover,
+:root.electron-transparent [data-slot="sidebar-menu-button"]:active,
+:root.electron-transparent [data-slot="sidebar-menu-button"][data-active="true"],
+:root.electron-transparent [data-slot="sidebar-menu-button"][data-state="open"] {
+  background: color-mix(in srgb, var(--sidebar-accent) var(--glass-sidebar-accent), transparent);
+}
+
+:root.electron-vibrancy [data-slot="sidebar-menu-button"]:hover,
+:root.electron-vibrancy [data-slot="sidebar-menu-button"]:active,
+:root.electron-vibrancy [data-slot="sidebar-menu-button"][data-active="true"],
+:root.electron-vibrancy [data-slot="sidebar-menu-button"][data-state="open"] {
+  background: color-mix(in srgb, var(--sidebar-accent) var(--glass-sidebar-accent), transparent);
+}
+
+/* ── Content card (SidebarInset) — floating card layout ──────
+ * We use variant="sidebar" (not "inset") so shadcn's peer-data
+ * utilities don't fire. All card styling is done here.
+ *
+ * Layout: left-side-only rounding (Codex style), margin on
+ * top/right/bottom, no left margin (butts against sidebar).
+ * When sidebar collapses the left margin appears.
+ *
+ * Background: glass tiers get semi-transparent bg so native
+ * glass bleeds through the rounded corners. Opaque tier keeps
+ * the stock bg-background. The sidebar-wrapper gets bg-sidebar
+ * on opaque tier so the sidebar color shows behind the corners.
+ * ──────────────────────────────────────────────────────────── */
+
+/* All tiers: card shape, layout constraints.
+ * No margin — the card extends to window edges on top/right/bottom.
+ * Only the left side is rounded, creating visual separation from
+ * the sidebar. The sidebar-wrapper background (visible behind the
+ * rounded corners) must match the sidebar color. */
+[data-slot="sidebar-inset"] {
+  border-top-left-radius: var(--radius-xl);
+  border-bottom-left-radius: var(--radius-xl);
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  box-shadow: -1px 0 3px -1px rgba(0,0,0,0.08);
+  min-height: 0;
+  overflow: clip;
+}
+
+/* Opaque tier: sidebar-wrapper needs bg-sidebar so the correct
+ * color shows behind the rounded left corners of the content card. */
+:root:not(.electron-transparent):not(.electron-vibrancy) [data-slot="sidebar-wrapper"] {
+  background-color: var(--sidebar);
+}
+
+/* Glass tier 1 (Liquid Glass) */
+:root.electron-transparent [data-slot="sidebar-inset"] {
+  background: color-mix(in srgb, var(--background) 93%, transparent) !important;
+}
+
+/* Glass tier 2 (Vibrancy) */
+:root.electron-vibrancy [data-slot="sidebar-inset"] {
+  background: color-mix(in srgb, var(--background) 93%, transparent) !important;
+}
+
+/* Sidebar container — ensure position context for divider pseudo-element */
+[data-slot="sidebar-container"] {
+  position: relative;
+}
+
+/* ============================================================
+ * Superellipse corners — macOS Tahoe visual language
+ *
+ * macOS 26 uses superellipse (squircle) corners. This is purely
+ * additive — browsers that don't support corner-shape ignore it.
+ * ============================================================ */
+@supports (corner-shape: superellipse(1.5)) {
+  :root {
+    --corner-radius-scale: 1.25;
+    --radius: calc(0.625rem * var(--corner-radius-scale));
+  }
+
+  [data-slot="dialog-content"],
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="command"],
+  [data-slot="card"],
+  [data-slot="sheet-content"],
+  [data-slot="sidebar-inset"] {
+    corner-shape: superellipse(1.5);
+  }
+}
+
+/* ============================================================
+ * Titlebar tint — per-conversation accent colors
+ * Applied via document.documentElement.style.setProperty()
+ * ============================================================ */
+@layer components {
+  [data-slot="app-bar"] {
+    background-color: var(--codedeck-titlebar-tint, transparent);
+  }
+}
+
 /* @pierre/diffs — override diff highlight colors with theme palette */
 @layer base {
   :root {
@@ -197,11 +575,21 @@
   }
 }
 
-/* Thin scrollbar — matches shadcn/ui ScrollArea appearance */
+/* Scrollbar — three-state system inspired by Codex
+ * .scrollbar-thin:  always-visible thin scrollbar (current shadcn style)
+ * .scrollbar-auto:  hidden at rest, reveals on hover with smooth transition
+ * Both use idle → hover → active color progression */
 @layer base {
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
+    transition: scrollbar-color var(--duration-fast, 0.15s);
+  }
+  .scrollbar-thin:hover {
+    scrollbar-color: var(--ring) transparent;
+  }
+  .scrollbar-thin:active {
+    scrollbar-color: var(--muted-foreground) transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
     width: 8px;
@@ -215,8 +603,106 @@
     border-radius: 9999px;
     border: 2px solid transparent;
     background-clip: content-box;
+    transition: background-color var(--duration-fast, 0.15s);
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background-color: var(--ring);
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:active {
+    background-color: var(--muted-foreground);
+  }
+
+  /* Auto-hide scrollbar — invisible until hovered */
+  .scrollbar-auto {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color var(--duration-fast, 0.15s);
+  }
+  .scrollbar-auto:hover {
+    scrollbar-color: var(--border) transparent;
+  }
+  .scrollbar-auto:active {
+    scrollbar-color: var(--ring) transparent;
+  }
+  .scrollbar-auto::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-auto::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-auto::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    transition: background-color var(--duration-fast, 0.15s);
+  }
+  .scrollbar-auto:hover::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+  }
+  .scrollbar-auto:hover::-webkit-scrollbar-thumb:hover {
+    background-color: var(--ring);
+  }
+
+  /* Hide scrollbar entirely (for command palette list etc.) */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Loading shimmer — gradient sweep clipped to text, inspired by Codex.
+ * Apply .loading-shimmer to any text element to get the effect.
+ * In dark mode the contrast color is dark; in light mode it's bright.
+ *
+ * Usage:
+ *   <span class="loading-shimmer">Thinking...</span>
+ */
+@layer components {
+  .loading-shimmer {
+    --shimmer-base: var(--muted-foreground);
+    --shimmer-contrast: rgba(255, 255, 255, 0.75);
+    background:
+      var(--shimmer-base)
+      linear-gradient(
+        to right,
+        var(--shimmer-base) 0%,
+        var(--shimmer-contrast) 40%,
+        var(--shimmer-contrast) 60%,
+        var(--shimmer-base) 100%
+      );
+    background-size: 50% 200%;
+    background-position: -100% 0;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: loading-shimmer 2s infinite;
+    display: inline-block;
+  }
+
+  :is(.dark *) .loading-shimmer,
+  .dark .loading-shimmer {
+    --shimmer-contrast: rgba(0, 0, 0, 0.6);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .loading-shimmer {
+      animation: none;
+      -webkit-text-fill-color: var(--muted-foreground);
+      background: none;
+    }
+  }
+}
+
+@keyframes loading-shimmer {
+  0% {
+    background-position: -100% 0;
+  }
+  100% {
+    background-position: 250% 0;
   }
 }

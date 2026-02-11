@@ -1,13 +1,23 @@
 import { Badge } from "@codedeck/ui/components/badge"
 import { Button } from "@codedeck/ui/components/button"
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@codedeck/ui/components/dropdown-menu"
 import { Input } from "@codedeck/ui/components/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
+import { cn } from "@codedeck/ui/lib/utils"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	ArrowLeftIcon,
 	CheckIcon,
+	ChevronDownIcon,
 	CopyIcon,
+	ExternalLinkIcon,
 	PencilIcon,
 	SquareIcon,
 	TerminalIcon,
@@ -24,6 +34,7 @@ import type {
 import { useServerConnection } from "../hooks/use-server"
 import type { ChatTurn } from "../hooks/use-session-chat"
 import type { Agent, AgentStatus, FileAttachment, QuestionAnswer } from "../lib/types"
+import { fetchOpenInTargets, isElectron, openInTarget } from "../services/backend"
 import { useSetAppBarContent } from "./app-bar-context"
 import { ChatView } from "./chat"
 
@@ -280,39 +291,60 @@ function SessionAppBarContent({
 	return (
 		<div className="flex w-full items-center gap-2">
 			{/* Session name — click to edit */}
-			{isEditingTitle ? (
-				<Input
-					ref={titleInputRef}
-					value={titleValue}
-					onChange={(e) => onTitleValueChange(e.target.value)}
-					onKeyDown={(e) => {
-						e.stopPropagation()
-						if (e.key === "Enter") onConfirmTitle()
-						if (e.key === "Escape") onCancelEditing()
-					}}
-					onBlur={onConfirmTitle}
-					className="h-7 min-w-0 flex-shrink border-none bg-transparent p-0 text-sm font-semibold shadow-none focus-visible:ring-0"
-				/>
-			) : (
-				<button
-					type="button"
-					onClick={onRename ? onStartEditing : undefined}
-					className={`group flex min-w-0 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
-				>
-					<h2 className="min-w-0 truncate text-sm font-semibold">{agent.name}</h2>
-					{onRename && (
-						<PencilIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-					)}
-				</button>
-			)}
+			<div
+				className="min-w-0 shrink"
+				style={{
+					// @ts-expect-error -- vendor-prefixed CSS property
+					WebkitAppRegion: "no-drag",
+				}}
+			>
+				{isEditingTitle ? (
+					<Input
+						ref={titleInputRef}
+						value={titleValue}
+						onChange={(e) => onTitleValueChange(e.target.value)}
+						onKeyDown={(e) => {
+							e.stopPropagation()
+							if (e.key === "Enter") onConfirmTitle()
+							if (e.key === "Escape") onCancelEditing()
+						}}
+						onBlur={onConfirmTitle}
+						className="h-7 min-w-0 flex-shrink border-none bg-transparent p-0 text-sm font-semibold shadow-none focus-visible:ring-0"
+					/>
+				) : (
+					<button
+						type="button"
+						onClick={onRename ? onStartEditing : undefined}
+						className={`group flex min-w-0 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
+					>
+						<h2 className="min-w-0 truncate text-xs font-semibold">{agent.name}</h2>
+						{onRename && (
+							<PencilIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+						)}
+					</button>
+				)}
+			</div>
 
 			{/* Project badge */}
-			<Badge variant="secondary" className="shrink-0 text-[11px] font-normal">
+			<Badge
+				variant="secondary"
+				className="shrink-0 text-[11px] font-normal"
+				style={{
+					// @ts-expect-error -- vendor-prefixed CSS property
+					WebkitAppRegion: "no-drag",
+				}}
+			>
 				{agent.project}
 			</Badge>
 
 			{/* Right-aligned items */}
-			<div className="ml-auto flex items-center gap-3">
+			<div
+				className="ml-auto flex items-center gap-3"
+				style={{
+					// @ts-expect-error -- vendor-prefixed CSS property
+					WebkitAppRegion: "no-drag",
+				}}
+			>
 				{/* Status dot + label */}
 				<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
 					<span
@@ -325,6 +357,9 @@ function SessionAppBarContent({
 				{agent.duration && (
 					<span className="text-xs text-muted-foreground/60">{agent.duration}</span>
 				)}
+
+				{/* Open in external editor */}
+				<OpenInButton directory={agent.directory} />
 
 				{/* Open in terminal */}
 				<AttachCommand sessionId={agent.sessionId} directory={agent.directory} />
@@ -357,6 +392,171 @@ function SessionAppBarContent({
 					<XIcon className="size-3.5" />
 				</button>
 			</div>
+		</div>
+	)
+}
+
+// ============================================================
+// Open in external editor/terminal
+// ============================================================
+
+interface OpenInTarget {
+	id: string
+	label: string
+	available: boolean
+}
+
+/**
+ * Static map from target ID to icon filename in `/app-icons/`.
+ * Icons are PNGs except WebStorm (SVG). Sourced from codex-app.
+ */
+const TARGET_ICON: Record<string, string> = {
+	vscode: "app-icons/vscode.png",
+	vscodeInsiders: "app-icons/vscode-insiders.png",
+	cursor: "app-icons/cursor.png",
+	windsurf: "app-icons/windsurf.png",
+	zed: "app-icons/zed.png",
+	finder: "app-icons/finder.png",
+	terminal: "app-icons/terminal.png",
+	iterm2: "app-icons/iterm2.png",
+	ghostty: "app-icons/ghostty.png",
+	warp: "app-icons/warp.png",
+	webstorm: "app-icons/webstorm.svg",
+	intellij: "app-icons/intellij.png",
+	pycharm: "app-icons/pycharm.png",
+	goland: "app-icons/goland.png",
+	rustrover: "app-icons/rustrover.png",
+	xcode: "app-icons/xcode.png",
+}
+
+/**
+ * Renders a small app icon for a target ID. Falls back to the generic
+ * ExternalLinkIcon if no icon is available for the target.
+ */
+function TargetIcon({ targetId, className }: { targetId: string; className?: string }) {
+	const src = TARGET_ICON[targetId]
+	if (!src) return <ExternalLinkIcon className={className} />
+	return (
+		<img alt="" aria-hidden="true" src={src} className={cn("shrink-0 object-contain", className)} />
+	)
+}
+
+/**
+ * Dropdown button that opens the project directory in an available editor,
+ * terminal, or file manager. Fetches targets lazily on first open.
+ *
+ * The primary action (clicking the main button) opens in the preferred target.
+ * The chevron opens a dropdown to choose a different target.
+ */
+function OpenInButton({ directory }: { directory: string }) {
+	const [targets, setTargets] = useState<OpenInTarget[]>([])
+	const [preferred, setPreferred] = useState<string | null>(null)
+	const [loaded, setLoaded] = useState(false)
+	const [opening, setOpening] = useState<string | null>(null)
+
+	const loadTargets = useCallback(async () => {
+		if (loaded) return
+		try {
+			const result = await fetchOpenInTargets()
+			setTargets(result.targets.filter((t) => t.available))
+			setPreferred(result.preferredTarget)
+			setLoaded(true)
+		} catch {
+			// Silently fail — button will show no targets
+			setLoaded(true)
+		}
+	}, [loaded])
+
+	const handleOpen = useCallback(
+		async (targetId: string) => {
+			setOpening(targetId)
+			try {
+				await openInTarget(directory, targetId, true)
+				setPreferred(targetId)
+			} catch {
+				// Silently fail
+			} finally {
+				setOpening(null)
+			}
+		},
+		[directory],
+	)
+
+	const handlePrimaryClick = useCallback(async () => {
+		if (!loaded) {
+			await loadTargets()
+		}
+		// After loading, use preferred or first available
+		const result = await fetchOpenInTargets()
+		const available = result.targets.filter((t) => t.available)
+		const target = result.preferredTarget
+			? available.find((t) => t.id === result.preferredTarget)
+			: available[0]
+		if (target) {
+			handleOpen(target.id)
+		}
+	}, [loaded, loadTargets, handleOpen])
+
+	// Don't show on non-Electron
+	if (!isElectron) return null
+
+	// Resolve the preferred target's icon for the primary button
+	const preferredIcon = preferred && TARGET_ICON[preferred] ? preferred : null
+
+	return (
+		<div className="flex items-center rounded-md border border-border/60">
+			<button
+				type="button"
+				onClick={handlePrimaryClick}
+				disabled={opening !== null}
+				className="flex items-center gap-1.5 rounded-l-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+			>
+				{preferredIcon ? (
+					<TargetIcon targetId={preferredIcon} className="size-3.5" />
+				) : (
+					<ExternalLinkIcon className="size-3" />
+				)}
+				<span>Open</span>
+			</button>
+
+			<DropdownMenu onOpenChange={(open) => open && loadTargets()}>
+				<DropdownMenuTrigger asChild>
+					<button
+						type="button"
+						className="rounded-r-md border-l border-border/60 px-1 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					>
+						<ChevronDownIcon className="size-3" />
+					</button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end" className="min-w-[180px]">
+					{!loaded ? (
+						<DropdownMenuItem disabled>Loading...</DropdownMenuItem>
+					) : targets.length === 0 ? (
+						<DropdownMenuItem disabled>No editors found</DropdownMenuItem>
+					) : (
+						<>
+							{targets.map((target) => (
+								<DropdownMenuItem
+									key={target.id}
+									onClick={() => handleOpen(target.id)}
+									disabled={opening === target.id}
+									className="flex items-center gap-2"
+								>
+									<TargetIcon targetId={target.id} className="size-4" />
+									<span className="flex-1">{target.label}</span>
+									{preferred === target.id && (
+										<CheckIcon className="size-3 shrink-0 text-muted-foreground/60" />
+									)}
+								</DropdownMenuItem>
+							))}
+							<DropdownMenuSeparator />
+							<DropdownMenuItem disabled className="text-[11px] text-muted-foreground/50">
+								{directory}
+							</DropdownMenuItem>
+						</>
+					)}
+				</DropdownMenuContent>
+			</DropdownMenu>
 		</div>
 	)
 }
