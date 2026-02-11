@@ -10,6 +10,7 @@ import { Input } from "@codedeck/ui/components/input"
 import {
 	Sidebar,
 	SidebarContent,
+	SidebarFooter,
 	SidebarGroup,
 	SidebarGroupContent,
 	SidebarGroupLabel,
@@ -33,6 +34,7 @@ import {
 	PencilIcon,
 	PlusIcon,
 	SearchIcon,
+	SettingsIcon,
 	TimerIcon,
 	TrashIcon,
 } from "lucide-react"
@@ -273,6 +275,20 @@ export function AppSidebar({
 					</SidebarGroupContent>
 				</SidebarGroup>
 			</SidebarContent>
+			<SidebarFooter className="p-2">
+				<SidebarMenu>
+					<SidebarMenuItem>
+						<SidebarMenuButton
+							tooltip="Settings"
+							onClick={() => navigate({ to: "/settings" })}
+							className="text-muted-foreground"
+						>
+							<SettingsIcon className="size-4" />
+							<span>Settings</span>
+						</SidebarMenuButton>
+					</SidebarMenuItem>
+				</SidebarMenu>
+			</SidebarFooter>
 			{agents.length === 0 && projects.length === 0 && (
 				<div className="flex flex-1 items-center justify-center p-4">
 					<div className="space-y-2 text-center">

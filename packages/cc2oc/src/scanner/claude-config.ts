@@ -15,8 +15,6 @@ import type {
 	GlobalScanResult,
 	HistoryScanResult,
 	ProjectScanResult,
-	ProjectSessionIndex,
-	PromptHistoryEntry,
 	SkillInfo,
 } from "../types/scan-result"
 import {

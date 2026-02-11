@@ -46,10 +46,12 @@ let eventLoopGeneration = 0
 const SSE_ABORT_KEY = "__codedeck_sse_abort__" as const
 
 function getGlobalAbort(): AbortController | undefined {
+	// biome-ignore lint/suspicious/noExplicitAny: accessing dynamic window property for SSE abort controller
 	return (window as any)[SSE_ABORT_KEY]
 }
 
 function setGlobalAbort(controller: AbortController | null) {
+	// biome-ignore lint/suspicious/noExplicitAny: accessing dynamic window property for SSE abort controller
 	;(window as any)[SSE_ABORT_KEY] = controller
 }
 

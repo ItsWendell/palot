@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Notification } from "electron"
+import { app, BrowserWindow, Notification, net } from "electron"
 import { createLogger } from "./logger"
+import { getNotificationSettings } from "./settings-store"
 
 const log = createLogger("notifications")
 
@@ -12,11 +13,21 @@ export interface NotificationRequest {
 	sessionId: string
 	title: string
 	body: string
+	/** Directory associated with the session (used for permission reply). */
+	directory?: string
 	meta?: {
 		permissionId?: string
 		requestId?: string
 		sessionTitle?: string
 	}
+}
+
+/** The OpenCode server URL, set by the notification watcher when it connects. */
+let serverUrl: string | null = null
+
+/** Set the OpenCode server URL for use in notification action replies. */
+export function setServerUrl(url: string | null): void {
+	serverUrl = url
 }
 
 // ============================================================
@@ -55,9 +66,21 @@ export function showNotification(request: NotificationRequest): void {
 		return
 	}
 
+	// Check if this notification type is enabled in settings
+	const prefs = getNotificationSettings()
+	if (request.type === "permission" && !prefs.permissions) return
+	if (request.type === "question" && !prefs.questions) return
+	if (request.type === "error" && !prefs.errors) return
+	if (request.type === "completed") {
+		if (prefs.completionMode === "off") return
+		// "always" mode: skip the focused check below
+		// "unfocused" mode: normal behavior (suppress when focused)
+	}
+
 	// Suppression: app is focused and not minimized
 	const win = BrowserWindow.getAllWindows()[0]
-	if (win?.isFocused() && !win.isMinimized()) {
+	const isFocused = win?.isFocused() && !win.isMinimized()
+	if (isFocused && !(request.type === "completed" && prefs.completionMode === "always")) {
 		log.debug("Suppressed (window focused)", { type: request.type, session: request.sessionId })
 		return
 	}
@@ -95,6 +118,16 @@ export function dismissNotification(sessionId: string): void {
  * Update the dock badge count (macOS) or app badge (Linux/Windows).
  */
 export function updateBadgeCount(count: number): void {
+	const prefs = getNotificationSettings()
+	if (!prefs.dockBadge) {
+		// Clear any existing badge when disabled
+		if (process.platform === "darwin") {
+			app.dock?.setBadge("")
+		} else {
+			app.setBadgeCount(0)
+		}
+		return
+	}
 	if (process.platform === "darwin") {
 		app.dock?.setBadge(count > 0 ? String(count) : "")
 	} else {
@@ -113,28 +146,45 @@ function fireNotification(request: NotificationRequest): void {
 	// Close any existing notification for this session
 	activeNotifications.get(request.sessionId)?.close()
 
+	// Build notification options — add action buttons for permissions on macOS.
+	// Actions require: (1) signed app, (2) NSUserNotificationAlertStyle=alert in Info.plist.
+	// On unsigned dev builds, actions are silently ignored (no crash).
+	const isMac = process.platform === "darwin"
+	const hasPermissionActions =
+		isMac && request.type === "permission" && request.meta?.permissionId && serverUrl
+
 	const notification = new Notification({
 		title: request.title,
 		body: request.body,
 		silent: false,
+		...(hasPermissionActions && {
+			actions: [
+				{ type: "button" as const, text: "Allow" },
+				{ type: "button" as const, text: "Deny" },
+			],
+		}),
 	})
 
 	notification.on("click", () => {
-		const win = BrowserWindow.getAllWindows()[0]
-		if (win) {
-			if (win.isMinimized()) win.restore()
-			win.focus()
-			// Tell renderer to navigate to the session
-			win.webContents.send("notification:navigate", {
-				sessionId: request.sessionId,
-			})
-		}
+		navigateToSession(request.sessionId)
 		activeNotifications.delete(request.sessionId)
 	})
 
 	notification.on("close", () => {
 		activeNotifications.delete(request.sessionId)
 	})
+
+	// macOS action button handler — Approve or Deny directly from the notification
+	if (hasPermissionActions) {
+		notification.on("action", (_event, index) => {
+			const permissionId = request.meta?.permissionId
+			if (!permissionId || !serverUrl) return
+
+			// index 0 = "Allow", index 1 = "Deny"
+			const response = index === 0 ? "once" : "reject"
+			replyToPermission(serverUrl, request.sessionId, permissionId, response, request.directory)
+		})
+	}
 
 	activeNotifications.set(request.sessionId, notification)
 	notification.show()
@@ -146,6 +196,53 @@ function fireNotification(request: NotificationRequest): void {
 	}
 
 	log.info("Notification shown", { type: request.type, session: request.sessionId })
+}
+
+/** Navigate the renderer to a specific session (used on notification click). */
+function navigateToSession(sessionId: string): void {
+	const win = BrowserWindow.getAllWindows()[0]
+	if (win) {
+		if (win.isMinimized()) win.restore()
+		win.focus()
+		win.webContents.send("notification:navigate", { sessionId })
+	}
+}
+
+/**
+ * Reply to a permission request directly from the main process.
+ * Calls the OpenCode server's permission respond endpoint via net.fetch().
+ */
+async function replyToPermission(
+	url: string,
+	sessionId: string,
+	permissionId: string,
+	response: "once" | "always" | "reject",
+	directory?: string,
+): Promise<void> {
+	try {
+		const endpoint = `${url}/session/${sessionId}/permissions/${permissionId}`
+		const headers: Record<string, string> = { "Content-Type": "application/json" }
+		if (directory) {
+			headers["x-opencode-directory"] = directory
+		}
+		const res = await net.fetch(endpoint, {
+			method: "POST",
+			headers,
+			body: JSON.stringify({ response }),
+		})
+		if (!res.ok) {
+			const body = await res.text()
+			log.error("Permission reply failed", { status: res.status, body })
+		} else {
+			log.info("Permission replied via notification action", {
+				sessionId,
+				permissionId,
+				response,
+			})
+		}
+	} catch (err) {
+		log.error("Failed to reply to permission from notification", err)
+	}
 }
 
 function batchPermissionNotification(request: NotificationRequest): void {

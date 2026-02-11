@@ -1,6 +1,6 @@
 import { net } from "electron"
 import { createLogger } from "./logger"
-import { showNotification, updateBadgeCount } from "./notifications"
+import { setServerUrl, showNotification, updateBadgeCount } from "./notifications"
 
 const log = createLogger("notification-watcher")
 
@@ -11,6 +11,7 @@ const log = createLogger("notification-watcher")
 interface SessionState {
 	status: string // "busy" | "idle" | "retry"
 	title: string
+	directory?: string
 }
 
 // ============================================================
@@ -45,6 +46,9 @@ export function startNotificationWatcher(url: string): void {
 	abortController = new AbortController()
 	pendingCount = 0
 
+	// Make the server URL available for notification action replies
+	setServerUrl(url)
+
 	log.info("Starting notification watcher", { url })
 	connectWithRetry(url, abortController.signal)
 }
@@ -60,6 +64,7 @@ export function stopNotificationWatcher(): void {
 	sessions.clear()
 	pendingCount = 0
 	updateBadgeCount(0)
+	setServerUrl(null)
 	log.info("Notification watcher stopped")
 }
 
@@ -169,6 +174,8 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 	const eventType = event.type
 	const props = event.properties
 
+	const directory = globalEvent.directory
+
 	switch (eventType) {
 		case "permission.updated": {
 			const sessionId = props.sessionID as string
@@ -180,6 +187,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 				sessionId,
 				title: "Agent needs permission",
 				body: title || "Approval required",
+				directory,
 				meta: { permissionId: props.id as string },
 			})
 			break
@@ -202,6 +210,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 				sessionId,
 				title: "Agent has a question",
 				body: header,
+				directory,
 				meta: { requestId: props.id as string },
 			})
 			break
@@ -226,6 +235,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 			sessions.set(sessionId, {
 				status: newStatusType,
 				title: prev?.title ?? "",
+				directory: directory ?? prev?.directory,
 			})
 
 			// Detect busy/retry -> idle transition (agent completed)
@@ -236,6 +246,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 					sessionId,
 					title: "Agent finished",
 					body: sessionTitle || "Task completed",
+					directory,
 				})
 			}
 			break
@@ -250,19 +261,21 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 				sessionId,
 				title: "Agent encountered an error",
 				body: error?.name ?? "Unknown error",
+				directory,
 			})
 			break
 		}
 
 		case "session.created":
 		case "session.updated": {
-			// Track session title for use in completion notifications
+			// Track session title and directory for use in completion notifications
 			const info = props.info as { id?: string; title?: string } | undefined
 			if (info?.id) {
 				const existing = sessions.get(info.id)
 				sessions.set(info.id, {
 					status: existing?.status ?? "idle",
 					title: info.title ?? existing?.title ?? "",
+					directory: directory ?? existing?.directory,
 				})
 			}
 			break

@@ -214,7 +214,17 @@ export function useCommands(
 		})
 
 		return cmds
-	}, [canUndo, canRedo, undo, redo, directory, sessionId, isIdle, options?.onUndoTextRestore])
+	}, [
+		canUndo,
+		canRedo,
+		undo,
+		redo,
+		directory,
+		sessionId,
+		isIdle,
+		options?.onUndoTextRestore,
+		options,
+	])
 
 	const allCommands = useMemo<AppCommand[]>(() => {
 		const serverCmds: AppCommand[] = serverCommands.map((cmd) => ({

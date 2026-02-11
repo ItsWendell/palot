@@ -134,6 +134,26 @@ export interface OpenInTargetsResult {
 }
 
 // ============================================================
+// Settings types (shared between main process and renderer)
+// ============================================================
+
+export type CompletionNotificationMode = "off" | "unfocused" | "always"
+
+export interface NotificationSettings {
+	completionMode: CompletionNotificationMode
+	permissions: boolean
+	questions: boolean
+	errors: boolean
+	dockBadge: boolean
+}
+
+export interface AppSettings {
+	notifications: NotificationSettings
+	/** Whether the user prefers opaque (solid) windows. Read at window creation time. */
+	opaqueWindows: boolean
+}
+
+// ============================================================
 // CLI install types
 // ============================================================
 
@@ -232,6 +252,14 @@ export interface CodedeckAPI {
 	dismissNotification: (sessionId: string) => Promise<void>
 	/** Update the dock badge / app badge count. */
 	updateBadgeCount: (count: number) => Promise<void>
+
+	// Settings
+	/** Get the full app settings object. */
+	getSettings: () => Promise<AppSettings>
+	/** Update settings with a partial object (deep-merged). Returns the updated settings. */
+	updateSettings: (partial: Record<string, unknown>) => Promise<AppSettings>
+	/** Subscribe to settings changes pushed from the main process. */
+	onSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
 }
 
 declare global {

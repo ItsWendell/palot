@@ -9,6 +9,7 @@ import { NewChat } from "./components/new-chat"
 import { NotFoundPage } from "./components/not-found-page"
 import { RootLayout } from "./components/root-layout"
 import { SessionRoute } from "./components/session-route"
+import { SettingsPage } from "./components/settings/settings-page"
 
 // ============================================================
 // Route tree
@@ -43,8 +44,15 @@ const sessionRoute = createRoute({
 	component: SessionRoute,
 })
 
+const settingsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "settings",
+	component: SettingsPage,
+})
+
 const routeTree = rootRoute.addChildren([
 	indexRoute,
+	settingsRoute,
 	projectRoute.addChildren([projectIndexRoute, sessionRoute]),
 ])
 

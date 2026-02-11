@@ -99,7 +99,7 @@ export function resolveEffectiveModel(
 	if (recentModels) {
 		for (const recent of recentModels) {
 			const provider = providers.find((p) => p.id === recent.providerID)
-			if (provider && provider.models[recent.modelID]) {
+			if (provider?.models[recent.modelID]) {
 				return recent
 			}
 		}

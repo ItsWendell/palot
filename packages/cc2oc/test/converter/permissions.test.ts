@@ -70,8 +70,8 @@ describe("convertPermissions", () => {
 		const { permission, report } = convertPermissions({
 			allow: ["Bash(npm run build)", "Read"],
 		})
-		expect(permission["bash"]).toEqual({ "npm run build": "allow" })
-		expect(permission["read"]).toBe("allow")
+		expect(permission.bash).toEqual({ "npm run build": "allow" })
+		expect(permission.read).toBe("allow")
 		expect(report.migrated.length).toBe(2)
 	})
 
@@ -79,7 +79,7 @@ describe("convertPermissions", () => {
 		const { permission } = convertPermissions({
 			deny: ["Bash(rm -rf *)"],
 		})
-		expect(permission["bash"]).toEqual({ "rm -rf *": "deny" })
+		expect(permission.bash).toEqual({ "rm -rf *": "deny" })
 	})
 
 	test("merges allow and deny for same tool", () => {
@@ -87,7 +87,7 @@ describe("convertPermissions", () => {
 			allow: ["Bash(git *)"],
 			deny: ["Bash(rm -rf *)"],
 		})
-		expect(permission["bash"]).toEqual({
+		expect(permission.bash).toEqual({
 			"git *": "allow",
 			"rm -rf *": "deny",
 		})
@@ -95,8 +95,8 @@ describe("convertPermissions", () => {
 
 	test("processes per-project allowedTools", () => {
 		const { permission } = convertPermissions(undefined, ["Read", "Edit", "Bash(npm run *)"])
-		expect(permission["read"]).toBe("allow")
-		expect(permission["edit"]).toBe("allow")
+		expect(permission.read).toBe("allow")
+		expect(permission.edit).toBe("allow")
 	})
 
 	test("simplifies single wildcard patterns", () => {
@@ -104,7 +104,7 @@ describe("convertPermissions", () => {
 			allow: ["Read"],
 		})
 		// Should be simplified from {"*": "allow"} to just "allow"
-		expect(permission["read"]).toBe("allow")
+		expect(permission.read).toBe("allow")
 	})
 
 	test("warns on unknown tool names", () => {
@@ -126,10 +126,10 @@ describe("convertPermissions", () => {
 describe("convertToolListToPermissions", () => {
 	test("converts comma-separated tool list", () => {
 		const result = convertToolListToPermissions("Read, Edit, Bash, Grep")
-		expect(result["read"]).toBe("allow")
-		expect(result["edit"]).toBe("allow")
-		expect(result["bash"]).toBe("ask") // Bash defaults to ask for safety
-		expect(result["grep"]).toBe("allow")
+		expect(result.read).toBe("allow")
+		expect(result.edit).toBe("allow")
+		expect(result.bash).toBe("ask") // Bash defaults to ask for safety
+		expect(result.grep).toBe("allow")
 	})
 
 	test("handles empty string", () => {

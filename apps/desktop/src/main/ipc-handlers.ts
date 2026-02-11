@@ -1,5 +1,4 @@
-import path from "node:path"
-import { app, dialog, ipcMain, nativeTheme, net } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net } from "electron"
 import { installCli, isCliInstalled, uninstallCli } from "./cli-install"
 import { discover } from "./discovery"
 import { checkout, getStatus, listBranches, stashAndCheckout, stashPop } from "./git-service"
@@ -10,46 +9,13 @@ import { readModelState, updateModelRecent } from "./model-state"
 import { dismissNotification, updateBadgeCount } from "./notifications"
 import { getOpenInTargets, openInTarget, setPreferredTarget } from "./open-in-targets"
 import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
+import { getOpaqueWindows, getSettings, onSettingsChanged, updateSettings } from "./settings-store"
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from "./updater"
 
 const log = createLogger("ipc")
 
-// ============================================================
-// Simple JSON preferences file for main-process-readable settings.
-// Stored in userData (e.g. ~/Library/Application Support/Codedeck/preferences.json).
-// Only settings that the main process needs at window creation time go here.
-// ============================================================
-
-const PREFS_FILE = () => path.join(app.getPath("userData"), "preferences.json")
-
-interface MainPreferences {
-	opaqueWindows?: boolean
-}
-
-function readMainPreferences(): MainPreferences {
-	try {
-		const fs = require("node:fs") as typeof import("node:fs")
-		const data = fs.readFileSync(PREFS_FILE(), "utf-8")
-		return JSON.parse(data) as MainPreferences
-	} catch {
-		return {}
-	}
-}
-
-function writeMainPreferences(prefs: MainPreferences): void {
-	try {
-		const fs = require("node:fs") as typeof import("node:fs")
-		fs.mkdirSync(path.dirname(PREFS_FILE()), { recursive: true })
-		fs.writeFileSync(PREFS_FILE(), JSON.stringify(prefs, null, 2), "utf-8")
-	} catch (err) {
-		log.error("Failed to write preferences:", err)
-	}
-}
-
 /** Read the opaque windows preference for use at window creation time. */
-export function getOpaqueWindowsPref(): boolean {
-	return readMainPreferences().opaqueWindows === true
-}
+export { getOpaqueWindows as getOpaqueWindowsPref } from "./settings-store"
 
 // ============================================================
 // Serialized fetch types — used to pass Request/Response over IPC
@@ -278,13 +244,11 @@ export function registerIpcHandlers(): void {
 	// --- Window preferences (opaque windows) ---
 
 	ipcMain.handle("prefs:get-opaque-windows", () => {
-		return readMainPreferences().opaqueWindows === true
+		return getOpaqueWindows()
 	})
 
 	ipcMain.handle("prefs:set-opaque-windows", (_, value: boolean) => {
-		const prefs = readMainPreferences()
-		prefs.opaqueWindows = value
-		writeMainPreferences(prefs)
+		updateSettings({ opaqueWindows: value })
 		return { success: true }
 	})
 
@@ -303,6 +267,12 @@ export function registerIpcHandlers(): void {
 		updateBadgeCount(count)
 	})
 
+	// --- Settings ---
+
+	ipcMain.handle("settings:get", () => getSettings())
+
+	ipcMain.handle("settings:update", (_, partial) => updateSettings(partial))
+
 	// --- Native theme (controls macOS glass tint color) ---
 
 	ipcMain.handle("theme:set-native", (_, source: string) => {
@@ -310,6 +280,15 @@ export function registerIpcHandlers(): void {
 			nativeTheme.themeSource = source
 		} else {
 			nativeTheme.themeSource = "system"
+		}
+	})
+
+	// --- Settings push channel (main -> renderer) ---
+	// Notify all renderer windows when settings change so they can update reactively.
+
+	onSettingsChanged((settings) => {
+		for (const win of BrowserWindow.getAllWindows()) {
+			win.webContents.send("settings:changed", settings)
 		}
 	})
 }

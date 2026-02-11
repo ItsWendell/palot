@@ -165,7 +165,7 @@ function buildProviderConfig(
 
 	if (env.ANTHROPIC_API_KEY) {
 		// Don't copy the actual key
-		providers["anthropic"] = {
+		providers.anthropic = {
 			options: { apiKey: "{env:ANTHROPIC_API_KEY}" },
 		}
 		report.warnings.push(

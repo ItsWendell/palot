@@ -164,4 +164,22 @@ contextBridge.exposeInMainWorld("codedeck", {
 
 	/** Update the dock badge / app badge count. */
 	updateBadgeCount: (count: number) => ipcRenderer.invoke("notification:badge", count),
+
+	// --- Settings ---
+
+	/** Get the full app settings object. */
+	getSettings: () => ipcRenderer.invoke("settings:get"),
+
+	/** Update settings with a partial object (deep-merged). */
+	updateSettings: (partial: Record<string, unknown>) =>
+		ipcRenderer.invoke("settings:update", partial),
+
+	/** Subscribe to settings changes pushed from the main process. */
+	onSettingsChanged: (callback: (settings: unknown) => void) => {
+		const listener = (_event: unknown, settings: unknown) => callback(settings)
+		ipcRenderer.on("settings:changed", listener)
+		return () => {
+			ipcRenderer.removeListener("settings:changed", listener)
+		}
+	},
 })

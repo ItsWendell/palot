@@ -18,7 +18,7 @@ import type {
 } from "../types/conversion-result"
 import type { MigrationReport } from "../types/report"
 import { createEmptyReport } from "../types/report"
-import type { HistoryScanResult, PromptHistoryEntry } from "../types/scan-result"
+import type { HistoryScanResult } from "../types/scan-result"
 import { readJsonl } from "../utils/fs"
 
 /**

@@ -27,7 +27,7 @@ export function convertCommands(commands: CommandFile[]): CommandConversionResul
 	for (const cmd of commands) {
 		try {
 			const converted = convertSingleCommand(cmd)
-			result.set(cmd.name + ".md", converted)
+			result.set(`${cmd.name}.md`, converted)
 			report.migrated.push({
 				category: "commands",
 				source: cmd.path,

@@ -1,5 +1,11 @@
 import { Button } from "@codedeck/ui/components/button"
-import { Loader2Icon, MessageCircleQuestionIcon } from "lucide-react"
+import {
+	ArrowRightIcon,
+	Loader2Icon,
+	MessageCircleQuestionIcon,
+	SendIcon,
+	SkipForwardIcon,
+} from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import type { QuestionAnswer, QuestionInfo, QuestionRequest } from "../../lib/types"
 
@@ -7,8 +13,9 @@ import type { QuestionAnswer, QuestionInfo, QuestionRequest } from "../../lib/ty
 // Types
 // ---------------------------------------------------------------------------
 
-interface ChatQuestionCardProps {
-	question: QuestionRequest
+interface ChatQuestionFlowProps {
+	/** All pending question requests for this agent */
+	questions: QuestionRequest[]
 	onReply: (requestId: string, answers: QuestionAnswer[]) => Promise<void>
 	onReject: (requestId: string) => Promise<void>
 	disabled?: boolean
@@ -32,17 +39,15 @@ function buildAnswers(
 	})
 }
 
-/** Check that every question has at least one answer selected or typed. */
-function isComplete(
-	questions: QuestionInfo[],
+/** Check that a single question index has at least one answer selected or typed. */
+function isQuestionAnswered(
+	index: number,
 	selections: Map<number, Set<string>>,
 	customTexts: Map<number, string>,
 ): boolean {
-	return questions.every((_, idx) => {
-		const selected = selections.get(idx)
-		const custom = (customTexts.get(idx) ?? "").trim()
-		return (selected && selected.size > 0) || custom.length > 0
-	})
+	const selected = selections.get(index)
+	const custom = (customTexts.get(index) ?? "").trim()
+	return (selected && selected.size > 0) || custom.length > 0
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +61,7 @@ interface QuestionSectionProps {
 	customText: string
 	onToggle: (index: number, label: string) => void
 	onCustomChange: (index: number, value: string) => void
+	onSubmitCustom?: () => void
 	disabled: boolean
 }
 
@@ -66,6 +72,7 @@ function QuestionSection({
 	customText,
 	onToggle,
 	onCustomChange,
+	onSubmitCustom,
 	disabled,
 }: QuestionSectionProps) {
 	const isMultiple = info.multiple === true
@@ -140,6 +147,12 @@ function QuestionSection({
 						type="text"
 						value={customText}
 						onChange={(e) => onCustomChange(index, e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && !e.shiftKey) {
+								e.preventDefault()
+								onSubmitCustom?.()
+							}
+						}}
 						placeholder="Type a custom answer..."
 						disabled={disabled}
 						className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
@@ -151,23 +164,107 @@ function QuestionSection({
 }
 
 // ---------------------------------------------------------------------------
-// Main component
+// Progress dots
 // ---------------------------------------------------------------------------
 
-export const ChatQuestionCard = memo(function ChatQuestionCard({
-	question,
+function StepDots({
+	total,
+	current,
+	answered,
+}: {
+	total: number
+	current: number
+	answered: Set<number>
+}) {
+	if (total <= 1) return null
+	const dots = []
+	for (let i = 0; i < total; i++) {
+		dots.push(
+			<span
+				key={`dot-${i}-of-${total}`}
+				className={`size-1.5 rounded-full transition-colors ${
+					i === current
+						? "bg-foreground"
+						: answered.has(i)
+							? "bg-foreground/40"
+							: "bg-muted-foreground/25"
+				}`}
+				aria-hidden="true"
+			/>,
+		)
+	}
+	return (
+		<span className="flex items-center gap-1" aria-hidden="true">
+			{dots}
+		</span>
+	)
+}
+
+// ---------------------------------------------------------------------------
+// Main component: question flow (replaces chat input entirely)
+// ---------------------------------------------------------------------------
+
+export const ChatQuestionFlow = memo(function ChatQuestionFlow({
+	questions,
 	onReply,
 	onReject,
 	disabled = false,
-}: ChatQuestionCardProps) {
+}: ChatQuestionFlowProps) {
+	// Current question request being worked on (first in the queue)
+	const currentRequest = questions[0]
+	if (!currentRequest) return null
+
+	return (
+		<QuestionRequestStepper
+			key={currentRequest.id}
+			request={currentRequest}
+			totalRequests={questions.length}
+			onReply={onReply}
+			onReject={onReject}
+			disabled={disabled}
+		/>
+	)
+})
+
+// ---------------------------------------------------------------------------
+// Inner component: handles stepping through QuestionInfos in one request
+// ---------------------------------------------------------------------------
+
+interface QuestionRequestStepperProps {
+	request: QuestionRequest
+	totalRequests: number
+	onReply: (requestId: string, answers: QuestionAnswer[]) => Promise<void>
+	onReject: (requestId: string) => Promise<void>
+	disabled: boolean
+}
+
+const QuestionRequestStepper = memo(function QuestionRequestStepper({
+	request,
+	totalRequests,
+	onReply,
+	onReject,
+	disabled,
+}: QuestionRequestStepperProps) {
+	const questions = request.questions
+	const totalSteps = questions.length
+
+	const [currentStep, setCurrentStep] = useState(0)
 	const [selections, setSelections] = useState<Map<number, Set<string>>>(() => new Map())
 	const [customTexts, setCustomTexts] = useState<Map<number, string>>(() => new Map())
 	const [submitting, setSubmitting] = useState(false)
 	const cardRef = useRef<HTMLElement>(null)
 
-	const questions = question.questions
+	const currentQuestion = questions[currentStep]
+	const isLastStep = currentStep === totalSteps - 1
+	const currentAnswered = isQuestionAnswered(currentStep, selections, customTexts)
 
-	const canSubmit = !disabled && !submitting && isComplete(questions, selections, customTexts)
+	// Track which steps have been answered
+	const answeredSteps = new Set<number>()
+	for (let i = 0; i < totalSteps; i++) {
+		if (isQuestionAnswered(i, selections, customTexts)) {
+			answeredSteps.add(i)
+		}
+	}
 
 	// --- Selection toggle ---
 	const handleToggle = useCallback(
@@ -203,116 +300,193 @@ export const ChatQuestionCard = memo(function ChatQuestionCard({
 		})
 	}, [])
 
-	// --- Submit ---
+	// --- Advance to next step or submit ---
+	const handleNext = useCallback(() => {
+		if (!currentAnswered || disabled || submitting) return
+		if (!isLastStep) {
+			setCurrentStep((s) => s + 1)
+		}
+	}, [currentAnswered, disabled, submitting, isLastStep])
+
+	// --- Submit all answers ---
 	const handleSubmit = useCallback(async () => {
-		if (!canSubmit) return
+		if (disabled || submitting) return
+		// If on last step, current must be answered. Otherwise all must be answered.
+		if (isLastStep && !currentAnswered) return
 		setSubmitting(true)
 		try {
 			const answers = buildAnswers(questions, selections, customTexts)
-			await onReply(question.id, answers)
+			await onReply(request.id, answers)
 		} finally {
 			setSubmitting(false)
 		}
-	}, [canSubmit, questions, selections, customTexts, onReply, question.id])
+	}, [
+		disabled,
+		submitting,
+		isLastStep,
+		currentAnswered,
+		questions,
+		selections,
+		customTexts,
+		onReply,
+		request.id,
+	])
 
-	// --- Dismiss ---
-	const handleDismiss = useCallback(async () => {
+	// Combined handler: next or submit
+	const handleAdvance = useCallback(() => {
+		if (isLastStep) {
+			handleSubmit()
+		} else {
+			handleNext()
+		}
+	}, [isLastStep, handleSubmit, handleNext])
+
+	// --- Skip entire request ---
+	const handleSkip = useCallback(async () => {
 		if (disabled || submitting) return
 		setSubmitting(true)
 		try {
-			await onReject(question.id)
+			await onReject(request.id)
 		} finally {
 			setSubmitting(false)
 		}
-	}, [disabled, submitting, onReject, question.id])
+	}, [disabled, submitting, onReject, request.id])
+
+	// --- Go back ---
+	const handleBack = useCallback(() => {
+		if (currentStep > 0) setCurrentStep((s) => s - 1)
+	}, [currentStep])
 
 	// --- Keyboard shortcuts ---
 	useEffect(() => {
 		function handleKeyDown(e: KeyboardEvent) {
-			if (
-				!cardRef.current?.contains(document.activeElement) &&
-				document.activeElement !== cardRef.current
-			) {
-				return
+			// Allow Enter from custom input to advance
+			if (e.target instanceof HTMLInputElement && e.target.id?.startsWith("question-custom-")) {
+				return // handled by onSubmitCustom prop
 			}
 
-			if (e.key === "Enter" && !e.shiftKey && canSubmit) {
+			if (e.key === "Enter" && !e.shiftKey && currentAnswered) {
 				e.preventDefault()
-				handleSubmit()
+				handleAdvance()
 			} else if (e.key === "Escape") {
 				e.preventDefault()
-				handleDismiss()
+				handleSkip()
 			}
 		}
 
 		document.addEventListener("keydown", handleKeyDown)
 		return () => document.removeEventListener("keydown", handleKeyDown)
-	}, [canSubmit, handleSubmit, handleDismiss])
+	}, [currentAnswered, handleAdvance, handleSkip])
 
-	// --- Auto-focus the card on mount for keyboard accessibility ---
+	// --- Auto-focus the card on mount and step change ---
 	useEffect(() => {
-		cardRef.current?.focus()
-	}, [])
+		// Focus the custom input if available, otherwise the card
+		const timer = requestAnimationFrame(() => {
+			const customInput = document.getElementById(
+				`question-custom-${currentStep}`,
+			) as HTMLInputElement | null
+			if (customInput) {
+				customInput.focus()
+			} else {
+				cardRef.current?.focus()
+			}
+		})
+		return () => cancelAnimationFrame(timer)
+	}, [currentStep])
+
+	if (!currentQuestion) return null
 
 	return (
 		<section
 			ref={cardRef}
 			tabIndex={-1}
 			aria-label="Agent question"
-			className="mb-2 animate-in fade-in slide-in-from-bottom-2 rounded-xl border border-border bg-card outline-none duration-300"
+			className="animate-in fade-in slide-in-from-bottom-2 rounded-xl border border-border bg-card outline-none duration-300"
 		>
-			{/* Questions */}
-			{questions.map((q: QuestionInfo, idx: number) => (
-				<div key={`${question.id}-q-${idx}`}>
-					{/* Header row */}
-					<div
-						className={`flex items-center gap-2 px-3 py-2 text-sm ${
-							idx > 0 ? "border-t border-border" : ""
-						}`}
-					>
-						<MessageCircleQuestionIcon
-							className="size-4 shrink-0 text-muted-foreground"
-							aria-hidden="true"
-						/>
-						<span className="flex-1 text-foreground">{q.question}</span>
-					</div>
+			{/* Header */}
+			<div className="flex items-center gap-2 px-3 py-2 text-sm">
+				<MessageCircleQuestionIcon
+					className="size-4 shrink-0 text-muted-foreground"
+					aria-hidden="true"
+				/>
+				<span className="flex-1 text-foreground">{currentQuestion.question}</span>
+				{totalRequests > 1 && (
+					<span className="shrink-0 text-[11px] text-muted-foreground">
+						+{totalRequests - 1} more
+					</span>
+				)}
+			</div>
 
-					{/* Content */}
-					<div className="border-t border-border">
-						<QuestionSection
-							info={q}
-							index={idx}
-							selected={selections.get(idx) ?? new Set()}
-							customText={customTexts.get(idx) ?? ""}
-							onToggle={handleToggle}
-							onCustomChange={handleCustomChange}
+			{/* Question content */}
+			<div className="border-t border-border">
+				<QuestionSection
+					info={currentQuestion}
+					index={currentStep}
+					selected={selections.get(currentStep) ?? new Set()}
+					customText={customTexts.get(currentStep) ?? ""}
+					onToggle={handleToggle}
+					onCustomChange={handleCustomChange}
+					onSubmitCustom={currentAnswered ? handleAdvance : undefined}
+					disabled={disabled || submitting}
+				/>
+			</div>
+
+			{/* Footer with navigation */}
+			<div className="flex items-center gap-2 border-t border-border px-3 py-2">
+				{/* Left side: back + step dots */}
+				<div className="flex flex-1 items-center gap-2">
+					{currentStep > 0 && (
+						<button
+							type="button"
+							onClick={handleBack}
 							disabled={disabled || submitting}
-						/>
-					</div>
+							className="text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							Back
+						</button>
+					)}
+					<StepDots total={totalSteps} current={currentStep} answered={answeredSteps} />
 				</div>
-			))}
 
-			{/* Footer */}
-			<div className="flex items-center justify-end gap-2 border-t border-border px-3 py-2">
+				{/* Right side: skip + action button */}
 				<button
 					type="button"
-					onClick={handleDismiss}
+					onClick={handleSkip}
 					disabled={disabled || submitting}
-					className="text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+					className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
 					aria-label="Skip question"
 				>
+					<SkipForwardIcon className="size-3" aria-hidden="true" />
 					Skip
 				</button>
-				<Button
-					size="sm"
-					onClick={handleSubmit}
-					disabled={!canSubmit}
-					className="h-7 text-xs"
-					aria-label="Send answer"
-				>
-					{submitting && <Loader2Icon className="size-3 animate-spin" aria-hidden="true" />}
-					Send
-				</Button>
+				{isLastStep ? (
+					<Button
+						size="sm"
+						onClick={handleSubmit}
+						disabled={!currentAnswered || disabled || submitting}
+						className="h-7 gap-1 text-xs"
+						aria-label="Send answer"
+					>
+						{submitting ? (
+							<Loader2Icon className="size-3 animate-spin" aria-hidden="true" />
+						) : (
+							<SendIcon className="size-3" aria-hidden="true" />
+						)}
+						Send
+					</Button>
+				) : (
+					<Button
+						size="sm"
+						variant="secondary"
+						onClick={handleNext}
+						disabled={!currentAnswered || disabled || submitting}
+						className="h-7 gap-1 text-xs"
+						aria-label="Next question"
+					>
+						Next
+						<ArrowRightIcon className="size-3" aria-hidden="true" />
+					</Button>
+				)}
 			</div>
 		</section>
 	)

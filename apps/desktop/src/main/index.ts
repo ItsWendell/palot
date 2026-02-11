@@ -5,6 +5,7 @@ import { getOpaqueWindowsPref, registerIpcHandlers } from "./ipc-handlers"
 import { installLiquidGlass, resolveWindowChrome } from "./liquid-glass"
 import { createLogger } from "./logger"
 import { stopServer } from "./opencode-manager"
+import { initSettingsStore } from "./settings-store"
 import { fixProcessEnv } from "./shell-env"
 import { initAutoUpdater, stopAutoUpdater } from "./updater"
 
@@ -196,6 +197,7 @@ if (!gotLock) {
 		)
 		log.info("Registered PNA header injection for 127.0.0.1 requests")
 
+		initSettingsStore()
 		registerIpcHandlers()
 		createWindow()
 		initAutoUpdater().catch(console.error)

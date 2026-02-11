@@ -94,6 +94,7 @@ export function processEvent(event: Event): void {
 		case "permission.updated":
 			set(addPermissionAtom, {
 				sessionId: event.properties.sessionID,
+				// biome-ignore lint/suspicious/noExplicitAny: event properties are untyped from SSE
 				permission: event.properties as any,
 			})
 			break

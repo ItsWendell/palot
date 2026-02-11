@@ -6,7 +6,6 @@
  */
 import { describe, expect, it } from "bun:test"
 import { scan } from "../../src/scanner"
-import type { ScanResult } from "../../src/types/scan-result"
 
 describe("scanner", () => {
 	describe("scan() with real filesystem", () => {
@@ -55,7 +54,7 @@ describe("scanner", () => {
 
 			// If userState has projects, scanner should find them
 			if (result.global.userState?.projects) {
-				const projectPaths = Object.keys(result.global.userState.projects)
+				const _projectPaths = Object.keys(result.global.userState.projects)
 				// Should have scanned each project
 				expect(result.projects.length).toBeGreaterThanOrEqual(0)
 

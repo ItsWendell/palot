@@ -10,7 +10,7 @@ import type { MigrationReport } from "../types/report"
 import { createEmptyReport } from "../types/report"
 import type { AgentFile } from "../types/scan-result"
 import { serializeFrontmatter } from "../utils/yaml"
-import { detectProvider, translateModelId } from "./model-id"
+import { translateModelId } from "./model-id"
 import { convertToolListToPermissions } from "./permissions"
 
 export interface AgentConversionInput {
@@ -35,7 +35,7 @@ export function convertAgents(input: AgentConversionInput): AgentConversionResul
 	for (const agent of input.agents) {
 		try {
 			const converted = convertSingleAgent(agent, input.provider, input.modelOverrides)
-			agents.set(agent.name + ".md", converted)
+			agents.set(`${agent.name}.md`, converted)
 			report.migrated.push({
 				category: "agents",
 				source: agent.path,

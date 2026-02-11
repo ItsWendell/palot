@@ -173,7 +173,7 @@ function validateConfig(
 }
 
 function validateMcp(
-	name: string,
+	_name: string,
 	mcp: unknown,
 	prefix: string,
 	errors: ValidationError[],

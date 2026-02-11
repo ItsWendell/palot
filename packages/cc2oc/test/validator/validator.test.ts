@@ -73,6 +73,7 @@ describe("validate", () => {
 			makeConversion({
 				globalConfig: {
 					mcp: {
+						// biome-ignore lint/suspicious/noExplicitAny: testing with intentionally invalid data
 						broken: { type: "local", command: [] } as any,
 					},
 				},
@@ -87,6 +88,7 @@ describe("validate", () => {
 			makeConversion({
 				globalConfig: {
 					mcp: {
+						// biome-ignore lint/suspicious/noExplicitAny: testing with intentionally invalid data
 						broken: { type: "remote" } as any,
 					},
 				},
@@ -101,6 +103,7 @@ describe("validate", () => {
 			makeConversion({
 				globalConfig: {
 					mcp: {
+						// biome-ignore lint/suspicious/noExplicitAny: testing with intentionally invalid data
 						broken: { command: ["node"] } as any,
 					},
 				},
@@ -143,6 +146,7 @@ describe("validate", () => {
 			makeConversion({
 				globalConfig: {
 					agent: {
+						// biome-ignore lint/suspicious/noExplicitAny: testing with intentionally invalid data
 						bad: { mode: "invalid" as any },
 					},
 				},
@@ -181,6 +185,7 @@ describe("validate", () => {
 		const result = validate(
 			makeConversion({
 				globalConfig: {
+					// biome-ignore lint/suspicious/noExplicitAny: testing with intentionally invalid data
 					permission: { "*": "invalid" as any },
 				},
 			}),
@@ -244,6 +249,7 @@ describe("validate", () => {
 	})
 
 	test("validates project configs independently", () => {
+		// biome-ignore lint/suspicious/noExplicitAny: testing with intentionally invalid data
 		const projectConfigs = new Map<string, any>()
 		projectConfigs.set("/project1", { model: "bad-model" })
 		projectConfigs.set("/project2", { model: "anthropic/good-model" })

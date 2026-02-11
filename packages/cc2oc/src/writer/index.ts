@@ -6,7 +6,7 @@
  */
 import type { ConversionResult } from "../types/conversion-result"
 import type { OpenCodeConfig } from "../types/opencode"
-import { ensureDir, exists, safeReadFile, writeFileSafe } from "../utils/fs"
+import { exists, safeReadFile, writeFileSafe } from "../utils/fs"
 import { stringifyJson } from "../utils/json"
 import * as paths from "../utils/paths"
 import { type MergeStrategy, mergeConfigs } from "./merge"
@@ -117,7 +117,7 @@ export async function write(
 	// ─── Write prompt history (if present) ───────────────────────────
 	if (conversion.promptHistory && conversion.promptHistory.length > 0) {
 		const historyPath = paths.ocPromptHistoryPath()
-		const lines = conversion.promptHistory.map((e) => JSON.stringify(e)).join("\n") + "\n"
+		const lines = `${conversion.promptHistory.map((e) => JSON.stringify(e)).join("\n")}\n`
 
 		// Append to existing history
 		if (!dryRun) {
@@ -161,7 +161,7 @@ async function writeConfigFile(
 		}
 
 		if (options.backup && !options.dryRun) {
-			const backupPath = filePath + ".bak"
+			const backupPath = `${filePath}.bak`
 			await writeFileSafe(backupPath, existingContent)
 			result.backupPaths.push(backupPath)
 		}
@@ -197,7 +197,7 @@ async function writeFile(
 	if (fileExists && options.backup && !options.dryRun) {
 		const existingContent = await safeReadFile(filePath)
 		if (existingContent) {
-			const backupPath = filePath + ".bak"
+			const backupPath = `${filePath}.bak`
 			await writeFileSafe(backupPath, existingContent)
 			result.backupPaths.push(backupPath)
 		}

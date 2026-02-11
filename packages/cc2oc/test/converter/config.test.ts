@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { convertConfig } from "../../src/converter/config"
-import type { ClaudeSettings, ClaudeUserState } from "../../src/types/claude-code"
+import type { ClaudeSettings } from "../../src/types/claude-code"
 
 describe("convertConfig", () => {
 	test("returns empty config when no settings", () => {

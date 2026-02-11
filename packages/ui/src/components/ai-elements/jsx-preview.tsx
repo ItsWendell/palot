@@ -167,7 +167,6 @@ export const JSXPreviewContent = memo(({ className, ...props }: JSXPreviewConten
 	const errorReportedRef = useRef<string | null>(null)
 
 	// Reset error tracking when jsx changes
-	// biome-ignore lint/correctness/useExhaustiveDependencies: processedJsx change should reset tracking
 	useEffect(() => {
 		errorReportedRef.current = null
 	}, [processedJsx])

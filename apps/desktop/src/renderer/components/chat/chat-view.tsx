@@ -48,7 +48,7 @@ import type { ChatTurn } from "../../hooks/use-session-chat"
 import type { Agent, FileAttachment, QuestionAnswer } from "../../lib/types"
 import { getProjectClient } from "../../services/connection-manager"
 import { PermissionItem } from "./chat-permission"
-import { ChatQuestionCard } from "./chat-question"
+import { ChatQuestionFlow } from "./chat-question"
 import { ChatTurnComponent } from "./chat-turn"
 import { PromptAttachmentPreview } from "./prompt-attachments"
 import { PromptToolbar, StatusBar } from "./prompt-toolbar"
@@ -606,17 +606,14 @@ export function ChatView({
 	// Keyboard shortcuts for undo/redo
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			// Don't intercept if focus is on a non-prompt input (like title editing)
+			// Don't intercept Cmd/Ctrl+Z in any text input — let the browser
+			// handle native undo/redo. Session undo/redo is still available via
+			// /undo, /redo slash commands and the command palette.
 			const target = e.target as HTMLElement
-			const isInNonPromptInput =
-				target.tagName === "INPUT" ||
-				(target.tagName === "TEXTAREA" && !target.closest("[data-prompt-input]"))
+			if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return
 
 			// Cmd+Z / Ctrl+Z — Undo
 			if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
-				// Allow native undo in non-prompt inputs
-				if (isInNonPromptInput) return
-
 				if (canUndo && onUndo) {
 					e.preventDefault()
 					onUndo()
@@ -626,8 +623,6 @@ export function ChatView({
 
 			// Cmd+Shift+Z / Ctrl+Shift+Z — Redo
 			if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.shiftKey) {
-				if (isInNonPromptInput) return
-
 				if (canRedo && onRedo) {
 					e.preventDefault()
 					onRedo()
@@ -767,18 +762,9 @@ export function ChatView({
 						</div>
 					)}
 
-					{/* Pending questions + permissions — above the input */}
-					{(agent.questions.length > 0 || agent.permissions.length > 0) && (
+					{/* Pending permissions — always shown above input/questions */}
+					{agent.permissions.length > 0 && (
 						<div className="pb-2">
-							{agent.questions.map((q) => (
-								<ChatQuestionCard
-									key={q.id}
-									question={q}
-									onReply={handleReplyQuestion}
-									onReject={handleRejectQuestion}
-									disabled={!isConnected}
-								/>
-							))}
 							{agent.permissions.map((permission) => (
 								<PermissionItem
 									key={permission.id}
@@ -792,61 +778,71 @@ export function ChatView({
 						</div>
 					)}
 
-					{/* Input card — rounded container with textarea + toolbar inside */}
-					<PromptInputProvider key={agent.sessionId} initialInput={draft}>
-						<DraftSync setDraft={setDraft} />
-						<SlashCommandBridge controllerRef={slashCommandRef} />
-						<PromptInput
-							className="rounded-xl"
-							accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
-							multiple
-							maxFileSize={10 * 1024 * 1024}
-							onSubmit={(message) => {
-								if (message.text.trim() && canSend)
-									handleSend(message.text, message.files.length > 0 ? message.files : undefined)
-							}}
-							data-prompt-input
-						>
-							<PromptAttachmentPreview
-								supportsImages={modelCapabilities?.image}
-								supportsPdf={modelCapabilities?.pdf}
-							/>
-							<SlashCommandTextarea
-								isConnected={isConnected}
-								isWorking={isWorking}
-								directory={agent.directory}
-								handleEscapeAbort={handleEscapeAbort}
-								handleSlashCommand={handleSlashCommand}
-								clearDraft={clearDraft}
-							/>
-
-							{/* Toolbar inside the card — agent + model + variant selectors + submit */}
-							<PromptInputFooter>
-								<PromptInputTools>
-									<AttachButton disabled={!isConnected} />
-									<PromptToolbar
-										agents={openCodeAgents ?? []}
-										selectedAgent={selectedAgent}
-										defaultAgent={config?.defaultAgent}
-										onSelectAgent={setSelectedAgent}
-										providers={providers ?? null}
-										effectiveModel={effectiveModel}
-										hasModelOverride={!!selectedModel}
-										onSelectModel={handleModelSelect}
-										recentModels={recentModels}
-										selectedVariant={selectedVariant}
-										onSelectVariant={setSelectedVariant}
-										disabled={!isConnected}
-									/>
-								</PromptInputTools>
-								<PromptInputSubmit
-									disabled={!canSend}
-									status={isWorking ? "streaming" : undefined}
-									onStop={handleStop}
+					{/* When questions are pending, replace the input with a focused question flow */}
+					{agent.questions.length > 0 ? (
+						<ChatQuestionFlow
+							questions={agent.questions}
+							onReply={handleReplyQuestion}
+							onReject={handleRejectQuestion}
+							disabled={!isConnected}
+						/>
+					) : (
+						/* Input card — rounded container with textarea + toolbar inside */
+						<PromptInputProvider key={agent.sessionId} initialInput={draft}>
+							<DraftSync setDraft={setDraft} />
+							<SlashCommandBridge controllerRef={slashCommandRef} />
+							<PromptInput
+								className="rounded-xl"
+								accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+								multiple
+								maxFileSize={10 * 1024 * 1024}
+								onSubmit={(message) => {
+									if (message.text.trim() && canSend)
+										handleSend(message.text, message.files.length > 0 ? message.files : undefined)
+								}}
+								data-prompt-input
+							>
+								<PromptAttachmentPreview
+									supportsImages={modelCapabilities?.image}
+									supportsPdf={modelCapabilities?.pdf}
 								/>
-							</PromptInputFooter>
-						</PromptInput>
-					</PromptInputProvider>
+								<SlashCommandTextarea
+									isConnected={isConnected}
+									isWorking={isWorking}
+									directory={agent.directory}
+									handleEscapeAbort={handleEscapeAbort}
+									handleSlashCommand={handleSlashCommand}
+									clearDraft={clearDraft}
+								/>
+
+								{/* Toolbar inside the card — agent + model + variant selectors + submit */}
+								<PromptInputFooter>
+									<PromptInputTools>
+										<AttachButton disabled={!isConnected} />
+										<PromptToolbar
+											agents={openCodeAgents ?? []}
+											selectedAgent={selectedAgent}
+											defaultAgent={config?.defaultAgent}
+											onSelectAgent={setSelectedAgent}
+											providers={providers ?? null}
+											effectiveModel={effectiveModel}
+											hasModelOverride={!!selectedModel}
+											onSelectModel={handleModelSelect}
+											recentModels={recentModels}
+											selectedVariant={selectedVariant}
+											onSelectVariant={setSelectedVariant}
+											disabled={!isConnected}
+										/>
+									</PromptInputTools>
+									<PromptInputSubmit
+										disabled={!canSend}
+										status={isWorking ? "streaming" : undefined}
+										onStop={handleStop}
+									/>
+								</PromptInputFooter>
+							</PromptInput>
+						</PromptInputProvider>
+					)}
 
 					{/* Status bar — outside the card */}
 					<StatusBar

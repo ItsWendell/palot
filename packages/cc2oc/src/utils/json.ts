@@ -27,5 +27,5 @@ export function parseJsonc<T = unknown>(content: string): T {
  * Stringify an object to pretty JSON (not JSONC -- we don't add comments).
  */
 export function stringifyJson(value: unknown, indent: string = "\t"): string {
-	return JSON.stringify(value, null, indent) + "\n"
+	return `${JSON.stringify(value, null, indent)}\n`
 }
