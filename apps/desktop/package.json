@@ -55,7 +55,7 @@
 	"devDependencies": {
 		"@palot/server": "workspace:*",
 		"@tailwindcss/vite": "^4.0.0",
-		"@types/node": "^22.0.0",
+		"@types/node": "^25.2.3",
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
 		"@types/react-syntax-highlighter": "^15.5.13",
