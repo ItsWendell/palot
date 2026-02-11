@@ -38,3 +38,6 @@ research/
 
 # Logo design iterations (keep final assets in resources/brand/)
 docs/logo-drafts/
+
+# Git worktrees
+.worktrees/

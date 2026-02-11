@@ -171,6 +171,9 @@
   }
   body {
     @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     font-feature-settings: "ss03" 1, "rlig" 1, "calt" 1;
   }
   code, kbd, samp, pre {

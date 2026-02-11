@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process"
 import path from "node:path"
 import { app, BrowserWindow, Menu, session, shell } from "electron"
 import { registerIpcHandlers } from "./ipc-handlers"
@@ -24,20 +25,62 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
 ]
 Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
 
-// Chromium networking: disable HTTPS upgrades and HTTP/2 for localhost connections.
+// Collect Chromium feature flags — must be merged into a single --disable-features
+// switch because Electron's appendSwitch overwrites (not appends) duplicate keys.
+const disabledFeatures: string[] = []
+
+// Chromium networking: disable HTTPS upgrades for localhost connections.
 // The OpenCode server is plain HTTP/1.1 on 127.0.0.1. Chromium 134+ (Electron 40+)
 // can silently upgrade http:// to https://, which causes ERR_ALPN_NEGOTIATION_FAILED
-// when hitting a plain HTTP server. Disabling these features prevents that.
+// when hitting a plain HTTP server. Disabling this feature prevents that.
 // Must be set before app.whenReady().
-app.commandLine.appendSwitch("disable-features", "HttpsUpgrades")
+disabledFeatures.push("HttpsUpgrades")
 app.commandLine.appendSwitch("allow-insecure-localhost")
 
-// Linux/Wayland: enable native Wayland rendering to avoid blurry XWayland scaling.
+// Linux/Wayland: enable native Wayland rendering and fix fractional scaling.
 // These flags must be set before app.whenReady().
 if (process.platform === "linux") {
 	app.commandLine.appendSwitch("ozone-platform-hint", "auto")
 	app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations")
 	app.commandLine.appendSwitch("enable-wayland-ime")
+	app.commandLine.appendSwitch("font-render-hinting", "slight")
+
+	// Chromium's WaylandFractionalScaleV1 has a known bug where non-maximized
+	// windows render at 1x and the compositor upscales them, causing blurry text
+	// and UI (Chromium issue 40934705). Work around this by detecting the GNOME
+	// fractional scale factor via Mutter's D-Bus API and forcing it explicitly.
+	// This runs synchronously before app.whenReady() since command-line switches
+	// must be set early. Falls back gracefully if detection fails (non-GNOME, X11).
+	if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland") {
+		try {
+			const dbusOutput = execSync(
+				"gdbus call --session --dest org.gnome.Mutter.DisplayConfig " +
+					"--object-path /org/gnome/Mutter/DisplayConfig " +
+					"--method org.gnome.Mutter.DisplayConfig.GetCurrentState",
+				{ timeout: 2000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] },
+			)
+			// Logical monitors section contains: (x, y, scale, uint32 transform, bool primary, ...)
+			const match = dbusOutput.match(/\(\d+,\s*\d+,\s*([\d.]+),\s*uint32\s+\d+,\s*true/)
+			if (match) {
+				const scale = Number.parseFloat(match[1])
+				if (scale > 0 && scale !== Math.floor(scale)) {
+					// Fractional scale detected — disable the buggy Wayland fractional
+					// scale protocol and force the correct DPI scale factor directly.
+					disabledFeatures.push("WaylandFractionalScaleV1")
+					app.commandLine.appendSwitch("force-device-scale-factor", scale.toString())
+					log.info(`Wayland fractional scale detected (${scale}), forcing device scale factor`)
+				}
+			}
+		} catch {
+			// D-Bus call failed (not GNOME, not Wayland, or timeout) — ignore.
+			// Chromium's default Wayland scaling will be used.
+		}
+	}
+}
+
+// Apply all collected disabled features as a single comma-separated switch.
+if (disabledFeatures.length > 0) {
+	app.commandLine.appendSwitch("disable-features", disabledFeatures.join(","))
 }
 
 const isDev = !app.isPackaged

@@ -14,6 +14,7 @@
 	"main": "./out/main/index.js",
 	"scripts": {
 		"dev": "electron-vite dev",
+		"dev:wayland": "electron-vite dev -- --ozone-platform=wayland --enable-features=WaylandWindowDecorations --disable-features=WaylandFractionalScaleV1",
 		"dev:web": "vite --config src/renderer/vite.web.config.ts",
 		"build": "electron-vite build",
 		"preview": "electron-vite preview",
