@@ -42,8 +42,8 @@
   --color-diff-addition-foreground: var(--diff-addition-foreground);
   --color-diff-deletion: var(--diff-deletion);
   --color-diff-deletion-foreground: var(--diff-deletion-foreground);
-  --font-sans: "Inter", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --text-xs: 0.8125rem;
   --text-xs--line-height: 1.125rem;
   --text-sm: 0.9375rem;
@@ -55,33 +55,20 @@
 }
 
 /*
- * Default color palette: 1:1 clone of OpenCode's OC-1 theme.
- * Uses the "smoke" warm gray scale (slight red/brown tint).
+ * Default color palette: Cortex theme.
+ * Cool neutral gray scale with blue accent.
  *
- * Light: warm near-whites (#fdfcfc) with dark text (#211e1e)
- * Dark:  warm near-blacks (#131010) with light text (#efeded)
- *
- * OpenCode's dark mode uses alpha-based colors (e.g. smoke-dark-alpha-11).
- * Below are opaque approximations pre-computed against the #131010 background.
- *
- * Mapping from OpenCode tokens:
- *   --background  ← --background-base (#f8f7f7 light / --smoke-dark-1 dark)
- *   --foreground  ← --text-strong (--smoke-light-12 / --smoke-dark-alpha-12)
- *   --card        ← --background-strong (--smoke-light-1 / --smoke-dark-2)
- *   --muted       ← --background-weak (--smoke-light-3 / --smoke-dark-3)
- *   --accent      ← --surface-weak (--smoke-light-4 / --smoke-dark-4)
- *   --border      ← --border-base (--smoke-light-6 / --smoke-dark-alpha-7)
- *   --ring        ← --border-active (--smoke-light-8 / --smoke-dark-alpha-8)
- *   --destructive ← --ember-light-9 (#fc533a, same in both modes)
+ * Light: clean whites (#ffffff) with near-black text (#0d0d0d)
+ * Dark:  neutral darks (#181818) with white text (#ffffff)
  *
  * These values serve as the baseline for the theme system.
  * Named themes override these via dynamic <style> injection.
  */
 
 :root {
-  --radius: 0.625rem;
+  --radius: 0.75rem;
 
-  /* Motion — named easing curves inspired by Codex */
+  /* Motion — named easing curves */
   --ease-enter: cubic-bezier(0.19, 1, 0.22, 1);       /* aggressive decelerate — dialogs, overlays */
   --ease-out: cubic-bezier(0, 0, 0.2, 1);              /* standard ease-out */
   --ease-default: cubic-bezier(0.4, 0, 0.2, 1);        /* Material-style default */
@@ -90,88 +77,87 @@
   --duration-normal: 0.2s;
   --duration-relaxed: 0.3s;
 
-  /* Light mode — derived from OpenCode "smoke-light" scale */
-  --background: #f8f7f7;
-  --foreground: #211e1e;
-  --card: #fdfcfc;
-  --card-foreground: #211e1e;
-  --popover: #fdfcfc;
-  --popover-foreground: #211e1e;
-  --primary: #211e1e;
-  --primary-foreground: #fdfcfc;
-  --secondary: #f1f0f0;
-  --secondary-foreground: #211e1e;
-  --muted: #f1f0f0;
-  --muted-foreground: #8e8b8b;
-  --accent: #eae8e8;
-  --accent-foreground: #211e1e;
-  --destructive: #fc533a;
-  --destructive-foreground: #fdfcfc;
-  --border: #dcd9d9;
-  --input: #dcd9d9;
-  --ring: #b0aeae;
-  --chart-1: #dc6b40;
-  --chart-2: #3ba58b;
-  --chart-3: #3a6ee0;
-  --chart-4: #d4b93c;
-  --chart-5: #c75dbd;
-  --sidebar: #f1f0f0;
-  --sidebar-foreground: #211e1e;
-  --sidebar-primary: #211e1e;
-  --sidebar-primary-foreground: #fdfcfc;
-  --sidebar-accent: #eae8e8;
-  --sidebar-accent-foreground: #211e1e;
-  --sidebar-border: #e5e3e3;
-  --sidebar-ring: #b0aeae;
+  /* Light mode — Cortex neutral scale with Palot Blue accent */
+  --background: #ffffff;
+  --foreground: #0d0d0d;
+  --card: #ffffff;
+  --card-foreground: #0d0d0d;
+  --popover: #fcfcfc;
+  --popover-foreground: #0d0d0d;
+  --primary: #0d0d0d;
+  --primary-foreground: #ffffff;
+  --secondary: #f9f9f9;
+  --secondary-foreground: #0d0d0d;
+  --muted: #f9f9f9;
+  --muted-foreground: #414141;
+  --accent: #ededed;
+  --accent-foreground: #0d0d0d;
+  --destructive: #fa423e;
+  --destructive-foreground: #ffffff;
+  --border: #ededed;
+  --input: #ededed;
+  --ring: #0080bd;              /* palot-blue-600 */
+  --chart-1: #05bdf5;           /* palot-blue-400 */
+  --chart-2: #04b84c;
+  --chart-3: #fb6a22;
+  --chart-4: #924ff7;
+  --chart-5: #ffc300;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #212121;
+  --sidebar-primary: #0d0d0d;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #a8ddf7;    /* palot-blue-200 */
+  --sidebar-accent-foreground: #0d0d0d;
+  --sidebar-border: #ededed;
+  --sidebar-ring: #0080bd;      /* palot-blue-600 */
 
-  /* Diff colors — warm-tinted to match the palette */
-  --diff-addition: #2a9d5c;
-  --diff-addition-foreground: #1a7a42;
-  --diff-deletion: #d94a3a;
-  --diff-deletion-foreground: #b83a2e;
+  /* Diff colors */
+  --diff-addition: #04b84c;
+  --diff-addition-foreground: #00a240;
+  --diff-deletion: #fa423e;
+  --diff-deletion-foreground: #e02e2a;
 }
 
 .dark {
-  /* Dark mode — derived from OpenCode "smoke-dark" scale
-   * Opaque equivalents of their alpha colors computed on #131010 bg */
-  --background: #131010;
-  --foreground: #efeded;
-  --card: #151313;
-  --card-foreground: #efeded;
-  --popover: #1c1717;
-  --popover-foreground: #efeded;
-  --primary: #f1ecec;
-  --primary-foreground: #131010;
-  --secondary: #1c1717;
-  --secondary-foreground: #efeded;
-  --muted: #221d1d;
-  --muted-foreground: #6f6c6b;
-  --accent: #271f1f;
-  --accent-foreground: #efeded;
-  --destructive: #fc533a;
-  --destructive-foreground: #fdfcfc;
-  --border: #2d2626;
-  --input: #2d2626;
-  --ring: #4a4242;
-  --chart-1: #e88a5e;
-  --chart-2: #4cc9a5;
-  --chart-3: #6b98e8;
-  --chart-4: #e8d570;
-  --chart-5: #d880cf;
-  --sidebar: #0f0d0d;
-  --sidebar-foreground: #efeded;
-  --sidebar-primary: #f1ecec;
-  --sidebar-primary-foreground: #131010;
-  --sidebar-accent: #1c1717;
-  --sidebar-accent-foreground: #efeded;
-  --sidebar-border: #251f1f;
-  --sidebar-ring: #4a4242;
+  /* Dark mode — Cortex neutral scale with Palot Blue accent */
+  --background: #181818;
+  --foreground: #ffffff;
+  --card: #212121;
+  --card-foreground: #ffffff;
+  --popover: #282828;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #0d0d0d;
+  --secondary: #212121;
+  --secondary-foreground: #ffffff;
+  --muted: #282828;
+  --muted-foreground: #afafaf;
+  --accent: #282828;
+  --accent-foreground: #ffffff;
+  --destructive: #fa423e;
+  --destructive-foreground: #ffffff;
+  --border: #2e2e2e;
+  --input: #2e2e2e;
+  --ring: #6fcbf3;              /* palot-blue-300 */
+  --chart-1: #05bdf5;           /* palot-blue-400 */
+  --chart-2: #40c977;
+  --chart-3: #ff8549;
+  --chart-4: #ad7bf9;
+  --chart-5: #ffd240;
+  --sidebar: #0d0d0d;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #0d0d0d;
+  --sidebar-accent: #001a2b;    /* palot-blue-950 */
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #0d0d0d;
+  --sidebar-ring: #6fcbf3;      /* palot-blue-300 */
 
-  /* Diff colors — warm-tinted to match the palette */
-  --diff-addition: #4cc9a5;
-  --diff-addition-foreground: #5ecc71;
-  --diff-deletion: #e8655c;
-  --diff-deletion-foreground: #ff6762;
+  /* Diff colors */
+  --diff-addition: #40c977;
+  --diff-addition-foreground: #40c977;
+  --diff-deletion: #ff6764;
+  --diff-deletion-foreground: #ff6764;
 }
 
 @layer base {
@@ -220,6 +206,7 @@
     --glass-surface: 60%;
     --glass-elevated: 82%;
     --glass-card: 90%;
+    --glass-content: 80%;
     --glass-sidebar-accent: 50%;
 
     /* Blur scale — backdrop-filter values */
@@ -253,12 +240,11 @@
     background: transparent !important;
   }
 
-  /* --- App bar (frosted glass — content scrolls behind, blurred) --- */
+  /* --- App bar — transparent so it inherits the sidebar-wrapper tint,
+   * matching the sidebar exactly (sidebar is also transparent). --- */
   :root.electron-transparent [data-slot="app-bar"] {
     background: transparent !important;
-    -webkit-backdrop-filter: saturate(180%) blur(var(--blur-md));
-    backdrop-filter: saturate(180%) blur(var(--blur-md));
-    border-color: color-mix(in srgb, var(--border) 20%, transparent);
+    border-color: transparent !important;
   }
 
   /* --- Floating panels: popovers, dropdowns, context menus, selects ---
@@ -273,13 +259,6 @@
     background: color-mix(in srgb, var(--popover) var(--glass-elevated), transparent);
     -webkit-backdrop-filter: blur(var(--blur-lg));
     backdrop-filter: blur(var(--blur-lg));
-  }
-
-  /* --- Command palette --- */
-  :root.electron-transparent [data-slot="command"] {
-    background: color-mix(in srgb, var(--popover) var(--glass-elevated), transparent);
-    -webkit-backdrop-filter: blur(var(--blur-xl));
-    backdrop-filter: blur(var(--blur-xl));
   }
 
   /* --- Dialogs --- */
@@ -330,22 +309,7 @@
    * Replaces the hard border-right with a vertical gradient line that
    * fades in from top/bottom, providing organic visual separation. */
   :root.electron-transparent [data-slot="sidebar-container"]::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 1px;
-    background: linear-gradient(
-      to bottom,
-      transparent 0%,
-      color-mix(in srgb, var(--border) 50%, transparent) 20%,
-      color-mix(in srgb, var(--border) 60%, transparent) 50%,
-      color-mix(in srgb, var(--border) 50%, transparent) 80%,
-      transparent 100%
-    );
-    pointer-events: none;
-    z-index: 1;
+    display: none;
   }
 }
 
@@ -368,12 +332,10 @@
     background: transparent !important;
   }
 
-  /* --- App bar (frosted glass — content scrolls behind, blurred) --- */
+  /* --- App bar — transparent (see Tier 1 comment) --- */
   :root.electron-vibrancy [data-slot="app-bar"] {
     background: transparent !important;
-    -webkit-backdrop-filter: saturate(180%) blur(var(--blur-md));
-    backdrop-filter: saturate(180%) blur(var(--blur-md));
-    border-color: color-mix(in srgb, var(--border) 20%, transparent);
+    border-color: transparent !important;
   }
 
   :root.electron-vibrancy [data-slot="dropdown-menu-content"],
@@ -382,7 +344,6 @@
   :root.electron-vibrancy [data-slot="context-menu-content"],
   :root.electron-vibrancy [data-slot="context-menu-sub-content"],
   :root.electron-vibrancy [data-slot="select-content"],
-  :root.electron-vibrancy [data-slot="command"],
   :root.electron-vibrancy [data-slot="dialog-content"],
   :root.electron-vibrancy [data-slot="sheet-content"] {
     background: color-mix(in srgb, var(--popover) var(--glass-elevated), transparent);
@@ -413,30 +374,40 @@
     border-color: transparent !important;
   }
 
-  /* --- Sidebar edge gradient divider (vibrancy) --- */
   :root.electron-vibrancy [data-slot="sidebar-container"]::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 1px;
-    background: linear-gradient(
-      to bottom,
-      transparent 0%,
-      color-mix(in srgb, var(--border) 50%, transparent) 20%,
-      color-mix(in srgb, var(--border) 60%, transparent) 50%,
-      color-mix(in srgb, var(--border) 50%, transparent) 80%,
-      transparent 100%
-    );
-    pointer-events: none;
-    z-index: 1;
+    display: none;
   }
 }
 
 /* Tier 3 (.electron-opaque / no class): no CSS changes needed.
  * Components use their stock bg-popover, bg-card, bg-background
  * Tailwind classes which resolve to solid CSS variables. */
+
+/* ============================================================
+ * Onboarding overlay — glass-aware backgrounds
+ *
+ * UNLAYERED so they override the Tailwind bg-background utility.
+ * The overlay becomes transparent on glass tiers, letting the
+ * desktop wallpaper and native blur show through.
+ * ============================================================ */
+
+:root.electron-transparent [data-slot="onboarding-overlay"] {
+  background: color-mix(in srgb, var(--background) var(--glass-body), transparent) !important;
+}
+
+:root.electron-transparent [data-slot="onboarding-card"] {
+  background: color-mix(in srgb, var(--card) var(--glass-card), transparent) !important;
+  -webkit-backdrop-filter: blur(var(--blur-md));
+  backdrop-filter: blur(var(--blur-md));
+}
+
+:root.electron-vibrancy [data-slot="onboarding-overlay"] {
+  background: color-mix(in srgb, var(--background) var(--glass-body), transparent) !important;
+}
+
+:root.electron-vibrancy [data-slot="onboarding-card"] {
+  background: color-mix(in srgb, var(--card) var(--glass-card), transparent) !important;
+}
 
 /* ============================================================
  * Inset content card — raised surface for variant="inset"
@@ -470,6 +441,24 @@
 :root.electron-vibrancy [data-slot="sidebar-menu-button"][data-active="true"],
 :root.electron-vibrancy [data-slot="sidebar-menu-button"][data-state="open"] {
   background: color-mix(in srgb, var(--sidebar-accent) var(--glass-sidebar-accent), transparent);
+}
+
+/* ── macOS: disable sidebar list-item hover ──────────────────
+ * Native macOS sidebars (Finder, Mail, Notes) do not show a
+ * hover highlight on list rows — only the selected row gets
+ * an accent background. This matches that behavior by removing
+ * the hover/active background from menu buttons and sub-buttons
+ * on macOS, while keeping selection state (data-active) intact.
+ *
+ * Small icon buttons (SidebarGroupAction, SidebarMenuAction)
+ * keep their hover states as they are true buttons, not list rows.
+ * ──────────────────────────────────────────────────────────── */
+:root[data-platform="darwin"] [data-slot="sidebar-menu-button"]:not([data-active="true"]):not([data-state="open"]):hover,
+:root[data-platform="darwin"] [data-slot="sidebar-menu-button"]:not([data-active="true"]):not([data-state="open"]):active,
+:root[data-platform="darwin"] [data-slot="sidebar-menu-sub-button"]:not([data-active="true"]):hover,
+:root[data-platform="darwin"] [data-slot="sidebar-menu-sub-button"]:not([data-active="true"]):active {
+  background: transparent;
+  color: inherit;
 }
 
 /* ── Content card (SidebarInset) — floating card layout ──────
@@ -509,12 +498,127 @@
 
 /* Glass tier 1 (Liquid Glass) */
 :root.electron-transparent [data-slot="sidebar-inset"] {
-  background: color-mix(in srgb, var(--background) 93%, transparent) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  margin-right: 12px;
+  margin-bottom: 12px;
+  border-top-right-radius: var(--radius-xl);
+  border-bottom-right-radius: var(--radius-xl);
+}
+:root.electron-transparent [data-slot="content-area"] {
+  background: color-mix(in srgb, var(--background) var(--glass-content), transparent);
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+  overflow: clip;
 }
 
 /* Glass tier 2 (Vibrancy) */
 :root.electron-vibrancy [data-slot="sidebar-inset"] {
-  background: color-mix(in srgb, var(--background) 93%, transparent) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  margin-right: 12px;
+  margin-bottom: 12px;
+  border-top-right-radius: var(--radius-xl);
+  border-bottom-right-radius: var(--radius-xl);
+}
+:root.electron-vibrancy [data-slot="content-area"] {
+  background: color-mix(in srgb, var(--background) var(--glass-content), transparent);
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+  overflow: clip;
+}
+
+/* Glass: hide scroll-fade gradients — they look like smudges on transparent surfaces */
+:root.electron-transparent [data-slot="scroll-fade"],
+:root.electron-vibrancy [data-slot="scroll-fade"] {
+  display: none;
+}
+
+/* ── Liquid Glass theme — extra transparency overrides ────────
+ * Scoped to .theme-liquid-glass so they only fire for that theme.
+ * These are UNLAYERED to beat Tailwind utility classes.
+ *
+ * When backgrounds are nearly invisible, every solid-colored
+ * surface (cards, user bubbles, tool output, code headers)
+ * looks like a dark cutout. We override the most common bg-*
+ * utilities to use semi-transparent color-mix equivalents. */
+
+/* Input group (prompt box) */
+:root.electron-transparent.theme-liquid-glass [data-slot="input-group"],
+:root.electron-vibrancy.theme-liquid-glass [data-slot="input-group"] {
+  background: color-mix(in srgb, var(--input) 15%, transparent) !important;
+}
+
+/* Cards (data-slot) */
+:root.electron-transparent.theme-liquid-glass [data-slot="card"],
+:root.electron-vibrancy.theme-liquid-glass [data-slot="card"] {
+  background: color-mix(in srgb, var(--card) var(--glass-card), transparent) !important;
+}
+
+/* bg-card utility (task list, permission cards, etc.) */
+:root.electron-transparent.theme-liquid-glass .bg-card,
+:root.electron-vibrancy.theme-liquid-glass .bg-card {
+  background-color: color-mix(in srgb, var(--card) var(--glass-card), transparent) !important;
+}
+
+/* bg-secondary utility (user message bubbles, node headers/footers) */
+:root.electron-transparent.theme-liquid-glass .bg-secondary,
+:root.electron-vibrancy.theme-liquid-glass .bg-secondary {
+  background-color: color-mix(in srgb, var(--secondary) 20%, transparent) !important;
+}
+
+/* bg-muted utility and variants (tool wrappers, code headers, badges) */
+:root.electron-transparent.theme-liquid-glass .bg-muted,
+:root.electron-vibrancy.theme-liquid-glass .bg-muted {
+  background-color: color-mix(in srgb, var(--muted) 20%, transparent) !important;
+}
+:root.electron-transparent.theme-liquid-glass .bg-muted\/50,
+:root.electron-vibrancy.theme-liquid-glass .bg-muted\/50 {
+  background-color: color-mix(in srgb, var(--muted) 12%, transparent) !important;
+}
+:root.electron-transparent.theme-liquid-glass .bg-muted\/80,
+:root.electron-vibrancy.theme-liquid-glass .bg-muted\/80 {
+  background-color: color-mix(in srgb, var(--muted) 16%, transparent) !important;
+}
+:root.electron-transparent.theme-liquid-glass .bg-muted\/40,
+:root.electron-vibrancy.theme-liquid-glass .bg-muted\/40 {
+  background-color: color-mix(in srgb, var(--muted) 10%, transparent) !important;
+}
+
+/* ============================================================
+ * Command palette — Notion-style frosted glass (UNLAYERED)
+ *
+ * Must be outside @layer to beat Tailwind's bg-background and
+ * bg-popover utilities. The dialog wrapper is made fully
+ * transparent so backdrop-filter on the command surface blurs
+ * through to the OS glass layer.
+ * ============================================================ */
+:root.electron-transparent [data-slot="dialog-content"][data-variant="command"],
+:root.electron-vibrancy [data-slot="dialog-content"][data-variant="command"] {
+  background: transparent;
+  background-color: transparent;
+  border-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+:root.electron-transparent [data-variant="command"] [data-slot="command"],
+:root.electron-vibrancy [data-variant="command"] [data-slot="command"] {
+  background:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--popover) 70%, transparent),
+      color-mix(in srgb, var(--popover) 82%, transparent)
+    );
+  -webkit-backdrop-filter: saturate(200%) blur(50px);
+  backdrop-filter: saturate(200%) blur(50px);
+  border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+  border-radius: var(--radius-lg);
+}
+
+:root.electron-transparent [data-slot="dialog-overlay"]:has(+ [data-variant="command"]),
+:root.electron-vibrancy [data-slot="dialog-overlay"]:has(+ [data-variant="command"]) {
+  background: rgba(0, 0, 0, 0.35);
 }
 
 /* Sidebar container — ensure position context for divider pseudo-element */
@@ -555,7 +659,7 @@
  * ============================================================ */
 @layer components {
   [data-slot="app-bar"] {
-    background-color: var(--codedeck-titlebar-tint, transparent);
+    background-color: var(--palot-titlebar-tint, transparent);
   }
 }
 

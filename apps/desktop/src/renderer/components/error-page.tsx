@@ -1,4 +1,4 @@
-import { Button } from "@codedeck/ui/components/button"
+import { Button } from "@palot/ui/components/button"
 import { type ErrorComponentProps, useRouter } from "@tanstack/react-router"
 import { AlertTriangleIcon, ChevronDownIcon, RefreshCwIcon } from "lucide-react"
 import { useState } from "react"

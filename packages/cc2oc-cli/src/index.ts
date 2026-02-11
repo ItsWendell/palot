@@ -8,11 +8,13 @@
  *   cc2oc migrate             Migrate Claude Code config to OpenCode
  *   cc2oc validate            Validate converted OpenCode config
  *   cc2oc diff                Compare Claude Code and OpenCode configs
+ *   cc2oc restore             Restore files from a pre-migration backup
  */
 import { defineCommand, runMain } from "citty"
 import diffCommand from "./commands/diff"
 import migrateCommand from "./commands/migrate"
 import planCommand from "./commands/plan"
+import restoreCommand from "./commands/restore"
 import scanCommand from "./commands/scan"
 import validateCommand from "./commands/validate"
 
@@ -28,6 +30,7 @@ const main = defineCommand({
 		migrate: migrateCommand,
 		validate: validateCommand,
 		diff: diffCommand,
+		restore: restoreCommand,
 	},
 })
 

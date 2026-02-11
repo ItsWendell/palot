@@ -1,6 +1,6 @@
 # OpenCode Upstream Issues
 
-Issues and missing features in the OpenCode server/SDK that affect Codedeck's UX.
+Issues and missing features in the OpenCode server/SDK that affect Palot's UX.
 Items are tracked here so we can contribute upstream or revisit when new releases land.
 
 ---
@@ -13,7 +13,7 @@ Items are tracked here so we can contribute upstream or revisit when new release
 
 The server's CORS config in `packages/opencode/src/server/server.ts` does not set `maxAge`. Without `Access-Control-Max-Age`, browsers send a fresh OPTIONS request before every non-simple request (POST with `application/json`, requests with custom headers). Adding `maxAge: 86400` would let browsers cache preflight responses for 24 hours.
 
-**Workaround:** Codedeck sends the project directory as a `?directory=` query param instead of the `x-opencode-directory` header to avoid triggering preflights on GET requests. POST requests still trigger preflights due to `Content-Type: application/json`.
+**Workaround:** Palot sends the project directory as a `?directory=` query param instead of the `x-opencode-directory` header to avoid triggering preflights on GET requests. POST requests still trigger preflights due to `Content-Type: application/json`.
 
 **Where:** `apps/desktop/src/renderer/services/opencode.ts`
 
@@ -21,7 +21,7 @@ The server's CORS config in `packages/opencode/src/server/server.ts` does not se
 
 **Impact:** "Load earlier messages" must fetch the entire session history in one request.
 
-`GET /session/{sessionID}/message` supports `limit` but has no `before`, `after`, or `offset` parameter. When Codedeck initially loads the most recent 30 messages and the user wants to see older ones, the only option is to re-fetch without a limit (all messages). For long sessions with hundreds of messages this is wasteful.
+`GET /session/{sessionID}/message` supports `limit` but has no `before`, `after`, or `offset` parameter. When Palot initially loads the most recent 30 messages and the user wants to see older ones, the only option is to re-fetch without a limit (all messages). For long sessions with hundreds of messages this is wasteful.
 
 **Ideal:** `GET /session/{id}/message?limit=30&before={messageID}` returning the 30 messages before the given ID.
 
@@ -37,7 +37,7 @@ The SSE stream emits `message.part.updated` events for text and reasoning parts 
 
 **Impact:** During streaming, the server sends one SSE event per token, creating thousands of events per second.
 
-Codedeck implements a client-side event batcher with RAF-aligned flushing, event coalescing, and a separate streaming store with 50ms throttled notifications. This complexity exists entirely because the server sends events at token-level granularity. Server-side batching (e.g., buffering events for 16-50ms before flushing) would reduce network overhead and simplify all GUI clients.
+Palot implements a client-side event batcher with RAF-aligned flushing, event coalescing, and a separate streaming store with 50ms throttled notifications. This complexity exists entirely because the server sends events at token-level granularity. Server-side batching (e.g., buffering events for 16-50ms before flushing) would reduce network overhead and simplify all GUI clients.
 
 **Where:** `apps/desktop/src/renderer/services/connection-manager.ts` (createEventBatcher), `apps/desktop/src/renderer/stores/streaming-store.ts`
 
@@ -53,7 +53,7 @@ If a user sends a follow-up message while the agent is busy, the message is queu
 
 **Impact:** GUI clients must replicate the TUI's 5-level model resolution chain.
 
-The server has no concept of a "current model" — when `promptAsync` is called without a `model` field, it falls back to the first connected provider's default. The TUI resolves the model client-side using: CLI arg > config.model > recent models from `model.json` > first provider default. Codedeck must replicate this entire chain in `resolveEffectiveModel()`. A `GET /config/resolved-model` endpoint (or including the resolved model in the config response) would simplify this.
+The server has no concept of a "current model" — when `promptAsync` is called without a `model` field, it falls back to the first connected provider's default. The TUI resolves the model client-side using: CLI arg > config.model > recent models from `model.json` > first provider default. Palot must replicate this entire chain in `resolveEffectiveModel()`. A `GET /config/resolved-model` endpoint (or including the resolved model in the config response) would simplify this.
 
 **Where:** `apps/desktop/src/renderer/hooks/use-opencode-data.ts` (resolveEffectiveModel)
 
@@ -69,13 +69,13 @@ The SDK's `createOpencodeClient({ directory })` sets `x-opencode-directory` as a
 
 **Ideal:** `createOpencodeClient({ directory, directoryTransport: "query" })` or defaulting to query params.
 
-**Workaround:** Codedeck accesses the SDK's `protected` `client` field at runtime to inject a request interceptor that moves the directory to a query param.
+**Workaround:** Palot accesses the SDK's `protected` `client` field at runtime to inject a request interceptor that moves the directory to a query param.
 
 **Where:** `apps/desktop/src/renderer/services/opencode.ts`
 
 ### 8. SDK types don't match actual response shapes
 
-**Impact:** Codedeck uses `as unknown as` type casts for most SDK responses.
+**Impact:** Palot uses `as unknown as` type casts for most SDK responses.
 
 The messages endpoint returns `Array<{ info: Message, parts: Part[] }>` but the SDK types suggest a flat response. Session timestamps are in milliseconds (not documented). The `data` property on responses is typed as the raw schema output, not the runtime shape. This forces consumers to use unsafe type assertions.
 

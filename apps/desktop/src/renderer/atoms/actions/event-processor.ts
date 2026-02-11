@@ -1,3 +1,5 @@
+import { createLogger } from "../../lib/logger"
+import { queryClient } from "../../lib/query-client"
 import type { Event, QuestionRequest } from "../../lib/types"
 import { serverConnectedAtom } from "../connection"
 import { removeMessageAtom, upsertMessageAtom } from "../messages"
@@ -15,6 +17,30 @@ import {
 } from "../sessions"
 import { appStore } from "../store"
 import { todosFamily } from "../todos"
+
+const log = createLogger("event-processor")
+
+/**
+ * Invalidate all OpenCode data queries for a specific directory.
+ * Called when an instance is disposed so the UI re-fetches config, agents, providers, etc.
+ */
+function invalidateDirectoryQueries(directory: string): void {
+	log.info("Invalidating queries for disposed instance", { directory })
+	for (const key of ["config", "providers", "agents", "commands", "vcs"]) {
+		queryClient.invalidateQueries({ queryKey: [key, directory] })
+	}
+}
+
+/**
+ * Invalidate all OpenCode data queries across all directories.
+ * Called when a global dispose event occurs (e.g. global config change).
+ */
+function invalidateAllQueries(): void {
+	log.info("Invalidating all OpenCode queries (global dispose)")
+	for (const key of ["config", "providers", "agents", "commands", "vcs"]) {
+		queryClient.invalidateQueries({ queryKey: [key] })
+	}
+}
 
 /**
  * Central SSE event dispatcher.
@@ -43,11 +69,23 @@ export function processEvent(event: Event): void {
 		set(removeQuestionAtom, { sessionId: props.sessionID, requestId: props.requestID })
 		return
 	}
+	if (eventType === "global.disposed") {
+		invalidateAllQueries()
+		return
+	}
 
 	switch (event.type) {
 		case "server.connected":
 			set(serverConnectedAtom, true)
 			break
+
+		case "server.instance.disposed": {
+			const directory = event.properties.directory
+			if (directory) {
+				invalidateDirectoryQueries(directory)
+			}
+			break
+		}
 
 		case "session.created": {
 			const info = event.properties.info

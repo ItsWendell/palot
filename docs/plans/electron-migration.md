@@ -1,4 +1,4 @@
-# Codedeck: Electron Migration Plan
+# Palot: Electron Migration Plan
 
 ## Why Move from Tauri to Electron
 
@@ -79,7 +79,7 @@ Electron IPC.
 ## Project Structure
 
 ```
-codedeck/
+palot/
 ├── apps/
 │   ├── desktop/                          # Electron app
 │   │   ├── electron.vite.config.ts       # electron-vite config (main/preload/renderer)
@@ -104,7 +104,7 @@ codedeck/
 │   │   │           ├── hooks/
 │   │   │           ├── services/
 │   │   │           │   ├── backend.ts    # Updated: uses window.electronAPI
-│   │   │           │   ├── codedeck-server.ts  # Kept for browser-mode dev
+│   │   │           │   ├── palot-server.ts  # Kept for browser-mode dev
 │   │   │           │   ├── opencode.ts
 │   │   │           │   └── connection-manager.ts
 │   │   │           ├── stores/
@@ -184,7 +184,7 @@ export function registerIpcHandlers(): void {
 ```typescript
 import { contextBridge, ipcRenderer } from "electron"
 
-contextBridge.exposeInMainWorld("codedeck", {
+contextBridge.exposeInMainWorld("palot", {
   ensureOpenCode: () => ipcRenderer.invoke("opencode:ensure"),
   stopOpenCode: () => ipcRenderer.invoke("opencode:stop"),
   discover: () => ipcRenderer.invoke("discover"),
@@ -196,7 +196,7 @@ contextBridge.exposeInMainWorld("codedeck", {
 ### Type Definitions (`preload/api.d.ts`)
 
 ```typescript
-export interface CodedeckAPI {
+export interface PalotAPI {
   ensureOpenCode: () => Promise<{ url: string; managed: boolean }>
   stopOpenCode: () => Promise<boolean>
   discover: () => Promise<DiscoveryResult>
@@ -206,7 +206,7 @@ export interface CodedeckAPI {
 
 declare global {
   interface Window {
-    codedeck: CodedeckAPI
+    palot: PalotAPI
   }
 }
 ```
@@ -215,17 +215,17 @@ declare global {
 
 ```typescript
 // Detect environment: Electron vs browser dev
-const isElectron = typeof window !== "undefined" && "codedeck" in window
+const isElectron = typeof window !== "undefined" && "palot" in window
 
 export async function fetchDiscovery() {
-  if (isElectron) return window.codedeck.discover()
-  const { fetchDiscovery } = await import("./codedeck-server")
+  if (isElectron) return window.palot.discover()
+  const { fetchDiscovery } = await import("./palot-server")
   return fetchDiscovery()
 }
 
 export async function fetchOpenCodeUrl() {
-  if (isElectron) return window.codedeck.ensureOpenCode()
-  const { fetchOpenCodeUrl } = await import("./codedeck-server")
+  if (isElectron) return window.palot.ensureOpenCode()
+  const { fetchOpenCodeUrl } = await import("./palot-server")
   return fetchOpenCodeUrl()
 }
 
@@ -233,7 +233,7 @@ export async function fetchOpenCodeUrl() {
 ```
 
 This follows the exact same dual-mode pattern we built for Tauri (`isTauri` →
-`isElectron`). The `codedeck-server.ts` Hono RPC client remains as the
+`isElectron`). The `palot-server.ts` Hono RPC client remains as the
 browser-mode fallback.
 
 ---
@@ -270,7 +270,7 @@ export default defineConfig({
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "src/renderer/src"),
-        "@codedeck/ui": path.resolve(__dirname, "../../packages/ui/src"),
+        "@palot/ui": path.resolve(__dirname, "../../packages/ui/src"),
       },
     },
     build: {
@@ -343,7 +343,7 @@ app.on("activate", () => {
 
 ```jsonc
 {
-  "name": "@codedeck/desktop",
+  "name": "@palot/desktop",
   "version": "0.1.0",
   "main": "./out/main/index.js",
   "scripts": {
@@ -359,7 +359,7 @@ app.on("activate", () => {
   },
   "dependencies": {
     // --- Existing renderer deps (unchanged) ---
-    "@codedeck/ui": "workspace:*",
+    "@palot/ui": "workspace:*",
     "@opencode-ai/sdk": "^1.1.53",
     "@tanstack/react-router": "^1.158.4",
     "@tanstack/react-query": "^5.90.20",
@@ -385,7 +385,7 @@ app.on("activate", () => {
     "electron-updater": "^6.0.0",
 
     // --- Existing dev deps (unchanged) ---
-    "@codedeck/server": "workspace:*",
+    "@palot/server": "workspace:*",
     "@tailwindcss/vite": "^4.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "typescript": "^5.7.0",
@@ -401,9 +401,9 @@ app.on("activate", () => {
 ### `electron-builder.yml`
 
 ```yaml
-appId: com.codedeck.desktop
-productName: Codedeck
-copyright: Copyright (c) 2025-2026 Codedeck
+appId: com.palot.desktop
+productName: Palot
+copyright: Copyright (c) 2025-2026 Palot
 directories:
   buildResources: resources
   output: release
@@ -436,7 +436,7 @@ linux:
     - target: rpm
       arch: [x64]
   category: Development
-  maintainer: codedeck
+  maintainer: palot
 
 nsis:
   oneClick: false
@@ -474,7 +474,7 @@ publish:
 - Register all IPC handlers in `src/main/ipc-handlers.ts`
 - Build typed preload bridge with `contextBridge`
 - Update `services/backend.ts` to detect Electron and use IPC
-- Remove `@codedeck/server` as a runtime dependency
+- Remove `@palot/server` as a runtime dependency
 
 ### Phase 3: Polish and ship (effort: MEDIUM)
 
@@ -518,7 +518,7 @@ These parts of the codebase are **completely unchanged**:
 
 The only files that change in the renderer are:
 - `services/backend.ts` — swap `isTauri` detection for `isElectron`
-- `services/codedeck-server.ts` — kept but only used in browser dev mode
+- `services/palot-server.ts` — kept but only used in browser dev mode
 
 ---
 
@@ -538,7 +538,7 @@ The only files that change in the renderer are:
 
 The 70-80 MB size increase is a worthwhile trade for consistent rendering,
 faster development iteration, and a mature ecosystem. For a developer tool
-like codedeck, bundle size is not the primary concern — performance and
+like palot, bundle size is not the primary concern — performance and
 reliability are.
 
 ---

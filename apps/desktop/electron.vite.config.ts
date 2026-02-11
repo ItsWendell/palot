@@ -5,7 +5,7 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite"
 
 export default defineConfig({
 	main: {
-		plugins: [externalizeDepsPlugin()],
+		plugins: [externalizeDepsPlugin({ exclude: ["@palot/cc2oc"] })],
 		build: {
 			rollupOptions: {
 				input: { index: path.resolve(__dirname, "src/main/index.ts") },
@@ -30,7 +30,7 @@ export default defineConfig({
 		resolve: {
 			alias: {
 				"@": path.resolve(__dirname, "src/renderer"),
-				"@codedeck/ui": path.resolve(__dirname, "../../packages/ui/src"),
+				"@palot/ui": path.resolve(__dirname, "../../packages/ui/src"),
 			},
 		},
 		server: {

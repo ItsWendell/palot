@@ -15,7 +15,7 @@
 		"noEmit": true,
 		"paths": {
 			"@/*": ["./src/renderer/*"],
-			"@codedeck/ui/*": ["../../packages/ui/src/*"]
+			"@palot/ui/*": ["../../packages/ui/src/*"]
 		}
 	},
 	"include": [

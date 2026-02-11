@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
 import { useCallback } from "react"
 import { serverConnectedAtom } from "../atoms/connection"
+import { isMockModeAtom } from "../atoms/mock-mode"
 import { fetchModelState, updateModelRecent } from "../services/backend"
 import { getProjectClient } from "../services/connection-manager"
 
@@ -156,6 +157,7 @@ export function useProviders(directory: string | null): {
 	reload: () => void
 } {
 	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
 	const queryClient = useQueryClient()
 
 	const { data, isLoading, error } = useQuery({
@@ -173,7 +175,7 @@ export function useProviders(directory: string | null): {
 				defaults: raw.default ?? {},
 			}
 		},
-		enabled: !!directory && connected,
+		enabled: !!directory && connected && !isMockMode,
 	})
 
 	const reload = useCallback(() => {
@@ -197,6 +199,7 @@ export function useConfig(directory: string | null): {
 	reload: () => void
 } {
 	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
 	const queryClient = useQueryClient()
 
 	const { data, isLoading, error } = useQuery({
@@ -212,7 +215,7 @@ export function useConfig(directory: string | null): {
 				defaultAgent: raw.default_agent,
 			}
 		},
-		enabled: !!directory && connected,
+		enabled: !!directory && connected && !isMockMode,
 	})
 
 	const reload = useCallback(() => {
@@ -236,6 +239,7 @@ export function useVcs(directory: string | null): {
 	reload: () => void
 } {
 	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
 	const queryClient = useQueryClient()
 
 	const { data, isLoading, error } = useQuery({
@@ -247,7 +251,7 @@ export function useVcs(directory: string | null): {
 			const raw = result.data as { branch: string }
 			return { branch: raw.branch ?? "" }
 		},
-		enabled: !!directory && connected,
+		enabled: !!directory && connected && !isMockMode,
 		staleTime: 30_000,
 		refetchInterval: 60_000,
 	})
@@ -273,6 +277,7 @@ export function useOpenCodeAgents(directory: string | null): {
 	reload: () => void
 } {
 	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
 	const queryClient = useQueryClient()
 
 	const { data, isLoading, error } = useQuery({
@@ -284,7 +289,7 @@ export function useOpenCodeAgents(directory: string | null): {
 			const raw = (result.data ?? []) as SdkAgent[]
 			return raw.filter((a) => (a.mode === "primary" || a.mode === "all") && !a.hidden)
 		},
-		enabled: !!directory && connected,
+		enabled: !!directory && connected && !isMockMode,
 	})
 
 	const reload = useCallback(() => {
@@ -308,6 +313,7 @@ export function useModelState(): {
 	addRecent: (model: ModelRef) => void
 } {
 	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
 	const queryClient = useQueryClient()
 
 	const { data, isLoading, error } = useQuery({
@@ -316,7 +322,7 @@ export function useModelState(): {
 			const result = await fetchModelState()
 			return result.recent ?? []
 		},
-		enabled: connected,
+		enabled: connected && !isMockMode,
 		staleTime: 60_000,
 	})
 
@@ -351,12 +357,16 @@ export function useModelState(): {
 	}
 }
 
-export function useServerCommands(directory: string | null): {
+export interface ServerCommand {
 	name: string
 	description?: string
 	agent?: string
-}[] {
+	source?: "command" | "mcp" | "skill"
+}
+
+export function useServerCommands(directory: string | null): ServerCommand[] {
 	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
 
 	const { data } = useQuery({
 		queryKey: queryKeys.commands(directory ?? ""),
@@ -364,9 +374,9 @@ export function useServerCommands(directory: string | null): {
 			const client = getProjectClient(directory!)
 			if (!client) throw new Error("No client for directory")
 			const result = await client.command.list()
-			return (result.data ?? []) as { name: string; description?: string; agent?: string }[]
+			return (result.data ?? []) as ServerCommand[]
 		},
-		enabled: !!directory && connected,
+		enabled: !!directory && connected && !isMockMode,
 	})
 
 	return data ?? []

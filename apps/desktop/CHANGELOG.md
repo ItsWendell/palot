@@ -1,10 +1,10 @@
-# @codedeck/desktop
+# @palot/desktop
 
 ## 0.3.0
 
 ### Minor Changes
 
-- [`0c44450`](https://github.com/ItsWendell/codedeck/commit/0c44450f8464e7fa87978e29dc53c59a7da98ea8) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add new Codedeck logo, app icons, favicons, brand assets, and comprehensive README
+- [`0c44450`](https://github.com/ItsWendell/palot/commit/0c44450f8464e7fa87978e29dc53c59a7da98ea8) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add new Palot logo, app icons, favicons, brand assets, and comprehensive README
 
   - Design new logo: stacked terminal cards with >\_ prompt (V10a-1)
   - Generate all icon assets: 1024px PNG (macOS/Linux), multi-size ICO (Windows), favicons
@@ -19,7 +19,7 @@
 
 ### Minor Changes
 
-- [#8](https://github.com/ItsWendell/codedeck/pull/8) [`95e12b0`](https://github.com/ItsWendell/codedeck/commit/95e12b00908f555820f93285a9db52049a34aa1b) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add auto-update support and overhaul release workflow
+- [#8](https://github.com/ItsWendell/palot/pull/8) [`95e12b0`](https://github.com/ItsWendell/palot/commit/95e12b00908f555820f93285a9db52049a34aa1b) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add auto-update support and overhaul release workflow
 
   - Integrate electron-updater for automatic app updates via GitHub Releases
   - Non-intrusive update banner with download progress and restart action
@@ -28,8 +28,8 @@
 
 ### Patch Changes
 
-- Updated dependencies [[`95e12b0`](https://github.com/ItsWendell/codedeck/commit/95e12b00908f555820f93285a9db52049a34aa1b)]:
-  - @codedeck/ui@0.2.0
+- Updated dependencies [[`95e12b0`](https://github.com/ItsWendell/palot/commit/95e12b00908f555820f93285a9db52049a34aa1b)]:
+  - @palot/ui@0.2.0
 
 ## 0.1.1
 
@@ -38,4 +38,4 @@
 - Initial release with multi-platform Electron builds, shared UI component library, and development server
 
 - Updated dependencies []:
-  - @codedeck/ui@0.1.1
+  - @palot/ui@0.1.1

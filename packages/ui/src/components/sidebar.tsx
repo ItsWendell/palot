@@ -1,22 +1,22 @@
-import { Button } from "@codedeck/ui/components/button"
-import { Input } from "@codedeck/ui/components/input"
-import { Separator } from "@codedeck/ui/components/separator"
+import { Button } from "@palot/ui/components/button"
+import { Input } from "@palot/ui/components/input"
+import { Separator } from "@palot/ui/components/separator"
 import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
-} from "@codedeck/ui/components/sheet"
-import { Skeleton } from "@codedeck/ui/components/skeleton"
+} from "@palot/ui/components/sheet"
+import { Skeleton } from "@palot/ui/components/skeleton"
 import {
 	Tooltip,
 	TooltipContent,
 	TooltipProvider,
 	TooltipTrigger,
-} from "@codedeck/ui/components/tooltip"
-import { useIsMobile } from "@codedeck/ui/hooks/use-mobile"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/tooltip"
+import { useIsMobile } from "@palot/ui/hooks/use-mobile"
+import { cn } from "@palot/ui/lib/utils"
 import { cva, type VariantProps } from "class-variance-authority"
 import { PanelLeftIcon } from "lucide-react"
 import { Slot } from "radix-ui"

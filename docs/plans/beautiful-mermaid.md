@@ -4,7 +4,7 @@
 
 ## Current State
 
-Codedeck renders markdown via **Streamdown** (`streamdown@2.1.0`) with four plugins: `@streamdown/cjk`, `@streamdown/code`, `@streamdown/math`, and `@streamdown/mermaid`. Mermaid rendering happens in two components:
+Palot renders markdown via **Streamdown** (`streamdown@2.1.0`) with four plugins: `@streamdown/cjk`, `@streamdown/code`, `@streamdown/math`, and `@streamdown/mermaid`. Mermaid rendering happens in two components:
 
 - `packages/ui/src/components/ai-elements/message.tsx:275` — `MessageResponse` (assistant text)
 - `packages/ui/src/components/ai-elements/reasoning.tsx:195` — `ReasoningContent` (thinking blocks)
@@ -65,7 +65,7 @@ interface MermaidInstance {
 
 1. **Bundle size** — `mermaid@11.12.2` pulls in D3, dagre, DOMPurify, and other heavy dependencies (~2.5MB minified). `beautiful-mermaid` has a single dependency (`@dagrejs/dagre`) and produces SVG strings with no DOM.
 2. **Aesthetics** — Mermaid's default rendering looks dated. beautiful-mermaid produces polished, professional SVGs with a CSS custom property theme system.
-3. **Theme integration** — The current plugin uses mermaid's internal theming (`theme: "default"`), which doesn't adapt to Codedeck's light/dark mode. beautiful-mermaid uses `--bg`/`--fg` CSS variables that can derive from the app's theme.
+3. **Theme integration** — The current plugin uses mermaid's internal theming (`theme: "default"`), which doesn't adapt to Palot's light/dark mode. beautiful-mermaid uses `--bg`/`--fg` CSS variables that can derive from the app's theme.
 4. **DOM requirement** — `mermaid.render()` requires a DOM (or jsdom). beautiful-mermaid is pure TypeScript with zero DOM dependencies.
 5. **Diagram type coverage** — beautiful-mermaid supports flowcharts, state, sequence, class, and ER diagrams. The standard mermaid library supports more types (pie, gantt, etc.), but these 5 cover >95% of AI-generated diagrams.
 
@@ -125,11 +125,11 @@ Our adapter intercepts the `render()` call and routes it through `beautiful-merm
 
 ### Theme Integration
 
-Codedeck already uses Shiki with `github-light` and `github-dark` themes (see `code-block.tsx:143`). beautiful-mermaid provides `fromShikiTheme()` that extracts diagram colors from any Shiki theme object. This creates a natural integration path:
+Palot already uses Shiki with `github-light` and `github-dark` themes (see `code-block.tsx:143`). beautiful-mermaid provides `fromShikiTheme()` that extracts diagram colors from any Shiki theme object. This creates a natural integration path:
 
 1. Detect current theme mode (light/dark) from the app's theme system
 2. Use `fromShikiTheme()` with the matching Shiki theme, OR
-3. Map Codedeck's CSS variables directly to `DiagramColors`
+3. Map Palot's CSS variables directly to `DiagramColors`
 
 Since the app uses Tailwind v4 with CSS variables (`--background`, `--foreground`, etc.), the simplest approach is to map these directly:
 
@@ -242,7 +242,7 @@ Both `message.tsx` and `reasoning.tsx` need this change. The plugin object is cr
 **Effort:** MEDIUM (1-2 hours)
 **Files:** `packages/ui/src/lib/beautiful-mermaid-plugin.ts`, `message.tsx`, `reasoning.tsx`
 
-Make the mermaid plugin react to Codedeck's theme (light/dark mode):
+Make the mermaid plugin react to Palot's theme (light/dark mode):
 
 **Option A: Static theme pair (simplest)**
 
@@ -253,7 +253,7 @@ const mermaidLight = createBeautifulMermaidPlugin({ theme: "github-light" })
 const mermaidDark = createBeautifulMermaidPlugin({ theme: "github-dark" })
 
 // In the component:
-const isDark = useTheme() // however Codedeck resolves theme
+const isDark = useTheme() // however Palot resolves theme
 const mermaid = isDark ? mermaidDark : mermaidLight
 const streamdownPlugins = useMemo(() => ({ cjk, code, math, mermaid }), [mermaid])
 ```
@@ -281,7 +281,7 @@ This ensures mermaid diagrams use the exact same color palette as syntax-highlig
 beautiful-mermaid SVGs use CSS custom properties (`--bg`, `--fg`, etc.) internally. Since the SVGs are rendered as inline HTML (not `<img>` tags), CSS variables from parent elements cascade into them. We could:
 
 1. Render with placeholder colors
-2. Add CSS rules that override `--bg`/`--fg` based on Codedeck's theme variables
+2. Add CSS rules that override `--bg`/`--fg` based on Palot's theme variables
 3. Theme changes propagate automatically without re-rendering
 
 This requires adding a CSS snippet to the global styles:
@@ -375,7 +375,7 @@ With Option B, keep `mermaid` as an optional/lazy dependency in `package.json` �
 
 **Risk:** beautiful-mermaid's SVGs include `@import url()` for Google Fonts (Inter, JetBrains Mono). In an Electron app, this requires network access.
 
-**Mitigation:** Codedeck already uses Inter as its UI font (bundled or loaded). The SVG font import will either hit the browser cache or fall back to `system-ui, sans-serif`. For offline scenarios, we can pass `font: "system-ui"` to skip the Google Fonts import.
+**Mitigation:** Palot already uses Inter as its UI font (bundled or loaded). The SVG font import will either hit the browser cache or fall back to `system-ui, sans-serif`. For offline scenarios, we can pass `font: "system-ui"` to skip the Google Fonts import.
 
 ### R5: Library maturity
 

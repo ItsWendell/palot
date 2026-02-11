@@ -1,6 +1,6 @@
-appId: com.codedeck.desktop
-productName: Codedeck
-copyright: Copyright (c) 2025-2026 Codedeck
+appId: com.palot.desktop
+productName: Palot
+copyright: Copyright (c) 2025-2026 Palot
 directories:
   buildResources: resources
   output: release
@@ -12,9 +12,9 @@ files:
   - "node_modules/electron-liquid-glass/**/*"
 
 # Bundle the CLI launcher script into the app package.
-# macOS: Contents/Resources/bin/codedeck
-# Linux: resources/bin/codedeck
-# Windows: resources/bin/codedeck.cmd
+# macOS: Contents/Resources/bin/palot
+# Linux: resources/bin/palot
+# Windows: resources/bin/palot.cmd
 extraResources:
   - from: resources/bin
     to: bin
@@ -57,10 +57,10 @@ linux:
     - target: rpm
       arch: [x64]
   category: Development
-  maintainer: codedeck
+  maintainer: palot
   desktop:
     entry:
-      Name: Codedeck
+      Name: Palot
       Comment: AI-powered coding assistant
       Categories: Development;IDE;
 

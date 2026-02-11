@@ -7,7 +7,7 @@ export type { OpencodeClient }
 
 const log = createLogger("opencode")
 
-const isElectron = typeof window !== "undefined" && "codedeck" in window
+const isElectron = typeof window !== "undefined" && "palot" in window
 
 /**
  * Determines if a fetch error is a transient network error worth retrying.
@@ -116,7 +116,7 @@ function createIpcFetch(): typeof fetch {
 		}
 
 		// Send through IPC → main process → net.fetch() → back
-		const result = await window.codedeck.fetch(serialized)
+		const result = await window.palot.fetch(serialized)
 
 		// Reconstruct a Response object from the serialized result
 		return new Response(result.body, {
@@ -270,6 +270,26 @@ export async function replyToQuestion(
  */
 export async function rejectQuestion(client: OpencodeClient, requestId: string): Promise<void> {
 	await client.question.reject({ requestID: requestId })
+}
+
+/**
+ * Dispose a specific project instance on the OpenCode server.
+ * This forces the server to re-read all config, agents, skills, etc. from disk
+ * for that project. The resulting `server.instance.disposed` SSE event triggers
+ * automatic query invalidation in the UI.
+ */
+export async function disposeInstance(client: OpencodeClient): Promise<void> {
+	await client.instance.dispose()
+}
+
+/**
+ * Dispose all instances on the OpenCode server (global reload).
+ * Forces re-initialization of all project instances, re-reading all config
+ * files, agents, skills, commands, etc. from disk. The resulting
+ * `global.disposed` SSE event triggers automatic query invalidation in the UI.
+ */
+export async function disposeAllInstances(client: OpencodeClient): Promise<void> {
+	await client.global.dispose()
 }
 
 /**

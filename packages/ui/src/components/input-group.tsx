@@ -1,7 +1,7 @@
-import { Button } from "@codedeck/ui/components/button"
-import { Input } from "@codedeck/ui/components/input"
-import { Textarea } from "@codedeck/ui/components/textarea"
-import { cn } from "@codedeck/ui/lib/utils"
+import { Button } from "@palot/ui/components/button"
+import { Input } from "@palot/ui/components/input"
+import { Textarea } from "@palot/ui/components/textarea"
+import { cn } from "@palot/ui/lib/utils"
 import { cva, type VariantProps } from "class-variance-authority"
 import type * as React from "react"
 

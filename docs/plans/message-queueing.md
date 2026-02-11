@@ -6,7 +6,7 @@
 
 Users should be able to send follow-up messages while the AI is still responding. This is commonly called "queueing" or "steering" -- the user types a correction, clarification, or new instruction mid-response, and the AI incorporates it on its next loop iteration without losing its place.
 
-OpenCode already supports this on the server side. The infrastructure is fully implemented in the `SessionPrompt.prompt()` / `loop()` functions. Codedeck's desktop app currently **blocks the input** while the AI is working (`canSend = isConnected && !isWorking && !sending`), so the feature is invisible to users.
+OpenCode already supports this on the server side. The infrastructure is fully implemented in the `SessionPrompt.prompt()` / `loop()` functions. Palot's desktop app currently **blocks the input** while the AI is working (`canSend = isConnected && !isWorking && !sending`), so the feature is invisible to users.
 
 ### How OpenCode's queueing works (server side)
 
@@ -31,7 +31,7 @@ The server uses a **promise-callback queue** pattern:
 
 **Key insight**: There is no explicit queue data structure for messages. The queue is *implicit* -- messages are persisted immediately, and the processing loop discovers them by re-reading storage.
 
-### What Codedeck does today
+### What Palot does today
 
 | Aspect | Current behavior | Problem |
 |---|---|---|

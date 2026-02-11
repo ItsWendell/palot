@@ -2,7 +2,7 @@
  * cc2oc diff -- Compare Claude Code and OpenCode configurations.
  */
 
-import { diff, scan } from "@codedeck/cc2oc"
+import { diff, scan } from "@palot/cc2oc"
 import { defineCommand } from "citty"
 import consola from "consola"
 import { printDiff } from "../output/terminal"

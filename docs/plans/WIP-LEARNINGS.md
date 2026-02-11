@@ -284,21 +284,21 @@ TypeScript modules with 15+ hook points. Not directly convertible from CC hooks 
 
 ## Architecture Decision: Dual-Package in Monorepo
 
-After analyzing the Codedeck monorepo structure, the chosen approach is **dual-package**:
+After analyzing the Palot monorepo structure, the chosen approach is **dual-package**:
 
-1. **`packages/cc2oc`** (`@codedeck/cc2oc`) -- pure library, zero CLI deps. Exports `scan()`, `convert()`, `write()`, `validate()`, `diff()`. All conversion logic is pure functions (data in, data out). Only `scan()` and `write()` do filesystem I/O.
+1. **`packages/cc2oc`** (`@palot/cc2oc`) -- pure library, zero CLI deps. Exports `scan()`, `convert()`, `write()`, `validate()`, `diff()`. All conversion logic is pure functions (data in, data out). Only `scan()` and `write()` do filesystem I/O.
 
 2. **`packages/cc2oc-cli`** (`cc2oc`) -- thin CLI using `citty` + `consola`. Imports everything from the library. Published to npm for standalone use.
 
-**Why this works for Codedeck:**
-- `apps/desktop` adds `"@codedeck/cc2oc": "workspace:*"` as a dependency
+**Why this works for Palot:**
+- `apps/desktop` adds `"@palot/cc2oc": "workspace:*"` as a dependency
 - Main process imports `scan`, `convert`, `write` and exposes via IPC handlers
 - Renderer can show a migration wizard UI with scan results, let user pick what to migrate, then trigger write
 - No CLI deps pollute the desktop app bundle
-- Follows the same pattern as `@codedeck/ui` (source-level exports, `workspace:*` linking)
+- Follows the same pattern as `@palot/ui` (source-level exports, `workspace:*` linking)
 
 **Key insight from monorepo analysis:**
-- `@codedeck/ui` uses direct source file exports (no build step) -- `@codedeck/cc2oc` can follow the same pattern
+- `@palot/ui` uses direct source file exports (no build step) -- `@palot/cc2oc` can follow the same pattern
 - TypeScript uses `moduleResolution: "bundler"` everywhere -- import from source works
 - Biome config is shared at root -- no per-package lint config needed
 - `tsgo --noEmit` for type checking (same as other packages)

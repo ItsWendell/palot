@@ -7,6 +7,7 @@ import { createLogger } from "./logger"
 import { stopServer } from "./opencode-manager"
 import { initSettingsStore } from "./settings-store"
 import { fixProcessEnv } from "./shell-env"
+import { createTray, destroyTray } from "./tray"
 import { initAutoUpdater, stopAutoUpdater } from "./updater"
 
 const log = createLogger("app")
@@ -91,12 +92,12 @@ const isDev = !app.isPackaged
 // The single-instance lock and user-data directory are both keyed on app name,
 // so changing it here prevents the two from conflicting.
 if (isDev) {
-	app.setName("Codedeck Dev")
-	app.setPath("userData", path.join(app.getPath("appData"), "Codedeck Dev"))
+	app.setName("Palot Dev")
+	app.setPath("userData", path.join(app.getPath("appData"), "Palot Dev"))
 }
 
 async function createWindow(): Promise<BrowserWindow> {
-	const title = isDev ? "Codedeck (Dev)" : "Codedeck"
+	const title = isDev ? "Palot (Dev)" : "Palot"
 
 	const isMac = process.platform === "darwin"
 
@@ -200,6 +201,7 @@ if (!gotLock) {
 		initSettingsStore()
 		registerIpcHandlers()
 		createWindow()
+		createTray(() => BrowserWindow.getAllWindows()[0])
 		initAutoUpdater().catch(console.error)
 
 		app.on("activate", () => {
@@ -208,7 +210,8 @@ if (!gotLock) {
 	})
 
 	app.on("window-all-closed", () => {
-		// Clean up the managed opencode server and auto-updater
+		// Clean up the managed opencode server, tray, and auto-updater
+		destroyTray()
 		stopServer()
 		stopAutoUpdater()
 		if (process.platform !== "darwin") app.quit()

@@ -73,7 +73,7 @@ export async function ensureServer(): Promise<OpenCodeServer> {
 		{
 			cwd: homedir(),
 			stdio: "pipe",
-			env: { ...process.env, PATH: augmentedPath, OPENCODE_INSPECT: "1" },
+			env: { ...process.env, PATH: augmentedPath },
 		},
 	)
 

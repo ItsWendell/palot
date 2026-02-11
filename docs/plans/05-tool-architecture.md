@@ -1,21 +1,21 @@
 # Tool Architecture: `cc2oc`
 
-> Implementation plan for the Claude Code to OpenCode migration tool, built as a dual-package in the Codedeck monorepo for reuse as both a standalone CLI and an importable library.
+> Implementation plan for the Claude Code to OpenCode migration tool, built as a dual-package in the Palot monorepo for reuse as both a standalone CLI and an importable library.
 
 ## Design Decision: Dual-Package in Monorepo
 
-The tool is split into two workspace packages inside the Codedeck monorepo:
+The tool is split into two workspace packages inside the Palot monorepo:
 
 | Package | Name | Purpose |
 |---------|------|---------|
-| `packages/cc2oc` | `@codedeck/cc2oc` | **Pure library** -- all scanning, conversion, validation logic. Zero CLI dependencies. |
-| `packages/cc2oc-cli` | `cc2oc` | **Thin CLI wrapper** -- uses `citty` for argument parsing, imports everything from `@codedeck/cc2oc`. Published to npm as `cc2oc`. |
+| `packages/cc2oc` | `@palot/cc2oc` | **Pure library** -- all scanning, conversion, validation logic. Zero CLI dependencies. |
+| `packages/cc2oc-cli` | `cc2oc` | **Thin CLI wrapper** -- uses `citty` for argument parsing, imports everything from `@palot/cc2oc`. Published to npm as `cc2oc`. |
 
 ### Why This Split
 
-1. **Codedeck reuse** -- `apps/desktop` imports `@codedeck/cc2oc` directly via `workspace:*` for in-app migration UX (e.g., an import wizard that detects Claude Code configs and offers one-click migration)
-2. **No CLI bloat in library consumers** -- `@codedeck/cc2oc` has only data-processing deps (zod, yaml, jsonc-parser). No `citty`, `consola`, or terminal formatting.
-3. **Follows existing patterns** -- mirrors how `@codedeck/ui` (library) is consumed by `@codedeck/desktop` (app). Same `workspace:*` linking, same source-level imports.
+1. **Palot reuse** -- `apps/desktop` imports `@palot/cc2oc` directly via `workspace:*` for in-app migration UX (e.g., an import wizard that detects Claude Code configs and offers one-click migration)
+2. **No CLI bloat in library consumers** -- `@palot/cc2oc` has only data-processing deps (zod, yaml, jsonc-parser). No `citty`, `consola`, or terminal formatting.
+3. **Follows existing patterns** -- mirrors how `@palot/ui` (library) is consumed by `@palot/desktop` (app). Same `workspace:*` linking, same source-level imports.
 4. **Independent publishing** -- the CLI can be published to npm as `cc2oc` for standalone use (`npx cc2oc migrate`), while the library stays private within the monorepo.
 
 ---
@@ -23,7 +23,7 @@ The tool is split into two workspace packages inside the Codedeck monorepo:
 ## Technology Choice
 
 ### Runtime: Bun
-- Codedeck monorepo already uses Bun workspaces
+- Palot monorepo already uses Bun workspaces
 - Native TypeScript execution (no build step for development)
 - Fast file system APIs
 
@@ -110,7 +110,7 @@ packages/cc2oc/
 **`package.json`:**
 ```json
 {
-  "name": "@codedeck/cc2oc",
+  "name": "@palot/cc2oc",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -202,7 +202,7 @@ packages/cc2oc-cli/
     "clean": "rm -rf node_modules .turbo"
   },
   "dependencies": {
-    "@codedeck/cc2oc": "workspace:*",
+    "@palot/cc2oc": "workspace:*",
     "citty": "^0.2.0",
     "consola": "^3.0.0"
   },
@@ -217,24 +217,24 @@ The CLI is a thin layer: parse args with `citty`, call library functions, format
 
 ---
 
-## How Codedeck Consumes the Library
+## How Palot Consumes the Library
 
 ### In `apps/desktop/package.json`:
 ```json
 {
   "dependencies": {
-    "@codedeck/cc2oc": "workspace:*"
+    "@palot/cc2oc": "workspace:*"
   }
 }
 ```
 
-### Usage in Codedeck (renderer or main process):
+### Usage in Palot (renderer or main process):
 
 ```typescript
 // Example: Import wizard component in the desktop app
-import { scan, convert, validate } from "@codedeck/cc2oc"
-import { convertMcpServers } from "@codedeck/cc2oc/converter/mcp"
-import type { ScanResult, ConversionResult } from "@codedeck/cc2oc/types"
+import { scan, convert, validate } from "@palot/cc2oc"
+import { convertMcpServers } from "@palot/cc2oc/converter/mcp"
+import type { ScanResult, ConversionResult } from "@palot/cc2oc/types"
 
 // Scan for Claude Code configs
 const scanResult: ScanResult = await scan({
@@ -267,7 +267,7 @@ await write(conversionResult, {
 
 ### In Electron main process (for filesystem access):
 
-Since the library does file I/O (scanning `~/.Claude/`, writing to `~/.config/opencode/`), it needs to run in the **main process** in Electron mode. The pattern follows existing Codedeck conventions:
+Since the library does file I/O (scanning `~/.Claude/`, writing to `~/.config/opencode/`), it needs to run in the **main process** in Electron mode. The pattern follows existing Palot conventions:
 
 1. Library functions called in main process via IPC handler
 2. Renderer sends IPC request -> main process runs scan/convert/write -> result sent back
@@ -275,7 +275,7 @@ Since the library does file I/O (scanning `~/.Claude/`, writing to `~/.config/op
 
 ```typescript
 // main/ipc/migration.ts
-import { scan, convert, write } from "@codedeck/cc2oc"
+import { scan, convert, write } from "@palot/cc2oc"
 
 ipcMain.handle("cc2oc:scan", async () => {
   return await scan({ global: true })
@@ -312,7 +312,7 @@ diff(scanResult)       -> DiffResult           (compares CC vs current OC)
 
 The key design principle: **`convert()` is pure** -- it takes data and returns data. No filesystem access. This makes it testable, usable in any context (CLI, Electron main process, web worker), and composable.
 
-Only `scan()` and `write()` touch the filesystem. The CLI and Codedeck can both swap in their own I/O layer if needed (e.g., Codedeck could scan via IPC instead of direct fs access).
+Only `scan()` and `write()` touch the filesystem. The CLI and Palot can both swap in their own I/O layer if needed (e.g., Palot could scan via IPC instead of direct fs access).
 
 ### Optional: Dependency Injection for I/O
 
@@ -330,7 +330,7 @@ interface FsAdapter {
 // Default: uses Bun/Node fs directly
 export async function scan(options: ScanOptions, fs?: FsAdapter): Promise<ScanResult>
 
-// Codedeck could pass an IPC-backed adapter
+// Palot could pass an IPC-backed adapter
 const ipcFs: FsAdapter = {
   readFile: (p) => ipcRenderer.invoke("fs:readFile", p),
   // ...
@@ -338,7 +338,7 @@ const ipcFs: FsAdapter = {
 const result = await scan(options, ipcFs)
 ```
 
-This is optional complexity -- start without it and add if Codedeck's renderer actually needs to call scan directly.
+This is optional complexity -- start without it and add if Palot's renderer actually needs to call scan directly.
 
 ---
 
@@ -538,10 +538,10 @@ Add both packages to the `linked` array in `.changeset/config.json` so they vers
 
 ### Dependency Graph
 ```
-@codedeck/desktop ──> @codedeck/cc2oc (library)
-                  ──> @codedeck/ui
+@palot/desktop ──> @palot/cc2oc (library)
+                  ──> @palot/ui
 
-cc2oc (CLI)       ──> @codedeck/cc2oc (library)
+cc2oc (CLI)       ──> @palot/cc2oc (library)
 ```
 
 No circular dependencies. The CLI has no relationship with the desktop app or UI package.
@@ -552,7 +552,7 @@ No circular dependencies. The CLI has no relationship with the desktop app or UI
 
 | Package | Published? | Registry | Notes |
 |---------|-----------|----------|-------|
-| `@codedeck/cc2oc` | No (private) | -- | Consumed only within monorepo via `workspace:*` |
+| `@palot/cc2oc` | No (private) | -- | Consumed only within monorepo via `workspace:*` |
 | `cc2oc` | Yes (public) | npm | Standalone CLI, `npx cc2oc migrate` |
 
 For publishing the CLI:
@@ -589,7 +589,7 @@ For publishing the CLI:
 - [ ] Integration tests with fixtures
 - [ ] Edge case handling
 
-### Week 4: Codedeck Integration + Polish
+### Week 4: Palot Integration + Polish
 - [ ] IPC handlers in `apps/desktop` main process
 - [ ] Migration wizard UI in renderer (if desired)
 - [ ] Session history converter (opt-in, P2)
@@ -601,7 +601,7 @@ For publishing the CLI:
 
 ## Dependencies
 
-### `@codedeck/cc2oc` (library -- minimal)
+### `@palot/cc2oc` (library -- minimal)
 ```json
 {
   "dependencies": {
@@ -616,7 +616,7 @@ For publishing the CLI:
 ```json
 {
   "dependencies": {
-    "@codedeck/cc2oc": "workspace:*",
+    "@palot/cc2oc": "workspace:*",
     "citty": "^0.2.0",
     "consola": "^3.0.0"
   }

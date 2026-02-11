@@ -4,7 +4,7 @@
 
 ## Context
 
-Codedeck needs to support file attachments (images, PDFs) in chat messages. The good news: **most of the infrastructure already exists** but isn't wired up.
+Palot needs to support file attachments (images, PDFs) in chat messages. The good news: **most of the infrastructure already exists** but isn't wired up.
 
 ### What already works
 

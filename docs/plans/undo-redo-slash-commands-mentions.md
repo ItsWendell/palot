@@ -1,10 +1,10 @@
 # Undo/Redo, Slash Commands, and @Mentions Plan
 
-> **Goal:** Bring Codedeck's input experience to parity with the OpenCode TUI — undo/redo for conversation turns, slash commands for quick actions, and @mentions for file/agent references.
+> **Goal:** Bring Palot's input experience to parity with the OpenCode TUI — undo/redo for conversation turns, slash commands for quick actions, and @mentions for file/agent references.
 
 ## Current State
 
-Codedeck has **none** of these features today:
+Palot has **none** of these features today:
 
 - All user text goes directly to `promptAsync()` — there is no input parsing layer
 - The textarea is a plain `<textarea>` element (`PromptInputTextarea` in `packages/ui`)
@@ -399,7 +399,7 @@ The current textarea is plain HTML. Both slash commands and @mentions benefit fr
 
 ### Recommendation
 
-**Phase 1**: Use `rich-textarea` for styled text rendering + custom autocomplete popovers (using `@codedeck/ui`'s existing Popover/Command components). This keeps the textarea semantics and is a minimal migration.
+**Phase 1**: Use `rich-textarea` for styled text rendering + custom autocomplete popovers (using `@palot/ui`'s existing Popover/Command components). This keeps the textarea semantics and is a minimal migration.
 
 **Phase 2** (later): If we need true token chips (clickable, deletable mention nodes), evaluate migrating to Tiptap. By then, Vercel's `ai-elements` may also have resolved [their open issue #179](https://github.com/vercel/ai-elements/issues/179) for rich input in PromptInput, which we could adopt.
 

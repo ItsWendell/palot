@@ -24,7 +24,7 @@ URL but with different directories gives us per-project isolation from a single 
 
 ### Before (current)
 ```
-Codedeck Backend (port 3100)
+Palot Backend (port 3100)
   ├── manages N opencode serve processes (ports 4101, 4102, ...)
   └── discovery reads disk
 
@@ -38,7 +38,7 @@ Desktop Frontend
 
 ### After (target)
 ```
-Codedeck Backend (port 3100)
+Palot Backend (port 3100)
   ├── manages ONE opencode serve process (port 4101)
   └── discovery reads disk
 
@@ -128,7 +128,7 @@ Desktop Frontend
 - [ ] **6.6** `sidebar.tsx`: No changes expected (doesn't reference serverId directly).
 
 ### Phase 7: Backend Cleanup
-- [ ] **7.1** `codedeck-server.ts` (RPC client): Update/add `fetchOpenCodeUrl()`
+- [ ] **7.1** `palot-server.ts` (RPC client): Update/add `fetchOpenCodeUrl()`
   function. Remove or deprecate `startServerForProject`.
 - [ ] **7.2** Remove multi-server port allocation from `server-manager.ts`.
 
@@ -166,7 +166,7 @@ session entry itself.
 
 ### What happens if the single server dies
 The SSE reconnection loop already handles disconnects with exponential backoff. If the
-server process crashes, the Codedeck backend should detect this and restart it. The
+server process crashes, the Palot backend should detect this and restart it. The
 frontend shows "Disconnected" in the status bar and auto-reconnects when the server
 comes back.
 
@@ -186,7 +186,7 @@ the server needs the directory to set up the correct Instance context for readin
 | `apps/server/src/index.ts` | Minor | Auto-start single server on boot |
 | `apps/desktop/src/stores/app-store.ts` | Major rewrite | Flatten sessions, remove server nesting |
 | `apps/desktop/src/services/connection-manager.ts` | Major rewrite | Single connection, project clients |
-| `apps/desktop/src/services/codedeck-server.ts` | Modify | New RPC function for server URL |
+| `apps/desktop/src/services/palot-server.ts` | Modify | New RPC function for server URL |
 | `apps/desktop/src/services/opencode.ts` | Minor | May need directory-aware wrappers |
 | `apps/desktop/src/hooks/use-discovery.ts` | Rewrite | Single connect flow |
 | `apps/desktop/src/hooks/use-opencode-data.ts` | Modify | serverId → directory params |

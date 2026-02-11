@@ -1,7 +1,7 @@
 import {
 	PromptInputHeader,
 	usePromptInputAttachments,
-} from "@codedeck/ui/components/ai-elements/prompt-input"
+} from "@palot/ui/components/ai-elements/prompt-input"
 import { AlertTriangleIcon, FileIcon, XIcon } from "lucide-react"
 import { memo, useMemo } from "react"
 

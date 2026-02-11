@@ -20,20 +20,20 @@ export interface PersistedModelRef {
 // ============================================================
 
 function migrateFromZustandPersist(): void {
-	const oldKey = "codedeck-preferences"
+	const oldKey = "palot-preferences"
 	const raw = localStorage.getItem(oldKey)
 	if (!raw) return
 
 	try {
 		const { state } = JSON.parse(raw) // Zustand persist wraps in { state, version }
 		if (state.displayMode)
-			localStorage.setItem("codedeck:displayMode", JSON.stringify(state.displayMode))
-		if (state.theme) localStorage.setItem("codedeck:theme", JSON.stringify(state.theme))
+			localStorage.setItem("palot:displayMode", JSON.stringify(state.displayMode))
+		if (state.theme) localStorage.setItem("palot:theme", JSON.stringify(state.theme))
 		if (state.colorScheme)
-			localStorage.setItem("codedeck:colorScheme", JSON.stringify(state.colorScheme))
-		if (state.drafts) localStorage.setItem("codedeck:drafts", JSON.stringify(state.drafts))
+			localStorage.setItem("palot:colorScheme", JSON.stringify(state.colorScheme))
+		if (state.drafts) localStorage.setItem("palot:drafts", JSON.stringify(state.drafts))
 		if (state.projectModels)
-			localStorage.setItem("codedeck:projectModels", JSON.stringify(state.projectModels))
+			localStorage.setItem("palot:projectModels", JSON.stringify(state.projectModels))
 
 		// Remove old key after successful migration
 		localStorage.removeItem(oldKey)
@@ -49,17 +49,17 @@ migrateFromZustandPersist()
 // Persisted atoms — each is independent with its own localStorage key
 // ============================================================
 
-export const displayModeAtom = atomWithStorage<DisplayMode>("codedeck:displayMode", "default")
+export const displayModeAtom = atomWithStorage<DisplayMode>("palot:displayMode", "default")
 
-export const themeAtom = atomWithStorage<string>("codedeck:theme", "default")
+export const themeAtom = atomWithStorage<string>("palot:theme", "default")
 
-export const colorSchemeAtom = atomWithStorage<ColorScheme>("codedeck:colorScheme", "dark")
+export const colorSchemeAtom = atomWithStorage<ColorScheme>("palot:colorScheme", "dark")
 
 /**
  * Whether the user prefers opaque (non-transparent) windows.
  * When true, the renderer uses solid backgrounds instead of semi-transparent.
  */
-export const opaqueWindowsAtom = atomWithStorage<boolean>("codedeck:opaqueWindows", false)
+export const opaqueWindowsAtom = atomWithStorage<boolean>("palot:opaqueWindows", false)
 
 /**
  * The active window chrome tier, set by the main process on load.
@@ -78,10 +78,10 @@ export const isTransparentAtom = atom((get) => {
 	return !opaque && (tier === "liquid-glass" || tier === "vibrancy")
 })
 
-export const draftsAtom = atomWithStorage<Record<string, string>>("codedeck:drafts", {})
+export const draftsAtom = atomWithStorage<Record<string, string>>("palot:drafts", {})
 
 export const projectModelsAtom = atomWithStorage<Record<string, PersistedModelRef>>(
-	"codedeck:projectModels",
+	"palot:projectModels",
 	{},
 )
 

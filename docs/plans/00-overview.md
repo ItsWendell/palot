@@ -52,29 +52,29 @@ Our tool fills the gap by providing a comprehensive, automated migration with va
 The tool is split into two workspace packages for reusability:
 
 ```
-packages/cc2oc/          @codedeck/cc2oc     Pure library (scanner, converter, writer, validator)
+packages/cc2oc/          @palot/cc2oc     Pure library (scanner, converter, writer, validator)
 packages/cc2oc-cli/      cc2oc               Thin CLI wrapper (arg parsing, terminal output)
 ```
 
 **Why the split:**
-- `@codedeck/cc2oc` is a **zero-CLI-dependency library** that Codedeck's desktop app imports directly via `workspace:*` to power an in-app migration wizard (scan via IPC, show results in UI, write on confirmation)
+- `@palot/cc2oc` is a **zero-CLI-dependency library** that Palot's desktop app imports directly via `workspace:*` to power an in-app migration wizard (scan via IPC, show results in UI, write on confirmation)
 - `cc2oc` is a standalone CLI published to npm (`npx cc2oc migrate`) for users who want terminal-based migration
 - The library's `convert()` function is **pure** (data in, data out, no I/O), making it testable and usable in any context
 
-See [05-tool-architecture.md](./05-tool-architecture.md) for full package structure, types, and Codedeck integration patterns.
+See [05-tool-architecture.md](./05-tool-architecture.md) for full package structure, types, and Palot integration patterns.
 
 ## High-Level Architecture
 
 ```
-@codedeck/cc2oc (library)           cc2oc (CLI)
+@palot/cc2oc (library)           cc2oc (CLI)
 ├── scan()      -> ScanResult       ├── cc2oc scan
 ├── convert()   -> ConversionResult ├── cc2oc plan (dry-run)
 ├── write()     -> WriteResult      ├── cc2oc migrate
 ├── validate()  -> ValidationResult ├── cc2oc validate
 └── diff()      -> DiffResult       └── cc2oc diff
 
-Codedeck Desktop (in-app migration wizard)
-├── main process: import { scan, convert, write } from "@codedeck/cc2oc"
+Palot Desktop (in-app migration wizard)
+├── main process: import { scan, convert, write } from "@palot/cc2oc"
 ├── IPC handlers: cc2oc:scan, cc2oc:migrate
 └── renderer: migration wizard UI showing scan results + conversion preview
 ```
@@ -105,11 +105,11 @@ cc2oc validate
 cc2oc diff
 ```
 
-## Library Interface (for Codedeck)
+## Library Interface (for Palot)
 
 ```typescript
-import { scan, convert, write, validate } from "@codedeck/cc2oc"
-import type { ScanResult, ConversionResult } from "@codedeck/cc2oc/types"
+import { scan, convert, write, validate } from "@palot/cc2oc"
+import type { ScanResult, ConversionResult } from "@palot/cc2oc/types"
 
 const scanResult = await scan({ global: true, project: "/path/to/project" })
 const converted  = await convert(scanResult, { categories: ["config", "mcp"] })

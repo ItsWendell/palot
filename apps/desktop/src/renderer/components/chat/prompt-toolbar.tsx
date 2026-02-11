@@ -8,15 +8,15 @@ import {
 	SearchableListPopoverSearch,
 	SearchableListPopoverTrigger,
 	useSearchableListPopoverSearch,
-} from "@codedeck/ui/components/searchable-list-popover"
+} from "@palot/ui/components/searchable-list-popover"
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@codedeck/ui/components/select"
-import { Separator } from "@codedeck/ui/components/separator"
+} from "@palot/ui/components/select"
+import { Separator } from "@palot/ui/components/separator"
 import {
 	CheckIcon,
 	ChevronDownIcon,

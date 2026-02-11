@@ -1,5 +1,5 @@
-import { type Button, buttonVariants } from "@codedeck/ui/components/button"
-import { cn } from "@codedeck/ui/lib/utils"
+import { type Button, buttonVariants } from "@palot/ui/components/button"
+import { cn } from "@palot/ui/lib/utils"
 import { ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon } from "lucide-react"
 import type * as React from "react"
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { cn } from "@codedeck/ui/lib/utils"
+import { cn } from "@palot/ui/lib/utils"
 import { GripVerticalIcon } from "lucide-react"
 import * as ResizablePrimitive from "react-resizable-panels"
 

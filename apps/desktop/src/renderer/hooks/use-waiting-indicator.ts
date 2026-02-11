@@ -9,10 +9,10 @@ export function useWaitingIndicator() {
 	const hasWaiting = useAtomValue(hasWaitingAtom)
 
 	useEffect(() => {
-		document.title = hasWaiting ? "(!) Codedeck \u2014 Input needed" : "Codedeck"
+		document.title = hasWaiting ? "(!) Palot \u2014 Input needed" : "Palot"
 
 		return () => {
-			document.title = "Codedeck"
+			document.title = "Palot"
 		}
 	}, [hasWaiting])
 }

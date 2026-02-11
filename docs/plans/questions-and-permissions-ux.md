@@ -4,11 +4,11 @@
 
 ## Problem Statement
 
-Codedeck currently has two separate "agent needs human input" mechanisms in the OpenCode SDK, but only one is partially implemented:
+Palot currently has two separate "agent needs human input" mechanisms in the OpenCode SDK, but only one is partially implemented:
 
 1. **Permissions** (`permission.updated` / `permission.replied`) — partially working. Rendered as a bottom bar in `AgentDetail` when `agent.status === "waiting"`. Functional but disconnected from the chat flow.
 
-2. **Questions** (`question.asked` / `question.replied` / `question.rejected`) — completely broken. The SDK has a full question system with structured questions, multi-select options, custom text input, and reply/reject endpoints. Codedeck ignores all three question events. The `mcp_question` tool renders as a generic tool call icon with no interactive UI.
+2. **Questions** (`question.asked` / `question.replied` / `question.rejected`) — completely broken. The SDK has a full question system with structured questions, multi-select options, custom text input, and reply/reject endpoints. Palot ignores all three question events. The `mcp_question` tool renders as a generic tool call icon with no interactive UI.
 
 **Impact:** When an agent asks a question (via `mcp_question`), the user sees nothing actionable. The agent appears stuck with no explanation. There is no way to answer the question, so the agent either times out or the user has to abort.
 
@@ -351,7 +351,7 @@ Already partially working (yellow dot). Enhance:
 - Add a subtle pulse animation to the session row when waiting
 - Show the question/permission summary text in the session subtitle:
   ```
-  codedeck                        ● Waiting
+  palot                        ● Waiting
   └─ Session: Feature X
      Asking: What framework?
   ```
@@ -359,14 +359,14 @@ Already partially working (yellow dot). Enhance:
 #### 4.2 Browser tab title / favicon
 
 When any agent is waiting for input:
-- Update document title: `(!) Codedeck — Question pending`
+- Update document title: `(!) Palot — Question pending`
 - Optionally swap favicon to an attention-grabbing variant
 
 #### 4.3 Desktop notification (optional, future)
 
 If the tab is not focused and an agent starts waiting, fire a browser notification:
 ```
-Codedeck — Agent needs input
+Palot — Agent needs input
 "What framework should we use?"
 [Answer] [Dismiss]
 ```

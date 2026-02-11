@@ -4,10 +4,10 @@ import type { WindowChromeTier } from "../../preload/api"
 import { chromeTierAtom, isTransparentAtom, opaqueWindowsAtom } from "../atoms/preferences"
 
 /**
- * Detect whether we're running inside Electron (preload injects `window.codedeck`).
+ * Detect whether we're running inside Electron (preload injects `window.palot`).
  */
 function isElectron(): boolean {
-	return typeof window !== "undefined" && "codedeck" in window
+	return typeof window !== "undefined" && "palot" in window
 }
 
 /** All glass-related CSS classes that we toggle on <html>. */
@@ -40,7 +40,7 @@ export function useChromeTier() {
 	useEffect(() => {
 		if (!isElectron()) return
 
-		window.codedeck.getChromeTier().then((tier) => {
+		window.palot.getChromeTier().then((tier) => {
 			setChromeTier(tier)
 		})
 	}, [setChromeTier])
@@ -49,7 +49,7 @@ export function useChromeTier() {
 	useEffect(() => {
 		if (!isElectron()) return
 
-		const unsubscribe = window.codedeck.onChromeTier((tier: string) => {
+		const unsubscribe = window.palot.onChromeTier((tier: string) => {
 			setChromeTier(tier as WindowChromeTier)
 		})
 
@@ -78,6 +78,13 @@ export function useChromeTier() {
 			root.classList.add("electron-opaque")
 		}
 	}, [chromeTier, isOpaque])
+
+	// Set data-platform on <html> so CSS can apply platform-specific styles
+	// (e.g. disabling hover states on macOS to match native sidebar behavior)
+	useEffect(() => {
+		if (!isElectron()) return
+		document.documentElement.dataset.platform = window.palot.platform
+	}, [])
 
 	return { isTransparent, isOpaque, chromeTier }
 }

@@ -163,7 +163,7 @@ export function useSessionMessages(directory: string | null, sessionId: string |
 				})
 				messages = (result.data as unknown as MessageEntry[]) ?? []
 			} else {
-				// Fallback: read from disk via the Codedeck backend server
+				// Fallback: read from disk via the Palot backend server
 				const result = await fetchSessionMessages(sessionId)
 				messages = (result.messages as unknown as MessageEntry[]) ?? []
 			}

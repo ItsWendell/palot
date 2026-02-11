@@ -3,13 +3,19 @@ import {
 	createRootRoute,
 	createRoute,
 	createRouter,
+	redirect,
 } from "@tanstack/react-router"
 import { ErrorPage } from "./components/error-page"
 import { NewChat } from "./components/new-chat"
 import { NotFoundPage } from "./components/not-found-page"
 import { RootLayout } from "./components/root-layout"
 import { SessionRoute } from "./components/session-route"
+import { AboutSettings } from "./components/settings/about-settings"
+import { GeneralSettings } from "./components/settings/general-settings"
+import { NotificationSettings } from "./components/settings/notification-settings"
 import { SettingsPage } from "./components/settings/settings-page"
+import { SetupSettings } from "./components/settings/setup-settings"
+import { SidebarLayout } from "./components/sidebar-layout"
 
 // ============================================================
 // Route tree
@@ -21,14 +27,20 @@ const rootRoute = createRootRoute({
 	notFoundComponent: NotFoundPage,
 })
 
-const indexRoute = createRoute({
+const sidebarLayout = createRoute({
 	getParentRoute: () => rootRoute,
+	id: "sidebar",
+	component: SidebarLayout,
+})
+
+const indexRoute = createRoute({
+	getParentRoute: () => sidebarLayout,
 	path: "/",
 	component: NewChat,
 })
 
 const projectRoute = createRoute({
-	getParentRoute: () => rootRoute,
+	getParentRoute: () => sidebarLayout,
 	path: "project/$projectSlug",
 })
 
@@ -45,15 +57,55 @@ const sessionRoute = createRoute({
 })
 
 const settingsRoute = createRoute({
-	getParentRoute: () => rootRoute,
+	getParentRoute: () => sidebarLayout,
 	path: "settings",
 	component: SettingsPage,
 })
 
+const settingsIndexRoute = createRoute({
+	getParentRoute: () => settingsRoute,
+	path: "/",
+	beforeLoad: () => {
+		throw redirect({ to: "/settings/general" })
+	},
+})
+
+const settingsGeneralRoute = createRoute({
+	getParentRoute: () => settingsRoute,
+	path: "general",
+	component: GeneralSettings,
+})
+
+const settingsNotificationsRoute = createRoute({
+	getParentRoute: () => settingsRoute,
+	path: "notifications",
+	component: NotificationSettings,
+})
+
+const settingsSetupRoute = createRoute({
+	getParentRoute: () => settingsRoute,
+	path: "setup",
+	component: SetupSettings,
+})
+
+const settingsAboutRoute = createRoute({
+	getParentRoute: () => settingsRoute,
+	path: "about",
+	component: AboutSettings,
+})
+
 const routeTree = rootRoute.addChildren([
-	indexRoute,
-	settingsRoute,
-	projectRoute.addChildren([projectIndexRoute, sessionRoute]),
+	sidebarLayout.addChildren([
+		indexRoute,
+		projectRoute.addChildren([projectIndexRoute, sessionRoute]),
+		settingsRoute.addChildren([
+			settingsIndexRoute,
+			settingsGeneralRoute,
+			settingsNotificationsRoute,
+			settingsSetupRoute,
+			settingsAboutRoute,
+		]),
+	]),
 ])
 
 // ============================================================

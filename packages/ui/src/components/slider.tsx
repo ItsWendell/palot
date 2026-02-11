@@ -1,4 +1,4 @@
-import { cn } from "@codedeck/ui/lib/utils"
+import { cn } from "@palot/ui/lib/utils"
 import { Slider as SliderPrimitive } from "radix-ui"
 import * as React from "react"
 

@@ -1,4 +1,4 @@
-# Codedeck Design Document
+# Palot Design Document
 
 > **Status:** Draft v1 — For Review
 > **Date:** February 7, 2026
@@ -78,7 +78,7 @@ OpenCode's own desktop app is proof that a standalone Tauri app works on top of 
 Tauri (Rust) → spawns `opencode serve` → connects via HTTP/SSE → frontend uses @opencode-ai/sdk
 ```
 
-We follow the exact same pattern. **Codedeck is a standalone desktop app that manages one or more OpenCode server instances.** No plugin, no fork, no extension needed. The entire OpenCode API is available externally:
+We follow the exact same pattern. **Palot is a standalone desktop app that manages one or more OpenCode server instances.** No plugin, no fork, no extension needed. The entire OpenCode API is available externally:
 
 - Session CRUD, prompting, aborting, forking, reverting
 - Real-time SSE event streams (all bus events)
@@ -91,7 +91,7 @@ We follow the exact same pattern. **Codedeck is a standalone desktop app that ma
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                     Codedeck Desktop App (Tauri v2)              │
+│                     Palot Desktop App (Tauri v2)              │
 │  ┌────────────────────────────────────┐  ┌────────────────────┐  │
 │  │         React Frontend             │  │   Rust Backend     │  │
 │  │  (Vite + shadcn/ui + Zustand)      │  │   (Tauri core)     │  │
@@ -133,9 +133,9 @@ We follow the exact same pattern. **Codedeck is a standalone desktop app that ma
 ### Why This Architecture
 
 1. **Zero duplication** — All agent intelligence, tool execution, and LLM interaction lives in OpenCode. We only build the management layer.
-2. **Automatic updates** — When OpenCode adds features (new tools, better agents, new providers), Codedeck gets them for free via the API.
+2. **Automatic updates** — When OpenCode adds features (new tools, better agents, new providers), Palot gets them for free via the API.
 3. **Multi-server** — Each project can have its own OpenCode server instance, or a single server can handle multiple projects via the `x-opencode-directory` header.
-4. **Clean separation** — Codedeck manages WHERE agents run. OpenCode manages WHAT agents do.
+4. **Clean separation** — Palot manages WHERE agents run. OpenCode manages WHAT agents do.
 
 ---
 
@@ -180,7 +180,7 @@ We follow the exact same pattern. **Codedeck is a standalone desktop app that ma
 
 ### Server Lifecycle
 
-Codedeck manages OpenCode server instances. For each project that has active agents:
+Palot manages OpenCode server instances. For each project that has active agents:
 
 ```typescript
 import { createOpencode } from "@opencode-ai/sdk"
@@ -206,7 +206,7 @@ let (rx, child) = app.shell()
     .args(["serve", "--hostname", "127.0.0.1", "--port", &port.to_string()])
     .envs([
         ("OPENCODE_SERVER_PASSWORD", &password),
-        ("OPENCODE_SERVER_USERNAME", "codedeck"),
+        ("OPENCODE_SERVER_USERNAME", "palot"),
     ])
     .spawn()?;
 ```
@@ -228,9 +228,9 @@ let (rx, child) = app.shell()
 
 ### Session Mapping
 
-Each "agent" in Codedeck maps 1:1 to an OpenCode session:
+Each "agent" in Palot maps 1:1 to an OpenCode session:
 
-| Codedeck Concept | OpenCode Concept |
+| Palot Concept | OpenCode Concept |
 |-----------------|-----------------|
 | Agent | Session |
 | Agent output stream | SSE events for session |
@@ -290,7 +290,7 @@ eventSource.onmessage = (event) => {
 │  on host, pointed │  inside the VM/   │  inside the container   │
 │  at worktree dir  │  container        │                         │
 ├───────────────────┼───────────────────┼─────────────────────────┤
-│  Codedeck spawns  │  Codedeck spawns  │  Codedeck provisions    │
+│  Palot spawns  │  Palot spawns  │  Palot provisions    │
 │  `opencode serve` │  VM, then starts  │  CF Container via API,  │
 │  with worktree    │  `opencode serve` │  OpenCode runs inside   │
 │  as working dir   │  inside it        │  with exposed HTTP port │
@@ -376,9 +376,9 @@ class WorktreeBackend implements RuntimeBackend {
 
   async provision(config: EnvironmentConfig): Promise<Environment> {
     // 1. Create a git worktree
-    const branchName = config.branch || `codedeck/${generateName()}`
+    const branchName = config.branch || `palot/${generateName()}`
     const worktreePath = path.join(
-      await getCodedeckDataDir(),
+      await getPalotDataDir(),
       "worktrees",
       projectId,
       slugify(branchName)
@@ -502,7 +502,7 @@ interface MigrationManifest {
   git: {
     remote: string              // e.g., "origin"
     remoteUrl: string           // e.g., "git@github.com:user/repo.git"
-    branch: string              // e.g., "codedeck/brave-falcon"
+    branch: string              // e.g., "palot/brave-falcon"
     commitSha: string           // HEAD commit after committing all work
     baseBranch: string          // e.g., "main"
     uncommittedPatch?: string   // If there were uncommitted changes, the patch
@@ -583,7 +583,7 @@ Migration is presented as a **simple environment switch**, not a complex operati
 │ Move to:                                 │
 │ ○ 💻 Local Worktree                      │
 │     Fastest. Creates git worktree at     │
-│     ~/codedeck/worktrees/auth-flow       │
+│     ~/palot/worktrees/auth-flow       │
 │     No process isolation.                │
 │                                          │
 │ ○ 🐳 Local VM                            │
@@ -620,7 +620,7 @@ Migration is presented as a **simple environment switch**, not a complex operati
 │ [+ Agent]    │ Filter ▼  Sort ▼  Search   │  Agent: "Add auth flow"  │
 │              │                            │                          │
 │ PROJECTS     │ ● "Add auth"    12m  ☁    │  ● Running · ☁ Cloud     │
-│  codedeck(3) │   reading files...         │  12m 34s · 45.2k tokens  │
+│  palot(3) │   reading files...         │  12m 34s · 45.2k tokens  │
 │  api-srv (1) │                            │  Branch: agent/auth-flow │
 │  frontend(2) │ ● "Fix CI"      3m  💻   │                          │
 │              │   running tests            │  ┌──────────────────────┐│
@@ -673,7 +673,7 @@ Single dialog — no wizard. Minimize friction:
 ┌─────────────────────────────────────────────┐
 │  NEW AGENT                                  │
 │                                             │
-│  Project:     [codedeck              ▼]     │
+│  Project:     [palot              ▼]     │
 │  Environment: [☁ Cloud] [💻 Local] [🐳 VM]  │
 │                                             │
 │  ┌─────────────────────────────────────┐    │
@@ -746,7 +746,7 @@ Selecting a new environment shows a confirmation with what will happen (see Sect
 ### Command Palette (`Cmd+K`)
 
 ```
-> new agent codedeck "fix the auth bug"
+> new agent palot "fix the auth bug"
 > stop agent "Add auth flow"
 > move "Fix CI" to cloud
 > show failed agents
@@ -823,14 +823,14 @@ When no agent is selected, the detail panel shows an overview:
 
 ## 9. Data Model
 
-Codedeck maintains its own lightweight data layer alongside OpenCode's session storage. This tracks environment assignments, migration history, and UI state that OpenCode doesn't know about.
+Palot maintains its own lightweight data layer alongside OpenCode's session storage. This tracks environment assignments, migration history, and UI state that OpenCode doesn't know about.
 
-### Codedeck State (persisted locally)
+### Palot State (persisted locally)
 
 ```typescript
-// Stored in ~/.local/share/codedeck/state.json (or Tauri app data dir)
+// Stored in ~/.local/share/palot/state.json (or Tauri app data dir)
 
-interface CodedeckState {
+interface PalotState {
   version: 1
   projects: ProjectConfig[]
   agents: AgentRecord[]
@@ -850,7 +850,7 @@ interface ProjectConfig {
 }
 
 interface AgentRecord {
-  id: string                      // Codedeck's ID
+  id: string                      // Palot's ID
   sessionId: string               // OpenCode session ID
   projectId: string               // Which project
   environmentId: string           // Which environment it's running in
@@ -899,7 +899,7 @@ interface UserPreferences {
 
 ## 10. API Design
 
-Codedeck itself doesn't expose a public API (it's a desktop app). But it has internal interfaces between its Rust backend and React frontend.
+Palot itself doesn't expose a public API (it's a desktop app). But it has internal interfaces between its Rust backend and React frontend.
 
 ### Tauri Commands (Rust → JS)
 
@@ -932,7 +932,7 @@ async fn migrate_agent(
 
 // State
 #[tauri::command]
-async fn get_state() -> Result<CodedeckState, Error>;
+async fn get_state() -> Result<PalotState, Error>;
 
 #[tauri::command]
 async fn update_preferences(prefs: UserPreferences) -> Result<(), Error>;
@@ -962,7 +962,7 @@ This keeps the data path simple and avoids double-proxying.
 
 ```
 ┌─────────────────────┐         ┌──────────────────────────────┐
-│   Codedeck App      │         │   Cloudflare Edge            │
+│   Palot App      │         │   Cloudflare Edge            │
 │                     │  HTTPS  │                              │
 │   Cloud Backend ────┼────────>│   Worker (router)            │
 │                     │  WSS    │     │                        │
@@ -995,7 +995,7 @@ export class AgentContainer extends Container {
   get envVars() {
     return {
       OPENCODE_SERVER_PASSWORD: this.ctx.storage.get('password'),
-      OPENCODE_SERVER_USERNAME: 'codedeck',
+      OPENCODE_SERVER_USERNAME: 'palot',
     }
   }
 }
@@ -1062,7 +1062,7 @@ Since Cloudflare Container disk is ephemeral:
 ```typescript
 class DockerVmBackend implements RuntimeBackend {
   async provision(config: EnvironmentConfig): Promise<Environment> {
-    const containerName = `codedeck-${generateId()}`
+    const containerName = `palot-${generateId()}`
     const port = await findAvailablePort()
     const password = generateUUID()
 
@@ -1072,8 +1072,8 @@ class DockerVmBackend implements RuntimeBackend {
       -p ${port}:8080 \
       -v ${config.projectPath}:/workspace \
       -e OPENCODE_SERVER_PASSWORD=${password} \
-      -e OPENCODE_SERVER_USERNAME=codedeck \
-      codedeck/agent-env:latest \
+      -e OPENCODE_SERVER_USERNAME=palot \
+      palot/agent-env:latest \
       opencode serve --hostname 0.0.0.0 --port 8080`, {
         cwd: config.projectPath
     })
@@ -1105,15 +1105,15 @@ For users who need stronger isolation than Docker provides (e.g., running untrus
 ### OpenCode Server Auth
 
 Every OpenCode server instance is protected with HTTP Basic Auth:
-- Codedeck generates a UUID password per server instance
-- Stored in Codedeck's encrypted state (via Tauri's secure storage)
+- Palot generates a UUID password per server instance
+- Stored in Palot's encrypted state (via Tauri's secure storage)
 - Passed to `@opencode-ai/sdk` client configuration
 
 ### Cloud Container Security
 
 - Cloudflare Containers run in individual VMs (strong isolation)
 - `enableInternet` can be set to `false` for sandboxed execution
-- Communication between Codedeck and cloud containers is over HTTPS/WSS
+- Communication between Palot and cloud containers is over HTTPS/WSS
 - Container-to-container communication is not possible (each is isolated)
 
 ### Local VM Security
@@ -1124,7 +1124,7 @@ Every OpenCode server instance is protected with HTTP Basic Auth:
 
 ### Permission Delegation
 
-OpenCode's built-in permission system handles tool-level permissions (bash commands, file edits, etc.). Codedeck adds environment-level permissions:
+OpenCode's built-in permission system handles tool-level permissions (bash commands, file edits, etc.). Palot adds environment-level permissions:
 
 - Which projects can use cloud environments (may involve cost)
 - Whether agents can access the network
@@ -1251,9 +1251,9 @@ OpenCode's built-in permission system handles tool-level permissions (bash comma
 
 1. **Single server vs. multi-server for multi-project**: We default to one server per project. Should we support a single-server mode for resource-constrained machines?
 
-2. **How to handle OpenCode version mismatches**: If the user's installed OpenCode version doesn't match what Codedeck expects, how do we handle API incompatibilities? Pin a minimum version and check on startup?
+2. **How to handle OpenCode version mismatches**: If the user's installed OpenCode version doesn't match what Palot expects, how do we handle API incompatibilities? Pin a minimum version and check on startup?
 
-3. **Should Codedeck bundle OpenCode?** Or require it as a prerequisite? Bundling (as a Tauri sidecar) ensures version compatibility but increases app size and complicates updates.
+3. **Should Palot bundle OpenCode?** Or require it as a prerequisite? Bundling (as a Tauri sidecar) ensures version compatibility but increases app size and complicates updates.
 
 ### Agent Mobility
 
@@ -1281,14 +1281,14 @@ OpenCode's built-in permission system handles tool-level permissions (bash comma
 
 ### Discovery & Onboarding
 
-13. **Auto-detect existing OpenCode projects and sessions**: Instead of requiring manual "Connect Server", Codedeck could auto-discover:
-    - **Running servers**: OpenCode supports `--mdns` for mDNS service discovery. Codedeck could listen for `_opencode._tcp` services on the local network.
+13. **Auto-detect existing OpenCode projects and sessions**: Instead of requiring manual "Connect Server", Palot could auto-discover:
+    - **Running servers**: OpenCode supports `--mdns` for mDNS service discovery. Palot could listen for `_opencode._tcp` services on the local network.
     - **Port scanning**: Scan common ports (4096, or read from OpenCode's state files) for running servers.
-    - **OpenCode state directory**: Read `~/.opencode/` (or `$XDG_STATE_HOME/opencode/`) to find known projects, their directories, and last-used ports. OpenCode stores project configs with `projectID` hashes — Codedeck could map these to directories and auto-connect.
+    - **OpenCode state directory**: Read `~/.opencode/` (or `$XDG_STATE_HOME/opencode/`) to find known projects, their directories, and last-used ports. OpenCode stores project configs with `projectID` hashes — Palot could map these to directories and auto-connect.
     - **Process detection**: On startup, scan running processes for `opencode serve` instances and extract their `--port` and working directory.
-    - This would make the first-run experience seamless: open Codedeck, and it already shows your projects and sessions.
+    - This would make the first-run experience seamless: open Palot, and it already shows your projects and sessions.
 
-14. **Auto-spawn servers for known projects**: When Codedeck detects a project directory but no running server, should it auto-spawn `opencode serve` for that project? This would eliminate the need to manually start servers, but introduces lifecycle management complexity (who owns the process? what happens on app quit?).
+14. **Auto-spawn servers for known projects**: When Palot detects a project directory but no running server, should it auto-spawn `opencode serve` for that project? This would eliminate the need to manually start servers, but introduces lifecycle management complexity (who owns the process? what happens on app quit?).
 
 ---
 

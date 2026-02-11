@@ -3,7 +3,7 @@ import {
 	ConversationContent,
 	ConversationScrollButton,
 	useStickToBottomContext,
-} from "@codedeck/ui/components/ai-elements/conversation"
+} from "@palot/ui/components/ai-elements/conversation"
 import {
 	PromptInput,
 	PromptInputButton,
@@ -14,7 +14,7 @@ import {
 	PromptInputTools,
 	usePromptInputAttachments,
 	usePromptInputController,
-} from "@codedeck/ui/components/ai-elements/prompt-input"
+} from "@palot/ui/components/ai-elements/prompt-input"
 import { useAtomValue } from "jotai"
 import { ChevronUpIcon, Loader2Icon, PlusIcon, Redo2Icon, Undo2Icon } from "lucide-react"
 import {
@@ -50,10 +50,22 @@ import { getProjectClient } from "../../services/connection-manager"
 import { PermissionItem } from "./chat-permission"
 import { ChatQuestionFlow } from "./chat-question"
 import { ChatTurnComponent } from "./chat-turn"
+import { ContextItems } from "./context-items"
+import type { MentionOption } from "./mention-popover"
+import { MentionPopover, type MentionPopoverHandle } from "./mention-popover"
 import { PromptAttachmentPreview } from "./prompt-attachments"
+import {
+	createAgentMention,
+	createFileMention,
+	getMentionMarker,
+	insertMentionIntoText,
+	type PromptMention,
+	reconcileMentions,
+} from "./prompt-mentions"
 import { PromptToolbar, StatusBar } from "./prompt-toolbar"
 import { SessionTaskList } from "./session-task-list"
-import { SlashCommandPopover } from "./slash-command-popover"
+import { SkillPickerDialog } from "./skill-picker-dialog"
+import { SlashCommandPopover, type SlashCommandPopoverHandle } from "./slash-command-popover"
 
 /**
  * Small "+" button that opens the file picker for attachments.
@@ -179,70 +191,77 @@ function SlashCommandBridge({
 }
 
 /**
- * Wraps PromptInputTextarea with SlashCommandPopover.
- * Must be inside a PromptInputProvider to access the text controller.
+ * Bridge that detects `/` and `@` triggers from the text input
+ * and syncs popover state. Must be rendered inside PromptInputProvider.
+ *
+ * Uses DOM queries to find the textarea for cursor position (since
+ * PromptInputTextarea doesn't support ref forwarding).
  */
-function SlashCommandTextarea({
-	isConnected,
-	isWorking,
-	directory,
-	handleEscapeAbort,
-	handleSlashCommand,
-	clearDraft,
+function TriggerDetector({
+	onSlashChange,
+	onMentionChange,
 }: {
-	isConnected: boolean
-	isWorking: boolean
-	directory: string | null
-	handleEscapeAbort: () => void
-	handleSlashCommand: (text: string) => Promise<boolean>
-	clearDraft: () => void
+	onSlashChange: (open: boolean, query: string) => void
+	onMentionChange: (open: boolean, query: string) => void
 }) {
 	const controller = usePromptInputController()
 	const inputText = controller.textInput.value
 
-	const handleSelect = useCallback(
-		(command: string) => {
-			// Set the input to the command and execute it
-			handleSlashCommand(command).then((handled) => {
-				if (handled) {
-					controller.textInput.clear()
-					clearDraft()
-				} else {
-					// If not handled, leave the command text in the input
-					controller.textInput.setInput(command)
-				}
-			})
-		},
-		[handleSlashCommand, controller.textInput, clearDraft],
-	)
+	useEffect(() => {
+		// Find textarea via DOM query (PromptInputTextarea doesn't forward refs)
+		const textarea = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+		const cursorPos = textarea?.selectionStart ?? inputText.length
+		const textBeforeCursor = inputText.slice(0, cursorPos)
 
-	return (
-		<SlashCommandPopover
-			inputText={inputText}
-			enabled={isConnected}
-			directory={directory}
-			onSelect={handleSelect}
-		>
-			<PromptInputTextarea
-				placeholder={
-					!isConnected
-						? "Connect to server to send messages..."
-						: isWorking
-							? "Send a follow-up or correction..."
-							: "Ask for follow-up changes"
-				}
-				disabled={!isConnected}
-				className="min-h-[80px]"
-				data-prompt-input
-				onKeyDown={(e) => {
-					if (e.key === "Escape" && isWorking && !(e.target as HTMLTextAreaElement).value.trim()) {
-						e.preventDefault()
-						handleEscapeAbort()
-					}
-				}}
-			/>
-		</SlashCommandPopover>
-	)
+		// Slash command: entire input starts with / and no space yet
+		const slashMatch = inputText.match(/^\/(\S*)$/)
+		if (slashMatch) {
+			onSlashChange(true, slashMatch[1])
+			onMentionChange(false, "")
+			return
+		}
+
+		// @mention: @ followed by non-whitespace before cursor
+		const atMatch = textBeforeCursor.match(/@(\S*)$/)
+		if (atMatch) {
+			onMentionChange(true, atMatch[1])
+			onSlashChange(false, "")
+			return
+		}
+
+		// No trigger
+		onSlashChange(false, "")
+		onMentionChange(false, "")
+	}, [inputText, onSlashChange, onMentionChange])
+
+	return null
+}
+
+/**
+ * Bridge that reconciles mentions with the current text.
+ * When the user manually deletes an `@mention` marker from the text,
+ * this removes the corresponding entry from the mentions list.
+ * Must be rendered inside PromptInputProvider.
+ */
+function MentionReconciler({
+	mentions,
+	onReconcile,
+}: {
+	mentions: PromptMention[]
+	onReconcile: (updated: PromptMention[]) => void
+}) {
+	const controller = usePromptInputController()
+	const inputText = controller.textInput.value
+
+	useEffect(() => {
+		if (mentions.length === 0) return
+		const reconciled = reconcileMentions(mentions, inputText)
+		if (reconciled.length !== mentions.length) {
+			onReconcile(reconciled)
+		}
+	}, [inputText, mentions, onReconcile])
+
+	return null
 }
 
 interface ChatViewProps {
@@ -319,6 +338,15 @@ export function ChatView({
 }: ChatViewProps) {
 	const isWorking = agent.status === "running"
 	const [sending, setSending] = useState(false)
+
+	// Mention tracking — files and agents referenced via @
+	const [mentions, setMentions] = useState<PromptMention[]>([])
+
+	// Reset mentions when session changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional — clear on session switch
+	useEffect(() => {
+		setMentions([])
+	}, [agent.sessionId])
 
 	// Ref to imperatively scroll the conversation to bottom from outside the
 	// <Conversation> tree (e.g. after sending a message or answering a question).
@@ -561,6 +589,7 @@ export function ChatView({
 				const handled = await handleSlashCommand(text)
 				if (handled) {
 					clearDraft()
+					setMentions([])
 					return
 				}
 			}
@@ -575,6 +604,10 @@ export function ChatView({
 					})
 				}
 
+				// Strip mention markers from the text for a clean prompt,
+				// and build file parts from tracked mentions.
+				// TODO: When the SDK supports FilePart in prompt, pass them here.
+				// For now, mentions are sent as inline text references.
 				await onSendMessage(agent, text.trim(), {
 					model: effectiveModel ?? undefined,
 					agentName: selectedAgent ?? undefined,
@@ -582,6 +615,7 @@ export function ChatView({
 					files,
 				})
 				clearDraft()
+				setMentions([])
 				// Force scroll to bottom after sending — the user just sent a message,
 				// so they always want to see it even if they had scrolled up.
 				requestAnimationFrame(() => {
@@ -662,6 +696,161 @@ export function ChatView({
 		})
 	}, [isWorking, handleStop])
 
+	// --- Popover state (slash commands + mentions) ---
+	const [slashOpen, setSlashOpen] = useState(false)
+	const [slashQuery, setSlashQuery] = useState("")
+	const [mentionOpen, setMentionOpen] = useState(false)
+	const [mentionQuery, setMentionQuery] = useState("")
+
+	// --- Skills picker dialog ---
+	const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
+
+	const handleSkillsOpen = useCallback(() => {
+		// Clear the slash text before opening dialog
+		const ctrl = slashCommandRef.current
+		if (ctrl) ctrl.setText("")
+		setSkillsDialogOpen(true)
+	}, [])
+
+	const handleSkillSelect = useCallback((skillName: string) => {
+		// Insert `/skillname ` into the input, like the TUI does
+		const ctrl = slashCommandRef.current
+		if (ctrl) {
+			ctrl.setText(`/${skillName} `)
+		}
+		// Focus the textarea
+		requestAnimationFrame(() => {
+			const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+			if (ta) {
+				ta.focus()
+				const len = `/${skillName} `.length
+				ta.setSelectionRange(len, len)
+			}
+		})
+	}, [])
+
+	const slashPopoverRef = useRef<SlashCommandPopoverHandle>(null)
+	const mentionPopoverRef = useRef<MentionPopoverHandle>(null)
+
+	// Stable callbacks for TriggerDetector
+	const handleSlashTriggerChange = useCallback((open: boolean, query: string) => {
+		setSlashOpen(open)
+		setSlashQuery(query)
+	}, [])
+
+	const handleMentionTriggerChange = useCallback((open: boolean, query: string) => {
+		setMentionOpen(open)
+		setMentionQuery(query)
+	}, [])
+
+	// Close popovers
+	const handleSlashClose = useCallback(() => {
+		setSlashOpen(false)
+		setSlashQuery("")
+	}, [])
+
+	const handleMentionClose = useCallback(() => {
+		setMentionOpen(false)
+		setMentionQuery("")
+	}, [])
+
+	// Slash command selection — execute and clear input
+	const handleSlashSelect = useCallback(
+		(command: string) => {
+			handleSlashClose()
+			const ctrl = slashCommandRef.current
+			if (ctrl) {
+				ctrl.setText(command)
+				// Trigger execution via setTimeout to let React flush the state update
+				setTimeout(() => {
+					const trimmed = ctrl.getText().trim()
+					if (trimmed.startsWith("/")) {
+						handleSlashCommand(trimmed).then((handled) => {
+							if (handled) {
+								ctrl.setText("")
+								clearDraft()
+							}
+						})
+					}
+				}, 0)
+			}
+		},
+		[handleSlashClose, handleSlashCommand, clearDraft],
+	)
+
+	// Mention selection — insert @displayName into text + add to mentions[]
+	const handleMentionSelect = useCallback(
+		(option: MentionOption) => {
+			handleMentionClose()
+			const ctrl = slashCommandRef.current
+			if (!ctrl) return
+
+			const currentText = ctrl.getText()
+			const textarea = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+			const cursorPos = textarea?.selectionStart ?? currentText.length
+
+			const mention =
+				option.type === "file" ? createFileMention(option.path) : createAgentMention(option.name)
+
+			const { text: newText, cursorPosition: newCursor } = insertMentionIntoText(
+				currentText,
+				cursorPos,
+				mention,
+			)
+
+			ctrl.setText(newText)
+
+			// Add to mentions if not already present
+			setMentions((prev) => {
+				const key = mention.type === "file" ? `file:${mention.path}` : `agent:${mention.name}`
+				if (prev.some((m) => (m.type === "file" ? `file:${m.path}` : `agent:${m.name}`) === key))
+					return prev
+				return [...prev, mention]
+			})
+
+			// Restore cursor position
+			requestAnimationFrame(() => {
+				const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+				if (ta) {
+					ta.focus()
+					ta.setSelectionRange(newCursor, newCursor)
+				}
+			})
+		},
+		[handleMentionClose],
+	)
+
+	// Remove a mention — strip marker from text + remove from list
+	const handleMentionRemove = useCallback((mention: PromptMention) => {
+		const ctrl = slashCommandRef.current
+		if (ctrl) {
+			const marker = getMentionMarker(mention)
+			const currentText = ctrl.getText()
+			// Remove the marker (and trailing space if present)
+			ctrl.setText(currentText.replace(`${marker} `, "").replace(marker, ""))
+		}
+		setMentions((prev) => {
+			const key = mention.type === "file" ? `file:${mention.path}` : `agent:${mention.name}`
+			return prev.filter((m) => (m.type === "file" ? `file:${m.path}` : `agent:${m.name}`) !== key)
+		})
+	}, [])
+
+	// Keyboard delegation — forward to whichever popover is open
+	const handleTextareaKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			// Delegate to slash popover
+			if (slashOpen && slashPopoverRef.current?.handleKeyDown(e)) return
+			// Delegate to mention popover
+			if (mentionOpen && mentionPopoverRef.current?.handleKeyDown(e)) return
+
+			// Escape-to-abort (only when no popover is open)
+			if (e.key === "Escape") {
+				handleEscapeAbort()
+			}
+		},
+		[slashOpen, mentionOpen, handleEscapeAbort],
+	)
+
 	return (
 		<div className="flex h-full flex-col">
 			{/* Chat messages — constrained width for readability */}
@@ -726,13 +915,15 @@ export function ChatView({
 
 				{/* Top fade */}
 				<div
+					data-slot="scroll-fade"
 					aria-hidden="true"
-					className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-background to-transparent"
+					className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-background/30 to-transparent"
 				/>
 				{/* Bottom fade */}
 				<div
+					data-slot="scroll-fade"
 					aria-hidden="true"
-					className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-6 bg-gradient-to-t from-background to-transparent"
+					className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-6 bg-gradient-to-t from-background/30 to-transparent"
 				/>
 			</div>
 
@@ -787,60 +978,91 @@ export function ChatView({
 							disabled={!isConnected}
 						/>
 					) : (
-						/* Input card — rounded container with textarea + toolbar inside */
+						/* Input card — PromptInputProvider wraps everything,
+						   popovers positioned relative to the card wrapper,
+						   textarea as a direct child of InputGroup inside PromptInput */
 						<PromptInputProvider key={agent.sessionId} initialInput={draft}>
 							<DraftSync setDraft={setDraft} />
 							<SlashCommandBridge controllerRef={slashCommandRef} />
-							<PromptInput
-								className="rounded-xl"
-								accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
-								multiple
-								maxFileSize={10 * 1024 * 1024}
-								onSubmit={(message) => {
-									if (message.text.trim() && canSend)
-										handleSend(message.text, message.files.length > 0 ? message.files : undefined)
-								}}
-								data-prompt-input
-							>
-								<PromptAttachmentPreview
-									supportsImages={modelCapabilities?.image}
-									supportsPdf={modelCapabilities?.pdf}
-								/>
-								<SlashCommandTextarea
-									isConnected={isConnected}
-									isWorking={isWorking}
+							<TriggerDetector
+								onSlashChange={handleSlashTriggerChange}
+								onMentionChange={handleMentionTriggerChange}
+							/>
+							<MentionReconciler mentions={mentions} onReconcile={setMentions} />
+							{/* Relative wrapper for absolutely-positioned popovers */}
+							<div className="relative">
+								{/* Popovers render above the card via bottom-full */}
+								<SlashCommandPopover
+									ref={slashPopoverRef}
+									query={slashQuery}
+									open={slashOpen}
+									enabled={isConnected}
 									directory={agent.directory}
-									handleEscapeAbort={handleEscapeAbort}
-									handleSlashCommand={handleSlashCommand}
-									clearDraft={clearDraft}
+									onSelect={handleSlashSelect}
+									onSkillsOpen={handleSkillsOpen}
+									onClose={handleSlashClose}
 								/>
-
-								{/* Toolbar inside the card — agent + model + variant selectors + submit */}
-								<PromptInputFooter>
-									<PromptInputTools>
-										<AttachButton disabled={!isConnected} />
-										<PromptToolbar
-											agents={openCodeAgents ?? []}
-											selectedAgent={selectedAgent}
-											defaultAgent={config?.defaultAgent}
-											onSelectAgent={setSelectedAgent}
-											providers={providers ?? null}
-											effectiveModel={effectiveModel}
-											hasModelOverride={!!selectedModel}
-											onSelectModel={handleModelSelect}
-											recentModels={recentModels}
-											selectedVariant={selectedVariant}
-											onSelectVariant={setSelectedVariant}
-											disabled={!isConnected}
-										/>
-									</PromptInputTools>
-									<PromptInputSubmit
-										disabled={!canSend}
-										status={isWorking ? "streaming" : undefined}
-										onStop={handleStop}
+								<MentionPopover
+									ref={mentionPopoverRef}
+									query={mentionQuery}
+									open={mentionOpen}
+									directory={agent.directory}
+									agents={openCodeAgents ?? []}
+									onSelect={handleMentionSelect}
+									onClose={handleMentionClose}
+								/>
+								<PromptInput
+									className="rounded-xl"
+									accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+									multiple
+									maxFileSize={10 * 1024 * 1024}
+									onSubmit={(message) => {
+										if (message.text.trim() && canSend)
+											handleSend(message.text, message.files.length > 0 ? message.files : undefined)
+									}}
+								>
+									{/* Mention chips above the textarea */}
+									<ContextItems mentions={mentions} onRemove={handleMentionRemove} />
+									<PromptAttachmentPreview
+										supportsImages={modelCapabilities?.image}
+										supportsPdf={modelCapabilities?.pdf}
 									/>
-								</PromptInputFooter>
-							</PromptInput>
+									<PromptInputTextarea
+										data-prompt-input
+										onKeyDown={handleTextareaKeyDown}
+										disabled={!isConnected}
+										placeholder={
+											isWorking ? "Send a follow-up message..." : "What would you like to do?"
+										}
+									/>
+
+									{/* Toolbar inside the card — agent + model + variant selectors + submit */}
+									<PromptInputFooter>
+										<PromptInputTools>
+											<AttachButton disabled={!isConnected} />
+											<PromptToolbar
+												agents={openCodeAgents ?? []}
+												selectedAgent={selectedAgent}
+												defaultAgent={config?.defaultAgent}
+												onSelectAgent={setSelectedAgent}
+												providers={providers ?? null}
+												effectiveModel={effectiveModel}
+												hasModelOverride={!!selectedModel}
+												onSelectModel={handleModelSelect}
+												recentModels={recentModels}
+												selectedVariant={selectedVariant}
+												onSelectVariant={setSelectedVariant}
+												disabled={!isConnected}
+											/>
+										</PromptInputTools>
+										<PromptInputSubmit
+											disabled={!canSend}
+											status={isWorking ? "streaming" : undefined}
+											onStop={handleStop}
+										/>
+									</PromptInputFooter>
+								</PromptInput>
+							</div>
 						</PromptInputProvider>
 					)}
 
@@ -853,6 +1075,14 @@ export function ChatView({
 					/>
 				</div>
 			</div>
+
+			{/* Skills picker dialog — triggered by /skills command */}
+			<SkillPickerDialog
+				open={skillsDialogOpen}
+				onOpenChange={setSkillsDialogOpen}
+				directory={agent.directory}
+				onSelect={handleSkillSelect}
+			/>
 		</div>
 	)
 }

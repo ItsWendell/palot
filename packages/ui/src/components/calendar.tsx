@@ -1,5 +1,5 @@
-import { Button, buttonVariants } from "@codedeck/ui/components/button"
-import { cn } from "@codedeck/ui/lib/utils"
+import { Button, buttonVariants } from "@palot/ui/components/button"
+import { cn } from "@palot/ui/lib/utils"
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 import * as React from "react"
 import { type DayButton, DayPicker, getDefaultClassNames } from "react-day-picker"

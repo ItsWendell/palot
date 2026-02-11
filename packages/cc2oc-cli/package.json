@@ -12,7 +12,7 @@
 		"clean": "rm -rf node_modules .turbo"
 	},
 	"dependencies": {
-		"@codedeck/cc2oc": "workspace:*",
+		"@palot/cc2oc": "workspace:*",
 		"citty": "^0.1.6",
 		"consola": "^3.4.2"
 	},

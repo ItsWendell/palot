@@ -1,6 +1,6 @@
 "use client"
 
-import { cn } from "@codedeck/ui/lib/utils"
+import { cn } from "@palot/ui/lib/utils"
 import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui"
 import type * as React from "react"

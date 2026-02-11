@@ -1,26 +1,24 @@
-import { Badge } from "@codedeck/ui/components/badge"
+import { Badge } from "@palot/ui/components/badge"
 import {
 	ContextMenu,
 	ContextMenuContent,
 	ContextMenuItem,
 	ContextMenuSeparator,
 	ContextMenuTrigger,
-} from "@codedeck/ui/components/context-menu"
-import { Input } from "@codedeck/ui/components/input"
+} from "@palot/ui/components/context-menu"
+import { Input } from "@palot/ui/components/input"
 import {
-	Sidebar,
 	SidebarContent,
 	SidebarFooter,
 	SidebarGroup,
 	SidebarGroupContent,
 	SidebarGroupLabel,
-	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarSeparator,
-} from "@codedeck/ui/components/sidebar"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
+} from "@palot/ui/components/sidebar"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	AlertCircleIcon,
@@ -41,7 +39,6 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { formatElapsed } from "../hooks/use-agents"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
-import { APP_BAR_HEIGHT } from "./app-bar"
 
 // ============================================================
 // Constants
@@ -75,7 +72,7 @@ const STATUS_COLOR: Record<AgentStatus, string> = {
 // Props
 // ============================================================
 
-interface AppSidebarProps {
+interface AppSidebarContentProps {
 	agents: Agent[]
 	projects: SidebarProject[]
 	onOpenCommandPalette: () => void
@@ -91,7 +88,11 @@ interface AppSidebarProps {
 // Main component
 // ============================================================
 
-export function AppSidebar({
+/**
+ * Default sidebar content: Active Now, Recent, Projects groups + Settings footer.
+ * Rendered inside the `<Sidebar>` shell provided by `SidebarLayout`.
+ */
+export function AppSidebarContent({
 	agents,
 	projects,
 	onOpenCommandPalette,
@@ -101,7 +102,7 @@ export function AppSidebar({
 	onToggleSubAgents,
 	onRenameSession,
 	onDeleteSession,
-}: AppSidebarProps) {
+}: AppSidebarContentProps) {
 	const navigate = useNavigate()
 	const routeParams = useParams({ strict: false }) as { sessionId?: string }
 	const selectedSessionId = routeParams.sessionId ?? null
@@ -127,19 +128,7 @@ export function AppSidebar({
 	)
 
 	return (
-		<Sidebar collapsible="offcanvas" variant="sidebar">
-			{/* Sidebar header — reserves space to match the app bar height so
-			 * sidebar content aligns with the main content area. Also clears
-			 * the traffic lights + the absolutely-positioned toggle button. */}
-			<SidebarHeader
-				className="flex-row items-center gap-1 shrink-0"
-				style={{
-					height: APP_BAR_HEIGHT,
-					// Make header draggable on Electron (acts as title bar above sidebar)
-					// @ts-expect-error -- vendor-prefixed CSS property
-					WebkitAppRegion: "drag",
-				}}
-			></SidebarHeader>
+		<>
 			{/* Scrollable content */}
 			<SidebarContent>
 				{/* Active Now */}
@@ -202,11 +191,13 @@ export function AppSidebar({
 					</SidebarGroup>
 				)}
 
-				{/* Projects — always render so search/sub-agent actions are accessible */}
-				{(activeSessions.length > 0 || recentSessions.length > 0) && <SidebarSeparator />}
+				{/* Projects -- always render so search/sub-agent actions are accessible */}
+				{(activeSessions.length > 0 || recentSessions.length > 0) && (
+					<SidebarSeparator className="bg-sidebar-border/25" />
+				)}
 				<SidebarGroup>
 					<SidebarGroupLabel>Projects</SidebarGroupLabel>
-					{/* Action buttons row — positioned like SidebarGroupAction but holds multiple icons */}
+					{/* Action buttons row -- positioned like SidebarGroupAction but holds multiple icons */}
 					<div className="absolute top-3.5 right-3 flex items-center gap-0.5">
 						{subAgentCount > 0 && (
 							<Tooltip>
@@ -299,7 +290,7 @@ export function AppSidebar({
 					</div>
 				</div>
 			)}
-		</Sidebar>
+		</>
 	)
 }
 
@@ -360,7 +351,7 @@ function ProjectFolder({
 			</SidebarMenuButton>
 
 			{expanded && (
-				<div className="ml-3 border-l border-sidebar-border pl-1">
+				<div className="ml-3 border-l border-sidebar-border/25 pl-1">
 					{projectSessions.length === 0 ? (
 						<p className="px-2 py-1.5 text-xs text-muted-foreground/60">No sessions yet</p>
 					) : (

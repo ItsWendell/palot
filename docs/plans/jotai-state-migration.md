@@ -25,7 +25,7 @@
 
 ## 1. Executive Summary
 
-This document proposes migrating Codedeck's state management from Zustand to Jotai. The motivation is not performance (the current system is well-optimized) but **architectural clarity**:
+This document proposes migrating Palot's state management from Zustand to Jotai. The motivation is not performance (the current system is well-optimized) but **architectural clarity**:
 
 - **Eliminate the React 19 footgun** — Zustand's `useShallow` + React 19 causes infinite render loops, forcing us to use `useMemo` wrappers everywhere. Jotai's atomic model avoids this entirely.
 - **Remove the `partsVersion` hack** — The current system uses a version counter + `getState()` inside `useMemo` to avoid subscribing to the entire `parts` record. Jotai's `atomFamily` gives us per-entity atoms natively.
@@ -166,7 +166,7 @@ The AI SDK doesn't do traditional optimistic updates for assistant messages. It 
 
 ### 3.3 Patterns We Adapt (Not Copy)
 
-| AI SDK Pattern | Codedeck Adaptation | Why Different |
+| AI SDK Pattern | Palot Adaptation | Why Different |
 |---|---|---|
 | `AbstractChat` class holding all state | Jotai atoms (no class) | We want React-native state, not an external class |
 | `structuredClone` on every `replaceMessage` | Only clone on atom boundary flush | Our streaming volume is higher; clone per-token is too expensive |
@@ -745,27 +745,27 @@ import { atom } from "jotai"
 
 // Each preference is an independent atom with localStorage persistence
 export const displayModeAtom = atomWithStorage<"default" | "compact" | "verbose">(
-  "codedeck:displayMode",
+  "palot:displayMode",
   "default",
 )
 
 export const themeAtom = atomWithStorage<string>(
-  "codedeck:theme",
+  "palot:theme",
   "default",
 )
 
 export const colorSchemeAtom = atomWithStorage<"dark" | "light" | "system">(
-  "codedeck:colorScheme",
+  "palot:colorScheme",
   "dark",
 )
 
 export const draftsAtom = atomWithStorage<Record<string, string>>(
-  "codedeck:drafts",
+  "palot:drafts",
   {},
 )
 
 export const projectModelsAtom = atomWithStorage<Record<string, PersistedModelRef>>(
-  "codedeck:projectModels",
+  "palot:projectModels",
   {},
 )
 
@@ -786,7 +786,7 @@ export const draftFamily = atomFamily((key: string) =>
 )
 ```
 
-**Migration note**: The current `usePersistedStore` uses Zustand's `persist` middleware with a single localStorage key `"codedeck-preferences"`. The new approach uses separate keys per preference. A one-time migration script reads the old key and writes to the new keys.
+**Migration note**: The current `usePersistedStore` uses Zustand's `persist` middleware with a single localStorage key `"palot-preferences"`. The new approach uses separate keys per preference. A one-time migration script reads the old key and writes to the new keys.
 
 ---
 
@@ -1112,7 +1112,7 @@ Jotai store state survives HMR as long as the `Provider` is above the HMR bounda
 
 ### 11.1 Migration from Zustand persist
 
-Current: Single `zustand/middleware/persist` with key `"codedeck-preferences"`.
+Current: Single `zustand/middleware/persist` with key `"palot-preferences"`.
 
 New: Individual `atomWithStorage` atoms with separate keys.
 
@@ -1122,17 +1122,17 @@ New: Individual `atomWithStorage` atoms with separate keys.
 // atoms/preferences.ts — run once on app boot
 
 function migrateFromZustandPersist(): void {
-  const oldKey = "codedeck-preferences"
+  const oldKey = "palot-preferences"
   const raw = localStorage.getItem(oldKey)
   if (!raw) return
 
   try {
     const { state } = JSON.parse(raw) // Zustand persist wraps in { state, version }
-    if (state.displayMode) localStorage.setItem("codedeck:displayMode", JSON.stringify(state.displayMode))
-    if (state.theme) localStorage.setItem("codedeck:theme", JSON.stringify(state.theme))
-    if (state.colorScheme) localStorage.setItem("codedeck:colorScheme", JSON.stringify(state.colorScheme))
-    if (state.drafts) localStorage.setItem("codedeck:drafts", JSON.stringify(state.drafts))
-    if (state.projectModels) localStorage.setItem("codedeck:projectModels", JSON.stringify(state.projectModels))
+    if (state.displayMode) localStorage.setItem("palot:displayMode", JSON.stringify(state.displayMode))
+    if (state.theme) localStorage.setItem("palot:theme", JSON.stringify(state.theme))
+    if (state.colorScheme) localStorage.setItem("palot:colorScheme", JSON.stringify(state.colorScheme))
+    if (state.drafts) localStorage.setItem("palot:drafts", JSON.stringify(state.drafts))
+    if (state.projectModels) localStorage.setItem("palot:projectModels", JSON.stringify(state.projectModels))
 
     // Remove old key after successful migration
     localStorage.removeItem(oldKey)

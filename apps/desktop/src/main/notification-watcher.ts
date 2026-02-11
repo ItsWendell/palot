@@ -12,6 +12,8 @@ interface SessionState {
 	status: string // "busy" | "idle" | "retry"
 	title: string
 	directory?: string
+	/** If set, this session is a sub-agent spawned by another session. */
+	parentID?: string
 }
 
 // ============================================================
@@ -182,14 +184,16 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 			const title = props.title as string
 			pendingCount++
 			updateBadgeCount(pendingCount)
-			showNotification({
-				type: "permission",
-				sessionId,
-				title: "Agent needs permission",
-				body: title || "Approval required",
-				directory,
-				meta: { permissionId: props.id as string },
-			})
+			if (!isSubAgent(sessionId)) {
+				showNotification({
+					type: "permission",
+					sessionId,
+					title: "Agent needs permission",
+					body: title || "Approval required",
+					directory,
+					meta: { permissionId: props.id as string },
+				})
+			}
 			break
 		}
 
@@ -205,14 +209,16 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 			const header = questions?.[0]?.header ?? "Question"
 			pendingCount++
 			updateBadgeCount(pendingCount)
-			showNotification({
-				type: "question",
-				sessionId,
-				title: "Agent has a question",
-				body: header,
-				directory,
-				meta: { requestId: props.id as string },
-			})
+			if (!isSubAgent(sessionId)) {
+				showNotification({
+					type: "question",
+					sessionId,
+					title: "Agent has a question",
+					body: header,
+					directory,
+					meta: { requestId: props.id as string },
+				})
+			}
 			break
 		}
 
@@ -236,10 +242,15 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 				status: newStatusType,
 				title: prev?.title ?? "",
 				directory: directory ?? prev?.directory,
+				parentID: prev?.parentID,
 			})
 
 			// Detect busy/retry -> idle transition (agent completed)
-			if (newStatusType === "idle" && (prevStatus === "busy" || prevStatus === "retry")) {
+			if (
+				newStatusType === "idle" &&
+				(prevStatus === "busy" || prevStatus === "retry") &&
+				!isSubAgent(sessionId)
+			) {
 				const sessionTitle = sessions.get(sessionId)?.title
 				showNotification({
 					type: "completed",
@@ -256,26 +267,29 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 			const sessionId = props.sessionID as string
 			const error = props.error as { name?: string } | undefined
 			if (!sessionId) break
-			showNotification({
-				type: "error",
-				sessionId,
-				title: "Agent encountered an error",
-				body: error?.name ?? "Unknown error",
-				directory,
-			})
+			if (!isSubAgent(sessionId)) {
+				showNotification({
+					type: "error",
+					sessionId,
+					title: "Agent encountered an error",
+					body: error?.name ?? "Unknown error",
+					directory,
+				})
+			}
 			break
 		}
 
 		case "session.created":
 		case "session.updated": {
-			// Track session title and directory for use in completion notifications
-			const info = props.info as { id?: string; title?: string } | undefined
+			// Track session title, directory, and parentID for use in notification decisions
+			const info = props.info as { id?: string; title?: string; parentID?: string } | undefined
 			if (info?.id) {
 				const existing = sessions.get(info.id)
 				sessions.set(info.id, {
 					status: existing?.status ?? "idle",
 					title: info.title ?? existing?.title ?? "",
 					directory: directory ?? existing?.directory,
+					parentID: info.parentID ?? existing?.parentID,
 				})
 			}
 			break
@@ -289,6 +303,11 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 // ============================================================
 // Helpers
 // ============================================================
+
+/** Check if a session is a sub-agent (has a parent session). */
+function isSubAgent(sessionId: string): boolean {
+	return !!sessions.get(sessionId)?.parentID
+}
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
 	return new Promise((resolve) => {

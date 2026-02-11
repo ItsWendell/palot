@@ -1,8 +1,8 @@
 "use client"
 
-import { Button } from "@codedeck/ui/components/button"
-import { ScrollArea, ScrollBar } from "@codedeck/ui/components/scroll-area"
-import { cn } from "@codedeck/ui/lib/utils"
+import { Button } from "@palot/ui/components/button"
+import { ScrollArea, ScrollBar } from "@palot/ui/components/scroll-area"
+import { cn } from "@palot/ui/lib/utils"
 import type { ComponentProps } from "react"
 import { useCallback } from "react"
 

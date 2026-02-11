@@ -1,6 +1,6 @@
 # OpenCode Architecture Reference
 
-Reference document for the official OpenCode repository (`../opencode`), used to inform Codedeck's design decisions.
+Reference document for the official OpenCode repository (`../opencode`), used to inform Palot's design decisions.
 
 ## Repository Overview
 
@@ -271,7 +271,7 @@ Pty.Info = {
 
 ---
 
-## Key Patterns for Codedeck
+## Key Patterns for Palot
 
 ### What we can reuse from OpenCode's architecture:
 
@@ -283,13 +283,13 @@ Pty.Info = {
 
 4. **Optimistic messages**: OpenCode desktop adds messages to the UI before server confirms, removes on failure. Good UX pattern.
 
-5. **Terminal renderer**: OpenCode uses `ghostty-web` (WASM). For Codedeck, `@xterm/xterm` is more established and easier to integrate with React. Both connect via the same WebSocket protocol.
+5. **Terminal renderer**: OpenCode uses `ghostty-web` (WASM). For Palot, `@xterm/xterm` is more established and easier to integrate with React. Both connect via the same WebSocket protocol.
 
-6. **Session interaction without live server**: OpenCode desktop always has a server (sidecar). For Codedeck, we'd need to start an OpenCode server for the project first (via our codedeck backend's `POST /api/servers/start`), then interact normally.
+6. **Session interaction without live server**: OpenCode desktop always has a server (sidecar). For Palot, we'd need to start an OpenCode server for the project first (via our palot backend's `POST /api/servers/start`), then interact normally.
 
-### What's different for Codedeck:
+### What's different for Palot:
 
-1. **Multi-project dashboard**: OpenCode desktop is scoped to one directory. Codedeck manages many projects simultaneously.
-2. **No sidecar**: We don't bundle opencode-cli. We detect/spawn servers via our codedeck backend.
+1. **Multi-project dashboard**: OpenCode desktop is scoped to one directory. Palot manages many projects simultaneously.
+2. **No sidecar**: We don't bundle opencode-cli. We detect/spawn servers via our palot backend.
 3. **React not SolidJS**: Our frontend is React 19, so we'll use React-compatible terminal libs.
 4. **Offline-first**: We read from disk for offline sessions. OpenCode desktop always has a server.

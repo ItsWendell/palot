@@ -2,8 +2,8 @@
  * cc2oc plan -- Dry-run showing what would be migrated.
  */
 
-import type { MigrationCategory } from "@codedeck/cc2oc"
-import { convert, scan, validate } from "@codedeck/cc2oc"
+import type { MigrationCategory } from "@palot/cc2oc"
+import { convert, scan, validate } from "@palot/cc2oc"
 import { defineCommand } from "citty"
 import consola from "consola"
 import { printReport } from "../output/terminal"

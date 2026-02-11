@@ -1,6 +1,6 @@
 # Streaming Text Performance Plan
 
-> **Goal:** Make Codedeck's streaming text rendering as smooth as OpenCode's TUI and ChatGPT's web UI.
+> **Goal:** Make Palot's streaming text rendering as smooth as OpenCode's TUI and ChatGPT's web UI.
 
 ## Current State
 
@@ -259,7 +259,7 @@ function createEventBatcher() {
 **Impact:** HIGH  
 **Files:** New `stores/streaming-store.ts`, modified `stores/app-store.ts`, `hooks/use-session-chat.ts`
 
-The AI SDK uses separate notification channels for messages vs. status vs. error. Codedeck can do the same by splitting the actively-streaming message's parts into a dedicated store that doesn't trigger Zustand subscriptions on the main store.
+The AI SDK uses separate notification channels for messages vs. status vs. error. Palot can do the same by splitting the actively-streaming message's parts into a dedicated store that doesn't trigger Zustand subscriptions on the main store.
 
 **Concept:**
 
@@ -300,7 +300,7 @@ The AI SDK's `smoothStream` is a server-side TransformStream that:
 
 This means the client receives ~100 word-chunks/sec instead of ~500 token-chunks/sec — an immediate 5x reduction in state updates.
 
-**Implementation:** In the Codedeck server (`apps/server/`), apply a similar transform to the SSE stream before it reaches the client:
+**Implementation:** In the Palot server (`apps/server/`), apply a similar transform to the SSE stream before it reaches the client:
 
 ```tsx
 // apps/server/src/transforms/smooth-stream.ts

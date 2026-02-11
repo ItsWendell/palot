@@ -5,12 +5,12 @@ import {
 	PromptInputTextarea,
 	PromptInputTools,
 	usePromptInputController,
-} from "@codedeck/ui/components/ai-elements/prompt-input"
-import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
+} from "@palot/ui/components/ai-elements/prompt-input"
+import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue } from "jotai"
 import { ChevronDownIcon, CodeIcon, FileTextIcon, GitPullRequestIcon } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { projectModelsAtom, setProjectModelAtom } from "../atoms/preferences"
 import { setSessionBranchAtom } from "../atoms/sessions"
 import { appStore } from "../atoms/store"
@@ -29,9 +29,11 @@ import {
 } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import type { FileAttachment } from "../lib/types"
+import { useSetAppBarContent } from "./app-bar-context"
 import { BranchPicker } from "./branch-picker"
 import { PromptAttachmentPreview } from "./chat/prompt-attachments"
 import { PromptToolbar, StatusBar } from "./chat/prompt-toolbar"
+import { PalotWordmark } from "./palot-wordmark"
 
 const SUGGESTIONS = [
 	{
@@ -73,6 +75,15 @@ export function NewChat() {
 	const projects = useProjectList()
 	const { createSession, sendPrompt } = useAgentActions()
 	const navigate = useNavigate()
+
+	// Inject app name into the AppBar
+	const setAppBarContent = useSetAppBarContent()
+	useLayoutEffect(() => {
+		setAppBarContent(
+			<PalotWordmark className="h-[11px] w-auto shrink-0 text-muted-foreground/70" />,
+		)
+		return () => setAppBarContent(null)
+	}, [setAppBarContent])
 
 	const [selectedDirectory, setSelectedDirectory] = useState<string>("")
 	const [launching, setLaunching] = useState(false)

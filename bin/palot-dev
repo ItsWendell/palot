@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# palot-dev — Launch the Palot desktop app in development mode.
+#
+# Usage:
+#   palot-dev          Start Electron dev (default)
+#   palot-dev --web    Start browser-only dev (renderer + server)
+#
+# Tip: symlink this into your PATH once:
+#   ln -sf "$(cd "$(dirname "$0")/.." && pwd)/bin/palot-dev" /usr/local/bin/palot-dev
+
+set -euo pipefail
+
+# Resolve the monorepo root (one level up from this script)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Ensure common tool directories are in PATH — non-interactive bash
+# doesn't source ~/.zshrc / ~/.bashrc, so bun/node may be missing.
+for dir in "$HOME/.bun/bin" "$HOME/.local/bin" "$HOME/.nvm/current/bin" "/opt/homebrew/bin" "/usr/local/bin"; do
+	[ -d "$dir" ] && case ":$PATH:" in *":$dir:"*) ;; *) PATH="$dir:$PATH" ;; esac
+done
+export PATH
+
+MODE="desktop"
+
+for arg in "$@"; do
+	case "$arg" in
+		--web)
+			MODE="web"
+			;;
+		--help|-h)
+			echo "Usage: palot-dev [--web]"
+			echo ""
+			echo "  --web    Start browser-only dev (Vite + Hono server)"
+			echo "           Default: Start Electron dev"
+			exit 0
+			;;
+		*)
+			echo "Unknown option: $arg" >&2
+			echo "Usage: palot-dev [--web]" >&2
+			exit 1
+			;;
+	esac
+done
+
+# Ensure bun is available
+if ! command -v bun &>/dev/null; then
+	echo "Error: bun is not installed or not in PATH." >&2
+	echo "Install it: https://bun.sh" >&2
+	exit 1
+fi
+
+if [ "$MODE" = "web" ]; then
+	echo "Starting Palot in browser dev mode..."
+	echo "  Server:   http://localhost:3100"
+	echo "  Renderer: http://localhost:1420"
+	echo ""
+	# Start server and renderer in parallel; kill both on exit
+	trap 'kill 0' EXIT
+	(cd "$REPO_ROOT/apps/server" && bun run dev) &
+	sleep 1
+	(cd "$REPO_ROOT/apps/desktop" && bun run dev:web)
+else
+	echo "Starting Palot in Electron dev mode..."
+	echo ""
+	cd "$REPO_ROOT"
+	exec bun run dev:desktop
+fi

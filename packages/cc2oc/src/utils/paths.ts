@@ -106,6 +106,11 @@ export function ocGlobalConfigDir(): string {
 	return join(xdgConfig, "opencode")
 }
 
+/** ~/.config/opencode/backups/ */
+export function ocBackupsDir(): string {
+	return join(ocGlobalConfigDir(), "backups")
+}
+
 /** ~/.config/opencode/AGENTS.md */
 export function ocGlobalAgentsMdPath(): string {
 	return join(ocGlobalConfigDir(), "AGENTS.md")

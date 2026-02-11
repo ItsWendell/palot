@@ -1,13 +1,13 @@
 import { useAtomValue, useSetAtom } from "jotai"
 import { useLayoutEffect, useMemo } from "react"
 import { colorSchemeAtom, themeAtom } from "../atoms/preferences"
-import { type ColorScheme, getTheme, type ThemeDefinition, themes } from "../lib/themes"
+import { type ColorScheme, getAvailableThemes, getTheme, type ThemeDefinition } from "../lib/themes"
 
 // ============================================================
 // useThemeEffect — synchronises persisted store to <html> element
 // ============================================================
 
-const STYLE_ID = "codedeck-theme-vars"
+const STYLE_ID = "palot-theme-vars"
 
 function getOrCreateStyleElement(): HTMLStyleElement {
 	let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null
@@ -35,6 +35,7 @@ function buildGlassVars(theme: ThemeDefinition): [string, string][] {
 	if (g.surfaceOpacity !== undefined) vars.push(["--glass-surface", `${g.surfaceOpacity}%`])
 	if (g.elevatedOpacity !== undefined) vars.push(["--glass-elevated", `${g.elevatedOpacity}%`])
 	if (g.cardOpacity !== undefined) vars.push(["--glass-card", `${g.cardOpacity}%`])
+	if (g.contentOpacity !== undefined) vars.push(["--glass-content", `${g.contentOpacity}%`])
 	if (g.blurScale !== undefined) {
 		const s = g.blurScale
 		vars.push(["--blur-sm", `${8 * s}px`])
@@ -100,8 +101,8 @@ export function useThemeEffect() {
 		// Sync native theme with macOS so the glass tint matches the CSS color scheme.
 		// Without this, macOS applies its system appearance (dark/light) to the native
 		// glass layer regardless of what the app's CSS says — causing mismatched tinting.
-		if ("codedeck" in window) {
-			window.codedeck.setNativeTheme(colorScheme === "system" ? "system" : cls)
+		if ("palot" in window) {
+			window.palot.setNativeTheme(colorScheme === "system" ? "system" : cls)
 		}
 
 		if (theme.fonts?.sans) {
@@ -141,7 +142,9 @@ export function useColorScheme(): ColorScheme {
 }
 
 export function useAvailableThemes(): ThemeDefinition[] {
-	return themes
+	const platform =
+		typeof window !== "undefined" && "palot" in window ? window.palot.platform : undefined
+	return useMemo(() => getAvailableThemes(platform), [platform])
 }
 
 export function useSetTheme(): (id: string) => void {

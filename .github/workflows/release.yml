@@ -247,7 +247,7 @@ jobs:
               release_id: draft.id,
               draft: false,
               prerelease: isPrerelease,
-              name: `Codedeck ${{ steps.version.outputs.version }}`,
+              name: `Palot ${{ steps.version.outputs.version }}`,
               body: body,
               make_latest: isPrerelease ? 'false' : 'true',
             });

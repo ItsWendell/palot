@@ -4,8 +4,8 @@ import {
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@codedeck/ui/components/select"
-import { Switch } from "@codedeck/ui/components/switch"
+} from "@palot/ui/components/select"
+import { Switch } from "@palot/ui/components/switch"
 import { useAtomValue, useSetAtom } from "jotai"
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
@@ -16,7 +16,7 @@ import { fetchOpenInTargets, setOpenInPreferred } from "../../services/backend"
 import { SettingsRow } from "./settings-row"
 import { SettingsSection } from "./settings-section"
 
-const isElectron = typeof window !== "undefined" && "codedeck" in window
+const isElectron = typeof window !== "undefined" && "palot" in window
 
 export function GeneralSettings() {
 	return (
@@ -123,9 +123,9 @@ function OpaqueWindowsRow() {
 		async (checked: boolean) => {
 			setOpaque(checked)
 			if (isElectron) {
-				await window.codedeck.setOpaqueWindows(checked)
+				await window.palot.setOpaqueWindows(checked)
 				// Requires relaunch -- prompt or auto-relaunch
-				window.codedeck.relaunch()
+				window.palot.relaunch()
 			}
 		},
 		[setOpaque],

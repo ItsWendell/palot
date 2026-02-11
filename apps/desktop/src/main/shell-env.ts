@@ -15,7 +15,7 @@
 import { execFileSync } from "node:child_process"
 import { homedir } from "node:os"
 
-const DELIMITER = "__CODEDECK_SHELL_ENV_DELIMITER__"
+const DELIMITER = "__PALOT_SHELL_ENV_DELIMITER__"
 
 /**
  * List of env vars we should NOT overwrite from the shell, because Electron

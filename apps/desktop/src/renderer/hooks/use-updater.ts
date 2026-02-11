@@ -19,13 +19,13 @@ export function useUpdater() {
 		if (!isElectron) return
 
 		// Get current state on mount
-		window.codedeck
+		window.palot
 			.getUpdateState()
 			.then(setState)
 			.catch(() => {})
 
 		// Subscribe to state changes pushed from main process
-		const unsubscribe = window.codedeck.onUpdateStateChanged((newState) => {
+		const unsubscribe = window.palot.onUpdateStateChanged((newState) => {
 			setState(newState)
 		})
 
@@ -34,17 +34,17 @@ export function useUpdater() {
 
 	const checkForUpdates = useCallback(async () => {
 		if (!isElectron) return
-		await window.codedeck.checkForUpdates()
+		await window.palot.checkForUpdates()
 	}, [])
 
 	const downloadUpdate = useCallback(async () => {
 		if (!isElectron) return
-		await window.codedeck.downloadUpdate()
+		await window.palot.downloadUpdate()
 	}, [])
 
 	const installUpdate = useCallback(() => {
 		if (!isElectron) return
-		window.codedeck.installUpdate()
+		window.palot.installUpdate()
 	}, [])
 
 	return {

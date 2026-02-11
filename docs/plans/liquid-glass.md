@@ -1,6 +1,6 @@
 # Liquid Glass — macOS Tahoe Transparency System
 
-> Three-tier progressive transparency for Codedeck: native liquid glass on macOS 26+, vibrancy fallback on older macOS, opaque everywhere else. Zero visual regressions on non-macOS platforms.
+> Three-tier progressive transparency for Palot: native liquid glass on macOS 26+, vibrancy fallback on older macOS, opaque everywhere else. Zero visual regressions on non-macOS platforms.
 
 ## Design Principles
 
@@ -519,7 +519,7 @@ Each CSS `backdrop-filter: blur()` triggers a GPU compositing layer. Guidelines:
 ### 6.5 Window Lifecycle
 
 - **`transparent: true` is creation-time only** — cannot be toggled at runtime, hence the restart requirement
-- **Multiple windows** — if Codedeck ever supports secondary/HUD windows, each gets its own `resolveWindowChrome()` call. The `appearance` parameter ("primary" / "secondary" / "hud") maps to different chrome configs (following the Codex pattern)
+- **Multiple windows** — if Palot ever supports secondary/HUD windows, each gets its own `resolveWindowChrome()` call. The `appearance` parameter ("primary" / "secondary" / "hud") maps to different chrome configs (following the Codex pattern)
 - **HMR (dev)** — Vite HMR loses Jotai state, but the chrome tier IPC re-fires on reconnect
 - **Browser mode** — no Electron, no `electron-*` class, all glass CSS is inert
 
@@ -531,13 +531,13 @@ Codex supports per-conversation accent color tinting on the titlebar. This is op
 
 ```css
 [data-slot="app-bar"] {
-  background-color: var(--codedeck-titlebar-tint, transparent);
+  background-color: var(--palot-titlebar-tint, transparent);
 }
 ```
 
 Applied via:
 ```typescript
-document.documentElement.style.setProperty('--codedeck-titlebar-tint', color)
+document.documentElement.style.setProperty('--palot-titlebar-tint', color)
 ```
 
 This can be wired to agent/project accent colors later without any additional component changes.
@@ -598,7 +598,7 @@ All other shadcn components (`dropdown-menu.tsx`, `popover.tsx`, `context-menu.t
 
 ## Comparison with Codex Implementation
 
-| Aspect | Codex | Codedeck |
+| Aspect | Codex | Palot |
 |---|---|---|
 | Glass CSS strategy | Inline classes on components | `data-slot` selectors from globals.css |
 | shadcn modifications | N/A (not shadcn-based) | **Zero** |

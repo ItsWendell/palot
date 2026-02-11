@@ -1,4 +1,4 @@
-import { cn } from "@codedeck/ui/lib/utils"
+import { cn } from "@palot/ui/lib/utils"
 import { Switch as SwitchPrimitive } from "radix-ui"
 import type * as React from "react"
 

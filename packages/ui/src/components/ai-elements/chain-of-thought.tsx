@@ -1,12 +1,12 @@
 "use client"
 
-import { Badge } from "@codedeck/ui/components/badge"
+import { Badge } from "@palot/ui/components/badge"
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
-} from "@codedeck/ui/components/collapsible"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/collapsible"
+import { cn } from "@palot/ui/lib/utils"
 import { useControllableState } from "@radix-ui/react-use-controllable-state"
 import type { LucideIcon } from "lucide-react"
 import { BrainIcon, ChevronDownIcon, DotIcon } from "lucide-react"

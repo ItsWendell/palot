@@ -7,27 +7,30 @@ import {
 	CommandList,
 	CommandSeparator,
 	CommandShortcut,
-} from "@codedeck/ui/components/command"
+} from "@palot/ui/components/command"
 import { useNavigate, useParams } from "@tanstack/react-router"
-import { useAtom } from "jotai"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
 	CheckIcon,
 	CloudIcon,
 	ContainerIcon,
 	EyeIcon,
 	EyeOffIcon,
+	FilmIcon,
 	GitBranchIcon,
 	MonitorIcon,
 	MoonIcon,
 	PaletteIcon,
 	PlusIcon,
 	Redo2Icon,
+	RefreshCwIcon,
 	SparklesIcon,
 	SunIcon,
 	SunMoonIcon,
 	Undo2Icon,
 } from "lucide-react"
-import { useCallback, useEffect, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { isMockModeAtom, toggleMockModeAtom } from "../atoms/mock-mode"
 import { opaqueWindowsAtom } from "../atoms/preferences"
 import { useSessionRevert } from "../hooks/use-commands"
 import {
@@ -37,14 +40,18 @@ import {
 	useSetColorScheme,
 	useSetTheme,
 } from "../hooks/use-theme"
+import { createLogger } from "../lib/logger"
 import type { ColorScheme } from "../lib/themes"
 import type { Agent } from "../lib/types"
+import { reloadConfig } from "../services/connection-manager"
 
 interface CommandPaletteProps {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	agents: Agent[]
 }
+
+const log = createLogger("command-palette")
 
 export function CommandPalette({ open, onOpenChange, agents }: CommandPaletteProps) {
 	const navigate = useNavigate()
@@ -70,8 +77,11 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 	const setTheme = useSetTheme()
 	const setColorScheme = useSetColorScheme()
 	const [opaqueWindows, setOpaqueWindows] = useAtom(opaqueWindowsAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
+	const toggleMockMode = useSetAtom(toggleMockModeAtom)
+	const [reloading, setReloading] = useState(false)
 
-	const isElectron = typeof window !== "undefined" && "codedeck" in window
+	const isElectron = typeof window !== "undefined" && "palot" in window
 
 	const handleToggleTransparency = useCallback(async () => {
 		const newValue = !opaqueWindows
@@ -79,16 +89,29 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 
 		// Persist to main process so the next window creation uses the correct chrome tier
 		if (isElectron) {
-			await window.codedeck.setOpaqueWindows(newValue)
+			await window.palot.setOpaqueWindows(newValue)
 			// BrowserWindow.transparent is a creation-time option — prompt for restart
 			const shouldRestart = window.confirm(
 				"Transparency changes take effect after restarting the app.\n\nRestart now?",
 			)
 			if (shouldRestart) {
-				window.codedeck.relaunch()
+				window.palot.relaunch()
 			}
 		}
 	}, [opaqueWindows, setOpaqueWindows, isElectron])
+
+	const handleReloadConfig = useCallback(async () => {
+		setReloading(true)
+		onOpenChange(false)
+		try {
+			await reloadConfig()
+			log.info("Config reloaded successfully")
+		} catch (err) {
+			log.error("Failed to reload config", {}, err)
+		} finally {
+			setReloading(false)
+		}
+	}, [onOpenChange])
 
 	useEffect(() => {
 		function handleKeyDown(e: KeyboardEvent) {
@@ -162,6 +185,10 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 							<span>Compact Conversation</span>
 						</CommandItem>
 					)}
+					<CommandItem onSelect={handleReloadConfig} disabled={reloading}>
+						<RefreshCwIcon />
+						<span>{reloading ? "Reloading..." : "Reload Config"}</span>
+					</CommandItem>
 				</CommandGroup>
 
 				<CommandSeparator />
@@ -220,6 +247,21 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 							{colorScheme === scheme && <CheckIcon className="ml-auto h-4 w-4" />}
 						</CommandItem>
 					))}
+				</CommandGroup>
+
+				<CommandSeparator />
+				<CommandGroup heading="Developer">
+					<CommandItem
+						keywords={["demo", "mock", "screenshot", "marketing"]}
+						onSelect={() => {
+							toggleMockMode()
+							onOpenChange(false)
+						}}
+					>
+						<FilmIcon />
+						<span>{isMockMode ? "Disable Demo Mode" : "Enable Demo Mode"}</span>
+						{isMockMode && <CheckIcon className="ml-auto h-4 w-4" />}
+					</CommandItem>
 				</CommandGroup>
 
 				{activeSessions.length > 0 && (

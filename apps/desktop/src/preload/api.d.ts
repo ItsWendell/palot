@@ -2,7 +2,7 @@
  * Type definitions for the Electron preload bridge.
  *
  * These types are shared between the preload script and the renderer.
- * The renderer accesses these via `window.codedeck`.
+ * The renderer accesses these via `window.palot`.
  */
 
 export interface OpenCodeServerInfo {
@@ -162,6 +162,67 @@ export interface CliInstallResult {
 	error?: string
 }
 
+// ============================================================
+// Onboarding types
+// ============================================================
+
+export interface OpenCodeCheckResult {
+	installed: boolean
+	version: string | null
+	path: string | null
+	compatible: boolean
+	compatibility: "ok" | "too-old" | "too-new" | "blocked" | "unknown"
+	message: string | null
+}
+
+export interface ClaudeCodeDetection {
+	found: boolean
+	hasGlobalSettings: boolean
+	hasUserState: boolean
+	projectCount: number
+	mcpServerCount: number
+	agentCount: number
+	commandCount: number
+	hasRules: boolean
+	hasHooks: boolean
+	skillCount: number
+	totalSessions: number
+	totalMessages: number
+}
+
+export interface MigrationCategoryPreview {
+	category: string
+	itemCount: number
+	files: MigrationFilePreview[]
+}
+
+export interface MigrationFilePreview {
+	path: string
+	status: "new" | "modified" | "skipped"
+	lineCount: number
+	content?: string
+}
+
+export interface MigrationPreview {
+	categories: MigrationCategoryPreview[]
+	warnings: string[]
+	manualActions: string[]
+	errors: string[]
+	fileCount: number
+	sessionCount: number
+	sessionProjectCount: number
+}
+
+export interface MigrationResult {
+	success: boolean
+	filesWritten: string[]
+	filesSkipped: string[]
+	backupDir: string | null
+	warnings: string[]
+	manualActions: string[]
+	errors: string[]
+}
+
 export interface AppInfo {
 	version: string
 	isDev: boolean
@@ -169,7 +230,7 @@ export interface AppInfo {
 
 export type WindowChromeTier = "liquid-glass" | "vibrancy" | "opaque"
 
-export interface CodedeckAPI {
+export interface PalotAPI {
 	/** The host platform: "darwin", "win32", or "linux". */
 	platform: NodeJS.Platform
 	getAppInfo: () => Promise<AppInfo>
@@ -229,6 +290,12 @@ export interface CodedeckAPI {
 	/** Set the native theme source ("light" | "dark" | "system") to control macOS glass tint. */
 	setNativeTheme: (source: string) => Promise<void>
 
+	// System accent color
+	/** Get the system accent color as an 8-char hex RRGGBBAA string, or null if unavailable. */
+	getAccentColor: () => Promise<string | null>
+	/** Subscribe to system accent color changes. Returns an unsubscribe function. */
+	onAccentColorChanged: (callback: (color: string) => void) => () => void
+
 	// Directory picker
 	pickDirectory: () => Promise<string | null>
 
@@ -260,10 +327,27 @@ export interface CodedeckAPI {
 	updateSettings: (partial: Record<string, unknown>) => Promise<AppSettings>
 	/** Subscribe to settings changes pushed from the main process. */
 	onSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
+
+	// Onboarding
+	onboarding: {
+		checkOpenCode: () => Promise<OpenCodeCheckResult>
+		installOpenCode: () => Promise<{ success: boolean; error?: string }>
+		onInstallOutput: (callback: (text: string) => void) => () => void
+		detectClaudeCode: () => Promise<ClaudeCodeDetection>
+		scanClaudeCode: () => Promise<{ detection: ClaudeCodeDetection; scanResult: unknown }>
+		previewMigration: (scanResult: unknown, categories: string[]) => Promise<MigrationPreview>
+		executeMigration: (scanResult: unknown, categories: string[]) => Promise<MigrationResult>
+		restoreBackup: () => Promise<{
+			success: boolean
+			restored: string[]
+			removed: string[]
+			errors: string[]
+		}>
+	}
 }
 
 declare global {
 	interface Window {
-		codedeck: CodedeckAPI
+		palot: PalotAPI
 	}
 }

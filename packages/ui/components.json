@@ -11,10 +11,10 @@
 	},
 	"iconLibrary": "lucide",
 	"aliases": {
-		"components": "@codedeck/ui/components",
-		"hooks": "@codedeck/ui/hooks",
-		"lib": "@codedeck/ui/lib",
-		"utils": "@codedeck/ui/lib/utils",
-		"ui": "@codedeck/ui/components"
+		"components": "@palot/ui/components",
+		"hooks": "@palot/ui/hooks",
+		"lib": "@palot/ui/lib",
+		"utils": "@palot/ui/lib/utils",
+		"ui": "@palot/ui/components"
 	}
 }

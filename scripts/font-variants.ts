@@ -64,13 +64,13 @@ const variants: Variant[] = [
 		name: "C",
 		desc: "All semibold, single color",
 		render: () => `
-      <text x="600" y="180" font-family="'GM'" font-size="160" font-weight="600" fill="#1a1a1a" text-anchor="middle">codedeck</text>`,
+      <text x="600" y="180" font-family="'GM'" font-size="160" font-weight="600" fill="#1a1a1a" text-anchor="middle">palot</text>`,
 	},
 	{
 		name: "D",
 		desc: "Medium weight, extra-tight, all lowercase",
 		render: () => `
-      <text x="600" y="180" font-family="'GM'" font-size="160" font-weight="500" fill="#1a1a1a" letter-spacing="-4" text-anchor="middle">codedeck</text>`,
+      <text x="600" y="180" font-family="'GM'" font-size="160" font-weight="500" fill="#1a1a1a" letter-spacing="-4" text-anchor="middle">palot</text>`,
 	},
 	{
 		name: "E",
@@ -84,7 +84,7 @@ const variants: Variant[] = [
 		name: "F",
 		desc: "ExtraBold, all caps, tracked",
 		render: () => `
-      <text x="600" y="176" font-family="'GM'" font-size="136" font-weight="800" fill="#1a1a1a" letter-spacing="12" text-anchor="middle">CODEDECK</text>`,
+      <text x="600" y="176" font-family="'GM'" font-size="136" font-weight="800" fill="#1a1a1a" letter-spacing="12" text-anchor="middle">PALOT</text>`,
 	},
 ]
 

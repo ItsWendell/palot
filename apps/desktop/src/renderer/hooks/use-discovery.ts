@@ -1,6 +1,7 @@
 import { useAtomValue } from "jotai"
 import { useEffect } from "react"
 import { discoveryAtom } from "../atoms/discovery"
+import { isMockModeAtom } from "../atoms/mock-mode"
 import { appStore } from "../atoms/store"
 import { createLogger } from "../lib/logger"
 import { fetchDiscovery, fetchOpenCodeUrl } from "../services/backend"
@@ -14,18 +15,26 @@ const log = createLogger("discovery")
 // or fast re-mounts.
 let discoveryInFlight = false
 
+/** Reset the discovery guard so discovery can re-run (used when exiting mock mode). */
+export function resetDiscoveryGuard(): void {
+	discoveryInFlight = false
+}
+
 /**
  * On mount:
- * 1. Fetches discovered projects/sessions from disk (via Codedeck server)
- * 2. Ensures the single OpenCode server is running (via Codedeck backend)
+ * 1. Fetches discovered projects/sessions from disk (via Palot server)
+ * 2. Ensures the single OpenCode server is running (via Palot backend)
  * 3. Connects to the OpenCode server (SSE events for all projects)
  * 4. Loads live sessions for all discovered projects
  */
 export function useDiscovery() {
 	const discovery = useAtomValue(discoveryAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
 	const { loaded, loading } = discovery
 
 	useEffect(() => {
+		// In mock mode, atoms are hydrated by useMockMode() -- skip real discovery
+		if (isMockMode) return
 		if (loaded || loading || discoveryInFlight) return
 		discoveryInFlight = true
 
@@ -94,5 +103,5 @@ export function useDiscovery() {
 				}))
 			}
 		})()
-	}, [loaded, loading])
+	}, [loaded, loading, isMockMode])
 }

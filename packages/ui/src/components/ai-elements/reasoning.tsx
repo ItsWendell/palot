@@ -4,8 +4,8 @@ import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
-} from "@codedeck/ui/components/collapsible"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/collapsible"
+import { cn } from "@palot/ui/lib/utils"
 import { useControllableState } from "@radix-ui/react-use-controllable-state"
 import { cjk } from "@streamdown/cjk"
 import { code } from "@streamdown/code"

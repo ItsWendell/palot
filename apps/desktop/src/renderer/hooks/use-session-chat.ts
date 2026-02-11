@@ -7,6 +7,7 @@ import {
 	mergeSessionParts,
 } from "../atoms/derived/session-chat"
 import { messagesFamily, setMessagesAtom } from "../atoms/messages"
+import { isMockModeAtom } from "../atoms/mock-mode"
 import { partsFamily } from "../atoms/parts"
 import { appStore } from "../atoms/store"
 import { streamingVersionAtom } from "../atoms/streaming"
@@ -36,6 +37,7 @@ export function useSessionChat(
 	sessionId: string | null,
 	_isActive = false,
 ) {
+	const isMockMode = useAtomValue(isMockModeAtom)
 	const [loading, setLoading] = useState(false)
 	const [loadingEarlier, setLoadingEarlier] = useState(false)
 	const [error, setError] = useState<string | null>(null)
@@ -130,13 +132,14 @@ export function useSessionChat(
 		}
 	}, [sessionId, directory, loadingEarlier])
 
-	// Trigger initial fetch when session changes
+	// Trigger initial fetch when session changes (skip in mock mode -- data is pre-hydrated)
 	useEffect(() => {
+		if (isMockMode) return
 		if (!sessionId) return
 		if (syncedRef.current === sessionId) return
 		syncedRef.current = sessionId
 		fetchAndHydrate(sessionId)
-	}, [sessionId, fetchAndHydrate])
+	}, [sessionId, fetchAndHydrate, isMockMode])
 
 	// Reset when session changes
 	useEffect(() => {

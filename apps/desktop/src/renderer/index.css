@@ -1,10 +1,10 @@
-/* Fonts — Inter (sans) + IBM Plex Mono (mono), matching OpenCode */
+/* Fonts — Inter (sans) + IBM Plex Mono (mono), available as fallback */
 @import "@fontsource-variable/inter";
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/500.css";
 @import "@fontsource/ibm-plex-mono/600.css";
 
-@import "@codedeck/ui/styles/globals.css";
+@import "@palot/ui/styles/globals.css";
 
 body {
 	margin: 0;

@@ -2,7 +2,7 @@
  * cc2oc validate -- Validate existing OpenCode configuration.
  */
 
-import { convert, scan, validate } from "@codedeck/cc2oc"
+import { convert, scan, validate } from "@palot/cc2oc"
 import { defineCommand } from "citty"
 import consola from "consola"
 

@@ -1,4 +1,4 @@
-import { cn } from "@codedeck/ui/lib/utils"
+import { cn } from "@palot/ui/lib/utils"
 import { NodeToolbar, Position } from "@xyflow/react"
 import type { ComponentProps } from "react"
 

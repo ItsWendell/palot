@@ -1,16 +1,15 @@
-import { Badge } from "@codedeck/ui/components/badge"
-import { Button } from "@codedeck/ui/components/button"
+import { Button } from "@palot/ui/components/button"
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
-} from "@codedeck/ui/components/dropdown-menu"
-import { Input } from "@codedeck/ui/components/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@codedeck/ui/components/tooltip"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/dropdown-menu"
+import { Input } from "@palot/ui/components/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
+import { cn } from "@palot/ui/lib/utils"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	ArrowLeftIcon,
@@ -37,6 +36,7 @@ import type { Agent, AgentStatus, FileAttachment, QuestionAnswer } from "../lib/
 import { fetchOpenInTargets, isElectron, openInTarget } from "../services/backend"
 import { useSetAppBarContent } from "./app-bar-context"
 import { ChatView } from "./chat"
+import { PalotWordmark } from "./palot-wordmark"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
 	running: "Running",
@@ -289,35 +289,52 @@ function SessionAppBarContent({
 	const navigate = useNavigate()
 
 	return (
-		<div className="flex w-full items-center gap-2">
-			{/* Session name — click to edit */}
+		<div className="flex h-full w-full items-center gap-2.5">
+			{/* App name */}
+			<PalotWordmark className="h-[11px] w-auto shrink-0 text-muted-foreground/70" />
+
+			{/* Separator */}
+			<div className="h-3 w-px shrink-0 bg-border/60" />
+
+			{/* Breadcrumb: project / session name */}
 			<div
-				className="min-w-0 shrink"
+				className="flex min-w-0 items-center gap-1.5"
 				style={{
 					// @ts-expect-error -- vendor-prefixed CSS property
 					WebkitAppRegion: "no-drag",
 				}}
 			>
+				{/* Project name */}
+				<span className="shrink-0 text-xs leading-none text-muted-foreground">{agent.project}</span>
+				<span className="shrink-0 text-xs leading-none text-muted-foreground/40">/</span>
+
+				{/* Session name — click to edit */}
 				{isEditingTitle ? (
-					<Input
-						ref={titleInputRef}
-						value={titleValue}
-						onChange={(e) => onTitleValueChange(e.target.value)}
-						onKeyDown={(e) => {
-							e.stopPropagation()
-							if (e.key === "Enter") onConfirmTitle()
-							if (e.key === "Escape") onCancelEditing()
-						}}
-						onBlur={onConfirmTitle}
-						className="h-7 min-w-0 flex-shrink border-none bg-transparent p-0 text-sm font-semibold shadow-none focus-visible:ring-0"
-					/>
+					<div className="inline-grid min-w-0 max-w-full items-center">
+						{/* Ghost span — sizes the grid column to match the text width */}
+						<span className="invisible col-start-1 row-start-1 truncate text-xs font-semibold leading-none">
+							{titleValue}
+						</span>
+						<Input
+							ref={titleInputRef}
+							value={titleValue}
+							onChange={(e) => onTitleValueChange(e.target.value)}
+							onKeyDown={(e) => {
+								e.stopPropagation()
+								if (e.key === "Enter") onConfirmTitle()
+								if (e.key === "Escape") onCancelEditing()
+							}}
+							onBlur={onConfirmTitle}
+							className="col-start-1 row-start-1 h-7 min-w-0 border-none bg-transparent p-0 text-xs font-semibold leading-none shadow-none focus-visible:ring-0"
+						/>
+					</div>
 				) : (
 					<button
 						type="button"
 						onClick={onRename ? onStartEditing : undefined}
 						className={`group flex min-w-0 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
 					>
-						<h2 className="min-w-0 truncate text-xs font-semibold">{agent.name}</h2>
+						<h2 className="min-w-0 truncate text-xs font-semibold leading-none">{agent.name}</h2>
 						{onRename && (
 							<PencilIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
 						)}
@@ -325,28 +342,16 @@ function SessionAppBarContent({
 				)}
 			</div>
 
-			{/* Project badge */}
-			<Badge
-				variant="secondary"
-				className="shrink-0 text-[11px] font-normal"
-				style={{
-					// @ts-expect-error -- vendor-prefixed CSS property
-					WebkitAppRegion: "no-drag",
-				}}
-			>
-				{agent.project}
-			</Badge>
-
 			{/* Right-aligned items */}
 			<div
-				className="ml-auto flex items-center gap-3"
+				className="ml-auto flex items-center gap-2.5"
 				style={{
 					// @ts-expect-error -- vendor-prefixed CSS property
 					WebkitAppRegion: "no-drag",
 				}}
 			>
 				{/* Status dot + label */}
-				<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+				<div className="flex items-center gap-1.5 text-xs leading-none text-muted-foreground">
 					<span
 						className={`inline-block size-1.5 rounded-full ${STATUS_DOT_COLOR[agent.status]}`}
 					/>
@@ -355,7 +360,7 @@ function SessionAppBarContent({
 
 				{/* Duration */}
 				{agent.duration && (
-					<span className="text-xs text-muted-foreground/60">{agent.duration}</span>
+					<span className="text-xs leading-none text-muted-foreground/60">{agent.duration}</span>
 				)}
 
 				{/* Open in external editor */}
@@ -369,7 +374,7 @@ function SessionAppBarContent({
 					<Button
 						size="sm"
 						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-red-400"
+						className="h-7 gap-1 px-2 text-xs leading-none text-muted-foreground hover:text-red-400"
 						onClick={() => onStop?.(agent)}
 						disabled={!isConnected}
 					>

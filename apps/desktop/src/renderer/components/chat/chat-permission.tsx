@@ -1,10 +1,10 @@
-import { Button } from "@codedeck/ui/components/button"
+import { Button } from "@palot/ui/components/button"
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
-} from "@codedeck/ui/components/dropdown-menu"
+} from "@palot/ui/components/dropdown-menu"
 import { ChevronDownIcon, Loader2Icon, ShieldCheckIcon } from "lucide-react"
 import { memo, useState } from "react"
 import type { Agent } from "../../lib/types"

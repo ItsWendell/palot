@@ -1,14 +1,14 @@
 "use client"
 
-import { Button } from "@codedeck/ui/components/button"
-import { ButtonGroup, ButtonGroupText } from "@codedeck/ui/components/button-group"
+import { Button } from "@palot/ui/components/button"
+import { ButtonGroup, ButtonGroupText } from "@palot/ui/components/button-group"
 import {
 	Tooltip,
 	TooltipContent,
 	TooltipProvider,
 	TooltipTrigger,
-} from "@codedeck/ui/components/tooltip"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/tooltip"
+import { cn } from "@palot/ui/lib/utils"
 import { cjk } from "@streamdown/cjk"
 import { code } from "@streamdown/code"
 import { math } from "@streamdown/math"

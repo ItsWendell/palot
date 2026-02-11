@@ -1,231 +1,953 @@
-import type { Agent, Project } from "./types"
+/**
+ * Static fixture data for demo/mock mode.
+ *
+ * All timestamps are relative to `Date.now()` so the UI always
+ * looks fresh regardless of when the screenshot is taken.
+ */
+import type { DiscoveredProject, DiscoveredSession, DiscoveryState } from "../atoms/discovery"
+import type { SessionEntry } from "../atoms/sessions"
+import type {
+	AssistantMessage,
+	Message,
+	Part,
+	Permission,
+	ReasoningPart,
+	Session,
+	TextPart,
+	ToolPart,
+	UserMessage,
+} from "./types"
 
-export const MOCK_PROJECTS: Project[] = [
-	{ name: "codedeck", agentCount: 3 },
-	{ name: "api-server", agentCount: 1 },
-	{ name: "frontend", agentCount: 2 },
-]
+// ============================================================
+// Helpers
+// ============================================================
 
-export const MOCK_AGENTS: Agent[] = [
+const NOW = Date.now()
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+
+/** Stable IDs so navigation works across reloads */
+const IDS = {
+	// Projects
+	projectPalot: "proj-a1b2c3d4e5f6",
+	projectAcmeApi: "proj-f6e5d4c3b2a1",
+	projectLanding: "proj-1a2b3c4d5e6f",
+
+	// Sessions
+	sessionDarkMode: "ses-mock-darkmode-001",
+	sessionAuthFix: "ses-mock-authfix-002",
+	sessionRefactor: "ses-mock-refactor-003",
+	sessionLanding: "ses-mock-landing-004",
+	sessionTests: "ses-mock-tests-005",
+	sessionDocs: "ses-mock-docs-006",
+
+	// Messages -- dark mode session
+	dmUser1: "msg-dm-u1",
+	dmAssistant1: "msg-dm-a1",
+	dmUser2: "msg-dm-u2",
+	dmAssistant2: "msg-dm-a2",
+
+	// Messages -- auth fix session
+	afUser1: "msg-af-u1",
+	afAssistant1: "msg-af-a1",
+
+	// Messages -- refactor session
+	rfUser1: "msg-rf-u1",
+	rfAssistant1: "msg-rf-a1",
+	rfUser2: "msg-rf-u2",
+	rfAssistant2: "msg-rf-a2",
+
+	// Messages -- landing session
+	lnUser1: "msg-ln-u1",
+	lnAssistant1: "msg-ln-a1",
+
+	// Messages -- tests session
+	tsUser1: "msg-ts-u1",
+	tsAssistant1: "msg-ts-a1",
+
+	// Messages -- docs session
+	dcUser1: "msg-dc-u1",
+	dcAssistant1: "msg-dc-a1",
+} as const
+
+function partId(messageId: string, index: number): string {
+	return `part-${messageId}-${index}`
+}
+
+// ============================================================
+// Project directories
+// ============================================================
+
+const DIRS = {
+	palot: "/Users/demo/Projects/palot",
+	acmeApi: "/Users/demo/Projects/acme-api",
+	landing: "/Users/demo/Projects/landing-page",
+}
+
+// ============================================================
+// Discovery state
+// ============================================================
+
+const mockDiscoveredProjects: DiscoveredProject[] = [
 	{
-		id: "1",
-		sessionId: "mock-session-1",
-
-		name: "Add OAuth2 login flow",
-		status: "running",
-		environment: "cloud",
-		project: "codedeck",
-		projectSlug: "codedeck-abc12345",
-		directory: "/home/user/projects/codedeck",
-		branch: "agent/oauth-login",
-		duration: "12m 34s",
-		tokens: 45200,
-		cost: 0.12,
-		currentActivity: "Editing middleware.ts",
-		activities: [
-			{
-				id: "a1",
-				timestamp: "12:34",
-				type: "read",
-				description: "Reading auth.ts",
-				detail: "src/auth/auth.ts",
-			},
-			{
-				id: "a2",
-				timestamp: "12:35",
-				type: "search",
-				description: 'Searching for "handler"',
-				detail: "Found 12 matches in 5 files",
-			},
-			{
-				id: "a3",
-				timestamp: "12:36",
-				type: "edit",
-				description: "Editing middleware.ts",
-				detail: "+24 -3 lines",
-			},
-			{
-				id: "a4",
-				timestamp: "12:37",
-				type: "write",
-				description: "Creating oauth-provider.ts",
-				detail: "src/auth/oauth-provider.ts",
-			},
-			{
-				id: "a5",
-				timestamp: "12:38",
-				type: "run",
-				description: "Running tests",
-				detail: "npm test -- --filter auth",
-			},
-		],
-		permissions: [],
-		questions: [],
-		createdAt: Date.now() - 12 * 60 * 1000,
-		lastActiveAt: Date.now(),
+		id: IDS.projectPalot,
+		worktree: DIRS.palot,
+		vcs: "git",
+		time: { created: NOW - 30 * 24 * HOUR, updated: NOW - 2 * MINUTE },
 	},
 	{
-		id: "2",
-		sessionId: "mock-session-2",
-
-		name: "Fix CI pipeline",
-		status: "running",
-		environment: "local",
-		project: "codedeck",
-		projectSlug: "codedeck-abc12345",
-		directory: "/home/user/projects/codedeck",
-		branch: "agent/fix-ci",
-		duration: "3m 12s",
-		tokens: 12800,
-		cost: 0.03,
-		currentActivity: "Running tests...",
-		activities: [
-			{
-				id: "b1",
-				timestamp: "12:50",
-				type: "read",
-				description: "Reading .github/workflows/ci.yml",
-			},
-			{ id: "b2", timestamp: "12:51", type: "think", description: "Analyzing test failures" },
-			{
-				id: "b3",
-				timestamp: "12:52",
-				type: "run",
-				description: "Running tests...",
-				detail: "bun test",
-			},
-		],
-		permissions: [],
-		questions: [],
-		createdAt: Date.now() - 3 * 60 * 1000,
-		lastActiveAt: Date.now(),
+		id: IDS.projectAcmeApi,
+		worktree: DIRS.acmeApi,
+		vcs: "git",
+		time: { created: NOW - 14 * 24 * HOUR, updated: NOW - 15 * MINUTE },
 	},
 	{
-		id: "3",
-		sessionId: "mock-session-3",
-
-		name: "Update dependencies",
-		status: "completed",
-		environment: "cloud",
-		project: "api-server",
-		projectSlug: "api-server-def67890",
-		directory: "/home/user/projects/api-server",
-		branch: "agent/update-deps",
-		duration: "2h ago",
-		tokens: 31500,
-		cost: 0.08,
-		activities: [
-			{ id: "c1", timestamp: "11:20", type: "read", description: "Reading package.json" },
-			{ id: "c2", timestamp: "11:22", type: "run", description: "Running npm outdated" },
-			{
-				id: "c3",
-				timestamp: "11:25",
-				type: "edit",
-				description: "Updating package.json",
-				detail: "+12 -12 lines",
-			},
-			{
-				id: "c4",
-				timestamp: "11:28",
-				type: "run",
-				description: "Running tests",
-				detail: "All 47 tests passed",
-			},
-		],
-		permissions: [],
-		questions: [],
-		createdAt: Date.now() - 3 * 60 * 60 * 1000,
-		lastActiveAt: Date.now() - 2 * 60 * 60 * 1000,
-	},
-	{
-		id: "4",
-		sessionId: "mock-session-4",
-
-		name: "Refactor database layer",
-		status: "failed",
-		environment: "local",
-		project: "api-server",
-		projectSlug: "api-server-def67890",
-		directory: "/home/user/projects/api-server",
-		branch: "agent/refactor-db",
-		duration: "1h ago",
-		tokens: 89200,
-		cost: 0.24,
-		currentActivity: "Failed: Out of memory",
-		activities: [
-			{ id: "d1", timestamp: "10:00", type: "read", description: "Reading database models" },
-			{ id: "d2", timestamp: "10:05", type: "think", description: "Planning migration strategy" },
-			{
-				id: "d3",
-				timestamp: "10:10",
-				type: "edit",
-				description: "Rewriting query builder",
-				detail: "+245 -180 lines",
-			},
-		],
-		permissions: [],
-		questions: [],
-		createdAt: Date.now() - 2 * 60 * 60 * 1000,
-		lastActiveAt: Date.now() - 1 * 60 * 60 * 1000,
-	},
-	{
-		id: "5",
-		sessionId: "mock-session-5",
-
-		name: "Add dark mode support",
-		status: "waiting",
-		environment: "cloud",
-		project: "frontend",
-		projectSlug: "frontend-aaa11111",
-		directory: "/home/user/projects/frontend",
-		branch: "agent/dark-mode",
-		duration: "5m 10s",
-		tokens: 18900,
-		cost: 0.05,
-		currentActivity: "Waiting for approval: install tailwind-dark-mode",
-		activities: [
-			{ id: "e1", timestamp: "12:40", type: "read", description: "Reading tailwind.config.ts" },
-			{
-				id: "e2",
-				timestamp: "12:42",
-				type: "tool",
-				description: "Requesting permission to install package",
-				detail: "tailwind-dark-mode@^2.0",
-			},
-		],
-		permissions: [],
-		questions: [],
-		createdAt: Date.now() - 5 * 60 * 1000,
-		lastActiveAt: Date.now(),
-	},
-	{
-		id: "6",
-		sessionId: "mock-session-6",
-
-		name: "Implement search API",
-		status: "running",
-		environment: "cloud",
-		project: "frontend",
-		projectSlug: "frontend-aaa11111",
-		directory: "/home/user/projects/frontend",
-		branch: "agent/search-api",
-		duration: "7m 0s",
-		tokens: 22100,
-		cost: 0.06,
-		currentActivity: "Writing search controller",
-		activities: [
-			{ id: "f1", timestamp: "12:30", type: "read", description: "Reading existing API routes" },
-			{
-				id: "f2",
-				timestamp: "12:33",
-				type: "write",
-				description: "Writing search controller",
-				detail: "src/controllers/search.ts",
-			},
-		],
-		permissions: [],
-		questions: [],
-		createdAt: Date.now() - 7 * 60 * 1000,
-		lastActiveAt: Date.now(),
+		id: IDS.projectLanding,
+		worktree: DIRS.landing,
+		vcs: "git",
+		time: { created: NOW - 7 * 24 * HOUR, updated: NOW - 1 * HOUR },
 	},
 ]
+
+const mockDiscoveredSessions: Record<string, DiscoveredSession[]> = {
+	[IDS.projectPalot]: [
+		{
+			id: IDS.sessionDarkMode,
+			projectID: IDS.projectPalot,
+			directory: DIRS.palot,
+			title: "Add dark mode toggle to settings",
+			time: { created: NOW - 25 * MINUTE, updated: NOW - 2 * MINUTE },
+			summary: { additions: 147, deletions: 23, files: 8 },
+		},
+		{
+			id: IDS.sessionTests,
+			projectID: IDS.projectPalot,
+			directory: DIRS.palot,
+			title: "Add unit tests for auth middleware",
+			time: { created: NOW - 3 * HOUR, updated: NOW - 2 * HOUR },
+			summary: { additions: 312, deletions: 5, files: 4 },
+		},
+		{
+			id: IDS.sessionDocs,
+			projectID: IDS.projectPalot,
+			directory: DIRS.palot,
+			title: "Update API documentation for v2 endpoints",
+			time: { created: NOW - 5 * HOUR, updated: NOW - 4 * HOUR },
+			summary: { additions: 89, deletions: 34, files: 3 },
+		},
+	],
+	[IDS.projectAcmeApi]: [
+		{
+			id: IDS.sessionAuthFix,
+			projectID: IDS.projectAcmeApi,
+			directory: DIRS.acmeApi,
+			title: "Fix JWT token refresh race condition",
+			time: { created: NOW - 45 * MINUTE, updated: NOW - 12 * MINUTE },
+			summary: { additions: 56, deletions: 18, files: 3 },
+		},
+		{
+			id: IDS.sessionRefactor,
+			projectID: IDS.projectAcmeApi,
+			directory: DIRS.acmeApi,
+			title: "Refactor database connection pooling",
+			time: { created: NOW - 2 * HOUR, updated: NOW - 45 * MINUTE },
+			summary: { additions: 203, deletions: 156, files: 12 },
+		},
+	],
+	[IDS.projectLanding]: [
+		{
+			id: IDS.sessionLanding,
+			projectID: IDS.projectLanding,
+			directory: DIRS.landing,
+			title: "Build hero section with animated gradient",
+			time: { created: NOW - 1 * HOUR, updated: NOW - 35 * MINUTE },
+			summary: { additions: 178, deletions: 0, files: 5 },
+		},
+	],
+}
+
+export const MOCK_DISCOVERY: DiscoveryState = {
+	loaded: true,
+	loading: false,
+	error: null,
+	projects: mockDiscoveredProjects,
+	sessions: mockDiscoveredSessions,
+}
+
+// ============================================================
+// Session factory helpers
+// ============================================================
+
+function makeSession(
+	id: string,
+	projectID: string,
+	directory: string,
+	title: string,
+	created: number,
+	updated: number,
+): Session {
+	return {
+		id,
+		projectID,
+		directory,
+		title,
+		version: "1",
+		time: { created, updated },
+	}
+}
+
+// ============================================================
+// Sessions (live)
+// ============================================================
+
+const mockSessions: Session[] = [
+	makeSession(
+		IDS.sessionDarkMode,
+		IDS.projectPalot,
+		DIRS.palot,
+		"Add dark mode toggle to settings",
+		NOW - 25 * MINUTE,
+		NOW - 2 * MINUTE,
+	),
+	makeSession(
+		IDS.sessionAuthFix,
+		IDS.projectAcmeApi,
+		DIRS.acmeApi,
+		"Fix JWT token refresh race condition",
+		NOW - 45 * MINUTE,
+		NOW - 12 * MINUTE,
+	),
+	makeSession(
+		IDS.sessionRefactor,
+		IDS.projectAcmeApi,
+		DIRS.acmeApi,
+		"Refactor database connection pooling",
+		NOW - 2 * HOUR,
+		NOW - 45 * MINUTE,
+	),
+	makeSession(
+		IDS.sessionLanding,
+		IDS.projectLanding,
+		DIRS.landing,
+		"Build hero section with animated gradient",
+		NOW - 1 * HOUR,
+		NOW - 35 * MINUTE,
+	),
+	makeSession(
+		IDS.sessionTests,
+		IDS.projectPalot,
+		DIRS.palot,
+		"Add unit tests for auth middleware",
+		NOW - 3 * HOUR,
+		NOW - 2 * HOUR,
+	),
+	makeSession(
+		IDS.sessionDocs,
+		IDS.projectPalot,
+		DIRS.palot,
+		"Update API documentation for v2 endpoints",
+		NOW - 5 * HOUR,
+		NOW - 4 * HOUR,
+	),
+]
+
+// ============================================================
+// Session entries (with status, permissions, etc.)
+// ============================================================
+
+export const MOCK_SESSION_ENTRIES: Map<string, SessionEntry> = new Map([
+	[
+		IDS.sessionDarkMode,
+		{
+			session: mockSessions[0],
+			status: { type: "busy" as const },
+			permissions: [],
+			questions: [],
+			directory: DIRS.palot,
+			branch: "feat/dark-mode",
+		},
+	],
+	[
+		IDS.sessionAuthFix,
+		{
+			session: mockSessions[1],
+			status: { type: "idle" as const },
+			permissions: [
+				{
+					id: "perm-mock-001",
+					type: "file.write",
+					sessionID: IDS.sessionAuthFix,
+					messageID: IDS.afAssistant1,
+					title: "Write to src/middleware/auth.ts",
+					metadata: {
+						file: "src/middleware/auth.ts",
+						description: "Update token refresh logic to handle concurrent requests",
+					},
+					time: { created: NOW - 12 * MINUTE },
+				} satisfies Permission,
+			],
+			questions: [],
+			directory: DIRS.acmeApi,
+			branch: "fix/token-refresh",
+		},
+	],
+	[
+		IDS.sessionRefactor,
+		{
+			session: mockSessions[2],
+			status: { type: "idle" as const },
+			permissions: [],
+			questions: [],
+			directory: DIRS.acmeApi,
+			branch: "refactor/db-pool",
+		},
+	],
+	[
+		IDS.sessionLanding,
+		{
+			session: mockSessions[3],
+			status: { type: "idle" as const },
+			permissions: [],
+			questions: [],
+			directory: DIRS.landing,
+			branch: "feat/hero-section",
+		},
+	],
+	[
+		IDS.sessionTests,
+		{
+			session: mockSessions[4],
+			status: { type: "idle" as const },
+			permissions: [],
+			questions: [],
+			directory: DIRS.palot,
+			branch: "test/auth-middleware",
+		},
+	],
+	[
+		IDS.sessionDocs,
+		{
+			session: mockSessions[5],
+			status: { type: "idle" as const },
+			permissions: [],
+			questions: [],
+			directory: DIRS.palot,
+			branch: "docs/api-v2",
+		},
+	],
+])
+
+export const MOCK_SESSION_IDS: Set<string> = new Set(MOCK_SESSION_ENTRIES.keys())
+
+// ============================================================
+// Message & part factory helpers
+// ============================================================
+
+function userMsg(id: string, sessionID: string, created: number): UserMessage {
+	return {
+		id,
+		sessionID,
+		role: "user",
+		time: { created },
+		agent: "default",
+		model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
+	}
+}
+
+function assistantMsg(
+	id: string,
+	sessionID: string,
+	parentID: string,
+	created: number,
+	completed?: number,
+): AssistantMessage {
+	return {
+		id,
+		sessionID,
+		role: "assistant",
+		time: { created, completed },
+		parentID,
+		modelID: "claude-sonnet-4-20250514",
+		providerID: "anthropic",
+		mode: "default",
+		path: { cwd: DIRS.palot, root: DIRS.palot },
+		cost: 0.003 + Math.random() * 0.01,
+		tokens: {
+			input: 1200 + Math.floor(Math.random() * 2000),
+			output: 400 + Math.floor(Math.random() * 1500),
+			reasoning: 0,
+			cache: { read: 800, write: 200 },
+		},
+	}
+}
+
+function textPart(
+	messageId: string,
+	sessionId: string,
+	index: number,
+	text: string,
+	startOffset: number,
+): TextPart {
+	return {
+		id: partId(messageId, index),
+		sessionID: sessionId,
+		messageID: messageId,
+		type: "text",
+		text,
+		time: { start: NOW - startOffset, end: NOW - startOffset + 2000 },
+	}
+}
+
+function reasoningPart(
+	messageId: string,
+	sessionId: string,
+	index: number,
+	text: string,
+	startOffset: number,
+): ReasoningPart {
+	return {
+		id: partId(messageId, index),
+		sessionID: sessionId,
+		messageID: messageId,
+		type: "reasoning",
+		text,
+		time: { start: NOW - startOffset, end: NOW - startOffset + 1500 },
+	}
+}
+
+function toolPart(
+	messageId: string,
+	sessionId: string,
+	index: number,
+	tool: string,
+	title: string,
+	input: Record<string, unknown>,
+	output: string,
+	startOffset: number,
+): ToolPart {
+	return {
+		id: partId(messageId, index),
+		sessionID: sessionId,
+		messageID: messageId,
+		type: "tool",
+		callID: `call-${messageId}-${index}`,
+		tool,
+		state: {
+			status: "completed",
+			input,
+			output,
+			title,
+			metadata: {},
+			time: { start: NOW - startOffset, end: NOW - startOffset + 3000 },
+		},
+	}
+}
+
+function runningToolPart(
+	messageId: string,
+	sessionId: string,
+	index: number,
+	tool: string,
+	title: string,
+	input: Record<string, unknown>,
+	startOffset: number,
+): ToolPart {
+	return {
+		id: partId(messageId, index),
+		sessionID: sessionId,
+		messageID: messageId,
+		type: "tool",
+		callID: `call-${messageId}-${index}`,
+		tool,
+		state: {
+			status: "running",
+			input,
+			title,
+			metadata: {},
+			time: { start: NOW - startOffset },
+		},
+	}
+}
+
+// ============================================================
+// Dark mode session
+// ============================================================
+
+const darkModeMessages: Message[] = [
+	userMsg(IDS.dmUser1, IDS.sessionDarkMode, NOW - 25 * MINUTE),
+	assistantMsg(
+		IDS.dmAssistant1,
+		IDS.sessionDarkMode,
+		IDS.dmUser1,
+		NOW - 25 * MINUTE + 2000,
+		NOW - 20 * MINUTE,
+	),
+	userMsg(IDS.dmUser2, IDS.sessionDarkMode, NOW - 8 * MINUTE),
+	assistantMsg(
+		IDS.dmAssistant2,
+		IDS.sessionDarkMode,
+		IDS.dmUser2,
+		NOW - 8 * MINUTE + 1500,
+		// no completed -- still running
+	),
+]
+
+const darkModeParts: Record<string, Part[]> = {
+	[IDS.dmUser1]: [
+		textPart(
+			IDS.dmUser1,
+			IDS.sessionDarkMode,
+			0,
+			"Add a dark mode toggle to the application settings page. It should persist the user's preference to localStorage and apply the theme immediately without a page reload.",
+			25 * MINUTE,
+		),
+	],
+	[IDS.dmAssistant1]: [
+		reasoningPart(
+			IDS.dmAssistant1,
+			IDS.sessionDarkMode,
+			0,
+			"The user wants a dark mode toggle in settings. I need to:\n1. Check existing theme infrastructure\n2. Add a toggle component\n3. Wire up localStorage persistence\n4. Apply CSS variables for theming",
+			25 * MINUTE - 2000,
+		),
+		toolPart(
+			IDS.dmAssistant1,
+			IDS.sessionDarkMode,
+			1,
+			"read",
+			"Read src/components/settings.tsx",
+			{ path: "src/components/settings.tsx" },
+			'export function Settings() {\n  return (\n    <div className="settings-page">\n      <h1>Settings</h1>\n      <section>...</section>\n    </div>\n  )\n}',
+			24 * MINUTE,
+		),
+		toolPart(
+			IDS.dmAssistant1,
+			IDS.sessionDarkMode,
+			2,
+			"edit",
+			"Edit src/hooks/use-theme.ts",
+			{
+				path: "src/hooks/use-theme.ts",
+				diff: '+import { useCallback, useEffect, useState } from "react"\n+\n+export function useTheme() {\n+  const [dark, setDark] = useState(() =>\n+    localStorage.getItem("theme") === "dark"\n+  )\n+  ...\n+}',
+			},
+			"Applied edit to src/hooks/use-theme.ts",
+			23 * MINUTE,
+		),
+		toolPart(
+			IDS.dmAssistant1,
+			IDS.sessionDarkMode,
+			3,
+			"edit",
+			"Edit src/components/settings.tsx",
+			{
+				path: "src/components/settings.tsx",
+				diff: '+import { useTheme } from "../hooks/use-theme"\n+import { Switch } from "./ui/switch"\n ...\n+  <Switch checked={dark} onCheckedChange={toggle} />\n+  <span>{dark ? "Dark" : "Light"} mode</span>',
+			},
+			"Applied edit to src/components/settings.tsx",
+			22 * MINUTE,
+		),
+		textPart(
+			IDS.dmAssistant1,
+			IDS.sessionDarkMode,
+			4,
+			"I've added the dark mode toggle to the settings page. Here's what I did:\n\n1. **Created `src/hooks/use-theme.ts`** - A custom hook that manages theme state with localStorage persistence and applies CSS class changes to the document root.\n\n2. **Updated `src/components/settings.tsx`** - Added a toggle switch component that uses the theme hook.\n\nThe theme is applied immediately via CSS custom properties on `:root`, so there's no flash or reload needed. The preference persists across sessions via localStorage.",
+			20 * MINUTE,
+		),
+	],
+	[IDS.dmUser2]: [
+		textPart(
+			IDS.dmUser2,
+			IDS.sessionDarkMode,
+			0,
+			"Great! Now also add system preference detection so it defaults to the user's OS setting, and add a transition animation when switching themes.",
+			8 * MINUTE,
+		),
+	],
+	[IDS.dmAssistant2]: [
+		reasoningPart(
+			IDS.dmAssistant2,
+			IDS.sessionDarkMode,
+			0,
+			"I need to add `prefers-color-scheme` media query detection and a CSS transition for the theme switch.",
+			8 * MINUTE - 1500,
+		),
+		toolPart(
+			IDS.dmAssistant2,
+			IDS.sessionDarkMode,
+			1,
+			"read",
+			"Read src/hooks/use-theme.ts",
+			{ path: "src/hooks/use-theme.ts" },
+			'export function useTheme() {\n  const [dark, setDark] = useState(() =>\n    localStorage.getItem("theme") === "dark"\n  )\n  const toggle = useCallback(() => {\n    setDark((prev) => {\n      const next = !prev\n      localStorage.setItem("theme", next ? "dark" : "light")\n      document.documentElement.classList.toggle("dark", next)\n      return next\n    })\n  }, [])\n  return { dark, toggle }\n}',
+			7 * MINUTE,
+		),
+		runningToolPart(
+			IDS.dmAssistant2,
+			IDS.sessionDarkMode,
+			2,
+			"edit",
+			"Edit src/hooks/use-theme.ts",
+			{
+				path: "src/hooks/use-theme.ts",
+				diff: '+  // Detect system preference\n+  const systemPrefersDark = window.matchMedia(\n+    "(prefers-color-scheme: dark)"\n+  ).matches\n+  const stored = localStorage.getItem("theme")\n+  const initial = stored ? stored === "dark" : systemPrefersDark',
+			},
+			2 * MINUTE,
+		),
+	],
+}
+
+// ============================================================
+// Auth fix session
+// ============================================================
+
+const authFixMessages: Message[] = [
+	userMsg(IDS.afUser1, IDS.sessionAuthFix, NOW - 45 * MINUTE),
+	assistantMsg(
+		IDS.afAssistant1,
+		IDS.sessionAuthFix,
+		IDS.afUser1,
+		NOW - 45 * MINUTE + 2000,
+		NOW - 15 * MINUTE,
+	),
+]
+
+const authFixParts: Record<string, Part[]> = {
+	[IDS.afUser1]: [
+		textPart(
+			IDS.afUser1,
+			IDS.sessionAuthFix,
+			0,
+			"There's a race condition in our JWT token refresh. When multiple API calls happen simultaneously and the token is expired, they all try to refresh at once, causing 401 errors. Fix this with a mutex pattern.",
+			45 * MINUTE,
+		),
+	],
+	[IDS.afAssistant1]: [
+		toolPart(
+			IDS.afAssistant1,
+			IDS.sessionAuthFix,
+			0,
+			"read",
+			"Read src/middleware/auth.ts",
+			{ path: "src/middleware/auth.ts" },
+			'export async function refreshToken() {\n  const response = await fetch("/api/refresh", { ... })\n  const { token } = await response.json()\n  localStorage.setItem("token", token)\n  return token\n}',
+			44 * MINUTE,
+		),
+		toolPart(
+			IDS.afAssistant1,
+			IDS.sessionAuthFix,
+			1,
+			"edit",
+			"Edit src/middleware/auth.ts",
+			{
+				path: "src/middleware/auth.ts",
+				diff: "+let refreshPromise: Promise<string> | null = null\n+\n+export async function refreshToken() {\n+  if (refreshPromise) return refreshPromise\n+  refreshPromise = doRefresh().finally(() => {\n+    refreshPromise = null\n+  })\n+  return refreshPromise\n+}",
+			},
+			"Applied edit to src/middleware/auth.ts",
+			40 * MINUTE,
+		),
+		toolPart(
+			IDS.afAssistant1,
+			IDS.sessionAuthFix,
+			2,
+			"bash",
+			"Run tests",
+			{ command: "bun test src/middleware/auth.test.ts" },
+			"PASS  src/middleware/auth.test.ts\n  refreshToken\n    ✓ refreshes token on expiry (12ms)\n    ✓ deduplicates concurrent refresh calls (8ms)\n    ✓ retries on network failure (15ms)\n\nTests: 3 passed, 3 total\nTime: 0.42s",
+			35 * MINUTE,
+		),
+		textPart(
+			IDS.afAssistant1,
+			IDS.sessionAuthFix,
+			3,
+			"I've fixed the race condition by implementing a singleton promise pattern (sometimes called a \"refresh mutex\"). Here's the approach:\n\n- A module-level `refreshPromise` variable holds the in-flight refresh request\n- When `refreshToken()` is called, if a refresh is already in progress, it returns the existing promise instead of starting a new one\n- The promise is cleared in a `.finally()` block so subsequent calls after completion will trigger a fresh refresh\n\nAll 3 tests pass, including a new test for concurrent refresh deduplication.",
+			15 * MINUTE,
+		),
+	],
+}
+
+// ============================================================
+// Refactor session
+// ============================================================
+
+const refactorMessages: Message[] = [
+	userMsg(IDS.rfUser1, IDS.sessionRefactor, NOW - 2 * HOUR),
+	assistantMsg(
+		IDS.rfAssistant1,
+		IDS.sessionRefactor,
+		IDS.rfUser1,
+		NOW - 2 * HOUR + 3000,
+		NOW - 1.5 * HOUR,
+	),
+	userMsg(IDS.rfUser2, IDS.sessionRefactor, NOW - 1 * HOUR),
+	assistantMsg(
+		IDS.rfAssistant2,
+		IDS.sessionRefactor,
+		IDS.rfUser2,
+		NOW - 1 * HOUR + 2000,
+		NOW - 45 * MINUTE,
+	),
+]
+
+const refactorParts: Record<string, Part[]> = {
+	[IDS.rfUser1]: [
+		textPart(
+			IDS.rfUser1,
+			IDS.sessionRefactor,
+			0,
+			"Our database connection pooling is creating too many connections under load. Refactor it to use a proper connection pool with configurable limits and health checking.",
+			2 * HOUR,
+		),
+	],
+	[IDS.rfAssistant1]: [
+		toolPart(
+			IDS.rfAssistant1,
+			IDS.sessionRefactor,
+			0,
+			"glob",
+			"Search for database files",
+			{ pattern: "src/**/*db*" },
+			"src/db/connection.ts\nsrc/db/pool.ts\nsrc/db/migrations/\nsrc/db/types.ts",
+			2 * HOUR - 3000,
+		),
+		toolPart(
+			IDS.rfAssistant1,
+			IDS.sessionRefactor,
+			1,
+			"read",
+			"Read src/db/connection.ts",
+			{ path: "src/db/connection.ts" },
+			'import pg from "pg"\n\nexport function createConnection() {\n  return new pg.Client({\n    connectionString: process.env.DATABASE_URL,\n  })\n}\n\nexport async function query(\n  sql: string,\n  params?: unknown[],\n) {\n  const client = createConnection()\n  await client.connect()\n  const result = await client.query(sql, params)\n  await client.end()\n  return result\n}',
+			2 * HOUR - 5000,
+		),
+		textPart(
+			IDS.rfAssistant1,
+			IDS.sessionRefactor,
+			2,
+			"I can see the issue. Each query creates a new connection and tears it down afterwards. This is very expensive under load. I'll refactor this to use `pg.Pool` with configurable connection limits, idle timeouts, and health checking.\n\nLet me update the connection module and add proper pool management.",
+			1.5 * HOUR,
+		),
+	],
+	[IDS.rfUser2]: [
+		textPart(
+			IDS.rfUser2,
+			IDS.sessionRefactor,
+			0,
+			"Looks good. Can you also add connection retry logic with exponential backoff?",
+			1 * HOUR,
+		),
+	],
+	[IDS.rfAssistant2]: [
+		toolPart(
+			IDS.rfAssistant2,
+			IDS.sessionRefactor,
+			0,
+			"edit",
+			"Edit src/db/pool.ts",
+			{
+				path: "src/db/pool.ts",
+				diff: '+async function connectWithRetry(\n+  pool: Pool,\n+  maxRetries = 5,\n+): Promise<PoolClient> {\n+  for (let attempt = 0; attempt < maxRetries; attempt++) {\n+    try {\n+      return await pool.connect()\n+    } catch (err) {\n+      const delay = Math.min(1000 * 2 ** attempt, 30000)\n+      await new Promise((r) => setTimeout(r, delay))\n+    }\n+  }\n+  throw new Error("Failed to connect after retries")\n+}',
+			},
+			"Applied edit to src/db/pool.ts",
+			55 * MINUTE,
+		),
+		textPart(
+			IDS.rfAssistant2,
+			IDS.sessionRefactor,
+			1,
+			"Done! I've added exponential backoff retry logic to the connection pool:\n\n- Retries up to 5 times (configurable)\n- Backoff starts at 1s and doubles each attempt, capped at 30s\n- Logs each retry attempt for observability\n- Throws a clear error after all retries are exhausted",
+			45 * MINUTE,
+		),
+	],
+}
+
+// ============================================================
+// Landing page session
+// ============================================================
+
+const landingMessages: Message[] = [
+	userMsg(IDS.lnUser1, IDS.sessionLanding, NOW - 1 * HOUR),
+	assistantMsg(
+		IDS.lnAssistant1,
+		IDS.sessionLanding,
+		IDS.lnUser1,
+		NOW - 1 * HOUR + 2000,
+		NOW - 35 * MINUTE,
+	),
+]
+
+const landingParts: Record<string, Part[]> = {
+	[IDS.lnUser1]: [
+		textPart(
+			IDS.lnUser1,
+			IDS.sessionLanding,
+			0,
+			"Create a hero section for the landing page with an animated gradient background, a bold headline, and a CTA button. Use Tailwind CSS and Framer Motion for animations.",
+			1 * HOUR,
+		),
+	],
+	[IDS.lnAssistant1]: [
+		toolPart(
+			IDS.lnAssistant1,
+			IDS.sessionLanding,
+			0,
+			"edit",
+			"Edit src/components/hero.tsx",
+			{
+				path: "src/components/hero.tsx",
+				diff: '+export function Hero() {\n+  return (\n+    <section className="relative min-h-screen flex items-center">\n+      <div className="animated-gradient absolute inset-0" />\n+      <div className="relative z-10 text-center">\n+        <motion.h1\n+          initial={{ opacity: 0, y: 20 }}\n+          animate={{ opacity: 1, y: 0 }}\n+        >\n+          Ship faster with AI\n+        </motion.h1>\n+      </div>\n+    </section>\n+  )\n+}',
+			},
+			"Created src/components/hero.tsx",
+			50 * MINUTE,
+		),
+		textPart(
+			IDS.lnAssistant1,
+			IDS.sessionLanding,
+			1,
+			"I've created the hero section with:\n\n- **Animated gradient background** using CSS `@keyframes` with a shifting color stop\n- **Bold headline** with Framer Motion fade-in and slide-up animation\n- **CTA button** with a subtle hover scale effect and gradient border\n\nThe component is fully responsive and uses Tailwind for all styling.",
+			35 * MINUTE,
+		),
+	],
+}
+
+// ============================================================
+// Tests session
+// ============================================================
+
+const testsMessages: Message[] = [
+	userMsg(IDS.tsUser1, IDS.sessionTests, NOW - 3 * HOUR),
+	assistantMsg(
+		IDS.tsAssistant1,
+		IDS.sessionTests,
+		IDS.tsUser1,
+		NOW - 3 * HOUR + 2000,
+		NOW - 2 * HOUR,
+	),
+]
+
+const testsParts: Record<string, Part[]> = {
+	[IDS.tsUser1]: [
+		textPart(
+			IDS.tsUser1,
+			IDS.sessionTests,
+			0,
+			"Write comprehensive unit tests for the auth middleware. Cover token validation, expiry handling, refresh flow, and error cases.",
+			3 * HOUR,
+		),
+	],
+	[IDS.tsAssistant1]: [
+		toolPart(
+			IDS.tsAssistant1,
+			IDS.sessionTests,
+			0,
+			"bash",
+			"Run existing tests",
+			{ command: "bun test src/middleware/" },
+			"No test files found in src/middleware/",
+			3 * HOUR - 3000,
+		),
+		toolPart(
+			IDS.tsAssistant1,
+			IDS.sessionTests,
+			1,
+			"edit",
+			"Edit src/middleware/auth.test.ts",
+			{
+				path: "src/middleware/auth.test.ts",
+				diff: '+import { describe, expect, it, mock } from "bun:test"\n+import { validateToken, refreshToken, authMiddleware } from "./auth"\n+\n+describe("validateToken", () => {\n+  it("returns true for valid non-expired token", () => { ... })\n+  it("returns false for expired token", () => { ... })\n+  it("returns false for malformed token", () => { ... })\n+})\n+\n+describe("authMiddleware", () => {\n+  it("passes through when token is valid", async () => { ... })\n+  it("refreshes expired token automatically", async () => { ... })\n+  it("returns 401 when refresh fails", async () => { ... })\n+})',
+			},
+			"Created src/middleware/auth.test.ts",
+			2.5 * HOUR,
+		),
+		toolPart(
+			IDS.tsAssistant1,
+			IDS.sessionTests,
+			2,
+			"bash",
+			"Run tests",
+			{ command: "bun test src/middleware/auth.test.ts" },
+			"PASS  src/middleware/auth.test.ts\n  validateToken\n    ✓ returns true for valid non-expired token (3ms)\n    ✓ returns false for expired token (2ms)\n    ✓ returns false for malformed token (1ms)\n  authMiddleware\n    ✓ passes through when token is valid (8ms)\n    ✓ refreshes expired token automatically (12ms)\n    ✓ returns 401 when refresh fails (5ms)\n\nTests: 6 passed, 6 total\nTime: 0.31s",
+			2 * HOUR,
+		),
+		textPart(
+			IDS.tsAssistant1,
+			IDS.sessionTests,
+			3,
+			"All 6 tests pass. I've created comprehensive tests covering:\n\n1. **Token validation**: valid tokens, expired tokens, and malformed tokens\n2. **Middleware flow**: successful auth, automatic refresh on expiry, and proper 401 responses when refresh fails\n\nThe tests use `bun:test` with mocked fetch calls for the refresh endpoint.",
+			2 * HOUR,
+		),
+	],
+}
+
+// ============================================================
+// Docs session
+// ============================================================
+
+const docsMessages: Message[] = [
+	userMsg(IDS.dcUser1, IDS.sessionDocs, NOW - 5 * HOUR),
+	assistantMsg(
+		IDS.dcAssistant1,
+		IDS.sessionDocs,
+		IDS.dcUser1,
+		NOW - 5 * HOUR + 2000,
+		NOW - 4 * HOUR,
+	),
+]
+
+const docsParts: Record<string, Part[]> = {
+	[IDS.dcUser1]: [
+		textPart(
+			IDS.dcUser1,
+			IDS.sessionDocs,
+			0,
+			"Update the API docs to document the new v2 endpoints. Include request/response examples and error codes.",
+			5 * HOUR,
+		),
+	],
+	[IDS.dcAssistant1]: [
+		toolPart(
+			IDS.dcAssistant1,
+			IDS.sessionDocs,
+			0,
+			"read",
+			"Read docs/api/v2.md",
+			{ path: "docs/api/v2.md" },
+			"# API v2\n\n> TODO: Document new endpoints",
+			5 * HOUR - 3000,
+		),
+		textPart(
+			IDS.dcAssistant1,
+			IDS.sessionDocs,
+			1,
+			"I've updated the API documentation with complete coverage of all v2 endpoints, including:\n\n- Authentication endpoints (`POST /v2/auth/login`, `POST /v2/auth/refresh`)\n- User management (`GET /v2/users`, `PATCH /v2/users/:id`)\n- Request/response schemas with TypeScript types\n- Error codes and their meanings (400, 401, 403, 404, 429, 500)\n- Rate limiting headers and retry guidance",
+			4 * HOUR,
+		),
+	],
+}
+
+// ============================================================
+// Public API: collected mock data
+// ============================================================
+
+export const MOCK_MESSAGES: Map<string, Message[]> = new Map([
+	[IDS.sessionDarkMode, darkModeMessages],
+	[IDS.sessionAuthFix, authFixMessages],
+	[IDS.sessionRefactor, refactorMessages],
+	[IDS.sessionLanding, landingMessages],
+	[IDS.sessionTests, testsMessages],
+	[IDS.sessionDocs, docsMessages],
+])
+
+export const MOCK_PARTS: Map<string, Record<string, Part[]>> = new Map([
+	[IDS.sessionDarkMode, darkModeParts],
+	[IDS.sessionAuthFix, authFixParts],
+	[IDS.sessionRefactor, refactorParts],
+	[IDS.sessionLanding, landingParts],
+	[IDS.sessionTests, testsParts],
+	[IDS.sessionDocs, docsParts],
+])
+
+/** The first session ID, suitable for navigating to after enabling mock mode */
+export const MOCK_DEFAULT_SESSION_ID = IDS.sessionDarkMode
+
+/** Project slug for the default session (palot project) */
+export const MOCK_DEFAULT_PROJECT_SLUG = `palot-${IDS.projectPalot.slice(0, 12)}`

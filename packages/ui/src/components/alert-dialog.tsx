@@ -1,7 +1,7 @@
 "use client"
 
-import { Button } from "@codedeck/ui/components/button"
-import { cn } from "@codedeck/ui/lib/utils"
+import { Button } from "@palot/ui/components/button"
+import { cn } from "@palot/ui/lib/utils"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 import type * as React from "react"
 

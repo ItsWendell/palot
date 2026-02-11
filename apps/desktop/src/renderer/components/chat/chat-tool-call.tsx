@@ -5,17 +5,17 @@ import {
 	CodeBlockCopyButton,
 	CodeBlockHeader,
 	CodeBlockTitle,
-} from "@codedeck/ui/components/ai-elements/code-block"
-import { Diff, DiffContent } from "@codedeck/ui/components/ai-elements/diff"
+} from "@palot/ui/components/ai-elements/code-block"
+import { Diff, DiffContent } from "@palot/ui/components/ai-elements/diff"
 import {
 	Terminal,
 	TerminalContent,
 	TerminalCopyButton,
 	TerminalHeader,
 	TerminalTitle,
-} from "@codedeck/ui/components/ai-elements/terminal"
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/ai-elements/terminal"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@palot/ui/components/dialog"
+import { cn } from "@palot/ui/lib/utils"
 
 import {
 	AlertTriangleIcon,
@@ -197,68 +197,112 @@ function extractFromRaw(state: ToolPart["state"], ...fields: string[]): string |
 }
 
 /**
+ * Returns a "Preparing ..." fallback label for tools in the `pending` state
+ * when no meaningful subtitle could be resolved from input/raw yet.
+ * Mirrors the OpenCode TUI's `InlineTool` behaviour (e.g. "~ Preparing write ...").
+ */
+function getPendingLabel(tool: string): string {
+	switch (tool) {
+		case "write":
+			return "Preparing write..."
+		case "edit":
+			return "Preparing edit..."
+		case "apply_patch":
+			return "Preparing patch..."
+		case "bash":
+			return "Preparing command..."
+		case "read":
+			return "Preparing read..."
+		case "task":
+			return "Preparing agent..."
+		case "webfetch":
+			return "Preparing fetch..."
+		default:
+			return `Preparing ${tool}...`
+	}
+}
+
+/**
  * Extracts a human-readable subtitle from tool state.
+ * Falls back to a "Preparing ..." label when the tool is in the `pending` state
+ * and no input fields have been parsed yet (the model is still streaming arguments).
  */
 export function getToolSubtitle(part: ToolPart): string | undefined {
 	const state = part.state
 	const input = state.input
 	const title = "title" in state ? state.title : undefined
 
+	let subtitle: string | undefined
+
 	switch (part.tool) {
 		case "read":
-			return (
+			subtitle =
 				shortenPath((input.filePath as string) ?? (input.path as string)) ??
 				shortenPath(extractFromRaw(state, "filePath", "path"))
-			)
+			break
 		case "glob":
-			return (
+			subtitle =
 				(input.pattern as string) ??
 				(input.path as string) ??
 				extractFromRaw(state, "pattern", "path")
-			)
+			break
 		case "grep":
-			return (
+			subtitle =
 				(input.pattern as string) ??
 				(input.path as string) ??
 				extractFromRaw(state, "pattern", "path")
-			)
+			break
 		case "bash":
-			return (
+			subtitle =
 				title ??
 				(input.description as string) ??
 				(input.command as string) ??
 				extractFromRaw(state, "command", "description")
-			)
+			break
 		case "edit":
-			return (
+			subtitle =
 				shortenPath((input.filePath as string) ?? (input.path as string)) ??
 				shortenPath(extractFromRaw(state, "filePath", "path"))
-			)
+			break
 		case "write":
-			return (
+			subtitle =
 				shortenPath((input.filePath as string) ?? (input.path as string)) ??
 				shortenPath(extractFromRaw(state, "filePath", "path"))
-			)
+			break
 		case "apply_patch":
-			return title
+			subtitle = title
+			break
 		case "webfetch":
-			return (input.url as string) ?? extractFromRaw(state, "url")
+			subtitle = (input.url as string) ?? extractFromRaw(state, "url")
+			break
 		case "task":
-			return (input.description as string) ?? title ?? extractFromRaw(state, "description")
+			subtitle = (input.description as string) ?? title ?? extractFromRaw(state, "description")
+			break
 		case "todowrite":
 		case "todoread": {
 			const todos = input?.todos as Array<{ status: string }> | undefined
 			if (todos && todos.length > 0) {
 				const completed = todos.filter((t) => t.status === "completed").length
-				return `${completed}/${todos.length} completed`
+				subtitle = `${completed}/${todos.length} completed`
+			} else {
+				subtitle = title
 			}
-			return title
+			break
 		}
 		default:
 			// Unknown / MCP tools: always show compact input params like [key=value, key=value]
 			// Input params are more useful than the SDK-generated title for MCP tools
-			return formatInputParams(input) ?? title
+			subtitle = formatInputParams(input) ?? title
+			break
 	}
+
+	// When pending with no resolved subtitle, show a "Preparing ..." label so
+	// the user sees activity instead of a blank card (matches OpenCode TUI behaviour).
+	if (!subtitle && state.status === "pending") {
+		return getPendingLabel(part.tool)
+	}
+
+	return subtitle
 }
 
 /**

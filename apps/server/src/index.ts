@@ -37,7 +37,7 @@ export type AppType = typeof routes
 
 const port = Number(process.env.PORT) || 3100
 
-console.log(`Codedeck server starting on port ${port}`)
+console.log(`Palot server starting on port ${port}`)
 
 // Eagerly start the single OpenCode server in the background
 ensureSingleServer()

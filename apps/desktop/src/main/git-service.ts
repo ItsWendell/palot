@@ -149,7 +149,7 @@ export async function stashAndCheckout(directory: string, branch: string): Promi
 		const needsStash = !status.isClean()
 
 		if (needsStash) {
-			await git.stash(["push", "-m", `codedeck: auto-stash before switching to ${branch}`])
+			await git.stash(["push", "-m", `palot: auto-stash before switching to ${branch}`])
 		}
 
 		// Now checkout

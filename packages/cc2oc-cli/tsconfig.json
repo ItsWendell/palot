@@ -12,8 +12,8 @@
 		"resolveJsonModule": true,
 		"types": ["bun"],
 		"paths": {
-			"@codedeck/cc2oc": ["../cc2oc/src/index.ts"],
-			"@codedeck/cc2oc/*": ["../cc2oc/src/*"]
+			"@palot/cc2oc": ["../cc2oc/src/index.ts"],
+			"@palot/cc2oc/*": ["../cc2oc/src/*"]
 		}
 	},
 	"include": ["src/**/*.ts"]

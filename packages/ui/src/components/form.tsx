@@ -1,5 +1,5 @@
-import { Label } from "@codedeck/ui/components/label"
-import { cn } from "@codedeck/ui/lib/utils"
+import { Label } from "@palot/ui/components/label"
+import { cn } from "@palot/ui/lib/utils"
 import type { Label as LabelPrimitive } from "radix-ui"
 import { Slot } from "radix-ui"
 import * as React from "react"

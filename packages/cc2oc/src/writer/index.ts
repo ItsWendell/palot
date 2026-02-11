@@ -2,8 +2,9 @@
  * Writer module.
  *
  * Writes conversion results to the filesystem.
- * Supports dry-run mode, backup, and configurable merge strategies.
+ * Supports dry-run mode, backup (via snapshot), and configurable merge strategies.
  */
+import { createBackup } from "../backup"
 import type { ConversionResult } from "../types/conversion-result"
 import type { OpenCodeConfig } from "../types/opencode"
 import { exists, safeReadFile, writeFileSafe } from "../utils/fs"
@@ -14,7 +15,7 @@ import { type MergeStrategy, mergeConfigs } from "./merge"
 export interface WriteOptions {
 	/** Simulate writes without touching disk */
 	dryRun?: boolean
-	/** Back up existing files before overwriting */
+	/** Back up all target files before writing (creates a restorable snapshot) */
 	backup?: boolean
 	/** Overwrite existing files */
 	force?: boolean
@@ -27,8 +28,57 @@ export interface WriteResult {
 	filesWritten: string[]
 	/** Files that were skipped because they already exist */
 	filesSkipped: string[]
-	/** Backup file paths created */
+	/** Path to the backup snapshot directory (if backup was created) */
+	backupDir?: string
+	/**
+	 * Individual backup file paths (legacy, for backwards compat with CLI output).
+	 * @deprecated Use backupDir instead.
+	 */
 	backupPaths: string[]
+}
+
+/**
+ * Collect all target file paths that the writer will touch.
+ */
+function collectTargetPaths(conversion: ConversionResult): string[] {
+	const targetPaths: string[] = []
+
+	if (Object.keys(conversion.globalConfig).length > 0) {
+		targetPaths.push(paths.ocGlobalConfigPath())
+	}
+
+	for (const [projectPath] of conversion.projectConfigs) {
+		targetPaths.push(paths.ocProjectConfigPath(projectPath))
+	}
+
+	for (const [targetPath] of conversion.agents) {
+		targetPaths.push(targetPath)
+	}
+	for (const [targetPath] of conversion.commands) {
+		targetPaths.push(targetPath)
+	}
+	for (const [targetPath] of conversion.rules) {
+		targetPaths.push(targetPath)
+	}
+	for (const [targetPath] of conversion.hookPlugins) {
+		targetPaths.push(targetPath)
+	}
+
+	if (conversion.sessions) {
+		const storageDir = paths.ocStorageDir()
+		for (const session of conversion.sessions) {
+			targetPaths.push(`${storageDir}/session/${session.projectId}/${session.session.id}.json`)
+			for (const message of session.messages) {
+				targetPaths.push(`${storageDir}/message/${session.session.id}/${message.id}.json`)
+			}
+		}
+	}
+
+	if (conversion.promptHistory && conversion.promptHistory.length > 0) {
+		targetPaths.push(paths.ocPromptHistoryPath())
+	}
+
+	return targetPaths
 }
 
 /**
@@ -55,13 +105,22 @@ export async function write(
 		backupPaths: [],
 	}
 
+	// ─── Create backup snapshot before any writes ─────────────────────
+	if (backup && !dryRun) {
+		const targetPaths = collectTargetPaths(conversion)
+		const backupDir = await createBackup(targetPaths, "Pre-migration backup")
+		if (backupDir) {
+			result.backupDir = backupDir
+		}
+	}
+
 	// ─── Write global config ─────────────────────────────────────────
 	if (Object.keys(conversion.globalConfig).length > 0) {
 		const globalConfigPath = paths.ocGlobalConfigPath()
 		await writeConfigFile(
 			globalConfigPath,
 			conversion.globalConfig,
-			{ dryRun, backup, force, mergeStrategy },
+			{ dryRun, force, mergeStrategy },
 			result,
 		)
 	}
@@ -69,27 +128,27 @@ export async function write(
 	// ─── Write per-project configs ───────────────────────────────────
 	for (const [projectPath, config] of conversion.projectConfigs) {
 		const configPath = paths.ocProjectConfigPath(projectPath)
-		await writeConfigFile(configPath, config, { dryRun, backup, force, mergeStrategy }, result)
+		await writeConfigFile(configPath, config, { dryRun, force, mergeStrategy }, result)
 	}
 
 	// ─── Write agent files ───────────────────────────────────────────
 	for (const [targetPath, content] of conversion.agents) {
-		await writeFile(targetPath, content, { dryRun, backup, force }, result)
+		await writeFile(targetPath, content, { dryRun, force }, result)
 	}
 
 	// ─── Write command files ─────────────────────────────────────────
 	for (const [targetPath, content] of conversion.commands) {
-		await writeFile(targetPath, content, { dryRun, backup, force }, result)
+		await writeFile(targetPath, content, { dryRun, force }, result)
 	}
 
 	// ─── Write rules files (AGENTS.md) ───────────────────────────────
 	for (const [targetPath, content] of conversion.rules) {
-		await writeFile(targetPath, content, { dryRun, backup, force }, result)
+		await writeFile(targetPath, content, { dryRun, force }, result)
 	}
 
 	// ─── Write hook plugin stubs ─────────────────────────────────────
 	for (const [targetPath, content] of conversion.hookPlugins) {
-		await writeFile(targetPath, content, { dryRun, backup, force }, result)
+		await writeFile(targetPath, content, { dryRun, force }, result)
 	}
 
 	// ─── Write session history (if present) ──────────────────────────
@@ -97,19 +156,12 @@ export async function write(
 		const storageDir = paths.ocStorageDir()
 
 		for (const session of conversion.sessions) {
-			// Write session metadata
 			const sessionPath = `${storageDir}/session/${session.projectId}/${session.session.id}.json`
-			await writeFile(
-				sessionPath,
-				stringifyJson(session.session),
-				{ dryRun, backup, force },
-				result,
-			)
+			await writeFile(sessionPath, stringifyJson(session.session), { dryRun, force }, result)
 
-			// Write messages
 			for (const message of session.messages) {
 				const messagePath = `${storageDir}/message/${session.session.id}/${message.id}.json`
-				await writeFile(messagePath, stringifyJson(message), { dryRun, backup, force }, result)
+				await writeFile(messagePath, stringifyJson(message), { dryRun, force }, result)
 			}
 		}
 	}
@@ -119,7 +171,6 @@ export async function write(
 		const historyPath = paths.ocPromptHistoryPath()
 		const lines = `${conversion.promptHistory.map((e) => JSON.stringify(e)).join("\n")}\n`
 
-		// Append to existing history
 		if (!dryRun) {
 			const existingContent = await safeReadFile(historyPath)
 			const finalContent = existingContent ? existingContent + lines : lines
@@ -138,7 +189,6 @@ async function writeConfigFile(
 	config: Partial<OpenCodeConfig>,
 	options: {
 		dryRun: boolean
-		backup: boolean
 		force: boolean
 		mergeStrategy: MergeStrategy
 	},
@@ -152,18 +202,11 @@ async function writeConfigFile(
 			return
 		}
 
-		// Merge with existing
 		let existingConfig: Partial<OpenCodeConfig> = {}
 		try {
 			existingConfig = JSON.parse(existingContent) as Partial<OpenCodeConfig>
 		} catch {
 			// Existing file is malformed -- treat as empty
-		}
-
-		if (options.backup && !options.dryRun) {
-			const backupPath = `${filePath}.bak`
-			await writeFileSafe(backupPath, existingContent)
-			result.backupPaths.push(backupPath)
 		}
 
 		const merged = mergeConfigs(existingConfig, config, options.mergeStrategy)
@@ -173,7 +216,6 @@ async function writeConfigFile(
 		}
 		result.filesWritten.push(filePath)
 	} else {
-		// New file
 		if (!options.dryRun) {
 			await writeFileSafe(filePath, stringifyJson(config))
 		}
@@ -184,7 +226,7 @@ async function writeConfigFile(
 async function writeFile(
 	filePath: string,
 	content: string,
-	options: { dryRun: boolean; backup: boolean; force: boolean },
+	options: { dryRun: boolean; force: boolean },
 	result: WriteResult,
 ): Promise<void> {
 	const fileExists = await exists(filePath)
@@ -192,15 +234,6 @@ async function writeFile(
 	if (fileExists && !options.force) {
 		result.filesSkipped.push(filePath)
 		return
-	}
-
-	if (fileExists && options.backup && !options.dryRun) {
-		const existingContent = await safeReadFile(filePath)
-		if (existingContent) {
-			const backupPath = `${filePath}.bak`
-			await writeFileSafe(backupPath, existingContent)
-			result.backupPaths.push(backupPath)
-		}
 	}
 
 	if (!options.dryRun) {

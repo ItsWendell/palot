@@ -1,8 +1,8 @@
 "use client"
 
-import { Button } from "@codedeck/ui/components/button"
-import { ButtonGroup, ButtonGroupText } from "@codedeck/ui/components/button-group"
-import { cn } from "@codedeck/ui/lib/utils"
+import { Button } from "@palot/ui/components/button"
+import { ButtonGroup, ButtonGroupText } from "@palot/ui/components/button-group"
+import { cn } from "@palot/ui/lib/utils"
 import type { Experimental_SpeechResult as SpeechResult } from "ai"
 import {
 	MediaControlBar,

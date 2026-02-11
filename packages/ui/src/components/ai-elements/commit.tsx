@@ -1,13 +1,13 @@
 "use client"
 
-import { Avatar, AvatarFallback } from "@codedeck/ui/components/avatar"
-import { Button } from "@codedeck/ui/components/button"
+import { Avatar, AvatarFallback } from "@palot/ui/components/avatar"
+import { Button } from "@palot/ui/components/button"
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
-} from "@codedeck/ui/components/collapsible"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/collapsible"
+import { cn } from "@palot/ui/lib/utils"
 import { CheckIcon, CopyIcon, FileIcon, GitCommitIcon, MinusIcon, PlusIcon } from "lucide-react"
 import type { ComponentProps, HTMLAttributes } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"

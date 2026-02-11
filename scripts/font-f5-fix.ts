@@ -33,7 +33,7 @@ const CHAR_WIDTH = 82 // approximate monospace cell width at this size
 const GAP = 18 // gap between character cells
 const STEP = CHAR_WIDTH + GAP // total step per letter
 
-const letters = "CODEDECK".split("")
+const letters = "PALOT".split("")
 const codeColors = ["#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a"]
 const deckColors = ["#666666", "#666666", "#666666", "#666666"]
 const codeWeight = 900

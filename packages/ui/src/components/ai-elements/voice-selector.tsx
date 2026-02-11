@@ -1,6 +1,6 @@
 "use client"
 
-import { Button } from "@codedeck/ui/components/button"
+import { Button } from "@palot/ui/components/button"
 import {
 	Command,
 	CommandDialog,
@@ -11,10 +11,10 @@ import {
 	CommandList,
 	CommandSeparator,
 	CommandShortcut,
-} from "@codedeck/ui/components/command"
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
-import { Spinner } from "@codedeck/ui/components/spinner"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/command"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@palot/ui/components/dialog"
+import { Spinner } from "@palot/ui/components/spinner"
+import { cn } from "@palot/ui/lib/utils"
 import { useControllableState } from "@radix-ui/react-use-controllable-state"
 import {
 	CircleSmallIcon,

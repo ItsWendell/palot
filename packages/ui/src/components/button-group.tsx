@@ -1,5 +1,5 @@
-import { Separator } from "@codedeck/ui/components/separator"
-import { cn } from "@codedeck/ui/lib/utils"
+import { Separator } from "@palot/ui/components/separator"
+import { cn } from "@palot/ui/lib/utils"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Slot } from "radix-ui"
 

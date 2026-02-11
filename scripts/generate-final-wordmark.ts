@@ -23,7 +23,7 @@ const CHAR_WIDTH = 82
 const GAP = 18
 const STEP = CHAR_WIDTH + GAP
 
-const letters = "CODEDECK".split("")
+const letters = "PALOT".split("")
 const totalTextWidth = letters.length * STEP - GAP // 782
 
 function renderLetters(startX: number, y: number) {

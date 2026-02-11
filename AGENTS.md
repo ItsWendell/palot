@@ -1,4 +1,4 @@
-# Codedeck Agent Instructions
+# Palot Agent Instructions
 
 ## Purpose of This File
 
@@ -9,15 +9,15 @@ Do NOT add one-time setup notes, general knowledge, or things discoverable from 
 ## Project Structure
 
 - **Monorepo**: Turborepo + Bun workspaces (Bun 1.3.8)
-- **`packages/ui`**: Shared shadcn/ui component library (`@codedeck/ui`)
-- **`packages/cc2oc`**: Claude Code to OpenCode migration library (`@codedeck/cc2oc`)
+- **`packages/ui`**: Shared shadcn/ui component library (`@palot/ui`)
+- **`packages/cc2oc`**: Claude Code to OpenCode migration library (`@palot/cc2oc`)
 - **`apps/desktop`**: Electron 40 + Vite + React 19 desktop app (via `electron-vite`)
 - **`apps/server`**: Bun + Hono backend -- used only in browser-mode dev (`dev:web`), NOT bundled with Electron
 
 ### Desktop App Layout (`apps/desktop/src/`)
 
 - **`main/`** -- Electron main process (Node.js): window management, IPC handlers, OpenCode server lifecycle, filesystem reads
-- **`preload/`** -- Electron preload bridge: exposes `window.codedeck` API via `contextBridge`
+- **`preload/`** -- Electron preload bridge: exposes `window.palot` API via `contextBridge`
 - **`renderer/`** -- React app (browser context): components, hooks, services, atoms (Jotai)
 
 ## Commands
@@ -54,7 +54,7 @@ Do NOT add one-time setup notes, general knowledge, or things discoverable from 
 - Use `import type { ... }` for type-only imports (Biome warns otherwise)
 - Order: external packages first, then internal/relative imports (no blank line between)
 - Main process: `node:` builtins first, then `electron`, then local
-- Renderer: `@codedeck/ui` -> `@tanstack/*` -> `lucide-react` -> `react` -> local atoms/hooks/services
+- Renderer: `@palot/ui` -> `@tanstack/*` -> `lucide-react` -> `react` -> local atoms/hooks/services
 
 ### Naming Conventions
 
@@ -108,11 +108,11 @@ Do NOT add one-time setup notes, general knowledge, or things discoverable from 
 
 ### Electron -- Two Runtime Contexts
 
-The main process runs in Node.js, the renderer runs in a Chromium sandbox. They communicate via IPC only. Never import Node.js modules (`fs`, `child_process`, `path`) in the renderer -- use the `window.codedeck` bridge or `services/backend.ts` instead.
+The main process runs in Node.js, the renderer runs in a Chromium sandbox. They communicate via IPC only. Never import Node.js modules (`fs`, `child_process`, `path`) in the renderer -- use the `window.palot` bridge or `services/backend.ts` instead.
 
 ### Backend Service Layer -- `services/backend.ts`
 
-All hooks must import from `services/backend.ts`, NOT from `services/codedeck-server.ts` directly. The backend module detects Electron (`"codedeck" in window`) and routes to IPC or HTTP automatically.
+All hooks must import from `services/backend.ts`, NOT from `services/palot-server.ts` directly. The backend module detects Electron (`"palot" in window`) and routes to IPC or HTTP automatically.
 
 ### Jotai + React 19
 

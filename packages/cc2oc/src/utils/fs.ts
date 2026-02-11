@@ -1,8 +1,20 @@
 /**
  * Filesystem utilities with safe error handling.
+ *
+ * Uses only Node.js APIs (no Bun-specific globals) so the library can
+ * be consumed by Electron's main process as well as Bun.
  */
-import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises"
-import { join } from "node:path"
+import {
+	lstat,
+	mkdir,
+	readdir,
+	readFile,
+	readlink,
+	realpath,
+	stat,
+	writeFile,
+} from "node:fs/promises"
+import { dirname, join } from "node:path"
 
 /**
  * Check if a file or directory exists.
@@ -21,7 +33,7 @@ export async function exists(path: string): Promise<boolean> {
  */
 export async function safeReadFile(path: string): Promise<string | undefined> {
 	try {
-		return await Bun.file(path).text()
+		return await readFile(path, "utf-8")
 	} catch {
 		return undefined
 	}
@@ -55,12 +67,17 @@ export async function safeReadDir(path: string): Promise<string[]> {
  * List files matching a pattern in a directory.
  */
 export async function globDir(dir: string, pattern: string): Promise<string[]> {
-	const glob = new Bun.Glob(pattern)
-	const matches: string[] = []
-	for await (const match of glob.scan({ cwd: dir, absolute: false })) {
-		matches.push(join(dir, match))
+	// Simple glob implementation for common patterns like "**/*.md"
+	// Uses recursive readdir instead of Bun.Glob for Node.js compatibility
+	const extensionMatch = pattern.match(/^\*\*\/\*(\.\w+)$/)
+	if (!extensionMatch) {
+		throw new Error(`globDir only supports "**/*.ext" patterns, got: ${pattern}`)
 	}
-	return matches
+	const ext = extensionMatch[1]
+	const entries = await readdir(dir, { recursive: true, withFileTypes: true })
+	return entries
+		.filter((e) => e.isFile() && e.name.endsWith(ext))
+		.map((e) => join(e.parentPath ?? dir, e.name))
 }
 
 /**
@@ -98,7 +115,6 @@ export async function resolveRealPath(path: string): Promise<string> {
  * Ensure a directory exists, creating it recursively if needed.
  */
 export async function ensureDir(path: string): Promise<void> {
-	const { mkdir } = await import("node:fs/promises")
 	await mkdir(path, { recursive: true })
 }
 
@@ -106,9 +122,8 @@ export async function ensureDir(path: string): Promise<void> {
  * Write a file, creating parent directories as needed.
  */
 export async function writeFileSafe(path: string, content: string): Promise<void> {
-	const { dirname } = await import("node:path")
 	await ensureDir(dirname(path))
-	await Bun.write(path, content)
+	await writeFile(path, content, "utf-8")
 }
 
 /**

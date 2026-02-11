@@ -1,8 +1,8 @@
 "use client"
 
-import { Alert, AlertDescription } from "@codedeck/ui/components/alert"
-import { Button } from "@codedeck/ui/components/button"
-import { cn } from "@codedeck/ui/lib/utils"
+import { Alert, AlertDescription } from "@palot/ui/components/alert"
+import { Button } from "@palot/ui/components/button"
+import { cn } from "@palot/ui/lib/utils"
 import type { ToolUIPart } from "ai"
 import type { ComponentProps, ReactNode } from "react"
 import { createContext, useContext } from "react"

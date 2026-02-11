@@ -2,7 +2,7 @@
  * Terminal output formatting utilities.
  */
 
-import type { DiffItem, DiffResult, MigrationReport } from "@codedeck/cc2oc"
+import type { BackupInfo, DiffItem, DiffResult, MigrationReport, RestoreResult } from "@palot/cc2oc"
 import consola from "consola"
 
 /**
@@ -120,6 +120,7 @@ export function printScanSummary(data: {
 export function printWriteResult(data: {
 	filesWritten: string[]
 	filesSkipped: string[]
+	backupDir?: string
 	backupPaths: string[]
 }): void {
 	if (data.filesWritten.length > 0) {
@@ -136,11 +137,63 @@ export function printWriteResult(data: {
 		}
 	}
 
-	if (data.backupPaths.length > 0) {
-		consola.info(`Backups created (${data.backupPaths.length}):`)
-		for (const f of data.backupPaths) {
-			consola.log(`  > ${f}`)
+	if (data.backupDir) {
+		consola.info(`Backup snapshot: ${data.backupDir}`)
+		consola.log("  Run `cc2oc restore` to revert if needed.")
+	}
+}
+
+/**
+ * Print a list of available backups.
+ */
+export function printBackupList(backups: BackupInfo[]): void {
+	if (backups.length === 0) {
+		consola.info("No backups found.")
+		return
+	}
+
+	consola.log("")
+	consola.log(`Available backups (${backups.length}):`)
+	consola.log("")
+
+	for (const backup of backups) {
+		const fileCount = backup.manifest.files.length
+		const date = new Date(backup.manifest.createdAt).toLocaleString()
+		consola.log(`  ${backup.id}`)
+		consola.log(`    Created: ${date}`)
+		consola.log(`    Files:   ${fileCount}`)
+		consola.log(`    Desc:    ${backup.manifest.description}`)
+		consola.log("")
+	}
+}
+
+/**
+ * Print restore results.
+ */
+export function printRestoreResult(result: RestoreResult): void {
+	if (result.restored.length > 0) {
+		consola.success(`Restored (${result.restored.length}):`)
+		for (const f of result.restored) {
+			consola.log(`  < ${f}`)
 		}
+	}
+
+	if (result.removed.length > 0) {
+		consola.info(`Removed newly created files (${result.removed.length}):`)
+		for (const f of result.removed) {
+			consola.log(`  - ${f}`)
+		}
+	}
+
+	if (result.errors.length > 0) {
+		consola.error(`Errors (${result.errors.length}):`)
+		for (const e of result.errors) {
+			consola.log(`  ! ${e.path}: ${e.error}`)
+		}
+	}
+
+	if (result.restored.length === 0 && result.removed.length === 0 && result.errors.length === 0) {
+		consola.info("Nothing to restore.")
 	}
 }
 

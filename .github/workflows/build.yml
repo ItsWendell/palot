@@ -47,7 +47,7 @@ jobs:
         if: matrix.platform == 'linux'
         uses: actions/upload-artifact@v4
         with:
-          name: codedeck-linux
+          name: palot-linux
           path: |
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
@@ -59,7 +59,7 @@ jobs:
         if: matrix.platform == 'mac'
         uses: actions/upload-artifact@v4
         with:
-          name: codedeck-macos
+          name: palot-macos
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
@@ -70,7 +70,7 @@ jobs:
         if: matrix.platform == 'win'
         uses: actions/upload-artifact@v4
         with:
-          name: codedeck-windows
+          name: palot-windows
           path: |
             apps/desktop/release/*.exe
           if-no-files-found: error

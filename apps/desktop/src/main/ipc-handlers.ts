@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, systemPreferences } from "electron"
 import { installCli, isCliInstalled, uninstallCli } from "./cli-install"
 import { discover } from "./discovery"
 import { checkout, getStatus, listBranches, stashAndCheckout, stashPop } from "./git-service"
@@ -7,6 +7,15 @@ import { createLogger } from "./logger"
 import { readSessionMessages } from "./messages"
 import { readModelState, updateModelRecent } from "./model-state"
 import { dismissNotification, updateBadgeCount } from "./notifications"
+import {
+	checkOpenCodeInstallation,
+	detectClaudeCode,
+	executeMigration,
+	installOpenCode,
+	previewMigration,
+	restoreMigrationBackup,
+	scanClaudeCode,
+} from "./onboarding"
 import { getOpenInTargets, openInTarget, setPreferredTarget } from "./open-in-targets"
 import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
 import { getOpaqueWindows, getSettings, onSettingsChanged, updateSettings } from "./settings-store"
@@ -282,6 +291,68 @@ export function registerIpcHandlers(): void {
 			nativeTheme.themeSource = "system"
 		}
 	})
+
+	// --- System accent color (macOS / Windows) ---
+
+	ipcMain.handle("theme:accent-color", () => {
+		try {
+			return systemPreferences.getAccentColor()
+		} catch {
+			return null
+		}
+	})
+
+	// Broadcast accent color changes to all renderer windows
+	systemPreferences.on("accent-color-changed", (_event, newColor) => {
+		for (const win of BrowserWindow.getAllWindows()) {
+			win.webContents.send("theme:accent-color-changed", newColor)
+		}
+	})
+
+	// --- Onboarding ---
+
+	ipcMain.handle(
+		"onboarding:check-opencode",
+		withLogging("onboarding:check-opencode", async () => await checkOpenCodeInstallation()),
+	)
+
+	ipcMain.handle(
+		"onboarding:install-opencode",
+		withLogging("onboarding:install-opencode", async () => await installOpenCode()),
+	)
+
+	ipcMain.handle(
+		"onboarding:detect-claude-code",
+		withLogging("onboarding:detect-claude-code", async () => await detectClaudeCode()),
+	)
+
+	ipcMain.handle(
+		"onboarding:scan-claude-code",
+		withLogging("onboarding:scan-claude-code", async () => await scanClaudeCode()),
+	)
+
+	ipcMain.handle(
+		"onboarding:preview-migration",
+		withLogging(
+			"onboarding:preview-migration",
+			async (_, scanResult: unknown, categories: string[]) =>
+				await previewMigration(scanResult, categories),
+		),
+	)
+
+	ipcMain.handle(
+		"onboarding:execute-migration",
+		withLogging(
+			"onboarding:execute-migration",
+			async (_, scanResult: unknown, categories: string[]) =>
+				await executeMigration(scanResult, categories),
+		),
+	)
+
+	ipcMain.handle(
+		"onboarding:restore-backup",
+		withLogging("onboarding:restore-backup", async () => await restoreMigrationBackup()),
+	)
 
 	// --- Settings push channel (main -> renderer) ---
 	// Notify all renderer windows when settings change so they can update reactively.

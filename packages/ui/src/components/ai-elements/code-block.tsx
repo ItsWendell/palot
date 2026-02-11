@@ -1,14 +1,14 @@
 "use client"
 
-import { Button } from "@codedeck/ui/components/button"
+import { Button } from "@palot/ui/components/button"
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@codedeck/ui/components/select"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/select"
+import { cn } from "@palot/ui/lib/utils"
 import { CheckIcon, CopyIcon } from "lucide-react"
 import type { ComponentProps, CSSProperties, HTMLAttributes } from "react"
 import {

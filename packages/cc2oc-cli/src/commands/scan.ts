@@ -2,7 +2,7 @@
  * cc2oc scan -- Discover Claude Code configuration files.
  */
 
-import { scan } from "@codedeck/cc2oc"
+import { scan } from "@palot/cc2oc"
 import { defineCommand } from "citty"
 import consola from "consola"
 import { printScanSummary } from "../output/terminal"

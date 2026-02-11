@@ -1,4 +1,4 @@
-import { cn } from "@codedeck/ui/lib/utils"
+import { cn } from "@palot/ui/lib/utils"
 import type * as React from "react"
 import { Drawer as DrawerPrimitive } from "vaul"
 

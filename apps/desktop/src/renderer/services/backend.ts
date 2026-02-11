@@ -3,10 +3,10 @@
  *
  * Detects whether we're running inside Electron (preload bridge available)
  * or in a plain browser (Bun + Hono server on port 3100). All hooks import
- * from here instead of `codedeck-server.ts` directly.
+ * from here instead of `palot-server.ts` directly.
  *
  * In Electron mode, calls go through IPC to the main process.
- * In browser mode, calls go through HTTP to the Codedeck server.
+ * In browser mode, calls go through HTTP to the Palot server.
  */
 
 import type {
@@ -29,9 +29,9 @@ const log = createLogger("backend")
 
 /**
  * Returns true when running inside Electron (preload bridge is available).
- * The `codedeck` object is exposed via `contextBridge.exposeInMainWorld`.
+ * The `palot` object is exposed via `contextBridge.exposeInMainWorld`.
  */
-export const isElectron = typeof window !== "undefined" && "codedeck" in window
+export const isElectron = typeof window !== "undefined" && "palot" in window
 
 // ============================================================
 // Backend API — same signatures regardless of runtime
@@ -44,9 +44,9 @@ export async function fetchDiscovery(): Promise<DiscoveryResult> {
 	log.debug("fetchDiscovery", { via: isElectron ? "ipc" : "http" })
 	try {
 		if (isElectron) {
-			return await window.codedeck.discover()
+			return await window.palot.discover()
 		}
-		const { fetchDiscovery: httpFetch } = await import("./codedeck-server")
+		const { fetchDiscovery: httpFetch } = await import("./palot-server")
 		const data = await httpFetch()
 		return data as unknown as DiscoveryResult
 	} catch (err) {
@@ -62,11 +62,11 @@ export async function fetchOpenCodeUrl(): Promise<{ url: string }> {
 	log.debug("fetchOpenCodeUrl", { via: isElectron ? "ipc" : "http" })
 	try {
 		if (isElectron) {
-			const info = await window.codedeck.ensureOpenCode()
+			const info = await window.palot.ensureOpenCode()
 			log.info("OpenCode server URL resolved", { url: info.url })
 			return { url: info.url }
 		}
-		const { fetchOpenCodeUrl: httpFetch } = await import("./codedeck-server")
+		const { fetchOpenCodeUrl: httpFetch } = await import("./palot-server")
 		const result = await httpFetch()
 		log.info("OpenCode server URL resolved", { url: result.url })
 		return result
@@ -84,9 +84,9 @@ export async function fetchSessionMessages(sessionId: string): Promise<MessagesR
 	log.debug("fetchSessionMessages", { sessionId, via: isElectron ? "ipc" : "http" })
 	try {
 		if (isElectron) {
-			return await window.codedeck.getSessionMessages(sessionId)
+			return await window.palot.getSessionMessages(sessionId)
 		}
-		const { fetchSessionMessages: httpFetch } = await import("./codedeck-server")
+		const { fetchSessionMessages: httpFetch } = await import("./palot-server")
 		const data = await httpFetch(sessionId)
 		return data as unknown as MessagesResult
 	} catch (err) {
@@ -101,9 +101,9 @@ export async function fetchSessionMessages(sessionId: string): Promise<MessagesR
  */
 export async function fetchModelState(): Promise<ModelState> {
 	if (isElectron) {
-		return window.codedeck.getModelState()
+		return window.palot.getModelState()
 	}
-	const { fetchModelState: httpFetch } = await import("./codedeck-server")
+	const { fetchModelState: httpFetch } = await import("./palot-server")
 	return httpFetch() as unknown as Promise<ModelState>
 }
 
@@ -117,22 +117,22 @@ export async function updateModelRecent(model: {
 	modelID: string
 }): Promise<ModelState> {
 	if (isElectron) {
-		return window.codedeck.updateModelRecent(model)
+		return window.palot.updateModelRecent(model)
 	}
-	const { updateModelRecent: httpUpdate } = await import("./codedeck-server")
+	const { updateModelRecent: httpUpdate } = await import("./palot-server")
 	return httpUpdate(model) as unknown as Promise<ModelState>
 }
 
 /**
  * Checks if the backend is available.
  * In Electron, always returns true (main process is always there).
- * In browser, pings the Codedeck HTTP server.
+ * In browser, pings the Palot HTTP server.
  */
 export async function checkBackendHealth(): Promise<boolean> {
 	if (isElectron) {
 		return true
 	}
-	const { checkServerHealth } = await import("./codedeck-server")
+	const { checkServerHealth } = await import("./palot-server")
 	return checkServerHealth()
 }
 
@@ -146,7 +146,7 @@ export async function checkBackendHealth(): Promise<boolean> {
  */
 export async function pickDirectory(): Promise<string | null> {
 	if (isElectron) {
-		return window.codedeck.pickDirectory()
+		return window.palot.pickDirectory()
 	}
 	throw new Error("Directory picker is only available in Electron mode")
 }
@@ -162,7 +162,7 @@ export async function pickDirectory(): Promise<string | null> {
  */
 export async function fetchGitBranches(directory: string): Promise<GitBranchInfo> {
 	if (isElectron) {
-		return window.codedeck.git.listBranches(directory)
+		return window.palot.git.listBranches(directory)
 	}
 	throw new Error("Git operations are only available in Electron mode")
 }
@@ -172,7 +172,7 @@ export async function fetchGitBranches(directory: string): Promise<GitBranchInfo
  */
 export async function fetchGitStatus(directory: string): Promise<GitStatusInfo> {
 	if (isElectron) {
-		return window.codedeck.git.getStatus(directory)
+		return window.palot.git.getStatus(directory)
 	}
 	throw new Error("Git operations are only available in Electron mode")
 }
@@ -183,7 +183,7 @@ export async function fetchGitStatus(directory: string): Promise<GitStatusInfo> 
  */
 export async function gitCheckout(directory: string, branch: string): Promise<GitCheckoutResult> {
 	if (isElectron) {
-		return window.codedeck.git.checkout(directory, branch)
+		return window.palot.git.checkout(directory, branch)
 	}
 	throw new Error("Git operations are only available in Electron mode")
 }
@@ -196,7 +196,7 @@ export async function gitStashAndCheckout(
 	branch: string,
 ): Promise<GitStashResult> {
 	if (isElectron) {
-		return window.codedeck.git.stashAndCheckout(directory, branch)
+		return window.palot.git.stashAndCheckout(directory, branch)
 	}
 	throw new Error("Git operations are only available in Electron mode")
 }
@@ -206,7 +206,7 @@ export async function gitStashAndCheckout(
  */
 export async function gitStashPop(directory: string): Promise<GitStashResult> {
 	if (isElectron) {
-		return window.codedeck.git.stashPop(directory)
+		return window.palot.git.stashPop(directory)
 	}
 	throw new Error("Git operations are only available in Electron mode")
 }
@@ -221,7 +221,7 @@ export async function gitStashPop(directory: string): Promise<GitStashResult> {
  */
 export async function fetchOpenInTargets(): Promise<OpenInTargetsResult> {
 	if (isElectron) {
-		return window.codedeck.openIn.getTargets()
+		return window.palot.openIn.getTargets()
 	}
 	throw new Error("Open-in targets are only available in Electron mode")
 }
@@ -236,7 +236,7 @@ export async function openInTarget(
 	persistPreferred?: boolean,
 ): Promise<void> {
 	if (isElectron) {
-		return window.codedeck.openIn.open(directory, targetId, persistPreferred)
+		return window.palot.openIn.open(directory, targetId, persistPreferred)
 	}
 	throw new Error("Open-in targets are only available in Electron mode")
 }
@@ -246,7 +246,7 @@ export async function openInTarget(
  */
 export async function setOpenInPreferred(targetId: string): Promise<{ success: boolean }> {
 	if (isElectron) {
-		return window.codedeck.openIn.setPreferred(targetId)
+		return window.palot.openIn.setPreferred(targetId)
 	}
 	throw new Error("Open-in targets are only available in Electron mode")
 }

@@ -8,9 +8,9 @@ import {
 	CommandList,
 	CommandSeparator,
 	CommandShortcut,
-} from "@codedeck/ui/components/command"
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@codedeck/ui/components/dialog"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/command"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@palot/ui/components/dialog"
+import { cn } from "@palot/ui/lib/utils"
 import type { ComponentProps, ReactNode } from "react"
 
 export type ModelSelectorProps = ComponentProps<typeof Dialog>

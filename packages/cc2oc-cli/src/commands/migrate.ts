@@ -2,8 +2,8 @@
  * cc2oc migrate -- Full migration from Claude Code to OpenCode.
  */
 
-import type { MergeStrategy, MigrationCategory } from "@codedeck/cc2oc"
-import { convert, scan, validate, write } from "@codedeck/cc2oc"
+import type { MergeStrategy, MigrationCategory } from "@palot/cc2oc"
+import { convert, scan, validate, write } from "@palot/cc2oc"
 import { defineCommand } from "citty"
 import consola from "consola"
 import { printReport, printWriteResult } from "../output/terminal"
@@ -177,6 +177,9 @@ export default defineCommand({
 		} else {
 			consola.log("")
 			consola.success("Migration complete!")
+			if (writeResult.backupDir) {
+				consola.info("To undo, run: cc2oc restore")
+			}
 		}
 	},
 })

@@ -3,7 +3,7 @@ import { useCallback, useEffect } from "react"
 import { agentsAtom } from "../atoms/derived/agents"
 import { pendingCountAtom } from "../atoms/derived/waiting"
 
-const isElectron = typeof window !== "undefined" && "codedeck" in window
+const isElectron = typeof window !== "undefined" && "palot" in window
 
 /**
  * Handles native OS notification integration:
@@ -21,7 +21,7 @@ export function useNotifications(
 
 	useEffect(() => {
 		if (!isElectron) return
-		window.codedeck.updateBadgeCount(pendingCount)
+		window.palot.updateBadgeCount(pendingCount)
 	}, [pendingCount])
 
 	// --- Notification click -> navigate to session ---
@@ -44,12 +44,12 @@ export function useNotifications(
 
 	useEffect(() => {
 		if (!isElectron) return
-		return window.codedeck.onNotificationNavigate(handleNavigate)
+		return window.palot.onNotificationNavigate(handleNavigate)
 	}, [handleNavigate])
 
 	// --- Auto-dismiss when viewing a session ---
 	useEffect(() => {
 		if (!isElectron || !currentSessionId) return
-		window.codedeck.dismissNotification(currentSessionId)
+		window.palot.dismissNotification(currentSessionId)
 	}, [currentSessionId])
 }

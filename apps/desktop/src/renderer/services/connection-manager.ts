@@ -9,6 +9,7 @@ import { createLogger } from "../lib/logger"
 import type { Event } from "../lib/types"
 import {
 	connectToServer,
+	disposeAllInstances,
 	getSessionStatuses,
 	listSessions,
 	subscribeToGlobalEvents,
@@ -43,7 +44,7 @@ let eventLoopGeneration = 0
  * with an unreachable AbortController. By storing it on `window`, the
  * new module can abort the stale loop on reconnect.
  */
-const SSE_ABORT_KEY = "__codedeck_sse_abort__" as const
+const SSE_ABORT_KEY = "__palot_sse_abort__" as const
 
 function getGlobalAbort(): AbortController | undefined {
 	// biome-ignore lint/suspicious/noExplicitAny: accessing dynamic window property for SSE abort controller
@@ -172,6 +173,20 @@ export function isConnected(): boolean {
  */
 export function getServerUrl(): string | null {
 	return connection?.url ?? null
+}
+
+/**
+ * Reload all OpenCode configuration by disposing all server instances.
+ * This forces the server to re-read config files, agents, skills, commands, etc.
+ * The resulting SSE events automatically invalidate UI queries.
+ */
+export async function reloadConfig(): Promise<void> {
+	if (!connection) {
+		log.warn("Cannot reload config: not connected to server")
+		return
+	}
+	log.info("Reloading OpenCode config (disposing all instances)")
+	await disposeAllInstances(connection.baseClient)
 }
 
 /**

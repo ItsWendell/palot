@@ -2,7 +2,7 @@
  * Standalone Vite config for browser-mode development (no Electron).
  * Usage: bun run dev:web (or `vite --config src/renderer/vite.web.config.ts`)
  *
- * In this mode, the Codedeck Bun server (apps/server) must be running
+ * In this mode, the Palot Bun server (apps/server) must be running
  * on port 3100 to handle filesystem operations and process management.
  */
 
@@ -17,7 +17,7 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			"@": __dirname,
-			"@codedeck/ui": path.resolve(__dirname, "../../../../packages/ui/src"),
+			"@palot/ui": path.resolve(__dirname, "../../../../packages/ui/src"),
 		},
 	},
 	clearScreen: false,

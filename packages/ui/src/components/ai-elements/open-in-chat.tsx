@@ -1,6 +1,6 @@
 "use client"
 
-import { Button } from "@codedeck/ui/components/button"
+import { Button } from "@palot/ui/components/button"
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -8,8 +8,8 @@ import {
 	DropdownMenuLabel,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
-} from "@codedeck/ui/components/dropdown-menu"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/dropdown-menu"
+import { cn } from "@palot/ui/lib/utils"
 import { ChevronDownIcon, ExternalLinkIcon, MessageCircleIcon } from "lucide-react"
 import type { ComponentProps } from "react"
 import { createContext, useContext } from "react"

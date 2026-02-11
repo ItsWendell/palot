@@ -183,7 +183,7 @@ describe("write()", () => {
 	})
 
 	describe("backups", () => {
-		it("creates backup when overwriting with backup=true", async () => {
+		it("creates backup snapshot when overwriting with backup=true", async () => {
 			const dir = tempDir()
 			tempDirs.push(dir)
 			await mkdir(join(dir, "agents"), { recursive: true })
@@ -202,16 +202,58 @@ describe("write()", () => {
 			})
 
 			expect(result.filesWritten.length).toBe(1)
-			expect(result.backupPaths.length).toBe(1)
-			expect(result.backupPaths[0]).toContain(".bak")
 
-			// Backup has original content
-			const backupContent = await readFile(result.backupPaths[0], "utf-8")
+			// New backup behavior: backupDir is set, backupPaths is empty (legacy)
+			expect(result.backupDir).toBeDefined()
+			expect(result.backupDir).toContain("backups")
+			expect(result.backupPaths.length).toBe(0)
+
+			// Verify manifest exists and has correct content
+			const manifestContent = await readFile(join(result.backupDir!, "manifest.json"), "utf-8")
+			const manifest = JSON.parse(manifestContent)
+			expect(manifest.files.length).toBeGreaterThanOrEqual(1)
+
+			const entry = manifest.files.find(
+				(f: { originalPath: string }) => f.originalPath === `${dir}/agents/existing.md`,
+			)
+			expect(entry).toBeDefined()
+			expect(entry.existedBefore).toBe(true)
+
+			// Verify backup file has original content
+			const backupContent = await readFile(
+				join(result.backupDir!, "files", entry.backupFilename),
+				"utf-8",
+			)
 			expect(backupContent).toBe("Original content")
 
 			// New file has new content
 			const newContent = await readFile(`${dir}/agents/existing.md`, "utf-8")
 			expect(newContent).toBe("New content")
+		})
+
+		it("does not create backup in dry-run mode", async () => {
+			const dir = tempDir()
+			tempDirs.push(dir)
+			await mkdir(join(dir, "agents"), { recursive: true })
+
+			await writeFile(`${dir}/agents/existing.md`, "Original content")
+
+			const agents = new Map<string, string>()
+			agents.set(`${dir}/agents/existing.md`, "New content")
+
+			const conversion = makeConversion({ agents })
+
+			const result = await write(conversion, {
+				dryRun: true,
+				force: true,
+				backup: true,
+			})
+
+			expect(result.backupDir).toBeUndefined()
+
+			// Original file untouched
+			const content = await readFile(`${dir}/agents/existing.md`, "utf-8")
+			expect(content).toBe("Original content")
 		})
 	})
 
@@ -223,7 +265,7 @@ describe("write()", () => {
 
 			expect(result.filesWritten.length).toBe(0)
 			expect(result.filesSkipped.length).toBe(0)
-			expect(result.backupPaths.length).toBe(0)
+			expect(result.backupDir).toBeUndefined()
 		})
 	})
 })

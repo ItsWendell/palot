@@ -1,3 +1,4 @@
+import { cn } from "@palot/ui/lib/utils"
 import { useAtomValue } from "jotai"
 import {
 	CheckCircle2Icon,
@@ -94,7 +95,10 @@ export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 			<button
 				type="button"
 				onClick={() => setIsExpanded((prev) => !prev)}
-				className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
+				className={cn(
+					"flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50",
+					isExpanded ? "rounded-t-xl" : "rounded-xl",
+				)}
 			>
 				<ListTodoIcon className="size-4 shrink-0 text-muted-foreground" />
 				<span className="flex-1 text-muted-foreground">

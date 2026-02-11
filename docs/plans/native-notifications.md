@@ -1,10 +1,10 @@
 # Native OS Notifications Plan
 
-> **Goal:** Notify the user via macOS and Linux native notifications when an agent needs attention — whether it finished, is asking for permission, posed a question, or hit an error — so the user can context-switch away from Codedeck without missing important moments.
+> **Goal:** Notify the user via macOS and Linux native notifications when an agent needs attention — whether it finished, is asking for permission, posed a question, or hit an error — so the user can context-switch away from Palot without missing important moments.
 
 ## Problem Statement
 
-Codedeck is a desktop app where agents run long tasks autonomously. Users naturally switch to other windows (editor, browser, terminal) while agents work. Today the **only** attention signal is a document title change (`(!) Codedeck — Input needed`) via `use-waiting-indicator.ts`. This is effectively invisible when the app is minimized, behind other windows, on a different virtual desktop, or the user is in full-screen mode in another app.
+Palot is a desktop app where agents run long tasks autonomously. Users naturally switch to other windows (editor, browser, terminal) while agents work. Today the **only** attention signal is a document title change (`(!) Palot — Input needed`) via `use-waiting-indicator.ts`. This is effectively invisible when the app is minimized, behind other windows, on a different virtual desktop, or the user is in full-screen mode in another app.
 
 The result: agents sit idle waiting for permission/question responses, wasting minutes or even timing out. Completed agents go unnoticed. Errors are discovered only when the user happens to check back.
 
@@ -14,7 +14,7 @@ The result: agents sit idle waiting for permission/question responses, wasting m
 
 ### The Background Reliability Problem
 
-The renderer is a Chromium process. When the Codedeck window is hidden or minimized:
+The renderer is a Chromium process. When the Palot window is hidden or minimized:
 
 - **macOS App Nap** suspends the renderer's timers and deprioritizes network I/O after ~30s of being hidden
 - **Chromium background throttling** clamps `setTimeout`/`setInterval` to 1s+ and pauses `requestAnimationFrame` entirely
@@ -30,7 +30,7 @@ OpenAI's Codex desktop app solves this by calling `electron.powerSaveBlocker.sta
 - macOS cannot App Nap the process — efficiency cores are bypassed, battery drain is measurable
 - The entire app stays hot even if the user hasn't looked at it in hours
 
-For Codedeck, where users run agents for extended periods, this is wasteful. What actually needs to stay awake is: one HTTP connection reading small JSON payloads, a few `if` checks per event, and one Electron API call to fire a notification.
+For Palot, where users run agents for extended periods, this is wasteful. What actually needs to stay awake is: one HTTP connection reading small JSON payloads, a few `if` checks per event, and one Electron API call to fire a notification.
 
 ### Approach: Main-Process SSE Watcher
 
@@ -161,7 +161,7 @@ Deferred to a follow-up. The core notification infrastructure ships first.
 
 ## Platform Notes
 
-- **macOS:** No entitlements needed for local notifications. `hardenedRuntime: true` doesn't block them. `appId: com.codedeck.desktop` groups notifications in System Preferences.
+- **macOS:** No entitlements needed for local notifications. `hardenedRuntime: true` doesn't block them. `appId: com.palot.desktop` groups notifications in System Preferences.
 - **Linux:** Uses `libnotify`. No special permissions. `BrowserWindow.flashFrame()` works on X11; varies on Wayland.
 - **Windows:** Toast notifications via Windows API. NSIS installer handles app identity.
 

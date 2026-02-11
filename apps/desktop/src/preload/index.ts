@@ -3,10 +3,10 @@ import { contextBridge, ipcRenderer } from "electron"
 /**
  * Preload bridge — exposes a typed API from the main process to the renderer.
  *
- * The renderer accesses these via `window.codedeck.*`.
+ * The renderer accesses these via `window.palot.*`.
  * All methods return Promises (backed by `ipcRenderer.invoke`).
  */
-contextBridge.exposeInMainWorld("codedeck", {
+contextBridge.exposeInMainWorld("palot", {
 	/** The host platform: "darwin", "win32", or "linux". */
 	platform: process.platform,
 
@@ -102,11 +102,11 @@ contextBridge.exposeInMainWorld("codedeck", {
 	// --- CLI install ---
 
 	cli: {
-		/** Checks whether the `codedeck` CLI command is installed. */
+		/** Checks whether the `palot` CLI command is installed. */
 		isInstalled: () => ipcRenderer.invoke("cli:is-installed"),
-		/** Installs the `codedeck` CLI command (symlinks to /usr/local/bin). */
+		/** Installs the `palot` CLI command (symlinks to /usr/local/bin). */
 		install: () => ipcRenderer.invoke("cli:install"),
-		/** Uninstalls the `codedeck` CLI command. */
+		/** Uninstalls the `palot` CLI command. */
 		uninstall: () => ipcRenderer.invoke("cli:uninstall"),
 	},
 
@@ -123,6 +123,18 @@ contextBridge.exposeInMainWorld("codedeck", {
 
 	/** Set the native theme source to control macOS glass tint color. */
 	setNativeTheme: (source: string) => ipcRenderer.invoke("theme:set-native", source),
+
+	/** Get the system accent color as an 8-char hex RRGGBBAA string, or null if unavailable. */
+	getAccentColor: () => ipcRenderer.invoke("theme:accent-color"),
+
+	/** Subscribe to system accent color changes (fired when the user changes OS accent color). */
+	onAccentColorChanged: (callback: (color: string) => void) => {
+		const listener = (_event: unknown, color: string) => callback(color)
+		ipcRenderer.on("theme:accent-color-changed", listener)
+		return () => {
+			ipcRenderer.removeListener("theme:accent-color-changed", listener)
+		}
+	},
 
 	// --- Directory picker ---
 
@@ -181,5 +193,34 @@ contextBridge.exposeInMainWorld("codedeck", {
 		return () => {
 			ipcRenderer.removeListener("settings:changed", listener)
 		}
+	},
+
+	// --- Onboarding ---
+
+	onboarding: {
+		/** Check if OpenCode CLI is installed and compatible. */
+		checkOpenCode: () => ipcRenderer.invoke("onboarding:check-opencode"),
+		/** Install OpenCode CLI via the official install script. */
+		installOpenCode: () => ipcRenderer.invoke("onboarding:install-opencode"),
+		/** Subscribe to install output lines (streamed from the install script). */
+		onInstallOutput: (callback: (text: string) => void) => {
+			const listener = (_event: unknown, text: string) => callback(text)
+			ipcRenderer.on("onboarding:install-output", listener)
+			return () => {
+				ipcRenderer.removeListener("onboarding:install-output", listener)
+			}
+		},
+		/** Quick detect whether Claude Code config exists (no heavy imports). */
+		detectClaudeCode: () => ipcRenderer.invoke("onboarding:detect-claude-code"),
+		/** Full scan of Claude Code configuration via cc2oc. */
+		scanClaudeCode: () => ipcRenderer.invoke("onboarding:scan-claude-code"),
+		/** Dry-run migration preview. */
+		previewMigration: (scanResult: unknown, categories: string[]) =>
+			ipcRenderer.invoke("onboarding:preview-migration", scanResult, categories),
+		/** Execute migration (writes files with backup). */
+		executeMigration: (scanResult: unknown, categories: string[]) =>
+			ipcRenderer.invoke("onboarding:execute-migration", scanResult, categories),
+		/** Restore the most recent migration backup. */
+		restoreBackup: () => ipcRenderer.invoke("onboarding:restore-backup"),
 	},
 })

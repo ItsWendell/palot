@@ -107,7 +107,7 @@ async function generateWordmarks() {
       }
     </style>
   </defs>
-  <text x="16" y="100" font-family="'${font.name}'" font-size="92" font-weight="700" fill="#1a1a1a">codedeck</text>
+  <text x="16" y="100" font-family="'${font.name}'" font-size="92" font-weight="700" fill="#1a1a1a">palot</text>
   <text x="16" y="135" font-family="sans-serif" font-size="14" fill="#aaa">${font.name} — bold</text>
 </svg>`
 

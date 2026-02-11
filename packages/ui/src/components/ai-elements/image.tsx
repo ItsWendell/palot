@@ -1,4 +1,4 @@
-import { cn } from "@codedeck/ui/lib/utils"
+import { cn } from "@palot/ui/lib/utils"
 import type { Experimental_GeneratedImage } from "ai"
 
 export type ImageProps = Experimental_GeneratedImage & {

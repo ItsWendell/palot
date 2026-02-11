@@ -1,15 +1,15 @@
 "use client"
 
-import { Button } from "@codedeck/ui/components/button"
+import { Button } from "@palot/ui/components/button"
 import {
 	Command,
 	CommandEmpty,
 	CommandInput,
 	CommandItem,
 	CommandList,
-} from "@codedeck/ui/components/command"
-import { Popover, PopoverContent, PopoverTrigger } from "@codedeck/ui/components/popover"
-import { cn } from "@codedeck/ui/lib/utils"
+} from "@palot/ui/components/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
+import { cn } from "@palot/ui/lib/utils"
 import { useControllableState } from "@radix-ui/react-use-controllable-state"
 import { ChevronsUpDownIcon } from "lucide-react"
 import type { ComponentProps, ReactNode } from "react"

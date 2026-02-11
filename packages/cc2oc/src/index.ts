@@ -1,5 +1,5 @@
 /**
- * @codedeck/cc2oc -- Claude Code to OpenCode migration library.
+ * @palot/cc2oc -- Claude Code to OpenCode migration library.
  *
  * Public API:
  *   scan()     -> ScanResult           (reads filesystem)
@@ -7,8 +7,17 @@
  *   validate() -> ValidationResult     (schema checks)
  *   write()    -> WriteResult          (writes to filesystem)
  *   diff()     -> DiffResult           (compares CC vs OC)
+ *
+ * Backup/restore:
+ *   createBackup()  -> string | undefined  (snapshot before migration)
+ *   listBackups()   -> BackupInfo[]        (available snapshots)
+ *   restore()       -> RestoreResult       (revert migration)
+ *   deleteBackup()  -> void                (remove a snapshot)
  */
 
+export type { BackupFileEntry, BackupInfo, BackupManifest, RestoreResult } from "./backup"
+// ─── Backup/restore ──────────────────────────────────────────────────
+export { createBackup, deleteBackup, listBackups, restore } from "./backup"
 export { convert } from "./converter"
 export { convertAgents } from "./converter/agents"
 export { convertCommands } from "./converter/commands"

@@ -68,16 +68,16 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" widt
   <text x="40" y="50" font-family="sans-serif" font-size="18" fill="#999">GEIST MONO</text>
   <line x1="40" y1="60" x2="1160" y2="60" stroke="#ddd" stroke-width="1"/>
 
-  <text x="40" y="120" font-family="'GeistMono'" font-size="80" font-weight="700" fill="#1a1a1a">codedeck</text>
+  <text x="40" y="120" font-family="'GeistMono'" font-size="80" font-weight="700" fill="#1a1a1a">palot</text>
   <text x="1060" y="120" font-family="sans-serif" font-size="14" fill="#aaa">700</text>
 
-  <text x="40" y="200" font-family="'GeistMono'" font-size="80" font-weight="600" fill="#1a1a1a">codedeck</text>
+  <text x="40" y="200" font-family="'GeistMono'" font-size="80" font-weight="600" fill="#1a1a1a">palot</text>
   <text x="1060" y="200" font-family="sans-serif" font-size="14" fill="#aaa">600</text>
 
-  <text x="40" y="280" font-family="'GeistMono'" font-size="80" font-weight="500" fill="#1a1a1a">codedeck</text>
+  <text x="40" y="280" font-family="'GeistMono'" font-size="80" font-weight="500" fill="#1a1a1a">palot</text>
   <text x="1060" y="280" font-family="sans-serif" font-size="14" fill="#aaa">500</text>
 
-  <text x="40" y="360" font-family="'GeistMono'" font-size="80" font-weight="400" fill="#1a1a1a">codedeck</text>
+  <text x="40" y="360" font-family="'GeistMono'" font-size="80" font-weight="400" fill="#1a1a1a">palot</text>
   <text x="1060" y="360" font-family="sans-serif" font-size="14" fill="#aaa">400</text>
 
   <!-- Split versions -->
@@ -98,7 +98,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" widt
   <text x="40" y="650" font-family="sans-serif" font-size="18" fill="#999">SPACE MONO (comparison)</text>
   <line x1="40" y1="660" x2="1160" y2="660" stroke="#ddd" stroke-width="1"/>
 
-  <text x="40" y="730" font-family="'SpaceMono'" font-size="80" font-weight="700" fill="#1a1a1a">codedeck</text>
+  <text x="40" y="730" font-family="'SpaceMono'" font-size="80" font-weight="700" fill="#1a1a1a">palot</text>
   <text x="1060" y="730" font-family="sans-serif" font-size="14" fill="#aaa">700</text>
 
   <text x="40" y="820" font-family="'SpaceMono'" font-size="80" fill="#1a1a1a">

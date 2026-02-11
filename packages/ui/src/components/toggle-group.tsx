@@ -1,7 +1,7 @@
 "use client"
 
-import { toggleVariants } from "@codedeck/ui/components/toggle"
-import { cn } from "@codedeck/ui/lib/utils"
+import { toggleVariants } from "@palot/ui/components/toggle"
+import { cn } from "@palot/ui/lib/utils"
 import type { VariantProps } from "class-variance-authority"
 import { ToggleGroup as ToggleGroupPrimitive } from "radix-ui"
 import * as React from "react"

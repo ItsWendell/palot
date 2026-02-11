@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import type { AppSettings } from "../../preload/api"
 
-const isElectron = typeof window !== "undefined" && "codedeck" in window
+const isElectron = typeof window !== "undefined" && "palot" in window
 
 const DEFAULT_SETTINGS: AppSettings = {
 	notifications: {
@@ -23,7 +23,7 @@ export function useSettings() {
 			setLoading(false)
 			return
 		}
-		window.codedeck
+		window.palot
 			.getSettings()
 			.then((s) => {
 				setSettings(s as AppSettings)
@@ -41,7 +41,7 @@ export function useSettings() {
 	// (e.g. notification action buttons update a setting from the main process).
 	useEffect(() => {
 		if (!isElectron) return
-		return window.codedeck.onSettingsChanged((updated) => {
+		return window.palot.onSettingsChanged((updated) => {
 			setSettings(updated)
 		})
 	}, [])
@@ -51,7 +51,7 @@ export function useSettings() {
 			if (!isElectron) return
 			const prev = settings
 			try {
-				const updated = (await window.codedeck.updateSettings(partial)) as AppSettings
+				const updated = (await window.palot.updateSettings(partial)) as AppSettings
 				setSettings(updated)
 			} catch (err) {
 				console.error("Failed to update settings:", err)
