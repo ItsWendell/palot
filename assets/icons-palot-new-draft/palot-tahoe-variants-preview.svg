@@ -1,0 +1,305 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700">
+  <style>
+    text { font-family: 'Helvetica Neue', Arial, sans-serif; text-anchor: middle; }
+    .title { font-size: 18px; font-weight: bold; fill: #ccc; }
+    .label { font-size: 12px; fill: #999; }
+    .sublabel { font-size: 10px; fill: #666; }
+  </style>
+
+  <rect width="1200" height="700" fill="#2A2A2A"/>
+
+  <text x="600" y="40" class="title">Palot — macOS Tahoe Icon Variants</text>
+
+  <!-- ============ ROW 1: Main modes ============ -->
+
+  <!-- 1. DEFAULT LIGHT -->
+  <g transform="translate(120, 200)">
+    <defs>
+      <radialGradient id="p_bgL" cx="50%" cy="50%" r="65%">
+        <stop offset="0%" stop-color="#F0F0FF"/>
+        <stop offset="100%" stop-color="#E0E0F0"/>
+      </radialGradient>
+      <radialGradient id="p_dotL" cx="40%" cy="38%" r="55%">
+        <stop offset="0%" stop-color="#6366F1"/>
+        <stop offset="50%" stop-color="#4F46E5"/>
+        <stop offset="100%" stop-color="#3730A3"/>
+      </radialGradient>
+      <radialGradient id="p_glowL" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#4F46E5" stop-opacity="0.25"/>
+        <stop offset="100%" stop-color="#4F46E5" stop-opacity="0"/>
+      </radialGradient>
+      <clipPath id="squircle1"><rect x="-75" y="-75" width="150" height="150" rx="33"/></clipPath>
+    </defs>
+    <g clip-path="url(#squircle1)">
+      <rect x="-75" y="-75" width="150" height="150" fill="url(#p_bgL)"/>
+      <circle cx="0" cy="0" r="45" fill="none" stroke="#4F46E5" stroke-width="2" opacity="0.18"/>
+      <circle cx="0" cy="0" r="26" fill="none" stroke="#4F46E5" stroke-width="2.6" opacity="0.4"/>
+      <circle cx="0" cy="0" r="16" fill="url(#p_glowL)"/>
+      <circle cx="0" cy="0" r="8" fill="url(#p_dotL)"/>
+    </g>
+    <rect x="-75" y="-75" width="150" height="150" rx="33" fill="none" stroke="#ffffff" stroke-width="0.5" opacity="0.15"/>
+    <text y="100" class="label">Default Light</text>
+  </g>
+
+  <!-- 2. DEFAULT DARK -->
+  <g transform="translate(320, 200)">
+    <defs>
+      <radialGradient id="p_bgD" cx="50%" cy="50%" r="65%">
+        <stop offset="0%" stop-color="#252547"/>
+        <stop offset="100%" stop-color="#151530"/>
+      </radialGradient>
+      <radialGradient id="p_dotD" cx="40%" cy="38%" r="55%">
+        <stop offset="0%" stop-color="#C7D2FE"/>
+        <stop offset="50%" stop-color="#A5B4FC"/>
+        <stop offset="100%" stop-color="#6366F1"/>
+      </radialGradient>
+      <radialGradient id="p_glowD" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#6366F1" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="#6366F1" stop-opacity="0"/>
+      </radialGradient>
+      <clipPath id="squircle2"><rect x="-75" y="-75" width="150" height="150" rx="33"/></clipPath>
+    </defs>
+    <g clip-path="url(#squircle2)">
+      <rect x="-75" y="-75" width="150" height="150" fill="url(#p_bgD)"/>
+      <circle cx="0" cy="0" r="45" fill="none" stroke="#818CF8" stroke-width="2" opacity="0.15"/>
+      <circle cx="0" cy="0" r="26" fill="none" stroke="#818CF8" stroke-width="2.6" opacity="0.4"/>
+      <circle cx="0" cy="0" r="16" fill="url(#p_glowD)"/>
+      <circle cx="0" cy="0" r="8" fill="url(#p_dotD)"/>
+    </g>
+    <rect x="-75" y="-75" width="150" height="150" rx="33" fill="none" stroke="#ffffff" stroke-width="0.5" opacity="0.08"/>
+    <text y="100" class="label">Dark</text>
+  </g>
+
+  <!-- 3. CLEAR LIGHT (wallpaper shows through) -->
+  <g transform="translate(520, 200)">
+    <defs>
+      <!-- Fake wallpaper gradient to simulate clear -->
+      <linearGradient id="p_wall1" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#87CEEB"/>
+        <stop offset="100%" stop-color="#DEB887"/>
+      </linearGradient>
+      <clipPath id="squircle3"><rect x="-75" y="-75" width="150" height="150" rx="33"/></clipPath>
+    </defs>
+    <g clip-path="url(#squircle3)">
+      <!-- Simulated wallpaper bleed-through -->
+      <rect x="-75" y="-75" width="150" height="150" fill="url(#p_wall1)"/>
+      <rect x="-75" y="-75" width="150" height="150" fill="#ffffff" opacity="0.15"/>
+      <!-- Foreground with reduced opacity for glass effect -->
+      <circle cx="0" cy="0" r="45" fill="none" stroke="#4F46E5" stroke-width="2" opacity="0.2"/>
+      <circle cx="0" cy="0" r="26" fill="none" stroke="#4F46E5" stroke-width="2.6" opacity="0.45"/>
+      <circle cx="0" cy="0" r="16" fill="#4F46E5" opacity="0.12"/>
+      <circle cx="0" cy="0" r="8" fill="#4F46E5" opacity="0.85"/>
+    </g>
+    <rect x="-75" y="-75" width="150" height="150" rx="33" fill="none" stroke="#ffffff" stroke-width="0.5" opacity="0.2"/>
+    <text y="100" class="label">Clear Light</text>
+    <text y="114" class="sublabel">(wallpaper shows through)</text>
+  </g>
+
+  <!-- 4. CLEAR DARK -->
+  <g transform="translate(720, 200)">
+    <defs>
+      <clipPath id="squircle4"><rect x="-75" y="-75" width="150" height="150" rx="33"/></clipPath>
+    </defs>
+    <g clip-path="url(#squircle4)">
+      <rect x="-75" y="-75" width="150" height="150" fill="url(#p_wall1)"/>
+      <rect x="-75" y="-75" width="150" height="150" fill="#000000" opacity="0.55"/>
+      <circle cx="0" cy="0" r="45" fill="none" stroke="#818CF8" stroke-width="2" opacity="0.15"/>
+      <circle cx="0" cy="0" r="26" fill="none" stroke="#818CF8" stroke-width="2.6" opacity="0.35"/>
+      <circle cx="0" cy="0" r="16" fill="#6366F1" opacity="0.15"/>
+      <circle cx="0" cy="0" r="8" fill="#A5B4FC" opacity="0.9"/>
+    </g>
+    <rect x="-75" y="-75" width="150" height="150" rx="33" fill="none" stroke="#ffffff" stroke-width="0.5" opacity="0.08"/>
+    <text y="100" class="label">Clear Dark</text>
+    <text y="114" class="sublabel">(wallpaper + dark overlay)</text>
+  </g>
+
+  <!-- 5. TINTED LIGHT -->
+  <g transform="translate(920, 200)">
+    <defs>
+      <clipPath id="squircle5"><rect x="-75" y="-75" width="150" height="150" rx="33"/></clipPath>
+    </defs>
+    <g clip-path="url(#squircle5)">
+      <!-- Simulated tint: user picked a teal/blue tint -->
+      <rect x="-75" y="-75" width="150" height="150" fill="#1A3A4A"/>
+      <circle cx="0" cy="0" r="45" fill="none" stroke="#5AC8D8" stroke-width="2" opacity="0.25"/>
+      <circle cx="0" cy="0" r="26" fill="none" stroke="#5AC8D8" stroke-width="2.6" opacity="0.5"/>
+      <circle cx="0" cy="0" r="16" fill="#5AC8D8" opacity="0.15"/>
+      <circle cx="0" cy="0" r="8" fill="#8AE8F0"/>
+    </g>
+    <rect x="-75" y="-75" width="150" height="150" rx="33" fill="none" stroke="#5AC8D8" stroke-width="0.5" opacity="0.15"/>
+    <text y="100" class="label">Tinted Light</text>
+    <text y="114" class="sublabel">(user-chosen color)</text>
+  </g>
+
+  <!-- 6. TINTED DARK -->
+  <g transform="translate(1080, 200)">
+    <defs>
+      <clipPath id="squircle6"><rect x="-75" y="-75" width="150" height="150" rx="33"/></clipPath>
+    </defs>
+    <g clip-path="url(#squircle6)">
+      <rect x="-75" y="-75" width="150" height="150" fill="#0F2028"/>
+      <circle cx="0" cy="0" r="45" fill="none" stroke="#3A8898" stroke-width="2" opacity="0.2"/>
+      <circle cx="0" cy="0" r="26" fill="none" stroke="#3A8898" stroke-width="2.6" opacity="0.4"/>
+      <circle cx="0" cy="0" r="16" fill="#3A8898" opacity="0.12"/>
+      <circle cx="0" cy="0" r="8" fill="#5AC8D8"/>
+    </g>
+    <rect x="-75" y="-75" width="150" height="150" rx="33" fill="none" stroke="#3A8898" stroke-width="0.5" opacity="0.1"/>
+    <text y="100" class="label">Tinted Dark</text>
+    <text y="114" class="sublabel">(user-chosen color, dark)</text>
+  </g>
+
+  <!-- ============ ROW 2: Dock simulation ============ -->
+  <text x="600" y="410" class="label" fill="#666">Simulated Dock (56px)</text>
+
+  <!-- Dock bar -->
+  <rect x="60" y="430" width="1080" height="80" rx="14" fill="#1A1A1A" opacity="0.8"/>
+
+  <!-- Dock icons at 56px -->
+  <!-- Default Light -->
+  <g transform="translate(160, 470)">
+    <defs><clipPath id="ds1"><rect x="-28" y="-28" width="56" height="56" rx="12"/></clipPath></defs>
+    <g clip-path="url(#ds1)">
+      <rect x="-28" y="-28" width="56" height="56" fill="url(#p_bgL)"/>
+      <circle cx="0" cy="0" r="17" fill="none" stroke="#4F46E5" stroke-width="0.8" opacity="0.18"/>
+      <circle cx="0" cy="0" r="10" fill="none" stroke="#4F46E5" stroke-width="1" opacity="0.4"/>
+      <circle cx="0" cy="0" r="3.2" fill="#4F46E5"/>
+    </g>
+  </g>
+
+  <!-- Dark -->
+  <g transform="translate(280, 470)">
+    <defs><clipPath id="ds2"><rect x="-28" y="-28" width="56" height="56" rx="12"/></clipPath></defs>
+    <g clip-path="url(#ds2)">
+      <rect x="-28" y="-28" width="56" height="56" fill="url(#p_bgD)"/>
+      <circle cx="0" cy="0" r="17" fill="none" stroke="#818CF8" stroke-width="0.8" opacity="0.15"/>
+      <circle cx="0" cy="0" r="10" fill="none" stroke="#818CF8" stroke-width="1" opacity="0.4"/>
+      <circle cx="0" cy="0" r="3.2" fill="#A5B4FC"/>
+    </g>
+  </g>
+
+  <!-- Spacer: other app icons -->
+  <rect x="332" y="442" width="56" height="56" rx="12" fill="#2563EB"/>
+  <rect x="402" y="442" width="56" height="56" rx="12" fill="#7C3AED"/>
+  <rect x="472" y="442" width="56" height="56" rx="12" fill="#059669"/>
+
+  <!-- Clear Light -->
+  <g transform="translate(580, 470)">
+    <defs><clipPath id="ds3"><rect x="-28" y="-28" width="56" height="56" rx="12"/></clipPath></defs>
+    <g clip-path="url(#ds3)">
+      <rect x="-28" y="-28" width="56" height="56" fill="url(#p_wall1)"/>
+      <rect x="-28" y="-28" width="56" height="56" fill="#ffffff" opacity="0.15"/>
+      <circle cx="0" cy="0" r="10" fill="none" stroke="#4F46E5" stroke-width="1" opacity="0.45"/>
+      <circle cx="0" cy="0" r="3.2" fill="#4F46E5" opacity="0.85"/>
+    </g>
+  </g>
+
+  <!-- Clear Dark -->
+  <g transform="translate(660, 470)">
+    <defs><clipPath id="ds4"><rect x="-28" y="-28" width="56" height="56" rx="12"/></clipPath></defs>
+    <g clip-path="url(#ds4)">
+      <rect x="-28" y="-28" width="56" height="56" fill="url(#p_wall1)"/>
+      <rect x="-28" y="-28" width="56" height="56" fill="#000" opacity="0.55"/>
+      <circle cx="0" cy="0" r="10" fill="none" stroke="#818CF8" stroke-width="1" opacity="0.35"/>
+      <circle cx="0" cy="0" r="3.2" fill="#A5B4FC" opacity="0.9"/>
+    </g>
+  </g>
+
+  <!-- Spacer -->
+  <rect x="702" y="442" width="56" height="56" rx="12" fill="#DC2626"/>
+
+  <!-- Tinted Light -->
+  <g transform="translate(820, 470)">
+    <defs><clipPath id="ds5"><rect x="-28" y="-28" width="56" height="56" rx="12"/></clipPath></defs>
+    <g clip-path="url(#ds5)">
+      <rect x="-28" y="-28" width="56" height="56" fill="#1A3A4A"/>
+      <circle cx="0" cy="0" r="10" fill="none" stroke="#5AC8D8" stroke-width="1" opacity="0.5"/>
+      <circle cx="0" cy="0" r="3.2" fill="#8AE8F0"/>
+    </g>
+  </g>
+
+  <!-- Tinted Dark -->
+  <g transform="translate(900, 470)">
+    <defs><clipPath id="ds6"><rect x="-28" y="-28" width="56" height="56" rx="12"/></clipPath></defs>
+    <g clip-path="url(#ds6)">
+      <rect x="-28" y="-28" width="56" height="56" fill="#0F2028"/>
+      <circle cx="0" cy="0" r="10" fill="none" stroke="#3A8898" stroke-width="1" opacity="0.4"/>
+      <circle cx="0" cy="0" r="3.2" fill="#5AC8D8"/>
+    </g>
+  </g>
+
+  <!-- Spacer -->
+  <rect x="952" y="442" width="56" height="56" rx="12" fill="#D97706"/>
+  <rect x="1022" y="442" width="56" height="56" rx="12" fill="#6366F1"/>
+
+  <!-- ============ ROW 3: Layer breakdown ============ -->
+  <text x="600" y="570" class="label" fill="#666">Icon Composer Layer Structure</text>
+
+  <!-- Background layer -->
+  <g transform="translate(300, 630)">
+    <rect x="-40" y="-40" width="80" height="80" rx="18" fill="url(#p_bgD)"/>
+    <text y="58" class="sublabel">Background</text>
+  </g>
+
+  <text x="380" y="632" fill="#666" font-family="Helvetica Neue, Arial" font-size="20">+</text>
+
+  <!-- Foreground layer -->
+  <g transform="translate(450, 630)">
+    <!-- Checkerboard to show transparency -->
+    <defs>
+      <pattern id="check" x="0" y="0" width="10" height="10" patternUnits="userSpaceOnUse">
+        <rect width="5" height="5" fill="#333"/>
+        <rect x="5" width="5" height="5" fill="#444"/>
+        <rect y="5" width="5" height="5" fill="#444"/>
+        <rect x="5" y="5" width="5" height="5" fill="#333"/>
+      </pattern>
+      <clipPath id="fgClip"><rect x="-40" y="-40" width="80" height="80" rx="18"/></clipPath>
+    </defs>
+    <g clip-path="url(#fgClip)">
+      <rect x="-40" y="-40" width="80" height="80" fill="url(#check)"/>
+      <circle cx="0" cy="0" r="24" fill="none" stroke="#818CF8" stroke-width="1" opacity="0.15"/>
+      <circle cx="0" cy="0" r="14" fill="none" stroke="#818CF8" stroke-width="1.4" opacity="0.4"/>
+      <circle cx="0" cy="0" r="4.5" fill="#A5B4FC"/>
+    </g>
+    <text y="58" class="sublabel">Foreground</text>
+  </g>
+
+  <text x="530" y="632" fill="#666" font-family="Helvetica Neue, Arial" font-size="20">=</text>
+
+  <!-- Composited result -->
+  <g transform="translate(600, 630)">
+    <defs><clipPath id="compClip"><rect x="-40" y="-40" width="80" height="80" rx="18"/></clipPath></defs>
+    <g clip-path="url(#compClip)">
+      <rect x="-40" y="-40" width="80" height="80" fill="url(#p_bgD)"/>
+      <circle cx="0" cy="0" r="24" fill="none" stroke="#818CF8" stroke-width="1" opacity="0.15"/>
+      <circle cx="0" cy="0" r="14" fill="none" stroke="#818CF8" stroke-width="1.4" opacity="0.4"/>
+      <circle cx="0" cy="0" r="4.5" fill="#A5B4FC"/>
+    </g>
+    <rect x="-40" y="-40" width="80" height="80" rx="18" fill="none" stroke="#fff" stroke-width="0.5" opacity="0.1"/>
+    <text y="58" class="sublabel">Composited</text>
+  </g>
+
+  <text x="720" y="632" fill="#666" font-family="Helvetica Neue, Arial" font-size="16">→ Tahoe applies</text>
+  <text x="720" y="648" fill="#666" font-family="Helvetica Neue, Arial" font-size="16">   Liquid Glass</text>
+
+  <!-- Final with glass effect simulation -->
+  <g transform="translate(880, 630)">
+    <defs>
+      <clipPath id="glassClip"><rect x="-40" y="-40" width="80" height="80" rx="18"/></clipPath>
+      <linearGradient id="glassSheen" x1="0" y1="0" x2="0.5" y2="1">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.12"/>
+        <stop offset="50%" stop-color="#ffffff" stop-opacity="0"/>
+        <stop offset="100%" stop-color="#ffffff" stop-opacity="0.04"/>
+      </linearGradient>
+    </defs>
+    <g clip-path="url(#glassClip)">
+      <rect x="-40" y="-40" width="80" height="80" fill="url(#p_bgD)"/>
+      <circle cx="0" cy="0" r="24" fill="none" stroke="#818CF8" stroke-width="1" opacity="0.15"/>
+      <circle cx="0" cy="0" r="14" fill="none" stroke="#818CF8" stroke-width="1.4" opacity="0.4"/>
+      <circle cx="0" cy="0" r="4.5" fill="#A5B4FC"/>
+      <!-- Glass overlay -->
+      <rect x="-40" y="-40" width="80" height="80" fill="url(#glassSheen)"/>
+    </g>
+    <rect x="-40" y="-40" width="80" height="80" rx="18" fill="none" stroke="#ffffff" stroke-width="0.8" opacity="0.15"/>
+    <text y="58" class="sublabel">Final (Liquid Glass)</text>
+  </g>
+</svg>

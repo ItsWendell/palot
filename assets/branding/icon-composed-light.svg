@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Palot App Icon: Composed Light variant -->
+  <!-- Palot Blue palette, with padding + macOS squircle mask -->
+  <defs>
+    <radialGradient id="bgL" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#ecf7fd"/>
+      <stop offset="100%" stop-color="#d3edf9"/>
+    </radialGradient>
+    <radialGradient id="dotL" cx="40%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#05bdf5"/>
+      <stop offset="50%" stop-color="#009fde"/>
+      <stop offset="100%" stop-color="#006094"/>
+    </radialGradient>
+    <radialGradient id="glowL" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#009fde" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#009fde" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="dotBlurL">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10"/>
+    </filter>
+    <!-- macOS-style squircle clip path (continuous corner curve) -->
+    <clipPath id="squircle">
+      <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect width="1024" height="1024" fill="url(#bgL)"/>
+    <circle cx="512" cy="512" r="350" fill="none" stroke="#0080bd" stroke-width="28" opacity="0.35"/>
+    <circle cx="512" cy="512" r="210" fill="none" stroke="#0080bd" stroke-width="30" opacity="0.6"/>
+    <circle cx="512" cy="512" r="134" fill="url(#glowL)"/>
+    <circle cx="512" cy="512" r="80" fill="#009fde" opacity="0.15" filter="url(#dotBlurL)"/>
+    <circle cx="512" cy="512" r="67" fill="url(#dotL)"/>
+  </g>
+</svg>

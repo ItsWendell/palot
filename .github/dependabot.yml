@@ -1,0 +1,53 @@
+version: 2
+updates:
+  # Root and workspace dependencies (Bun/npm ecosystem)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      # Group minor/patch updates to reduce PR noise
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      electron:
+        patterns:
+          - "electron"
+          - "electron-builder"
+          - "electron-vite"
+      tanstack:
+        patterns:
+          - "@tanstack/*"
+      tailwind:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
+      radix:
+        patterns:
+          - "@radix-ui/*"
+          - "radix-ui"
+      dev-tools:
+        patterns:
+          - "@biomejs/*"
+          - "turbo"
+          - "typescript"
+          - "vite"
+          - "@vitejs/*"
+    labels:
+      - "dependencies"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"

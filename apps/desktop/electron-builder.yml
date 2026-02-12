@@ -1,0 +1,74 @@
+appId: com.palot.desktop
+productName: Palot
+copyright: Copyright (c) 2025-2026 Palot
+directories:
+  buildResources: resources
+  output: release
+
+files:
+  - "out/**/*"
+  # Native N-API addon for macOS liquid glass / vibrancy effects.
+  # Must be included because externalizeDepsPlugin keeps it external.
+  - "node_modules/electron-liquid-glass/**/*"
+
+# Bundle the CLI launcher script into the app package.
+# macOS: Contents/Resources/bin/palot
+# Linux: resources/bin/palot
+# Windows: resources/bin/palot.cmd
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - "**/*"
+
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+
+# Inject version from package.json into the built app
+extraMetadata:
+  main: ./out/main/index.js
+
+mac:
+  icon: resources/icon-macos.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # Notarization — uncomment when Apple credentials are configured
+  # notarize:
+  #   teamId: ${env.APPLE_TEAM_ID}
+
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+
+linux:
+  icon: resources/icon.png
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+  category: Development
+  maintainer: palot
+  desktop:
+    entry:
+      Name: Palot
+      Comment: AI-powered coding assistant
+      Categories: Development;IDE;
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+publish:
+  provider: github
+  releaseType: draft

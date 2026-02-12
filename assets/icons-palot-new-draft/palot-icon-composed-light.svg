@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- COMPOSITED: Light variant -->
+  <!-- Export as 1024x1024 PNG for Icon Composer -->
+  <defs>
+    <radialGradient id="bgL" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#F0F0FF"/>
+      <stop offset="100%" stop-color="#E0E0F0"/>
+    </radialGradient>
+    <radialGradient id="dotL" cx="40%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="50%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#3730A3"/>
+    </radialGradient>
+    <radialGradient id="glowL" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#4F46E5" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#4F46E5" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="dotBlurL">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#bgL)"/>
+  <circle cx="512" cy="512" r="310" fill="none" stroke="#4F46E5" stroke-width="14" opacity="0.18"/>
+  <circle cx="512" cy="512" r="180" fill="none" stroke="#4F46E5" stroke-width="18" opacity="0.4"/>
+  <circle cx="512" cy="512" r="110" fill="url(#glowL)"/>
+  <circle cx="512" cy="512" r="60" fill="#4F46E5" opacity="0.15" filter="url(#dotBlurL)"/>
+  <circle cx="512" cy="512" r="56" fill="url(#dotL)"/>
+</svg>

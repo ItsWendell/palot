@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Palot App Icon: macOS variant -->
+  <!-- Transparent background, solid rings for native macOS icon backing -->
+  <defs>
+    <radialGradient id="dot" cx="40%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#7dd4f7"/>
+      <stop offset="50%" stop-color="#15aee6"/>
+      <stop offset="100%" stop-color="#0080bd"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#05bdf5" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#05bdf5" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="dotGlow">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10"/>
+    </filter>
+  </defs>
+
+  <!-- Outer ring: solid dark blue -->
+  <circle cx="512" cy="512" r="380" fill="none" stroke="#0a6a9e" stroke-width="28"/>
+  <!-- Inner ring: medium blue -->
+  <circle cx="512" cy="512" r="228" fill="none" stroke="#0d85c3" stroke-width="30"/>
+  <!-- Subtle glow behind dot -->
+  <circle cx="512" cy="512" r="145" fill="url(#glow)"/>
+  <!-- Dot shadow/glow -->
+  <circle cx="512" cy="512" r="86" fill="#05bdf5" opacity="0.15" filter="url(#dotGlow)"/>
+  <!-- Center dot -->
+  <circle cx="512" cy="512" r="72" fill="url(#dot)"/>
+</svg>

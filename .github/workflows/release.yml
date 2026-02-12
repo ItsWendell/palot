@@ -1,0 +1,302 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1: Changeset versioning (main push only)
+  # ──────────────────────────────────────────────
+  changeset:
+    name: Changeset Version
+    if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      publishedPackages: ${{ steps.changesets.outputs.publishedPackages }}
+      hasChangesets: ${{ steps.changesets.outputs.hasChangesets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.8"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Create Release PR or Publish
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          title: "chore: version packages"
+          commit: "chore: version packages"
+          version: bun changeset version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────
+  # Job 2: Create git tag after changeset publish
+  # ──────────────────────────────────────────────
+  create-tag:
+    name: Create Release Tag
+    needs: [changeset]
+    if: needs.changeset.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from package.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin ${{ steps.version.outputs.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────
+  # Job 3: Cross-platform build & publish to draft
+  # ──────────────────────────────────────────────
+  release-build:
+    name: Build (${{ matrix.os }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.8"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Cache Electron binaries (macOS)
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('apps/desktop/package.json') }}
+          restore-keys: electron-${{ runner.os }}-
+        if: runner.os == 'macOS'
+
+      - name: Cache Electron binaries (Linux)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('apps/desktop/package.json') }}
+          restore-keys: electron-${{ runner.os }}-
+        if: runner.os == 'Linux'
+
+      - name: Cache Electron binaries (Windows)
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/electron/Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('apps/desktop/package.json') }}
+          restore-keys: electron-${{ runner.os }}-
+        if: runner.os == 'Windows'
+
+      - name: Cache Turborepo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ hashFiles('bun.lock') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ hashFiles('bun.lock') }}-
+            turbo-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build electron-vite
+        run: bun run build
+        working-directory: apps/desktop
+
+      - name: Package & publish to GitHub Release (draft)
+        run: bun run eb:${{ matrix.platform }} -- --publish always
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # macOS notarization (uncomment when configured):
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          # CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+
+      # Keep artifacts as fallback in case publish fails
+      - name: Upload artifacts (Linux)
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.rpm
+            apps/desktop/release/*.yml
+          retention-days: 30
+
+      - name: Upload artifacts (macOS)
+        if: matrix.platform == 'mac'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.yml
+          retention-days: 30
+
+      - name: Upload artifacts (Windows)
+        if: matrix.platform == 'win'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.yml
+          retention-days: 30
+
+  # ──────────────────────────────────────────────
+  # Job 4: Promote draft → published release
+  # ──────────────────────────────────────────────
+  publish-release:
+    name: Publish GitHub Release
+    needs: [release-build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version info
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # Extract the changelog section for this version from CHANGELOG.md
+          CHANGELOG_FILE="apps/desktop/CHANGELOG.md"
+          if [ -f "$CHANGELOG_FILE" ]; then
+            # Extract content between this version header and the next version header
+            CONTENT=$(awk '/^## ${{ steps.version.outputs.version }}$/,/^## [0-9]/' "$CHANGELOG_FILE" | head -n -1 | tail -n +2)
+            if [ -z "$CONTENT" ]; then
+              CONTENT="No changelog entry found for this version."
+            fi
+          else
+            CONTENT="No changelog file found."
+          fi
+          # Write to file to avoid escaping issues
+          echo "$CONTENT" > /tmp/changelog.md
+          echo "has_changelog=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish draft release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const tag = '${{ steps.version.outputs.tag }}';
+            const draft = releases.find(
+              (r) => r.draft && r.tag_name === tag
+            );
+
+            if (!draft) {
+              core.setFailed(`No draft release found for tag ${tag}`);
+              return;
+            }
+
+            console.log(`Found draft release: ${draft.name} (${draft.id})`);
+            console.log(`Assets: ${draft.assets.map(a => a.name).join(', ')}`);
+
+            // Read changelog content
+            let body = '';
+            try {
+              const changelog = fs.readFileSync('/tmp/changelog.md', 'utf8').trim();
+              if (changelog && changelog !== 'No changelog entry found for this version.' && changelog !== 'No changelog file found.') {
+                body = `## What's Changed\n\n${changelog}`;
+              }
+            } catch (e) {
+              console.log('No changelog file found, using auto-generated notes');
+            }
+
+            // If no changeset changelog, fall back to auto-generated release notes
+            if (!body) {
+              const { data: generatedNotes } = await github.rest.repos.generateReleaseNotes({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+              });
+              body = generatedNotes.body;
+            }
+
+            const isPrerelease = '${{ steps.version.outputs.version }}'.includes('-');
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: draft.id,
+              draft: false,
+              prerelease: isPrerelease,
+              name: `Palot ${{ steps.version.outputs.version }}`,
+              body: body,
+              make_latest: isPrerelease ? 'false' : 'true',
+            });
+
+            console.log('Release published successfully!');
