@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.next/
+out/
+
+# Turborepo
+.turbo/
+
+# Tauri
+src-tauri/target/
+
+# Electron Builder
+release/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Research (local only)
+research/
+
+# Logo design iterations (keep final assets in resources/brand/)
+docs/logo-drafts/
+
+# Git worktrees
+.worktrees/

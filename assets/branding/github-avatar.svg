@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Palot GitHub Avatar: Optimized for circular crop -->
+  <!-- Palot Blue palette, centered for GitHub's circle mask -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#0f1629"/>
+      <stop offset="100%" stop-color="#001a2b"/>
+    </radialGradient>
+    <radialGradient id="dot" cx="40%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#a8ddf7"/>
+      <stop offset="50%" stop-color="#6fcbf3"/>
+      <stop offset="100%" stop-color="#05bdf5"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#05bdf5" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#05bdf5" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="dotBlur">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12"/>
+    </filter>
+    <clipPath id="circleClip">
+      <circle cx="512" cy="512" r="512"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background fills the full square; GitHub will circle-crop it -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+
+  <!-- Outer ring: pulled in from 420 to 380 so it doesn't clip at edges -->
+  <circle cx="512" cy="512" r="380" fill="none" stroke="#6fcbf3" stroke-width="30" opacity="0.35"/>
+
+  <!-- Inner ring -->
+  <circle cx="512" cy="512" r="230" fill="none" stroke="#6fcbf3" stroke-width="34" opacity="0.6"/>
+
+  <!-- Glow halo -->
+  <circle cx="512" cy="512" r="150" fill="url(#glow)"/>
+
+  <!-- Soft bloom behind center dot -->
+  <circle cx="512" cy="512" r="90" fill="#05bdf5" opacity="0.2" filter="url(#dotBlur)"/>
+
+  <!-- Center dot -->
+  <circle cx="512" cy="512" r="76" fill="url(#dot)"/>
+</svg>
