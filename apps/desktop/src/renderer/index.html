@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+    <title>Palot</title>
+  </head>
+  <body>
+    <script>
+      // Prevent flash of wrong color scheme before React hydrates.
+      // Reads from the same localStorage key used by Zustand persist.
+      try {
+        var prefs = JSON.parse(localStorage.getItem('palot-preferences') || '{}');
+        var state = prefs.state || {};
+        var scheme = state.colorScheme || 'dark';
+        var themeId = state.theme || 'default';
+        var cls = scheme;
+        if (scheme === 'system') {
+          cls = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.classList.add(cls);
+        if (themeId !== 'default') {
+          document.documentElement.classList.add('theme-' + themeId);
+        }
+      } catch (e) {
+        document.documentElement.classList.add('dark');
+      }
+    </script>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

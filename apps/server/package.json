@@ -1,0 +1,30 @@
+{
+	"name": "@palot/server",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"default": "./src/index.ts"
+		},
+		"./client": {
+			"types": "./dist/src/client.d.ts",
+			"default": "./src/client.ts"
+		}
+	},
+	"scripts": {
+		"dev": "bun run --hot src/index.ts",
+		"build": "tsc && bun build src/index.ts --outdir dist --target bun",
+		"build:types": "tsc",
+		"check-types": "tsgo --noEmit"
+	},
+	"dependencies": {
+		"@opencode-ai/sdk": "^1.1.53",
+		"hono": "4.7.10"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.2.14",
+		"typescript": "^5.8.3"
+	}
+}
