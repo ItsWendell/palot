@@ -15,9 +15,9 @@
     </filter>
   </defs>
 
-  <circle cx="512" cy="512" r="420" fill="none" stroke="#6fcbf3" stroke-width="32" opacity="0.35"/>
-  <circle cx="512" cy="512" r="250" fill="none" stroke="#6fcbf3" stroke-width="36" opacity="0.6"/>
-  <circle cx="512" cy="512" r="160" fill="url(#glow)"/>
-  <circle cx="512" cy="512" r="95" fill="#05bdf5" opacity="0.2" filter="url(#dotBlur)"/>
-  <circle cx="512" cy="512" r="80" fill="url(#dot)"/>
+  <circle cx="512" cy="512" r="350" fill="none" stroke="#6fcbf3" stroke-width="28" opacity="0.35"/>
+  <circle cx="512" cy="512" r="210" fill="none" stroke="#6fcbf3" stroke-width="30" opacity="0.6"/>
+  <circle cx="512" cy="512" r="134" fill="url(#glow)"/>
+  <circle cx="512" cy="512" r="80" fill="#05bdf5" opacity="0.2" filter="url(#dotBlur)"/>
+  <circle cx="512" cy="512" r="67" fill="url(#dot)"/>
 </svg>

@@ -423,7 +423,10 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 					{latestText && (
 						<div className="border-t border-border/30 px-3.5 py-2.5">
 							<div className="max-h-96 overflow-y-auto text-xs text-muted-foreground">
-								<MessageResponse className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_li]:text-xs [&_p]:text-xs [&_p]:my-1 [&_pre]:max-h-40 [&_pre]:text-[11px]">
+								<MessageResponse
+									animated={isRunning}
+									className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_li]:text-xs [&_p]:text-xs [&_p]:my-1 [&_pre]:max-h-40 [&_pre]:text-[11px]"
+								>
 									{latestText}
 								</MessageResponse>
 							</div>

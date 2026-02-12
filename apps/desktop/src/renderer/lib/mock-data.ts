@@ -175,6 +175,111 @@ export const MOCK_DISCOVERY: DiscoveryState = {
 }
 
 // ============================================================
+// Providers data (for model selector)
+// ============================================================
+
+export const MOCK_PROVIDERS = {
+	providers: [
+		{
+			id: "bedrock",
+			name: "AWS Bedrock",
+			source: "builtin" as const,
+			env: {},
+			options: {},
+			models: {
+				"anthropic.claude-opus-4-6": {
+					id: "anthropic.claude-opus-4-6",
+					name: "Claude Opus 4.6",
+					variants: {
+						Adaptive: {
+							name: "Adaptive",
+							description: "Adaptive reasoning mode for complex tasks",
+						},
+						Standard: {
+							name: "Standard",
+							description: "Standard mode for general tasks",
+						},
+					},
+					capabilities: {
+						input: { image: true, pdf: true },
+						attachment: true,
+					},
+				},
+			},
+		},
+		{
+			id: "anthropic",
+			name: "Anthropic",
+			source: "builtin" as const,
+			env: {},
+			options: {},
+			models: {
+				"claude-sonnet-4-20250514": {
+					id: "claude-sonnet-4-20250514",
+					name: "Claude Sonnet 4",
+					capabilities: {
+						input: { image: true, pdf: true },
+						attachment: true,
+					},
+				},
+			},
+		},
+	],
+	defaults: {
+		bedrock: "anthropic.claude-opus-4-6",
+		anthropic: "claude-sonnet-4-20250514",
+	},
+}
+
+// ============================================================
+// Agents data
+// ============================================================
+
+export const MOCK_AGENTS = [
+	{
+		id: "build",
+		name: "Build",
+		description: "Expert at building new features and implementing complex functionality",
+		mode: "primary" as const,
+		hidden: false,
+		permissions: [],
+		options: {},
+		model: {
+			providerID: "bedrock",
+			modelID: "anthropic.claude-opus-4-6",
+		},
+	},
+	{
+		id: "debug",
+		name: "Debug",
+		description: "Specialist in finding and fixing bugs",
+		mode: "primary" as const,
+		hidden: false,
+		permissions: [],
+		options: {},
+	},
+	{
+		id: "default",
+		name: "Default",
+		description: "General-purpose assistant",
+		mode: "primary" as const,
+		hidden: false,
+		permissions: [],
+		options: {},
+	},
+]
+
+// ============================================================
+// Config data
+// ============================================================
+
+export const MOCK_CONFIG = {
+	model: "bedrock/anthropic.claude-opus-4-6",
+	smallModel: "anthropic/claude-sonnet-4-20250514",
+	defaultAgent: "Build",
+}
+
+// ============================================================
 // Session factory helpers
 // ============================================================
 
@@ -349,8 +454,8 @@ function userMsg(id: string, sessionID: string, created: number): UserMessage {
 		sessionID,
 		role: "user",
 		time: { created },
-		agent: "default",
-		model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
+		agent: "Build",
+		model: { providerID: "bedrock", modelID: "anthropic.claude-opus-4-6" },
 	}
 }
 
@@ -367,9 +472,9 @@ function assistantMsg(
 		role: "assistant",
 		time: { created, completed },
 		parentID,
-		modelID: "claude-sonnet-4-20250514",
-		providerID: "anthropic",
-		mode: "default",
+		modelID: "anthropic.claude-opus-4-6",
+		providerID: "bedrock",
+		mode: "Adaptive",
 		path: { cwd: DIRS.palot, root: DIRS.palot },
 		cost: 0.003 + Math.random() * 0.01,
 		tokens: {
@@ -507,7 +612,7 @@ const darkModeParts: Record<string, Part[]> = {
 			IDS.dmAssistant1,
 			IDS.sessionDarkMode,
 			0,
-			"The user wants a dark mode toggle in settings. I need to:\n1. Check existing theme infrastructure\n2. Add a toggle component\n3. Wire up localStorage persistence\n4. Apply CSS variables for theming",
+			"The user wants a theme toggle in settings. I should:\n1. Read the existing Settings component to see the layout\n2. Create a theme utility module (resolve, apply, persist)\n3. Add a three-way toggle: light / dark / system\n4. Use `data-theme` attribute so CSS custom properties switch instantly",
 			25 * MINUTE - 2000,
 		),
 		toolPart(
@@ -517,7 +622,7 @@ const darkModeParts: Record<string, Part[]> = {
 			"read",
 			"Read src/components/settings.tsx",
 			{ path: "src/components/settings.tsx" },
-			'export function Settings() {\n  return (\n    <div className="settings-page">\n      <h1>Settings</h1>\n      <section>...</section>\n    </div>\n  )\n}',
+			'import { Card, CardContent, CardHeader } from "@/ui/card"\nimport { Label } from "@/ui/label"\n\nexport function Settings() {\n  return (\n    <Card>\n      <CardHeader title="Preferences" />\n      <CardContent>\n        <Label>Language</Label>\n        <LanguagePicker />\n        {/* TODO: add theme toggle */}\n      </CardContent>\n    </Card>\n  )\n}',
 			24 * MINUTE,
 		),
 		toolPart(
@@ -525,12 +630,12 @@ const darkModeParts: Record<string, Part[]> = {
 			IDS.sessionDarkMode,
 			2,
 			"edit",
-			"Edit src/hooks/use-theme.ts",
+			"Edit src/lib/theme.ts",
 			{
-				path: "src/hooks/use-theme.ts",
-				diff: '+import { useCallback, useEffect, useState } from "react"\n+\n+export function useTheme() {\n+  const [dark, setDark] = useState(() =>\n+    localStorage.getItem("theme") === "dark"\n+  )\n+  ...\n+}',
+				path: "src/lib/theme.ts",
+				diff: '+type Theme = "light" | "dark" | "system"\n+\n+const STORAGE_KEY = "app-theme"\n+const query = "(prefers-color-scheme: dark)"\n+\n+export function resolveTheme(stored: Theme | null): "light" | "dark" {\n+  if (stored === "light" || stored === "dark") return stored\n+  return window.matchMedia(query).matches ? "dark" : "light"\n+}\n+\n+export function applyTheme(theme: "light" | "dark") {\n+  document.documentElement.dataset.theme = theme\n+}',
 			},
-			"Applied edit to src/hooks/use-theme.ts",
+			"Applied edit to src/lib/theme.ts",
 			23 * MINUTE,
 		),
 		toolPart(
@@ -541,7 +646,7 @@ const darkModeParts: Record<string, Part[]> = {
 			"Edit src/components/settings.tsx",
 			{
 				path: "src/components/settings.tsx",
-				diff: '+import { useTheme } from "../hooks/use-theme"\n+import { Switch } from "./ui/switch"\n ...\n+  <Switch checked={dark} onCheckedChange={toggle} />\n+  <span>{dark ? "Dark" : "Light"} mode</span>',
+				diff: '+import { ToggleGroup, ToggleGroupItem } from "@/ui/toggle-group"\n+import { Sun, Moon, Monitor } from "lucide-react"\n ...\n+        <Label>Theme</Label>\n+        <ToggleGroup type="single" value={theme} onValueChange={setTheme}>\n+          <ToggleGroupItem value="light"><Sun /></ToggleGroupItem>\n+          <ToggleGroupItem value="dark"><Moon /></ToggleGroupItem>\n+          <ToggleGroupItem value="system"><Monitor /></ToggleGroupItem>\n+        </ToggleGroup>',
 			},
 			"Applied edit to src/components/settings.tsx",
 			22 * MINUTE,
@@ -550,7 +655,7 @@ const darkModeParts: Record<string, Part[]> = {
 			IDS.dmAssistant1,
 			IDS.sessionDarkMode,
 			4,
-			"I've added the dark mode toggle to the settings page. Here's what I did:\n\n1. **Created `src/hooks/use-theme.ts`** - A custom hook that manages theme state with localStorage persistence and applies CSS class changes to the document root.\n\n2. **Updated `src/components/settings.tsx`** - Added a toggle switch component that uses the theme hook.\n\nThe theme is applied immediately via CSS custom properties on `:root`, so there's no flash or reload needed. The preference persists across sessions via localStorage.",
+			"I've added the dark mode toggle to the settings page. Here's what I did:\n\n1. **Created `src/lib/theme.ts`** - Pure functions to resolve, apply, and persist the theme. Supports `light`, `dark`, and `system` (which reads `prefers-color-scheme`).\n\n2. **Updated `src/components/settings.tsx`** - Added a three-way toggle group (Sun/Moon/Monitor icons) so users can pick light, dark, or match their OS.\n\nThe theme applies instantly via `data-theme` on the root element, no reload needed.",
 			20 * MINUTE,
 		),
 	],
@@ -568,7 +673,7 @@ const darkModeParts: Record<string, Part[]> = {
 			IDS.dmAssistant2,
 			IDS.sessionDarkMode,
 			0,
-			"I need to add `prefers-color-scheme` media query detection and a CSS transition for the theme switch.",
+			"The `system` option already resolves on load, but doesn't react when the OS preference changes. I'll add a `matchMedia` listener so the theme updates in real-time, plus a CSS transition on `background-color` and `color` for a smooth switch.",
 			8 * MINUTE - 1500,
 		),
 		toolPart(
@@ -576,9 +681,9 @@ const darkModeParts: Record<string, Part[]> = {
 			IDS.sessionDarkMode,
 			1,
 			"read",
-			"Read src/hooks/use-theme.ts",
-			{ path: "src/hooks/use-theme.ts" },
-			'export function useTheme() {\n  const [dark, setDark] = useState(() =>\n    localStorage.getItem("theme") === "dark"\n  )\n  const toggle = useCallback(() => {\n    setDark((prev) => {\n      const next = !prev\n      localStorage.setItem("theme", next ? "dark" : "light")\n      document.documentElement.classList.toggle("dark", next)\n      return next\n    })\n  }, [])\n  return { dark, toggle }\n}',
+			"Read src/lib/theme.ts",
+			{ path: "src/lib/theme.ts" },
+			'type Theme = "light" | "dark" | "system"\n\nconst STORAGE_KEY = "app-theme"\nconst query = "(prefers-color-scheme: dark)"\n\nexport function resolveTheme(stored: Theme | null) {\n  if (stored === "light" || stored === "dark") return stored\n  return window.matchMedia(query).matches ? "dark" : "light"\n}\n\nexport function applyTheme(theme: "light" | "dark") {\n  document.documentElement.dataset.theme = theme\n}',
 			7 * MINUTE,
 		),
 		runningToolPart(
@@ -586,10 +691,10 @@ const darkModeParts: Record<string, Part[]> = {
 			IDS.sessionDarkMode,
 			2,
 			"edit",
-			"Edit src/hooks/use-theme.ts",
+			"Edit src/lib/theme.ts",
 			{
-				path: "src/hooks/use-theme.ts",
-				diff: '+  // Detect system preference\n+  const systemPrefersDark = window.matchMedia(\n+    "(prefers-color-scheme: dark)"\n+  ).matches\n+  const stored = localStorage.getItem("theme")\n+  const initial = stored ? stored === "dark" : systemPrefersDark',
+				path: "src/lib/theme.ts",
+				diff: '+export function watchSystemTheme(cb: (dark: boolean) => void) {\n+  const mql = window.matchMedia(query)\n+  const handler = (e: MediaQueryListEvent) => cb(e.matches)\n+  mql.addEventListener("change", handler)\n+  return () => mql.removeEventListener("change", handler)\n+}',
 			},
 			2 * MINUTE,
 		),

@@ -9,6 +9,7 @@ import { useAtomValue } from "jotai"
 import { useCallback } from "react"
 import { serverConnectedAtom } from "../atoms/connection"
 import { isMockModeAtom } from "../atoms/mock-mode"
+import { MOCK_AGENTS, MOCK_CONFIG, MOCK_PROVIDERS } from "../lib/mock-data"
 import { fetchModelState, updateModelRecent } from "../services/backend"
 import { getProjectClient } from "../services/connection-manager"
 
@@ -184,6 +185,16 @@ export function useProviders(directory: string | null): {
 		}
 	}, [directory, queryClient])
 
+	// Return mock data if in mock mode
+	if (isMockMode && directory) {
+		return {
+			data: MOCK_PROVIDERS as unknown as ProvidersData,
+			loading: false,
+			error: null,
+			reload,
+		}
+	}
+
 	return {
 		data: data ?? null,
 		loading: isLoading,
@@ -223,6 +234,16 @@ export function useConfig(directory: string | null): {
 			queryClient.invalidateQueries({ queryKey: queryKeys.config(directory) })
 		}
 	}, [directory, queryClient])
+
+	// Return mock data if in mock mode
+	if (isMockMode && directory) {
+		return {
+			data: MOCK_CONFIG,
+			loading: false,
+			error: null,
+			reload,
+		}
+	}
 
 	return {
 		data: data ?? null,
@@ -298,6 +319,16 @@ export function useOpenCodeAgents(directory: string | null): {
 		}
 	}, [directory, queryClient])
 
+	// Return mock data if in mock mode
+	if (isMockMode && directory) {
+		return {
+			agents: MOCK_AGENTS as unknown as SdkAgent[],
+			loading: false,
+			error: null,
+			reload,
+		}
+	}
+
 	return {
 		agents: data ?? [],
 		loading: isLoading,
@@ -348,6 +379,18 @@ export function useModelState(): {
 		},
 		[queryClient],
 	)
+
+	// Return mock data if in mock mode
+	if (isMockMode) {
+		return {
+			recentModels: [{ providerID: "bedrock", modelID: "anthropic.claude-opus-4-6" }],
+			loading: false,
+			error: null,
+			addRecent: () => {
+				// No-op in mock mode
+			},
+		}
+	}
 
 	return {
 		recentModels: data ?? [],

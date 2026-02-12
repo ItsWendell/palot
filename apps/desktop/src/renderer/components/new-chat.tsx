@@ -289,24 +289,9 @@ export function NewChat() {
 			{/* Hero area — vertically centered */}
 			<div className="flex flex-1 flex-col items-center justify-center px-6">
 				<div className="w-full max-w-4xl space-y-8">
-					{/* Icon */}
+					{/* Wordmark */}
 					<div className="flex justify-center">
-						<div className="flex size-14 items-center justify-center rounded-full border border-border bg-background">
-							<svg
-								aria-hidden="true"
-								className="size-7 text-foreground"
-								fill="none"
-								stroke="currentColor"
-								strokeWidth={1.8}
-								viewBox="0 0 24 24"
-							>
-								<path
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-								/>
-							</svg>
-						</div>
+						<PalotWordmark className="h-4 w-auto text-foreground" />
 					</div>
 
 					{/* "Let's build" + project name */}

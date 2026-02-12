@@ -1,6 +1,6 @@
 /**
  * Root layout: shared providers, global hooks, keyboard navigation,
- * command palette, onboarding, and mock-mode indicator.
+ * command palette, and onboarding.
  * Does NOT render any sidebar chrome -- that lives in SidebarLayout.
  */
 import { TooltipProvider } from "@palot/ui/components/tooltip"
@@ -151,11 +151,6 @@ export function RootLayout() {
 						onOpenChange={setCommandPaletteOpen}
 						agents={agents}
 					/>
-					{isMockMode && (
-						<div className="pointer-events-none fixed bottom-3 right-3 z-50 rounded-md bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold tracking-wider text-black">
-							DEMO
-						</div>
-					)}
 				</SidebarSlotProvider>
 			</AppBarProvider>
 		</TooltipProvider>

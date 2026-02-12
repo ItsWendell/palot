@@ -638,7 +638,9 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 											defaultOpen={isReasoningStreaming ? undefined : false}
 										>
 											<ReasoningTrigger />
-											<ReasoningContent>{reasoningText}</ReasoningContent>
+											<ReasoningContent animated={isReasoningStreaming}>
+												{reasoningText}
+											</ReasoningContent>
 										</Reasoning>
 									)
 								}
@@ -697,7 +699,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 			{working && responseText && !textAlreadyInline && (
 				<Message from="assistant">
 					<MessageContent>
-						<MessageResponse>{responseText}</MessageResponse>
+						<MessageResponse animated>{responseText}</MessageResponse>
 					</MessageContent>
 				</Message>
 			)}

@@ -28,7 +28,7 @@ extraMetadata:
   main: ./out/main/index.js
 
 mac:
-  icon: resources/icon.png
+  icon: resources/icon-macos.png
   target:
     - target: dmg
       arch: [arm64, x64]
