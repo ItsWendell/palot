@@ -53,6 +53,7 @@ jobs:
           title: "chore: version packages"
           commit: "chore: version packages"
           version: bun changeset version
+          publish: bun changeset tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
