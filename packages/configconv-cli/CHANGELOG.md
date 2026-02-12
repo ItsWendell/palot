@@ -1,4 +1,4 @@
-# @palot/desktop
+# configconv
 
 ## 0.2.0-alpha.1
 
@@ -10,9 +10,3 @@
 
 - Updated dependencies [[`e6d4908`](https://github.com/ItsWendell/palot/commit/e6d4908ee0be6a172d07035ce41bc4a71b9cd7cf)]:
   - @palot/configconv@0.2.0-alpha.1
-
-## 0.2.0-alpha.0
-
-### Minor Changes
-
-- [`2181d76`](https://github.com/ItsWendell/palot/commit/2181d76313480e393450f8c9def7e571392811cf) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Initial alpha release of Palot desktop app
