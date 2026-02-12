@@ -488,12 +488,16 @@
   box-shadow: -1px 0 3px -1px rgba(0,0,0,0.08);
   min-height: 0;
   overflow: clip;
+  transition: margin-left 250ms ease-in-out;
 }
 
 /* Opaque tier: sidebar-wrapper needs bg-sidebar so the correct
  * color shows behind the rounded left corners of the content card. */
 :root:not(.electron-transparent):not(.electron-vibrancy) [data-slot="sidebar-wrapper"] {
   background-color: var(--sidebar);
+}
+:root:not(.electron-transparent):not(.electron-vibrancy) [data-slot="sidebar-wrapper"][data-state="collapsed"] [data-slot="sidebar-inset"] {
+  margin-left: 12px;
 }
 
 /* Glass tier 1 (Liquid Glass) */
@@ -504,6 +508,9 @@
   margin-bottom: 12px;
   border-top-right-radius: var(--radius-xl);
   border-bottom-right-radius: var(--radius-xl);
+}
+:root.electron-transparent [data-slot="sidebar-wrapper"][data-state="collapsed"] [data-slot="sidebar-inset"] {
+  margin-left: 12px;
 }
 :root.electron-transparent [data-slot="content-area"] {
   background: color-mix(in srgb, var(--background) var(--glass-content), transparent);
@@ -520,6 +527,9 @@
   margin-bottom: 12px;
   border-top-right-radius: var(--radius-xl);
   border-bottom-right-radius: var(--radius-xl);
+}
+:root.electron-vibrancy [data-slot="sidebar-wrapper"][data-state="collapsed"] [data-slot="sidebar-inset"] {
+  margin-left: 12px;
 }
 :root.electron-vibrancy [data-slot="content-area"] {
   background: color-mix(in srgb, var(--background) var(--glass-content), transparent);

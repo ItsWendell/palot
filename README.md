@@ -68,6 +68,20 @@ Palot spawns and manages the OpenCode server automatically, streams responses in
 
 Download the latest release from the [Releases page](https://github.com/palothq/palot/releases).
 
+### macOS: unsigned app warning
+
+Palot is not yet code-signed or notarized. macOS Gatekeeper will block the app on first launch with a message like *"Palot is damaged and can't be opened"* or *"Apple could not verify Palot"*. To fix this:
+
+**Option A** -- Right-click (or Control-click) the app in Finder and select **Open**, then click **Open** in the dialog.
+
+**Option B** -- Remove the quarantine attribute from the terminal:
+
+```bash
+xattr -cr /Applications/Palot.app
+```
+
+This is expected behavior for unsigned apps and does not indicate malware.
+
 <br>
 
 ## Getting Started

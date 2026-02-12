@@ -155,6 +155,18 @@ async function createWindow(): Promise<BrowserWindow> {
 		})
 	}
 
+	// Workaround: transparent/vibrancy windows on macOS lose click interactivity
+	// after DevTools are toggled (Electron recomposites the window and marks
+	// transparent regions as click-through). Force detached mode and re-assert
+	// mouse events on every DevTools open/close cycle.
+	if (process.platform === "darwin") {
+		const fixClickThrough = () => {
+			win.setIgnoreMouseEvents(false)
+		}
+		win.webContents.on("devtools-opened", fixClickThrough)
+		win.webContents.on("devtools-closed", fixClickThrough)
+	}
+
 	// Dev: load from Vite dev server | Prod: load built files
 	if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
 		win.loadURL(process.env.ELECTRON_RENDERER_URL)

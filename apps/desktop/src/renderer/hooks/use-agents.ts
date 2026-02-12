@@ -1,9 +1,11 @@
 import { useAtomValue, useSetAtom } from "jotai"
 import {
+	agentFamily,
 	agentsAtom,
 	formatElapsed,
 	formatRelativeTime,
 	projectListAtom,
+	sessionNameFamily,
 } from "../atoms/derived/agents"
 import { type DisplayMode, displayModeAtom } from "../atoms/preferences"
 import { commandPaletteOpenAtom, showSubAgentsAtom, toggleShowSubAgentsAtom } from "../atoms/ui"
@@ -17,6 +19,22 @@ export { formatRelativeTime, formatElapsed }
  */
 export function useAgents(): Agent[] {
 	return useAtomValue(agentsAtom)
+}
+
+/**
+ * Hook that returns the Agent for a single session ID.
+ * Only subscribes to that session's data, not all sessions.
+ */
+export function useAgent(sessionId: string): Agent | null {
+	return useAtomValue(agentFamily(sessionId))
+}
+
+/**
+ * Hook that returns just the session title for a given session ID.
+ * Used for parent session name lookups without subscribing to all agents.
+ */
+export function useSessionName(sessionId: string): string | undefined {
+	return useAtomValue(sessionNameFamily(sessionId))
 }
 
 /**

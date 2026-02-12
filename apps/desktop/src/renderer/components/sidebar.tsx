@@ -36,7 +36,7 @@ import {
 	TimerIcon,
 	TrashIcon,
 } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { formatElapsed } from "../hooks/use-agents"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
 
@@ -142,15 +142,6 @@ export function AppSidebarContent({
 										key={agent.id}
 										agent={agent}
 										isSelected={agent.id === selectedSessionId}
-										onSelect={() =>
-											navigate({
-												to: "/project/$projectSlug/session/$sessionId",
-												params: {
-													projectSlug: agent.projectSlug,
-													sessionId: agent.id,
-												},
-											})
-										}
 										onRename={onRenameSession}
 										onDelete={onDeleteSession}
 										showProject
@@ -172,15 +163,6 @@ export function AppSidebarContent({
 										key={agent.id}
 										agent={agent}
 										isSelected={agent.id === selectedSessionId}
-										onSelect={() =>
-											navigate({
-												to: "/project/$projectSlug/session/$sessionId",
-												params: {
-													projectSlug: agent.projectSlug,
-													sessionId: agent.id,
-												},
-											})
-										}
 										onRename={onRenameSession}
 										onDelete={onDeleteSession}
 										showProject
@@ -257,7 +239,6 @@ export function AppSidebarContent({
 									project={project}
 									agents={agents}
 									selectedSessionId={selectedSessionId}
-									navigate={navigate}
 									onRename={onRenameSession}
 									onDelete={onDeleteSession}
 								/>
@@ -302,17 +283,16 @@ function ProjectFolder({
 	project,
 	agents,
 	selectedSessionId,
-	navigate,
 	onRename,
 	onDelete,
 }: {
 	project: SidebarProject
 	agents: Agent[]
 	selectedSessionId: string | null
-	navigate: ReturnType<typeof useNavigate>
 	onRename?: (agent: Agent, title: string) => Promise<void>
 	onDelete?: (agent: Agent) => Promise<void>
 }) {
+	const navigate = useNavigate()
 	const [expanded, setExpanded] = useState(false)
 	const [showAll, setShowAll] = useState(false)
 
@@ -361,15 +341,6 @@ function ProjectFolder({
 									key={agent.id}
 									agent={agent}
 									isSelected={agent.id === selectedSessionId}
-									onSelect={() =>
-										navigate({
-											to: "/project/$projectSlug/session/$sessionId",
-											params: {
-												projectSlug: agent.projectSlug,
-												sessionId: agent.id,
-											},
-										})
-									}
 									onRename={onRename}
 									onDelete={onDelete}
 									compact
@@ -421,7 +392,6 @@ function useLiveDuration(agent: Agent): string {
 const SessionItem = memo(function SessionItem({
 	agent,
 	isSelected,
-	onSelect,
 	onRename,
 	onDelete,
 	showProject = false,
@@ -429,12 +399,13 @@ const SessionItem = memo(function SessionItem({
 }: {
 	agent: Agent
 	isSelected: boolean
-	onSelect: () => void
 	onRename?: (agent: Agent, title: string) => Promise<void>
 	onDelete?: (agent: Agent) => Promise<void>
 	showProject?: boolean
 	compact?: boolean
 }) {
+	const navigate = useNavigate()
+	const [, startTransition] = useTransition()
 	const StatusIcon = STATUS_ICON[agent.status]
 	const statusColor = STATUS_COLOR[agent.status]
 	const isSubAgent = !!agent.parentId
@@ -443,6 +414,15 @@ const SessionItem = memo(function SessionItem({
 	const [isEditing, setIsEditing] = useState(false)
 	const [editValue, setEditValue] = useState(agent.name)
 	const inputRef = useRef<HTMLInputElement>(null)
+
+	const onSelect = useCallback(() => {
+		startTransition(() => {
+			navigate({
+				to: "/project/$projectSlug/session/$sessionId",
+				params: { projectSlug: agent.projectSlug, sessionId: agent.id },
+			})
+		})
+	}, [navigate, agent.projectSlug, agent.id])
 
 	const startEditing = useCallback(() => {
 		setEditValue(agent.name)

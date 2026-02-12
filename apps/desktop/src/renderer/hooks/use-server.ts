@@ -57,8 +57,22 @@ export function useAgentActions() {
 				files?: FileAttachment[]
 			},
 		) => {
+			log.debug("sendPrompt called", {
+				directory,
+				sessionId,
+				textLength: text.length,
+				agent: options?.agent,
+				model: options?.model,
+				variant: options?.variant,
+				hasFiles: !!(options?.files && options.files.length > 0),
+			})
+
 			const client = getProjectClient(directory)
-			if (!client) throw new Error("Not connected to OpenCode server")
+			if (!client) {
+				log.error("sendPrompt: no client for directory", { directory })
+				throw new Error("Not connected to OpenCode server")
+			}
+			log.debug("sendPrompt: got client", { directory })
 
 			// Optimistic user message — include variant so it's available when
 			// re-initializing the session's toolbar state (the v1 UserMessage type
@@ -74,6 +88,7 @@ export function useAgentActions() {
 				variant: options?.variant,
 			}
 			appStore.set(upsertMessageAtom, optimisticMessage as UserMessage)
+			log.debug("sendPrompt: optimistic message set", { optimisticId })
 
 			// Optimistic text part
 			const optimisticTextPart: TextPart = {
@@ -112,9 +127,14 @@ export function useAgentActions() {
 				})
 			}
 
-			log.debug("sendPrompt", { sessionId, agent: options?.agent, model: options?.model })
+			log.debug("sendPrompt: calling promptAsync", {
+				sessionId,
+				agent: options?.agent,
+				model: options?.model,
+				partsCount: parts.length,
+			})
 			try {
-				await client.session.promptAsync({
+				const result = await client.session.promptAsync({
 					sessionID: sessionId,
 					parts,
 					model: options?.model
@@ -123,8 +143,12 @@ export function useAgentActions() {
 					agent: options?.agent,
 					variant: options?.variant,
 				})
+				log.debug("sendPrompt: promptAsync returned", {
+					sessionId,
+					result: JSON.stringify(result).slice(0, 200),
+				})
 			} catch (err) {
-				log.error("sendPrompt failed", { sessionId, agent: options?.agent }, err)
+				log.error("sendPrompt: promptAsync failed", { sessionId, agent: options?.agent }, err)
 				throw err
 			}
 		},

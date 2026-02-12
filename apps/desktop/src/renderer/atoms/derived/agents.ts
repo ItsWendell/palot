@@ -1,4 +1,5 @@
 import { atom } from "jotai"
+import { atomFamily } from "jotai-family"
 import type { Agent, AgentStatus, SessionStatus, SidebarProject } from "../../lib/types"
 import { type DiscoveredProject, type DiscoveredSession, discoveryAtom } from "../discovery"
 import { sessionFamily, sessionIdsAtom } from "../sessions"
@@ -138,40 +139,51 @@ function collectAllProjects(
 }
 
 // ============================================================
-// Derived atom: agents list
+// Derived atom: project slug map (shared by agentsAtom + agentFamily)
 // ============================================================
 
-export const agentsAtom = atom((get) => {
+/**
+ * Lightweight derived atom that maps directory -> { id, slug }.
+ * Only depends on session directories (stable after creation) and discovery
+ * (loaded once). This avoids recomputing slugs when session status/permissions change.
+ */
+const projectSlugMapAtom = atom((get) => {
 	const sessionIds = get(sessionIdsAtom)
 	const discovery = get(discoveryAtom)
-	const agents: Agent[] = []
 
-	// Collect live session info for project map building
 	const liveSessionDirs = new Map<string, string>()
-	const liveSessionIds = new Set<string>()
-
 	for (const id of sessionIds) {
 		const entry = get(sessionFamily(id))
 		if (!entry) continue
 		liveSessionDirs.set(id, entry.directory)
-		liveSessionIds.add(id)
 	}
 
-	// Build project slug map
 	const allProjects = collectAllProjects(liveSessionDirs, discovery)
-	const slugMap = buildProjectSlugMap(allProjects)
+	return buildProjectSlugMap(allProjects)
+})
 
-	// 1. Live sessions
-	for (const id of sessionIds) {
-		const entry = get(sessionFamily(id))
-		if (!entry) continue
+// ============================================================
+// Per-session agent selector (reads ONE sessionFamily atom)
+// ============================================================
+
+/**
+ * Derives a full `Agent` for a single session. Only subscribes to that session's
+ * `sessionFamily` atom + the shared `projectSlugMapAtom`, so status/permission
+ * changes on OTHER sessions do not trigger re-derivation.
+ */
+export const agentFamily = atomFamily((sessionId: string) =>
+	atom((get) => {
+		const entry = get(sessionFamily(sessionId))
+		if (!entry) return null
+
+		const slugMap = get(projectSlugMapAtom)
 		const { session, status, permissions, questions, directory } = entry
 		const projectInfo = slugMap.get(directory)
 		const agentStatus = deriveAgentStatus(status, permissions.length > 0, questions.length > 0)
 		const created = session.time.created
 		const lastActiveAt = session.time.updated ?? session.time.created
 
-		agents.push({
+		const agent: Agent = {
 			id: session.id,
 			sessionId: session.id,
 			name: session.title || "Untitled",
@@ -198,7 +210,41 @@ export const agentsAtom = atom((get) => {
 			parentId: session.parentID,
 			createdAt: created,
 			lastActiveAt,
-		})
+		}
+		return agent
+	}),
+)
+
+/**
+ * Reads just the session title for a given session ID.
+ * Used for breadcrumb "parent session name" lookups without subscribing
+ * to the full agents list.
+ */
+export const sessionNameFamily = atomFamily((sessionId: string) =>
+	atom((get) => {
+		const entry = get(sessionFamily(sessionId))
+		if (!entry) return undefined
+		return entry.session.title || "Untitled"
+	}),
+)
+
+// ============================================================
+// Derived atom: agents list
+// ============================================================
+
+export const agentsAtom = atom((get) => {
+	const sessionIds = get(sessionIdsAtom)
+	const discovery = get(discoveryAtom)
+	const slugMap = get(projectSlugMapAtom)
+	const agents: Agent[] = []
+
+	const liveSessionIds = new Set<string>()
+
+	// 1. Live sessions -- read via agentFamily for consistency
+	for (const id of sessionIds) {
+		liveSessionIds.add(id)
+		const agent = get(agentFamily(id))
+		if (agent) agents.push(agent)
 	}
 
 	// 2. Discovered (offline) sessions
@@ -255,20 +301,9 @@ export const projectListAtom = atom((get) => {
 	const sessionIds = get(sessionIdsAtom)
 	const discovery = get(discoveryAtom)
 	const showSubAgents = get(showSubAgentsAtom)
+	const slugMap = get(projectSlugMapAtom)
 
-	// Collect live session info for project map building
-	const liveSessionDirs = new Map<string, string>()
-	const liveSessionIds = new Set<string>()
-
-	for (const id of sessionIds) {
-		const entry = get(sessionFamily(id))
-		if (!entry) continue
-		liveSessionDirs.set(id, entry.directory)
-		liveSessionIds.add(id)
-	}
-
-	const allProjects = collectAllProjects(liveSessionDirs, discovery)
-	const slugMap = buildProjectSlugMap(allProjects)
+	const liveSessionIds = new Set<string>(sessionIds)
 
 	const projects = new Map<string, SidebarProject>()
 

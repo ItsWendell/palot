@@ -60,9 +60,15 @@ export function AgentSelector({
 }: AgentSelectorProps) {
 	if (agents.length === 0) return null
 
-	const currentAgent = selectedAgent ?? defaultAgent ?? agents[0]?.name ?? "build"
-
-	const currentAgentObj = agents.find((a) => a.name === currentAgent)
+	// Resolve which agent to display. If the preferred name doesn't match any
+	// available agent (e.g. stale session data, config reload), fall back to a
+	// known-valid agent so the Radix Select always has a matching SelectItem.
+	const preferred = selectedAgent ?? defaultAgent ?? agents[0]?.name ?? "build"
+	const currentAgentObj =
+		agents.find((a) => a.name === preferred) ??
+		agents.find((a) => a.name === defaultAgent) ??
+		agents[0]
+	const currentAgent = currentAgentObj?.name ?? preferred
 
 	return (
 		<Select value={currentAgent} onValueChange={onSelectAgent} disabled={disabled}>

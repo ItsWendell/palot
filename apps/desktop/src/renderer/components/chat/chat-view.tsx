@@ -45,8 +45,12 @@ import {
 	useModelState,
 } from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
+import { createLogger } from "../../lib/logger"
 import type { Agent, FileAttachment, QuestionAnswer } from "../../lib/types"
 import { getProjectClient } from "../../services/connection-manager"
+
+const log = createLogger("chat-view")
+
 import { PermissionItem } from "./chat-permission"
 import { ChatQuestionFlow } from "./chat-question"
 import { ChatTurnComponent } from "./chat-turn"
@@ -417,47 +421,81 @@ export function ChatView({
 	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
 	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
 
-	// Initialize model + variant from the session's last user message.
+	// Initialize model, variant, and agent from the session's last user message.
 	// This ensures returning to an existing session continues with the same
-	// model AND variant, isolated from changes made in other sessions.
-	// Falls back to per-project preference only when the message has no variant.
+	// settings, isolated from changes made in other sessions.
+	// Falls back to per-project preferences when the session has no relevant info.
 	const sessionMessages = useAtomValue(messagesFamily(agent.sessionId))
 	const projectModels = useAtomValue(projectModelsAtom)
-	const initializedRef = useRef(false)
+	const initializedForSessionRef = useRef<string | null>(null)
+	const resetForSessionRef = useRef<string | null>(null)
 	useEffect(() => {
-		if (initializedRef.current) return
-		if (!sessionMessages || sessionMessages.length === 0) return
-		initializedRef.current = true
+		// Reset state once when switching sessions (component stays mounted across
+		// session navigation, so we track which session we've reset/initialized for).
+		// Seed immediately from per-project preferences to avoid a flash of empty
+		// selectors while session messages load asynchronously.
+		if (resetForSessionRef.current !== agent.sessionId) {
+			resetForSessionRef.current = agent.sessionId
+			initializedForSessionRef.current = null
+			const stored = agent.directory ? projectModels[agent.directory] : undefined
+			if (stored?.providerID && stored?.modelID) {
+				setSelectedModel(stored)
+				setSelectedVariant(stored.variant)
+			} else {
+				setSelectedModel(null)
+				setSelectedVariant(undefined)
+			}
+			setSelectedAgent(stored?.agent || null)
+		}
 
-		// Find the last user message (iterate backwards) for model + variant
-		let foundVariant = false
+		// Wait until messages are available before initializing
+		if (initializedForSessionRef.current === agent.sessionId) return
+		if (!sessionMessages || sessionMessages.length === 0) return
+		initializedForSessionRef.current = agent.sessionId
+
+		// Find the last user message (iterate backwards) for model + variant + agent.
+		// These override the project-level preferences seeded above.
+		let foundModel = false
+		let foundAgent = false
 		for (let i = sessionMessages.length - 1; i >= 0; i--) {
 			const msg = sessionMessages[i]
-			if (msg.role === "user" && "model" in msg && msg.model) {
+			if (msg.role !== "user") continue
+			const dynamic = msg as Record<string, unknown>
+
+			// Extract model
+			if (!foundModel && "model" in msg && msg.model) {
 				const model = msg.model as { providerID: string; modelID: string }
 				if (model.providerID && model.modelID) {
 					setSelectedModel(model)
+					foundModel = true
 					// variant is stored on user messages (v2 SDK type) but not
-					// in the v1 TypeScript type we import — access it dynamically.
-					const variant = (msg as Record<string, unknown>).variant as string | undefined
+					// in the v1 TypeScript type we import -- access it dynamically.
+					const variant = dynamic.variant as string | undefined
 					if (variant) {
 						setSelectedVariant(variant)
-						foundVariant = true
+					} else {
+						// Session message has a model but no variant -- clear the
+						// project-level variant that was seeded above, since it may
+						// belong to a different model.
+						setSelectedVariant(undefined)
 					}
-					break
 				}
 			}
-		}
 
-		// Fall back to per-project preference for variant when the session's
-		// messages don't have one (e.g. first message sent before variant persistence).
-		if (!foundVariant && agent.directory) {
-			const stored = projectModels[agent.directory]
-			if (stored?.variant) {
-				setSelectedVariant(stored.variant)
+			// Extract agent name from message metadata
+			if (
+				!foundAgent &&
+				dynamic.agent &&
+				typeof dynamic.agent === "string" &&
+				dynamic.agent.length > 0
+			) {
+				setSelectedAgent(dynamic.agent)
+				foundAgent = true
 			}
+
+			if (foundModel && foundAgent) break
 		}
-	}, [sessionMessages, agent.directory, projectModels])
+	}, [sessionMessages, agent.sessionId, agent.directory, projectModels])
 
 	// Recent models from model.json (for matching TUI's default model resolution)
 	const { recentModels, addRecent: addRecentModel } = useModelState()
@@ -582,7 +620,20 @@ export function ChatView({
 
 	const handleSend = useCallback(
 		async (text: string, files?: FileAttachment[]) => {
-			if (!text.trim() || !onSendMessage || sending) return
+			log.debug("handleSend called", {
+				textLength: text.trim().length,
+				hasOnSendMessage: !!onSendMessage,
+				sending,
+				sessionId: agent.sessionId,
+			})
+			if (!text.trim() || !onSendMessage || sending) {
+				log.warn("handleSend bailed", {
+					emptyText: !text.trim(),
+					noOnSendMessage: !onSendMessage,
+					sending,
+				})
+				return
+			}
 
 			// Check for slash commands
 			if (text.trim().startsWith("/")) {
@@ -596,24 +647,37 @@ export function ChatView({
 
 			setSending(true)
 			try {
-				// Persist the model + variant for this project so new sessions remember it
+				// Persist the model + variant + agent for this project so new sessions remember it
 				if (effectiveModel && agent.directory) {
 					appStore.set(setProjectModelAtom, {
 						directory: agent.directory,
-						model: { ...effectiveModel, variant: selectedVariant },
+						model: {
+							...effectiveModel,
+							variant: selectedVariant,
+							agent: selectedAgent || undefined,
+						},
 					})
 				}
 
+				log.debug("handleSend calling onSendMessage", {
+					sessionId: agent.sessionId,
+					directory: agent.directory,
+					model: effectiveModel,
+					agentName: selectedAgent,
+					variant: selectedVariant,
+					hasFiles: !!(files && files.length > 0),
+				})
 				// Strip mention markers from the text for a clean prompt,
 				// and build file parts from tracked mentions.
 				// TODO: When the SDK supports FilePart in prompt, pass them here.
 				// For now, mentions are sent as inline text references.
 				await onSendMessage(agent, text.trim(), {
 					model: effectiveModel ?? undefined,
-					agentName: selectedAgent ?? undefined,
+					agentName: selectedAgent || undefined,
 					variant: selectedVariant,
 					files,
 				})
+				log.debug("handleSend onSendMessage completed", { sessionId: agent.sessionId })
 				clearDraft()
 				setMentions([])
 				// Force scroll to bottom after sending — the user just sent a message,
@@ -621,6 +685,8 @@ export function ChatView({
 				requestAnimationFrame(() => {
 					scrollRef.current?.scrollToBottom("smooth")
 				})
+			} catch (err) {
+				log.error("handleSend failed", { sessionId: agent.sessionId }, err)
 			} finally {
 				setSending(false)
 			}
@@ -675,6 +741,12 @@ export function ChatView({
 	const handleStop = useCallback(() => {
 		if (onStop && isWorking) {
 			onStop(agent)
+		}
+	}, [onStop, isWorking, agent])
+
+	const handleSendNow = useCallback(async () => {
+		if (onStop && isWorking) {
+			await onStop(agent)
 		}
 	}, [onStop, isWorking, agent])
 
@@ -892,6 +964,9 @@ export function ChatView({
 										isLast={index === turns.length - 1}
 										isWorking={isWorking}
 										onRevertToMessage={onRevertToMessage}
+										onSendNow={
+											isWorking && turn.assistantMessages.length === 0 ? handleSendNow : undefined
+										}
 									/>
 								))
 							) : (

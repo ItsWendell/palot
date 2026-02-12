@@ -115,11 +115,23 @@ function createIpcFetch(): typeof fetch {
 			body,
 		}
 
+		log.debug("IPC fetch", { method: request.method, url: request.url })
 		// Send through IPC → main process → net.fetch() → back
 		const result = await window.palot.fetch(serialized)
+		log.debug("IPC fetch result", {
+			method: request.method,
+			url: request.url,
+			status: result.status,
+		})
+
+		// HTTP spec: 101, 204, 205, 304 are "null body statuses" and the
+		// Response constructor throws if you pass a non-null body with them.
+		// The main process may serialize an empty string for these, so we
+		// must explicitly pass null.
+		const isNullBodyStatus = [101, 204, 205, 304].includes(result.status)
 
 		// Reconstruct a Response object from the serialized result
-		return new Response(result.body, {
+		return new Response(isNullBodyStatus ? null : result.body, {
 			status: result.status,
 			statusText: result.statusText,
 			headers: result.headers,

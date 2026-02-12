@@ -99,10 +99,11 @@ export function NewChat() {
 	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
 	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
 
-	// Seed selectedModel from the persisted project model on first mount / project switch.
-	// This puts it at step 1 (user override) in resolveEffectiveModel, so it wins over
-	// config.model and global recent list — matching the user's expectation that the
-	// model they last used in this project sticks.
+	// Seed selectedModel, selectedVariant, and selectedAgent from the persisted
+	// per-project preferences on first mount / project switch.
+	// This puts the model at step 1 (user override) in resolveEffectiveModel, so it
+	// wins over config.model and global recent list — matching the user's expectation
+	// that the model they last used in this project sticks.
 	const projectModels = useAtomValue(projectModelsAtom)
 	const prevDirectoryRef = useRef<string>("")
 	useEffect(() => {
@@ -116,6 +117,8 @@ export function NewChat() {
 			setSelectedModel(null)
 			setSelectedVariant(undefined)
 		}
+		// Restore the per-project agent preference (null = use config default)
+		setSelectedAgent(stored?.agent ?? null)
 	}, [selectedDirectory, projectModels])
 
 	const selectedProject = useMemo(
@@ -231,11 +234,15 @@ export function NewChat() {
 						appStore.set(setSessionBranchAtom, { sessionId: session.id, branch: currentBranch })
 					}
 
-					// Persist the model + variant for this project so new sessions remember it
+					// Persist the model + variant + agent for this project so new sessions remember it
 					if (effectiveModel) {
 						appStore.set(setProjectModelAtom, {
 							directory: selectedDirectory,
-							model: { ...effectiveModel, variant: selectedVariant },
+							model: {
+								...effectiveModel,
+								variant: selectedVariant,
+								agent: selectedAgent ?? undefined,
+							},
 						})
 					}
 

@@ -1,7 +1,8 @@
 import { useAtomValue } from "jotai"
 import { useCallback, useEffect } from "react"
-import { agentsAtom } from "../atoms/derived/agents"
+import { agentFamily } from "../atoms/derived/agents"
 import { pendingCountAtom } from "../atoms/derived/waiting"
+import { appStore } from "../atoms/store"
 
 const isElectron = typeof window !== "undefined" && "palot" in window
 
@@ -17,7 +18,6 @@ export function useNotifications(
 ) {
 	// --- Badge sync ---
 	const pendingCount = useAtomValue(pendingCountAtom)
-	const agents = useAtomValue(agentsAtom)
 
 	useEffect(() => {
 		if (!isElectron) return
@@ -28,7 +28,7 @@ export function useNotifications(
 	const handleNavigate = useCallback(
 		(data: { sessionId: string }) => {
 			// Find the agent to get its projectSlug
-			const agent = agents.find((a) => a.id === data.sessionId)
+			const agent = appStore.get(agentFamily(data.sessionId))
 			if (agent) {
 				navigate({
 					to: "/project/$projectSlug/session/$sessionId",
@@ -39,7 +39,7 @@ export function useNotifications(
 				})
 			}
 		},
-		[agents, navigate],
+		[navigate],
 	)
 
 	useEffect(() => {

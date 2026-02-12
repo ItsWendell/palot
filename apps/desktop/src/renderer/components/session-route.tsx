@@ -1,13 +1,17 @@
 import { useParams } from "@tanstack/react-router"
-import { useCallback, useMemo } from "react"
-import { useAgents } from "../hooks/use-agents"
+import { useAtomValue } from "jotai"
+import { useCallback } from "react"
+import { agentFamily, sessionNameFamily } from "../atoms/derived/agents"
 import { useSessionRevert } from "../hooks/use-commands"
 import type { ModelRef } from "../hooks/use-opencode-data"
 import { useConfig, useOpenCodeAgents, useProviders, useVcs } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import { useSessionChat } from "../hooks/use-session-chat"
+import { createLogger } from "../lib/logger"
 import type { Agent, FileAttachment, QuestionAnswer } from "../lib/types"
 import { AgentDetail } from "./agent-detail"
+
+const log = createLogger("session-route")
 
 export function SessionRoute() {
 	// TanStack Router params — strict: false since we're in a nested route
@@ -16,21 +20,13 @@ export function SessionRoute() {
 		projectSlug?: string
 	}
 
-	const agents = useAgents()
 	const { abort, sendPrompt, renameSession, respondToPermission, replyToQuestion, rejectQuestion } =
 		useAgentActions()
 
-	const selectedAgent = useMemo(
-		() => agents.find((a) => a.id === sessionId) ?? null,
-		[agents, sessionId],
-	)
+	const selectedAgent = useAtomValue(agentFamily(sessionId ?? ""))
 
 	// Resolve parent session name for breadcrumb navigation
-	const parentSessionName = useMemo(() => {
-		if (!selectedAgent?.parentId) return undefined
-		const parent = agents.find((a) => a.id === selectedAgent.parentId)
-		return parent?.name
-	}, [agents, selectedAgent?.parentId])
+	const parentSessionName = useAtomValue(sessionNameFamily(selectedAgent?.parentId ?? ""))
 
 	// Load chat turns for the selected session
 	const isSessionActive = selectedAgent?.status === "running" || selectedAgent?.status === "waiting"
@@ -113,12 +109,26 @@ export function SessionRoute() {
 				files?: FileAttachment[]
 			},
 		) => {
-			await sendPrompt(agent.directory, agent.sessionId, message, {
+			log.debug("handleSendMessage", {
+				sessionId: agent.sessionId,
+				directory: agent.directory,
+				messageLength: message.length,
 				model: options?.model,
-				agent: options?.agentName,
+				agentName: options?.agentName,
 				variant: options?.variant,
-				files: options?.files,
 			})
+			try {
+				await sendPrompt(agent.directory, agent.sessionId, message, {
+					model: options?.model,
+					agent: options?.agentName || undefined,
+					variant: options?.variant,
+					files: options?.files,
+				})
+				log.debug("handleSendMessage completed", { sessionId: agent.sessionId })
+			} catch (err) {
+				log.error("handleSendMessage failed", { sessionId: agent.sessionId }, err)
+				throw err
+			}
 		},
 		[sendPrompt],
 	)

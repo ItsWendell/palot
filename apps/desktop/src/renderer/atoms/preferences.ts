@@ -13,6 +13,7 @@ export interface PersistedModelRef {
 	providerID: string
 	modelID: string
 	variant?: string
+	agent?: string
 }
 
 // ============================================================
@@ -126,6 +127,7 @@ export const setProjectModelAtom = atom(
 			providerID: args.model.providerID,
 			modelID: args.model.modelID,
 			variant: args.model.variant,
+			agent: args.model.agent,
 		}
 		set(projectModelsAtom, models)
 	},
