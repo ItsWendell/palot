@@ -40,7 +40,6 @@
 		"@palot/ui": "workspace:*",
 		"@tanstack/react-query": "^5.90.20",
 		"@tanstack/react-router": "^1.158.4",
-		"electron-liquid-glass": "^1.1.1",
 		"electron-updater": "^6.7.3",
 		"fuzzysort": "^3.1.0",
 		"hono": "4.7.10",
@@ -56,6 +55,9 @@
 		"remark-gfm": "^4.0.1",
 		"rich-textarea": "^0.27.0",
 		"simple-git": "^3.30.0"
+	},
+	"optionalDependencies": {
+		"electron-liquid-glass": "^1.1.1"
 	},
 	"devDependencies": {
 		"@palot/server": "workspace:*",
