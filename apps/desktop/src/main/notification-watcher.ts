@@ -8,7 +8,7 @@ const log = createLogger("notification-watcher")
 // Types — minimal, only what we need for notification decisions
 // ============================================================
 
-interface SessionState {
+export interface SessionState {
 	status: string // "busy" | "idle" | "retry"
 	title: string
 	directory?: string
@@ -27,6 +27,9 @@ const sessions = new Map<string, SessionState>()
 
 /** Pending permission/question count for badge. */
 let pendingCount = 0
+
+/** Listeners notified whenever session or pending state changes. */
+const changeListeners = new Set<() => void>()
 
 // ============================================================
 // Public API
@@ -75,6 +78,31 @@ export function stopNotificationWatcher(): void {
  */
 export function isWatcherRunning(): boolean {
 	return abortController !== null && !abortController.signal.aborted
+}
+
+/**
+ * Get a snapshot of all tracked sessions.
+ * Returns a new Map (caller-safe to iterate without races).
+ */
+export function getSessionStates(): ReadonlyMap<string, SessionState> {
+	return new Map(sessions)
+}
+
+/**
+ * Get the current pending permission/question count.
+ */
+export function getPendingCount(): number {
+	return pendingCount
+}
+
+/**
+ * Subscribe to any state change (session status, pending count).
+ * Called after every processGlobalEvent that mutates state.
+ * Returns an unsubscribe function.
+ */
+export function onStateChanged(listener: () => void): () => void {
+	changeListeners.add(listener)
+	return () => changeListeners.delete(listener)
 }
 
 // ============================================================
@@ -184,6 +212,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 			const title = props.title as string
 			pendingCount++
 			updateBadgeCount(pendingCount)
+			scheduleNotify()
 			if (!isSubAgent(sessionId)) {
 				showNotification({
 					type: "permission",
@@ -200,6 +229,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 		case "permission.replied": {
 			pendingCount = Math.max(0, pendingCount - 1)
 			updateBadgeCount(pendingCount)
+			scheduleNotify()
 			break
 		}
 
@@ -209,6 +239,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 			const header = questions?.[0]?.header ?? "Question"
 			pendingCount++
 			updateBadgeCount(pendingCount)
+			scheduleNotify()
 			if (!isSubAgent(sessionId)) {
 				showNotification({
 					type: "question",
@@ -226,6 +257,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 		case "question.rejected": {
 			pendingCount = Math.max(0, pendingCount - 1)
 			updateBadgeCount(pendingCount)
+			scheduleNotify()
 			break
 		}
 
@@ -244,6 +276,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 				directory: directory ?? prev?.directory,
 				parentID: prev?.parentID,
 			})
+			scheduleNotify()
 
 			// Detect busy/retry -> idle transition (agent completed)
 			if (
@@ -291,6 +324,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 					directory: directory ?? existing?.directory,
 					parentID: info.parentID ?? existing?.parentID,
 				})
+				scheduleNotify()
 			}
 			break
 		}
@@ -303,6 +337,23 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 // ============================================================
 // Helpers
 // ============================================================
+
+/** Notify all change listeners (debounced per event loop tick). */
+let notifyScheduled = false
+function scheduleNotify(): void {
+	if (notifyScheduled) return
+	notifyScheduled = true
+	queueMicrotask(() => {
+		notifyScheduled = false
+		for (const listener of changeListeners) {
+			try {
+				listener()
+			} catch {
+				// Listener errors must not break the watcher
+			}
+		}
+	})
+}
 
 /** Check if a session is a sub-agent (has a parent session). */
 function isSubAgent(sessionId: string): boolean {

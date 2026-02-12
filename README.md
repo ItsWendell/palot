@@ -94,6 +94,10 @@ This is expected behavior for unsigned apps and does not indicate malware.
 
 > OpenCode needs at least one AI provider configured (Anthropic, OpenAI, Google, etc.). Run `opencode` in a terminal once to complete initial setup.
 
+### Configuration
+
+Palot is a GUI layer on top of OpenCode, so core configuration like model providers, MCP servers, custom tools, and agent behavior is managed through OpenCode's own config files. Refer to the [OpenCode documentation](https://opencode.ai/docs) for setup instructions.
+
 ### From source
 
 **Prerequisites:** [Bun](https://bun.sh) 1.3.8+ and [OpenCode CLI](https://opencode.ai)
@@ -129,7 +133,8 @@ apps/
   server/        Bun + Hono backend (browser-mode dev only)
 packages/
   ui/            Shared shadcn/ui component library (@palot/ui)
-  cc2oc/         Claude Code to OpenCode migration library
+  configconv/    Universal agent config converter (Claude Code, Cursor, OpenCode)
+  configconv-cli/ CLI wrapper for the config converter
 ```
 
 The desktop app has three runtime contexts:
