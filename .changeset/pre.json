@@ -8,5 +8,7 @@
     "cc2oc": "0.1.0",
     "@palot/ui": "0.1.0"
   },
-  "changesets": []
+  "changesets": [
+    "initial-alpha"
+  ]
 }
