@@ -413,7 +413,7 @@ interface OpenInTarget {
 
 /**
  * Static map from target ID to icon filename in `/app-icons/`.
- * Icons are PNGs except WebStorm (SVG). Sourced from codex-app.
+ * Icons are PNGs except WebStorm (SVG).
  */
 const TARGET_ICON: Record<string, string> = {
 	vscode: "app-icons/vscode.png",

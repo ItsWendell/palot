@@ -6,7 +6,6 @@
  *   Tier 2: Vibrancy fallback (older macOS) — NSVisualEffectView via Electron
  *   Tier 3: Opaque (user preference or non-macOS) — solid background
  *
- * Inspired by OpenAI Codex desktop app's implementation.
  */
 
 import type { BrowserWindow, BrowserWindowConstructorOptions } from "electron"

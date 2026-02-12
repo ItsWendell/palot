@@ -2,7 +2,6 @@
  * Detects installed editors, terminals, and file managers on the system
  * and provides the ability to open a directory in any of them.
  *
- * Inspired by the Codex app's open-in-targets implementation.
  * Currently supports macOS only; other platforms return an empty list.
  */
 

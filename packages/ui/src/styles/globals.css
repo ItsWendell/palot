@@ -416,8 +416,8 @@
  * override Tailwind utility classes from @layer utilities
  * (e.g. peer-data-[variant=inset]:rounded-xl on SidebarInset).
  *
- * Matches Codex's layout: only left corners are rounded,
- * content extends to the window edge on the right. A subtle
+ * Only left corners are rounded, content extends to the window
+ * edge on the right. A subtle
  * shadow provides visual separation instead of a hard border.
  * ============================================================ */
 
@@ -465,7 +465,7 @@
  * We use variant="sidebar" (not "inset") so shadcn's peer-data
  * utilities don't fire. All card styling is done here.
  *
- * Layout: left-side-only rounding (Codex style), margin on
+ * Layout: left-side-only rounding, margin on
  * top/right/bottom, no left margin (butts against sidebar).
  * When sidebar collapses the left margin appears.
  *
@@ -689,7 +689,7 @@
   }
 }
 
-/* Scrollbar — three-state system inspired by Codex
+/* Scrollbar — three-state system
  * .scrollbar-thin:  always-visible thin scrollbar (current shadcn style)
  * .scrollbar-auto:  hidden at rest, reveals on hover with smooth transition
  * Both use idle → hover → active color progression */
@@ -768,7 +768,7 @@
   }
 }
 
-/* Loading shimmer — gradient sweep clipped to text, inspired by Codex.
+/* Loading shimmer — gradient sweep clipped to text.
  * Apply .loading-shimmer to any text element to get the effect.
  * In dark mode the contrast color is dark; in light mode it's bright.
  *
