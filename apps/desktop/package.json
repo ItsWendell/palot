@@ -28,6 +28,7 @@
 		"eb:linux": "electron-builder --linux --config electron-builder.yml --publish never",
 		"eb:mac": "electron-builder --mac --config electron-builder.yml --publish never",
 		"eb:win": "electron-builder --win --config electron-builder.yml --publish never",
+		"rebuild": "electron-rebuild",
 		"lint": "biome check .",
 		"check-types": "tsgo --noEmit",
 		"clean": "rm -rf out release dist node_modules .turbo"
@@ -36,10 +37,11 @@
 		"@fontsource-variable/inter": "^5.2.8",
 		"@fontsource/ibm-plex-mono": "^5.2.7",
 		"@opencode-ai/sdk": "^1.1.53",
-		"@palot/cc2oc": "workspace:*",
+		"@palot/configconv": "workspace:*",
 		"@palot/ui": "workspace:*",
 		"@tanstack/react-query": "^5.90.20",
 		"@tanstack/react-router": "^1.158.4",
+
 		"electron-updater": "^6.7.3",
 		"fuzzysort": "^3.1.0",
 		"hono": "4.7.10",

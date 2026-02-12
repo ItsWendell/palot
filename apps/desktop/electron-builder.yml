@@ -21,6 +21,9 @@ extraResources:
     filter:
       - "**/*"
 
+# Rebuild native modules for Electron's Node.js ABI during packaging.
+npmRebuild: true
+
 artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
 
 # Inject version from package.json into the built app

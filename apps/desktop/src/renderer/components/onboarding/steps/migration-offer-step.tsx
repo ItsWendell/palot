@@ -1,9 +1,9 @@
 /**
- * Claude Code Migration Offer.
+ * Multi-provider Migration Offer.
  *
- * Scans the user's Claude Code configuration and lets them select which
- * categories to migrate. The user explicitly opted in, so scanning
- * happens on mount. Generates a dry-run preview before proceeding.
+ * Scans the selected provider's configuration and lets the user select which
+ * categories to migrate to OpenCode format. The user explicitly opted in
+ * (from the complete step), so scanning happens on mount.
  */
 
 import { Button } from "@palot/ui/components/button"
@@ -22,7 +22,11 @@ import {
 	TerminalIcon,
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { ClaudeCodeDetection, MigrationPreview } from "../../../../preload/api"
+import type {
+	MigrationPreview,
+	MigrationProvider,
+	ProviderDetection,
+} from "../../../../preload/api"
 
 // ============================================================
 // Types
@@ -38,15 +42,26 @@ interface MigrationCategory {
 }
 
 interface MigrationOfferStepProps {
+	provider: MigrationProvider
 	onPreview: (scanResult: unknown, categories: string[], preview: MigrationPreview) => void
 	onSkip: () => void
+}
+
+// ============================================================
+// Provider display metadata
+// ============================================================
+
+const PROVIDER_LABELS: Record<MigrationProvider, string> = {
+	"claude-code": "Claude Code",
+	cursor: "Cursor",
+	opencode: "OpenCode",
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProps) {
+export function MigrationOfferStep({ provider, onPreview, onSkip }: MigrationOfferStepProps) {
 	const [categories, setCategories] = useState<MigrationCategory[]>([])
 	const [scanning, setScanning] = useState(false)
 	const [scanError, setScanError] = useState<string | null>(null)
@@ -55,6 +70,7 @@ export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProp
 	const scanResultRef = useRef<unknown>(null)
 
 	const isElectron = typeof window !== "undefined" && "palot" in window
+	const label = PROVIDER_LABELS[provider]
 
 	// Run full scan on mount (user explicitly opted in)
 	useEffect(() => {
@@ -63,17 +79,17 @@ export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProp
 		setScanning(true)
 
 		window.palot.onboarding
-			.scanClaudeCode()
-			.then(({ detection: fullDetection, scanResult }) => {
+			.scanProvider(provider)
+			.then(({ detection, scanResult }) => {
 				scanResultRef.current = scanResult
-				setCategories(buildCategories(fullDetection))
+				setCategories(buildCategories(provider, detection))
 				setScanning(false)
 			})
 			.catch((err) => {
 				setScanError(err instanceof Error ? err.message : "Scan failed")
 				setScanning(false)
 			})
-	}, [isElectron])
+	}, [isElectron, provider])
 
 	const toggleCategory = useCallback((id: string) => {
 		setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, enabled: !c.enabled } : c)))
@@ -88,6 +104,7 @@ export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProp
 
 		try {
 			const preview = await window.palot.onboarding.previewMigration(
+				provider,
 				scanResultRef.current,
 				selectedIds,
 			)
@@ -97,7 +114,7 @@ export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProp
 		} finally {
 			setPreviewing(false)
 		}
-	}, [isElectron, categories, onPreview])
+	}, [isElectron, provider, categories, onPreview])
 
 	const enabledCount = categories.filter((c) => c.enabled).length
 
@@ -105,10 +122,10 @@ export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProp
 		<div className="flex h-full flex-col items-center justify-center px-6">
 			<div className="w-full max-w-lg space-y-6">
 				<div className="text-center">
-					<h2 className="text-xl font-semibold text-foreground">Migrate from Claude Code</h2>
+					<h2 className="text-xl font-semibold text-foreground">Migrate from {label}</h2>
 					<p className="mt-1 text-sm text-muted-foreground">
-						We detected an existing Claude Code setup. Palot can migrate your configuration to
-						OpenCode format.
+						We detected an existing {label} setup. Palot can migrate your configuration to OpenCode
+						format.
 					</p>
 				</div>
 
@@ -119,9 +136,7 @@ export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProp
 						className="flex items-center justify-center gap-3 rounded-lg border border-border bg-muted/30 p-6"
 					>
 						<Spinner className="size-4" />
-						<span className="text-sm text-muted-foreground">
-							Scanning Claude Code configuration...
-						</span>
+						<span className="text-sm text-muted-foreground">Scanning {label} configuration...</span>
 					</div>
 				)}
 
@@ -165,9 +180,7 @@ export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProp
 						className="rounded-lg border border-border bg-muted/20 p-3"
 					>
 						<p className="text-xs leading-relaxed text-muted-foreground">
-							Model IDs are translated automatically. MCP servers are converted to OpenCode format.
-							Agent frontmatter is adapted. A backup is created before any changes, and you can undo
-							at any time from Settings.
+							{getMigrationDescription(provider)}
 						</p>
 					</div>
 				)}
@@ -213,8 +226,32 @@ export function MigrationOfferStep({ onPreview, onSkip }: MigrationOfferStepProp
 // Helpers
 // ============================================================
 
-function buildCategories(detection: ClaudeCodeDetection): MigrationCategory[] {
-	// Build a human-readable description for the history row
+function getMigrationDescription(provider: MigrationProvider): string {
+	switch (provider) {
+		case "claude-code":
+			return "Model IDs are translated automatically. MCP servers are converted to OpenCode format. Agent frontmatter is adapted. A backup is created before any changes, and you can undo at any time from Settings."
+		case "cursor":
+			return "MCP servers, rules (.mdc), agents, and commands are converted to OpenCode format. Cursor-specific features like OAuth and rule modes are adapted where possible. A backup is created before any changes."
+		case "opencode":
+			return "Configuration, agents, commands, and rules are imported. A backup is created before any changes, and you can undo at any time from Settings."
+	}
+}
+
+function buildCategories(
+	provider: MigrationProvider,
+	detection: ProviderDetection,
+): MigrationCategory[] {
+	switch (provider) {
+		case "claude-code":
+			return buildClaudeCodeCategories(detection)
+		case "cursor":
+			return buildCursorCategories(detection)
+		case "opencode":
+			return buildOpenCodeCategories(detection)
+	}
+}
+
+function buildClaudeCodeCategories(detection: ProviderDetection): MigrationCategory[] {
 	const historyParts: string[] = []
 	if (detection.projectCount > 0) {
 		historyParts.push(`${detection.projectCount} project${detection.projectCount === 1 ? "" : "s"}`)
@@ -231,7 +268,7 @@ function buildCategories(detection: ClaudeCodeDetection): MigrationCategory[] {
 			label: "Global settings & model preferences",
 			description: "Model IDs, provider config, auto-update settings",
 			icon: CogIcon,
-			count: detection.hasGlobalSettings || detection.hasUserState ? 1 : 0,
+			count: detection.hasGlobalSettings ? 1 : 0,
 			enabled: true,
 		},
 		{
@@ -271,7 +308,7 @@ function buildCategories(detection: ClaudeCodeDetection): MigrationCategory[] {
 			label: "Project rules (CLAUDE.md)",
 			description: "Copied as AGENTS.md for OpenCode",
 			icon: ScrollTextIcon,
-			count: detection.hasRules ? 1 : 0,
+			count: detection.ruleCount,
 			enabled: true,
 		},
 		{
@@ -288,6 +325,140 @@ function buildCategories(detection: ClaudeCodeDetection): MigrationCategory[] {
 			description: "Converted to TypeScript plugin stubs (manual finishing needed)",
 			icon: PlugIcon,
 			count: detection.hasHooks ? 1 : 0,
+			enabled: true,
+		},
+		{
+			id: "skills",
+			label: "Skills",
+			description: "Verified for compatibility",
+			icon: FileTextIcon,
+			count: detection.skillCount,
+			enabled: true,
+		},
+	]
+}
+
+function buildCursorCategories(detection: ProviderDetection): MigrationCategory[] {
+	const historyParts: string[] = []
+	if (detection.totalSessions > 0) {
+		historyParts.push(
+			`${detection.totalSessions} session${detection.totalSessions === 1 ? "" : "s"}`,
+		)
+	}
+	if (detection.totalMessages > 0) {
+		historyParts.push(
+			`${detection.totalMessages} message${detection.totalMessages === 1 ? "" : "s"}`,
+		)
+	}
+
+	return [
+		{
+			id: "config",
+			label: "Global settings & permissions",
+			description: "CLI permissions and configuration",
+			icon: CogIcon,
+			count: detection.hasGlobalSettings ? 1 : 0,
+			enabled: true,
+		},
+		{
+			id: "mcp",
+			label: "MCP server configurations",
+			description: "Local and remote MCP server definitions",
+			icon: ServerIcon,
+			count: detection.mcpServerCount,
+			enabled: true,
+		},
+		{
+			id: "history",
+			label: "Chat history",
+			description: historyParts.length > 0 ? historyParts.join(", ") : "No chat sessions found",
+			icon: FolderOpenIcon,
+			count: detection.totalSessions,
+			enabled: detection.totalSessions > 0,
+		},
+		{
+			id: "agents",
+			label: "Custom agents",
+			description: "Agent definitions from .cursor/agents/",
+			icon: BotIcon,
+			count: detection.agentCount,
+			enabled: true,
+		},
+		{
+			id: "commands",
+			label: "Custom commands",
+			description: "Command files from .cursor/commands/",
+			icon: TerminalIcon,
+			count: detection.commandCount,
+			enabled: true,
+		},
+		{
+			id: "rules",
+			label: "Rules (.mdc files)",
+			description: "Cursor rules converted to AGENTS.md format",
+			icon: ScrollTextIcon,
+			count: detection.ruleCount,
+			enabled: true,
+		},
+		{
+			id: "permissions",
+			label: "Permission settings",
+			description: "CLI agent permissions from cli-config.json",
+			icon: ShieldIcon,
+			count: detection.hasPermissions ? 1 : 0,
+			enabled: true,
+		},
+		{
+			id: "skills",
+			label: "Skills",
+			description: "Verified for compatibility",
+			icon: FileTextIcon,
+			count: detection.skillCount,
+			enabled: true,
+		},
+	]
+}
+
+function buildOpenCodeCategories(detection: ProviderDetection): MigrationCategory[] {
+	return [
+		{
+			id: "config",
+			label: "Global configuration",
+			description: "opencode.json settings and model preferences",
+			icon: CogIcon,
+			count: detection.hasGlobalSettings ? 1 : 0,
+			enabled: true,
+		},
+		{
+			id: "mcp",
+			label: "MCP server configurations",
+			description: "Local and remote MCP server definitions",
+			icon: ServerIcon,
+			count: detection.mcpServerCount,
+			enabled: true,
+		},
+		{
+			id: "agents",
+			label: "Custom agents",
+			description: "Agent definitions from .opencode/agents/",
+			icon: BotIcon,
+			count: detection.agentCount,
+			enabled: true,
+		},
+		{
+			id: "commands",
+			label: "Custom commands",
+			description: "Command files from .opencode/commands/",
+			icon: TerminalIcon,
+			count: detection.commandCount,
+			enabled: true,
+		},
+		{
+			id: "rules",
+			label: "Rules (AGENTS.md)",
+			description: "Agent instructions and project rules",
+			icon: ScrollTextIcon,
+			count: detection.ruleCount,
 			enabled: true,
 		},
 		{

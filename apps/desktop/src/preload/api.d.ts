@@ -175,17 +175,24 @@ export interface OpenCodeCheckResult {
 	message: string | null
 }
 
-export interface ClaudeCodeDetection {
+/** Supported migration source providers. */
+export type MigrationProvider = "claude-code" | "cursor" | "opencode"
+
+/** Detection result for a single provider. */
+export interface ProviderDetection {
+	provider: MigrationProvider
 	found: boolean
-	hasGlobalSettings: boolean
-	hasUserState: boolean
-	projectCount: number
+	label: string
+	summary: string
 	mcpServerCount: number
 	agentCount: number
 	commandCount: number
-	hasRules: boolean
-	hasHooks: boolean
+	ruleCount: number
 	skillCount: number
+	projectCount: number
+	hasGlobalSettings: boolean
+	hasPermissions: boolean
+	hasHooks: boolean
 	totalSessions: number
 	totalMessages: number
 }
@@ -221,6 +228,15 @@ export interface MigrationResult {
 	warnings: string[]
 	manualActions: string[]
 	errors: string[]
+	/** Number of history sessions that were skipped as duplicates */
+	historyDuplicatesSkipped: number
+}
+
+export interface MigrationProgress {
+	phase: string
+	current: number
+	total: number
+	duplicatesSkipped: number
 }
 
 export interface AppInfo {
@@ -333,10 +349,27 @@ export interface PalotAPI {
 		checkOpenCode: () => Promise<OpenCodeCheckResult>
 		installOpenCode: () => Promise<{ success: boolean; error?: string }>
 		onInstallOutput: (callback: (text: string) => void) => () => void
-		detectClaudeCode: () => Promise<ClaudeCodeDetection>
-		scanClaudeCode: () => Promise<{ detection: ClaudeCodeDetection; scanResult: unknown }>
-		previewMigration: (scanResult: unknown, categories: string[]) => Promise<MigrationPreview>
-		executeMigration: (scanResult: unknown, categories: string[]) => Promise<MigrationResult>
+		/** Quick-detect all supported providers (Claude Code, Cursor, OpenCode). */
+		detectProviders: () => Promise<ProviderDetection[]>
+		/** Full scan of a specific provider's configuration. */
+		scanProvider: (
+			provider: MigrationProvider,
+		) => Promise<{ detection: ProviderDetection; scanResult: unknown }>
+		/** Dry-run migration preview for a provider. */
+		previewMigration: (
+			provider: MigrationProvider,
+			scanResult: unknown,
+			categories: string[],
+		) => Promise<MigrationPreview>
+		/** Execute migration (writes files with backup). */
+		executeMigration: (
+			provider: MigrationProvider,
+			scanResult: unknown,
+			categories: string[],
+		) => Promise<MigrationResult>
+		/** Subscribe to migration progress updates (history writing). */
+		onMigrationProgress: (callback: (progress: MigrationProgress) => void) => () => void
+		/** Restore the most recent migration backup. */
 		restoreBackup: () => Promise<{
 			success: boolean
 			restored: string[]

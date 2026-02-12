@@ -16,6 +16,8 @@ export interface OnboardingState {
 	completedAt: string | null
 	skippedSteps: string[]
 	migrationPerformed: boolean
+	/** Which provider(s) were migrated from (e.g. ["claude-code", "cursor"]). */
+	migratedFrom: string[]
 	opencodeVersion: string | null
 }
 
@@ -28,5 +30,6 @@ export const onboardingStateAtom = atomWithStorage<OnboardingState>("palot:onboa
 	completedAt: null,
 	skippedSteps: [],
 	migrationPerformed: false,
+	migratedFrom: [],
 	opencodeVersion: null,
 })

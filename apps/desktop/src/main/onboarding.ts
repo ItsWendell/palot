@@ -4,7 +4,8 @@
  * Provides IPC-callable functions for the first-run experience:
  * - OpenCode CLI detection and version compatibility check
  * - OpenCode CLI installation (via curl/shell)
- * - Claude Code detection and migration via @palot/cc2oc
+ * - Multi-provider config detection and migration via @palot/configconv
+ *   Supported providers: Claude Code, Cursor, OpenCode
  */
 
 import { type ChildProcess, spawn } from "node:child_process"
@@ -22,18 +23,38 @@ const log = createLogger("onboarding")
 // Types
 // ============================================================
 
-export interface ClaudeCodeDetection {
+/** Supported migration source providers. */
+export type MigrationProvider = "claude-code" | "cursor" | "opencode"
+
+/** Quick-detect result for a single provider (no heavy imports). */
+export interface ProviderDetection {
+	provider: MigrationProvider
 	found: boolean
-	hasGlobalSettings: boolean
-	hasUserState: boolean
-	projectCount: number
+	/** Human-readable label */
+	label: string
+	/** Short summary of what was found */
+	summary: string
+	/** Number of MCP servers found */
 	mcpServerCount: number
+	/** Number of agents found */
 	agentCount: number
+	/** Number of commands found */
 	commandCount: number
-	hasRules: boolean
-	hasHooks: boolean
+	/** Number of rule files found (e.g. .mdc rules, CLAUDE.md, AGENTS.md) */
+	ruleCount: number
+	/** Number of skills found */
 	skillCount: number
+	/** Number of projects found */
+	projectCount: number
+	/** Whether global settings exist */
+	hasGlobalSettings: boolean
+	/** Whether permissions exist (cli-config.json, settings.json, etc.) */
+	hasPermissions: boolean
+	/** Claude Code specific: hooks present */
+	hasHooks: boolean
+	/** Claude Code specific: total sessions for history import */
 	totalSessions: number
+	/** Claude Code specific: total messages for history import */
 	totalMessages: number
 }
 
@@ -70,6 +91,18 @@ export interface MigrationResult {
 	warnings: string[]
 	manualActions: string[]
 	errors: string[]
+	/** Number of history sessions that were skipped as duplicates */
+	historyDuplicatesSkipped: number
+}
+
+// ============================================================
+// Provider metadata
+// ============================================================
+
+const PROVIDER_LABELS: Record<MigrationProvider, string> = {
+	"claude-code": "Claude Code",
+	cursor: "Cursor",
+	opencode: "OpenCode",
 }
 
 // ============================================================
@@ -159,17 +192,24 @@ export async function installOpenCode(): Promise<{ success: boolean; error?: str
 }
 
 // ============================================================
-// Claude Code detection
+// Multi-provider detection (lightweight, no configconv import)
 // ============================================================
 
 /**
- * Quickly detects whether Claude Code configuration exists on this machine.
- * Does NOT import @palot/cc2oc -- just checks for file existence.
- * This keeps the main process startup fast when cc2oc isn't needed.
+ * Quickly detects which agent tools have configuration on this machine.
+ * Does NOT import @palot/configconv, just checks for file/directory existence.
+ * Returns an array of detections (one per supported provider).
  */
-export async function detectClaudeCode(): Promise<ClaudeCodeDetection> {
+export async function detectProviders(): Promise<ProviderDetection[]> {
+	const results = await Promise.all([detectClaudeCode(), detectCursor(), detectOpenCodeProvider()])
+	return results
+}
+
+/**
+ * Quickly detects whether Claude Code configuration exists on this machine.
+ */
+async function detectClaudeCode(): Promise<ProviderDetection> {
 	const home = homedir()
-	const claudeDir = path.join(home, ".claude")
 	const claudeSettingsDir = path.join(home, ".Claude")
 
 	const hasGlobalSettings = existsSync(path.join(claudeSettingsDir, "settings.json"))
@@ -186,18 +226,29 @@ export async function detectClaudeCode(): Promise<ClaudeCodeDetection> {
 		// Directory doesn't exist
 	}
 
+	let ruleCount = 0
+	if (existsSync(path.join(home, ".claude", "CLAUDE.md"))) ruleCount++
+	if (existsSync("CLAUDE.md")) ruleCount++
+
 	const found = hasGlobalSettings || hasUserState || projectCount > 0
 
+	const summaryParts: string[] = []
+	if (hasGlobalSettings) summaryParts.push("global settings")
+	if (projectCount > 0) summaryParts.push(`${projectCount} project${projectCount === 1 ? "" : "s"}`)
+	if (ruleCount > 0) summaryParts.push("rules")
+
 	return {
+		provider: "claude-code",
 		found,
-		hasGlobalSettings,
-		hasUserState,
+		label: PROVIDER_LABELS["claude-code"],
+		summary: found ? `Found ${summaryParts.join(", ")}` : "No Claude Code configuration detected",
+		hasGlobalSettings: hasGlobalSettings || hasUserState,
+		hasPermissions: hasGlobalSettings,
 		projectCount,
-		// These will be populated by the full scan if the user proceeds
 		mcpServerCount: 0,
 		agentCount: 0,
 		commandCount: 0,
-		hasRules: existsSync(path.join(claudeDir, "CLAUDE.md")) || existsSync("CLAUDE.md"),
+		ruleCount,
 		hasHooks: false,
 		skillCount: 0,
 		totalSessions: 0,
@@ -205,38 +256,221 @@ export async function detectClaudeCode(): Promise<ClaudeCodeDetection> {
 	}
 }
 
+/**
+ * Quickly detects whether Cursor configuration exists on this machine.
+ * Reads mcp.json to count servers and checks for rules directories.
+ */
+async function detectCursor(): Promise<ProviderDetection> {
+	const { readFileSync, readdirSync } = await import("node:fs")
+	const home = homedir()
+	const cursorDir = path.join(home, ".cursor")
+
+	// MCP servers: parse mcp.json to count actual server entries
+	let mcpServerCount = 0
+	const mcpJsonPath = path.join(cursorDir, "mcp.json")
+	if (existsSync(mcpJsonPath)) {
+		try {
+			const raw = readFileSync(mcpJsonPath, "utf-8")
+			const parsed = JSON.parse(raw)
+			if (parsed?.mcpServers && typeof parsed.mcpServers === "object") {
+				mcpServerCount = Object.keys(parsed.mcpServers).length
+			}
+		} catch {
+			// malformed JSON, count as 0
+		}
+	}
+
+	// Permissions from cli-config.json
+	const hasCliConfig = existsSync(path.join(cursorDir, "cli-config.json"))
+
+	// Skills
+	let skillCount = 0
+	const skillsDir = path.join(cursorDir, "skills")
+	if (existsSync(skillsDir)) {
+		try {
+			skillCount = readdirSync(skillsDir, { withFileTypes: true }).filter(
+				(e) => e.isDirectory() && e.name !== "skills-cursor",
+			).length
+		} catch {
+			// ignore
+		}
+	}
+
+	// Agents (global)
+	let agentCount = 0
+	const agentsDir = path.join(cursorDir, "agents")
+	if (existsSync(agentsDir)) {
+		try {
+			agentCount = readdirSync(agentsDir).filter((f) => f.endsWith(".md")).length
+		} catch {
+			// ignore
+		}
+	}
+
+	// Commands (global)
+	let commandCount = 0
+	const commandsDir = path.join(cursorDir, "commands")
+	if (existsSync(commandsDir)) {
+		try {
+			commandCount = readdirSync(commandsDir).filter((f) => f.endsWith(".md")).length
+		} catch {
+			// ignore
+		}
+	}
+
+	// Rules: Cursor stores rules per-project in .cursor/rules/*.mdc|*.md.
+	// The lightweight detector cannot scan all projects, but it checks
+	// if the global cursor dir has any rule-like content.
+	// (Full scan via scanProvider will get project-level rule counts.)
+	const ruleCount = 0
+
+	const found =
+		mcpServerCount > 0 || hasCliConfig || skillCount > 0 || agentCount > 0 || commandCount > 0
+
+	const summaryParts: string[] = []
+	if (mcpServerCount > 0)
+		summaryParts.push(`${mcpServerCount} MCP server${mcpServerCount === 1 ? "" : "s"}`)
+	if (hasCliConfig) summaryParts.push("permissions")
+	if (agentCount > 0) summaryParts.push(`${agentCount} agent${agentCount === 1 ? "" : "s"}`)
+	if (commandCount > 0) summaryParts.push(`${commandCount} command${commandCount === 1 ? "" : "s"}`)
+	if (skillCount > 0) summaryParts.push(`${skillCount} skill${skillCount === 1 ? "" : "s"}`)
+
+	return {
+		provider: "cursor",
+		found,
+		label: PROVIDER_LABELS.cursor,
+		summary: found ? `Found ${summaryParts.join(", ")}` : "No Cursor configuration detected",
+		hasGlobalSettings: mcpServerCount > 0,
+		hasPermissions: hasCliConfig,
+		projectCount: 0,
+		mcpServerCount,
+		agentCount,
+		commandCount,
+		ruleCount,
+		hasHooks: false,
+		skillCount,
+		totalSessions: 0,
+		totalMessages: 0,
+	}
+}
+
+/**
+ * Quickly detects whether OpenCode configuration exists on this machine.
+ * Parses opencode.json to count MCP servers.
+ */
+async function detectOpenCodeProvider(): Promise<ProviderDetection> {
+	const { readFileSync, readdirSync } = await import("node:fs")
+	const home = homedir()
+	const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(home, ".config")
+	const ocDir = path.join(xdgConfig, "opencode")
+
+	// Parse opencode.json to count MCP servers
+	let mcpServerCount = 0
+	let hasConfig = false
+	let hasPermissions = false
+	const configPath = path.join(ocDir, "opencode.json")
+	if (existsSync(configPath)) {
+		hasConfig = true
+		try {
+			const raw = readFileSync(configPath, "utf-8")
+			const parsed = JSON.parse(raw)
+			if (parsed?.mcp && typeof parsed.mcp === "object") {
+				mcpServerCount = Object.keys(parsed.mcp).length
+			}
+			if (parsed?.permission && typeof parsed.permission === "object") {
+				hasPermissions = Object.keys(parsed.permission).length > 0
+			}
+		} catch {
+			// malformed JSON
+		}
+	}
+
+	const hasAgentsMd = existsSync(path.join(ocDir, "AGENTS.md"))
+
+	let agentCount = 0
+	const agentsDir = path.join(ocDir, "agents")
+	if (existsSync(agentsDir)) {
+		try {
+			agentCount = readdirSync(agentsDir).filter((f) => f.endsWith(".md")).length
+		} catch {
+			// ignore
+		}
+	}
+
+	let commandCount = 0
+	const commandsDir = path.join(ocDir, "commands")
+	if (existsSync(commandsDir)) {
+		try {
+			commandCount = readdirSync(commandsDir).filter((f) => f.endsWith(".md")).length
+		} catch {
+			// ignore
+		}
+	}
+
+	let skillCount = 0
+	const skillsDir = path.join(ocDir, "skills")
+	if (existsSync(skillsDir)) {
+		try {
+			skillCount = readdirSync(skillsDir, { withFileTypes: true }).filter((e) =>
+				e.isDirectory(),
+			).length
+		} catch {
+			// ignore
+		}
+	}
+
+	const ruleCount = hasAgentsMd ? 1 : 0
+	const found = hasConfig || hasAgentsMd || agentCount > 0 || commandCount > 0
+
+	const summaryParts: string[] = []
+	if (hasConfig) summaryParts.push("global config")
+	if (mcpServerCount > 0)
+		summaryParts.push(`${mcpServerCount} MCP server${mcpServerCount === 1 ? "" : "s"}`)
+	if (hasAgentsMd) summaryParts.push("rules")
+	if (agentCount > 0) summaryParts.push(`${agentCount} agent${agentCount === 1 ? "" : "s"}`)
+	if (commandCount > 0) summaryParts.push(`${commandCount} command${commandCount === 1 ? "" : "s"}`)
+	if (skillCount > 0) summaryParts.push(`${skillCount} skill${skillCount === 1 ? "" : "s"}`)
+
+	return {
+		provider: "opencode",
+		found,
+		label: PROVIDER_LABELS.opencode,
+		summary: found ? `Found ${summaryParts.join(", ")}` : "No OpenCode configuration detected",
+		hasGlobalSettings: hasConfig,
+		hasPermissions,
+		projectCount: 0,
+		mcpServerCount,
+		agentCount,
+		commandCount,
+		ruleCount,
+		hasHooks: false,
+		skillCount,
+		totalSessions: 0,
+		totalMessages: 0,
+	}
+}
+
 // ============================================================
-// Migration (lazy-loads @palot/cc2oc)
+// Migration (lazy-loads @palot/configconv)
 // ============================================================
 
 /**
- * Runs the full cc2oc scan and returns detailed detection results.
- * Lazy-loads @palot/cc2oc to keep the main process fast when not needed.
+ * Runs a full scan for the specified provider and returns detailed detection results.
+ * Lazy-loads @palot/configconv to keep the main process fast when not needed.
  */
-export async function scanClaudeCode(): Promise<{
-	detection: ClaudeCodeDetection
+export async function scanProvider(provider: MigrationProvider): Promise<{
+	detection: ProviderDetection
 	scanResult: unknown
 }> {
-	const { scan } = await import("@palot/cc2oc")
-	const scanResult = await scan({ global: true, includeHistory: true })
+	const { scanFormat } = await import("@palot/configconv")
 
-	const detection: ClaudeCodeDetection = {
-		found: true,
-		hasGlobalSettings: !!scanResult.global.settings,
-		hasUserState: !!scanResult.global.userState,
-		projectCount: scanResult.projects.length,
-		mcpServerCount: countMcpServers(scanResult),
-		agentCount: countAgents(scanResult),
-		commandCount: countCommands(scanResult),
-		hasRules: !!scanResult.global.claudeMd || scanResult.projects.some((p) => !!p.claudeMd),
-		hasHooks: !!(scanResult.global.settings as Record<string, unknown>)?.hooks,
-		skillCount:
-			scanResult.global.skills.length +
-			scanResult.projects.reduce((sum, p) => sum + p.skills.length, 0),
-		totalSessions: scanResult.history?.totalSessions ?? 0,
-		totalMessages: scanResult.history?.totalMessages ?? 0,
-	}
+	const scanResult = await scanFormat({
+		format: provider,
+		global: true,
+		includeHistory: provider === "claude-code" || provider === "cursor",
+	})
 
+	const detection = buildDetectionFromScan(provider, scanResult)
 	return { detection, scanResult }
 }
 
@@ -244,27 +478,15 @@ export async function scanClaudeCode(): Promise<{
  * Runs a dry-run migration preview. Returns what would be changed without writing anything.
  */
 export async function previewMigration(
+	provider: MigrationProvider,
 	scanResult: unknown,
 	categories: string[],
 ): Promise<MigrationPreview> {
-	const { convert, validate } = await import("@palot/cc2oc")
-	const includeHistory = categories.includes("history")
-	// biome-ignore lint/suspicious/noExplicitAny: cc2oc ScanResult is dynamically imported
-	const conversion = await convert(scanResult as any, {
-		categories: categories as Array<
-			| "config"
-			| "mcp"
-			| "agents"
-			| "commands"
-			| "skills"
-			| "permissions"
-			| "rules"
-			| "hooks"
-			| "history"
-		>,
-		includeHistory,
-	})
-	const validation = validate(conversion)
+	const { universalConvert } = await import("@palot/configconv")
+
+	// Convert from source provider to OpenCode (the target for Palot)
+	// biome-ignore lint/suspicious/noExplicitAny: scanResult is dynamically typed from IPC
+	const conversion = universalConvert(scanResult as any, { to: "opencode" })
 
 	const categoryPreviews: MigrationCategoryPreview[] = []
 
@@ -346,10 +568,10 @@ export async function previewMigration(
 		categoryPreviews.push({ category: "rules", itemCount: files.length, files })
 	}
 
-	// Hooks
-	if (conversion.hookPlugins.size > 0) {
+	// Extra files (plugins etc.)
+	if (conversion.extraFiles.size > 0) {
 		const files: MigrationFilePreview[] = []
-		for (const [filePath, content] of conversion.hookPlugins) {
+		for (const [filePath, content] of conversion.extraFiles) {
 			files.push({
 				path: filePath,
 				status: "new",
@@ -357,68 +579,203 @@ export async function previewMigration(
 				content,
 			})
 		}
-		categoryPreviews.push({ category: "hooks", itemCount: files.length, files })
+		categoryPreviews.push({ category: "extra", itemCount: files.length, files })
+	}
+
+	// History (Cursor or Claude Code)
+	let sessionCount = 0
+	let sessionProjectCount = 0
+	if (categories.includes("history")) {
+		const historyResult = await previewHistoryMigration(provider, scanResult)
+		if (historyResult) {
+			sessionCount = historyResult.sessionCount
+			sessionProjectCount = historyResult.projectCount
+			if (sessionCount > 0) {
+				categoryPreviews.push({
+					category: "history",
+					itemCount: sessionCount,
+					files: [
+						{
+							path: "~/.local/share/opencode/storage/",
+							status: "new",
+							lineCount: 0,
+							content: `${sessionCount} chat sessions across ${sessionProjectCount} projects will be imported`,
+						},
+					],
+				})
+			}
+		}
 	}
 
 	const totalFiles = categoryPreviews.reduce((sum, c) => sum + c.files.length, 0)
 
-	// Count sessions and their projects for the info card
-	const sessions = conversion.sessions ?? []
-	const sessionProjectPaths = new Set(sessions.map((s) => s.session.directory))
-
 	return {
 		categories: categoryPreviews,
-		warnings: [...conversion.report.warnings, ...validation.warnings],
+		warnings: [...conversion.report.warnings],
 		manualActions: [...conversion.report.manualActions],
-		errors: [
-			...conversion.report.errors,
-			...validation.errors.map((e) => `${e.path}: ${e.message}`),
-		],
+		errors: [...conversion.report.errors],
 		fileCount: totalFiles,
-		sessionCount: sessions.length,
-		sessionProjectCount: sessionProjectPaths.size,
+		sessionCount,
+		sessionProjectCount,
 	}
 }
 
 /**
+ * Preview history migration for the given provider scan result.
+ */
+async function previewHistoryMigration(
+	provider: MigrationProvider,
+	scanResult: unknown,
+): Promise<{ sessionCount: number; projectCount: number } | null> {
+	// biome-ignore lint/suspicious/noExplicitAny: dynamically typed from IPC
+	const result = scanResult as any
+	if (provider === "cursor" && result?.data?.history) {
+		const history = result.data.history
+		const projectPaths = new Set<string>()
+		for (const session of history.sessions ?? []) {
+			if (session.projectPath) projectPaths.add(session.projectPath)
+		}
+		return {
+			sessionCount: history.totalSessions ?? 0,
+			projectCount: projectPaths.size,
+		}
+	}
+	if (provider === "claude-code" && result?.data?.history) {
+		return {
+			sessionCount: result.data.history.totalSessions ?? 0,
+			projectCount: result.data.history.sessionIndices?.length ?? 0,
+		}
+	}
+	return null
+}
+
+/**
  * Executes the migration, writing files to disk with a backup.
+ * Sends progress events to the renderer via IPC during history migration.
  */
 export async function executeMigration(
+	provider: MigrationProvider,
 	scanResult: unknown,
 	categories: string[],
 ): Promise<MigrationResult> {
-	const { convert, write } = await import("@palot/cc2oc")
-	const includeHistory = categories.includes("history")
-	// biome-ignore lint/suspicious/noExplicitAny: cc2oc ScanResult is dynamically imported
-	const conversion = await convert(scanResult as any, {
-		categories: categories as Array<
-			| "config"
-			| "mcp"
-			| "agents"
-			| "commands"
-			| "skills"
-			| "permissions"
-			| "rules"
-			| "hooks"
-			| "history"
-		>,
-		includeHistory,
-	})
+	const { universalConvert, universalWrite } = await import("@palot/configconv")
 
-	const writeResult = await write(conversion, {
+	// biome-ignore lint/suspicious/noExplicitAny: scanResult is dynamically typed from IPC
+	const conversion = universalConvert(scanResult as any, { to: "opencode" })
+
+	const writeResult = await universalWrite(conversion, {
 		backup: true,
 		mergeStrategy: "preserve-existing",
 	})
 
+	const allWarnings = [...conversion.report.warnings]
+	const allManualActions = [...conversion.report.manualActions]
+	const allErrors = [...conversion.report.errors]
+	const allFilesWritten = [...writeResult.filesWritten]
+	let historyDuplicatesSkipped = 0
+
+	// Write history sessions if selected
+	if (categories.includes("history")) {
+		try {
+			const historyResult = await executeHistoryMigration(provider, scanResult)
+			allFilesWritten.push(...historyResult.filesWritten)
+			historyDuplicatesSkipped = historyResult.duplicatesSkipped
+
+			if (historyResult.duplicatesSkipped > 0) {
+				allWarnings.push(
+					`${historyResult.duplicatesSkipped} chat session${historyResult.duplicatesSkipped === 1 ? " was" : "s were"} already imported and skipped.`,
+				)
+			}
+		} catch (err) {
+			allErrors.push(
+				`History migration failed: ${err instanceof Error ? err.message : String(err)}`,
+			)
+		}
+	}
+
 	return {
 		success: true,
-		filesWritten: writeResult.filesWritten,
+		filesWritten: allFilesWritten,
 		filesSkipped: writeResult.filesSkipped,
 		backupDir: writeResult.backupDir ?? null,
-		warnings: [...conversion.report.warnings],
-		manualActions: [...conversion.report.manualActions],
-		errors: [...conversion.report.errors],
+		warnings: allWarnings,
+		manualActions: allManualActions,
+		errors: allErrors,
+		historyDuplicatesSkipped,
 	}
+}
+
+/**
+ * Execute history migration: convert sessions and write to OpenCode storage.
+ * Uses the detailed writer with deduplication and sends progress to the renderer.
+ */
+async function executeHistoryMigration(
+	provider: MigrationProvider,
+	scanResult: unknown,
+): Promise<{ filesWritten: string[]; duplicatesSkipped: number }> {
+	// biome-ignore lint/suspicious/noExplicitAny: dynamically typed from IPC
+	const result = scanResult as any
+
+	const sendProgress = (phase: string, current: number, total: number, skipped: number) => {
+		for (const win of BrowserWindow.getAllWindows()) {
+			win.webContents.send("onboarding:migration-progress", {
+				phase,
+				current,
+				total,
+				duplicatesSkipped: skipped,
+			})
+		}
+	}
+
+	if (provider === "cursor" && result?.data?.history) {
+		const { convertCursorHistory } = await import("@palot/configconv/converter/cursor-history")
+		const { writeHistorySessionsDetailed } = await import("@palot/configconv/writer/history")
+
+		sendProgress("converting", 0, 0, 0)
+		const { sessions } = convertCursorHistory(result.data.history)
+
+		if (sessions.length > 0) {
+			const writeResult = await writeHistorySessionsDetailed(sessions, {
+				onProgress: (progress) => {
+					sendProgress(
+						progress.phase,
+						progress.sessionIndex,
+						progress.sessionCount,
+						progress.duplicatesSkipped,
+					)
+				},
+			})
+			return {
+				filesWritten: writeResult.filesWritten,
+				duplicatesSkipped: writeResult.duplicatesSkipped.length,
+			}
+		}
+	} else if (provider === "claude-code" && result?.data?.history) {
+		const { convertHistory } = await import("@palot/configconv/converter/history")
+		const { writeHistorySessionsDetailed } = await import("@palot/configconv/writer/history")
+
+		sendProgress("converting", 0, 0, 0)
+		const { sessions } = await convertHistory(result.data.history)
+
+		if (sessions.length > 0) {
+			const writeResult = await writeHistorySessionsDetailed(sessions, {
+				onProgress: (progress) => {
+					sendProgress(
+						progress.phase,
+						progress.sessionIndex,
+						progress.sessionCount,
+						progress.duplicatesSkipped,
+					)
+				},
+			})
+			return {
+				filesWritten: writeResult.filesWritten,
+				duplicatesSkipped: writeResult.duplicatesSkipped.length,
+			}
+		}
+	}
+
+	return { filesWritten: [], duplicatesSkipped: 0 }
 }
 
 /**
@@ -430,7 +787,7 @@ export async function restoreMigrationBackup(): Promise<{
 	removed: string[]
 	errors: string[]
 }> {
-	const { restore } = await import("@palot/cc2oc")
+	const { restore } = await import("@palot/configconv")
 	const result = await restore()
 	return {
 		success: result.errors.length === 0,
@@ -444,12 +801,162 @@ export async function restoreMigrationBackup(): Promise<{
 // Helpers
 // ============================================================
 
-// biome-ignore lint/suspicious/noExplicitAny: cc2oc types are dynamically imported
-function countMcpServers(scanResult: any): number {
+/**
+ * Build a ProviderDetection from a configconv scan result.
+ * This is the "full scan" counterpart to the lightweight detectXxx() functions above.
+ */
+function buildDetectionFromScan(
+	provider: MigrationProvider,
+	// biome-ignore lint/suspicious/noExplicitAny: scan result is dynamically typed from import
+	scanResult: any,
+): ProviderDetection {
+	const data = scanResult.data
+
+	switch (provider) {
+		case "claude-code":
+			return buildClaudeCodeDetection(data)
+		case "cursor":
+			return buildCursorDetection(data)
+		case "opencode":
+			return buildOpenCodeDetection(data)
+	}
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: scan result is dynamically typed
+function buildClaudeCodeDetection(data: any): ProviderDetection {
+	const mcpServerCount = countClaudeCodeMcpServers(data)
+	const agentCount = countClaudeCodeItems(data, "agents")
+	const commandCount = countClaudeCodeItems(data, "commands")
+	let ruleCount = 0
+	if (data.global?.claudeMd) ruleCount++
+	for (const p of data.projects) {
+		if (p.claudeMd) ruleCount++
+	}
+	const hasHooks = !!(data.global.settings as Record<string, unknown> | undefined)?.hooks
+	const skillCount =
+		data.global.skills.length +
+		data.projects.reduce((sum: number, p: { skills: unknown[] }) => sum + p.skills.length, 0)
+
+	const summaryParts: string[] = []
+	if (data.global.settings) summaryParts.push("global settings")
+	if (data.projects.length > 0)
+		summaryParts.push(`${data.projects.length} project${data.projects.length === 1 ? "" : "s"}`)
+	if (mcpServerCount > 0)
+		summaryParts.push(`${mcpServerCount} MCP server${mcpServerCount === 1 ? "" : "s"}`)
+	if (agentCount > 0) summaryParts.push(`${agentCount} agent${agentCount === 1 ? "" : "s"}`)
+
+	return {
+		provider: "claude-code",
+		found: true,
+		label: PROVIDER_LABELS["claude-code"],
+		summary: `Found ${summaryParts.join(", ")}`,
+		hasGlobalSettings: !!data.global.settings || !!data.global.userState,
+		hasPermissions: !!data.global.settings,
+		projectCount: data.projects.length,
+		mcpServerCount,
+		agentCount,
+		commandCount,
+		ruleCount,
+		hasHooks,
+		skillCount,
+		totalSessions: data.history?.totalSessions ?? 0,
+		totalMessages: data.history?.totalMessages ?? 0,
+	}
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: scan result is dynamically typed
+function buildCursorDetection(data: any): ProviderDetection {
+	const mcpServerCount = data.global.mcpJson?.mcpServers
+		? Object.keys(data.global.mcpJson.mcpServers).length
+		: 0
+	const agentCount = data.global.agents?.length ?? 0
+	const commandCount = data.global.commands?.length ?? 0
+	const skillCount = data.global.skills?.length ?? 0
+	const hasPermissions = !!data.global.cliConfig
+
+	let ruleCount = 0
+	for (const p of data.projects ?? []) {
+		ruleCount += p.rules?.length ?? 0
+		if (p.cursorRules) ruleCount++
+	}
+
+	const totalSessions = data.history?.totalSessions ?? 0
+	const totalMessages = data.history?.totalMessages ?? 0
+
+	const summaryParts: string[] = []
+	if (mcpServerCount > 0)
+		summaryParts.push(`${mcpServerCount} MCP server${mcpServerCount === 1 ? "" : "s"}`)
+	if (hasPermissions) summaryParts.push("permissions")
+	if (agentCount > 0) summaryParts.push(`${agentCount} agent${agentCount === 1 ? "" : "s"}`)
+	if (commandCount > 0) summaryParts.push(`${commandCount} command${commandCount === 1 ? "" : "s"}`)
+	if (skillCount > 0) summaryParts.push(`${skillCount} skill${skillCount === 1 ? "" : "s"}`)
+	if (totalSessions > 0)
+		summaryParts.push(`${totalSessions} chat session${totalSessions === 1 ? "" : "s"}`)
+
+	return {
+		provider: "cursor",
+		found: true,
+		label: PROVIDER_LABELS.cursor,
+		summary: `Found ${summaryParts.join(", ") || "configuration"}`,
+		hasGlobalSettings: !!data.global.mcpJson || hasPermissions,
+		hasPermissions,
+		projectCount: data.projects?.length ?? 0,
+		mcpServerCount,
+		agentCount,
+		commandCount,
+		ruleCount,
+		hasHooks: false,
+		skillCount,
+		totalSessions,
+		totalMessages,
+	}
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: scan result is dynamically typed
+function buildOpenCodeDetection(data: any): ProviderDetection {
+	let mcpServerCount = 0
+	if (data.global.config?.mcp) {
+		mcpServerCount += Object.keys(data.global.config.mcp).length
+	}
+	const agentCount = data.global.agents?.length ?? 0
+	const commandCount = data.global.commands?.length ?? 0
+	const skillCount = data.global.skills?.length ?? 0
+	const ruleCount = data.global.agentsMd ? 1 : 0
+	const hasPermissions =
+		!!data.global.config?.permission && Object.keys(data.global.config.permission).length > 0
+
+	const summaryParts: string[] = []
+	if (data.global.config) summaryParts.push("global config")
+	if (mcpServerCount > 0)
+		summaryParts.push(`${mcpServerCount} MCP server${mcpServerCount === 1 ? "" : "s"}`)
+	if (ruleCount > 0) summaryParts.push("rules")
+	if (agentCount > 0) summaryParts.push(`${agentCount} agent${agentCount === 1 ? "" : "s"}`)
+
+	return {
+		provider: "opencode",
+		found: true,
+		label: PROVIDER_LABELS.opencode,
+		summary: `Found ${summaryParts.join(", ") || "configuration"}`,
+		hasGlobalSettings: !!data.global.config,
+		hasPermissions,
+		projectCount: data.projects?.length ?? 0,
+		mcpServerCount,
+		agentCount,
+		commandCount,
+		ruleCount,
+		hasHooks: false,
+		skillCount,
+		totalSessions: 0,
+		totalMessages: 0,
+	}
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: scan result is dynamically imported
+function countClaudeCodeMcpServers(data: any): number {
 	let count = 0
 	// Global MCP from user state
-	if (scanResult.global.userState?.projects) {
-		for (const project of Object.values(scanResult.global.userState.projects) as Array<
+	if (data.global.userState?.projects) {
+		for (const project of Object.values(data.global.userState.projects) as Array<
 			Record<string, unknown>
 		>) {
 			if (project.mcpServers && typeof project.mcpServers === "object") {
@@ -458,7 +965,7 @@ function countMcpServers(scanResult: any): number {
 		}
 	}
 	// Per-project MCP
-	for (const project of scanResult.projects) {
+	for (const project of data.projects) {
 		if (project.mcpJson?.mcpServers) {
 			count += Object.keys(project.mcpJson.mcpServers).length
 		}
@@ -466,20 +973,11 @@ function countMcpServers(scanResult: any): number {
 	return count
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: cc2oc types are dynamically imported
-function countAgents(scanResult: any): number {
+// biome-ignore lint/suspicious/noExplicitAny: scan result is dynamically imported
+function countClaudeCodeItems(data: any, field: string): number {
 	let count = 0
-	for (const project of scanResult.projects) {
-		count += project.agents?.length ?? 0
-	}
-	return count
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: cc2oc types are dynamically imported
-function countCommands(scanResult: any): number {
-	let count = 0
-	for (const project of scanResult.projects) {
-		count += project.commands?.length ?? 0
+	for (const project of data.projects) {
+		count += project[field]?.length ?? 0
 	}
 	return count
 }

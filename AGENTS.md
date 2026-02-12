@@ -10,7 +10,8 @@ Do NOT add one-time setup notes, general knowledge, or things discoverable from 
 
 - **Monorepo**: Turborepo + Bun workspaces (Bun 1.3.8)
 - **`packages/ui`**: Shared shadcn/ui component library (`@palot/ui`)
-- **`packages/cc2oc`**: Claude Code to OpenCode migration library (`@palot/cc2oc`)
+- **`packages/configconv`**: Universal agent config converter library (`@palot/configconv`) -- converts between Claude Code, OpenCode, and Cursor formats
+- **`packages/configconv-cli`**: Thin CLI wrapper (`configconv`) for the converter library
 - **`apps/desktop`**: Electron 40 + Vite + React 19 desktop app (via `electron-vite`)
 - **`apps/server`**: Bun + Hono backend -- used only in browser-mode dev (`dev:web`), NOT bundled with Electron
 
@@ -29,9 +30,9 @@ Do NOT add one-time setup notes, general knowledge, or things discoverable from 
 - **Lint/format fix**: `bun run lint:fix` or `bunx biome check --write .` (from root)
 - **Type check all**: `bun run check-types` (from root, via Turborepo)
 - **Type check desktop**: `cd apps/desktop && bun run check-types` (uses `tsgo`)
-- **Run all tests**: `cd packages/cc2oc && bun test`
-- **Run single test file**: `cd packages/cc2oc && bun test test/converter/config.test.ts`
-- **Run tests by name**: `cd packages/cc2oc && bun test --grep "converts model"`
+- **Run all tests**: `cd packages/configconv && bun test`
+- **Run single test file**: `cd packages/configconv && bun test test/converter/config.test.ts`
+- **Run tests by name**: `cd packages/configconv && bun test --grep "converts model"`
 - **Rebuild server types**: `cd apps/server && bun run build:types` (required after adding server routes)
 - **Add UI component**: `cd packages/ui && bunx shadcn@latest add <component>`
 - **Package**: `cd apps/desktop && bun run package` (or `package:linux`, `package:mac`, `package:win`, `package:all`)
@@ -162,11 +163,11 @@ The OpenCode server/TUI source is often checked out locally at `../opencode`. Ke
 ## Testing
 
 - **Framework**: Bun's built-in test runner (`bun:test`) -- no vitest/jest/playwright
-- **Tests exist only in `packages/cc2oc`** -- desktop app, server, and UI have no tests
+- **Tests exist only in `packages/configconv`** -- desktop app, server, and UI have no tests
 - Tests are NOT run in CI (only lint, type-check, and build are)
-- Run all: `cd packages/cc2oc && bun test`
-- Run one file: `cd packages/cc2oc && bun test test/converter/mcp.test.ts`
-- Run by name: `cd packages/cc2oc && bun test --grep "pattern"`
+- Run all: `cd packages/configconv && bun test`
+- Run one file: `cd packages/configconv && bun test test/converter/mcp.test.ts`
+- Run by name: `cd packages/configconv && bun test --grep "pattern"`
 
 ## agent-browser
 

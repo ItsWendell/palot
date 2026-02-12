@@ -210,16 +210,24 @@ contextBridge.exposeInMainWorld("palot", {
 				ipcRenderer.removeListener("onboarding:install-output", listener)
 			}
 		},
-		/** Quick detect whether Claude Code config exists (no heavy imports). */
-		detectClaudeCode: () => ipcRenderer.invoke("onboarding:detect-claude-code"),
-		/** Full scan of Claude Code configuration via cc2oc. */
-		scanClaudeCode: () => ipcRenderer.invoke("onboarding:scan-claude-code"),
-		/** Dry-run migration preview. */
-		previewMigration: (scanResult: unknown, categories: string[]) =>
-			ipcRenderer.invoke("onboarding:preview-migration", scanResult, categories),
+		/** Quick detect all supported providers (Claude Code, Cursor, OpenCode). */
+		detectProviders: () => ipcRenderer.invoke("onboarding:detect-providers"),
+		/** Full scan of a specific provider's configuration. */
+		scanProvider: (provider: string) => ipcRenderer.invoke("onboarding:scan-provider", provider),
+		/** Dry-run migration preview for a provider. */
+		previewMigration: (provider: string, scanResult: unknown, categories: string[]) =>
+			ipcRenderer.invoke("onboarding:preview-migration", provider, scanResult, categories),
 		/** Execute migration (writes files with backup). */
-		executeMigration: (scanResult: unknown, categories: string[]) =>
-			ipcRenderer.invoke("onboarding:execute-migration", scanResult, categories),
+		executeMigration: (provider: string, scanResult: unknown, categories: string[]) =>
+			ipcRenderer.invoke("onboarding:execute-migration", provider, scanResult, categories),
+		/** Subscribe to migration progress updates (history writing). */
+		onMigrationProgress: (callback: (progress: unknown) => void) => {
+			const listener = (_event: unknown, progress: unknown) => callback(progress)
+			ipcRenderer.on("onboarding:migration-progress", listener)
+			return () => {
+				ipcRenderer.removeListener("onboarding:migration-progress", listener)
+			}
+		},
 		/** Restore the most recent migration backup. */
 		restoreBackup: () => ipcRenderer.invoke("onboarding:restore-backup"),
 	},

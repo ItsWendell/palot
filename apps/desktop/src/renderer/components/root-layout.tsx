@@ -122,6 +122,7 @@ export function RootLayout() {
 		(state: {
 			skippedSteps: string[]
 			migrationPerformed: boolean
+			migratedFrom: string[]
 			opencodeVersion: string | null
 		}) => {
 			setOnboardingState({
@@ -129,6 +130,7 @@ export function RootLayout() {
 				completedAt: new Date().toISOString(),
 				skippedSteps: state.skippedSteps,
 				migrationPerformed: state.migrationPerformed,
+				migratedFrom: state.migratedFrom,
 				opencodeVersion: state.opencodeVersion,
 			})
 		},

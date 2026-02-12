@@ -1,8 +1,9 @@
 /**
- * Onboarding Step 4: Migration Preview & Execute.
+ * Migration Preview & Execute step.
  *
  * Shows a file tree of what will be created/modified, a diff preview of
  * selected files, and executes the migration with backup on confirmation.
+ * Supports all migration providers (Claude Code, Cursor, OpenCode).
  */
 
 import { Button } from "@palot/ui/components/button"
@@ -15,14 +16,20 @@ import {
 	FolderOpenIcon,
 	PlayIcon,
 } from "lucide-react"
-import { useCallback, useState } from "react"
-import type { MigrationPreview, MigrationResult } from "../../../../preload/api"
+import { useCallback, useEffect, useState } from "react"
+import type {
+	MigrationPreview,
+	MigrationProgress,
+	MigrationProvider,
+	MigrationResult,
+} from "../../../../preload/api"
 
 // ============================================================
 // Types
 // ============================================================
 
 interface MigrationPreviewStepProps {
+	provider: MigrationProvider
 	scanResult: unknown
 	categories: string[]
 	preview: MigrationPreview | null
@@ -32,10 +39,21 @@ interface MigrationPreviewStepProps {
 }
 
 // ============================================================
+// Provider display metadata
+// ============================================================
+
+const PROVIDER_LABELS: Record<MigrationProvider, string> = {
+	"claude-code": "Claude Code",
+	cursor: "Cursor",
+	opencode: "OpenCode",
+}
+
+// ============================================================
 // Component
 // ============================================================
 
 export function MigrationPreviewStep({
+	provider,
 	scanResult,
 	categories,
 	preview,
@@ -46,22 +64,38 @@ export function MigrationPreviewStep({
 	const [selectedFile, setSelectedFile] = useState<string | null>(null)
 	const [executing, setExecuting] = useState(false)
 	const [error, setError] = useState<string | null>(null)
+	const [progress, setProgress] = useState<MigrationProgress | null>(null)
 
 	const isElectron = typeof window !== "undefined" && "palot" in window
+	const label = PROVIDER_LABELS[provider]
+
+	// Subscribe to migration progress events during execution
+	useEffect(() => {
+		if (!isElectron || !executing) return
+		const unsub = window.palot.onboarding.onMigrationProgress((p) => {
+			setProgress(p as MigrationProgress)
+		})
+		return unsub
+	}, [isElectron, executing])
 
 	const handleExecute = useCallback(async () => {
 		if (!isElectron || !scanResult) return
 		setExecuting(true)
 		setError(null)
+		setProgress(null)
 
 		try {
-			const result = await window.palot.onboarding.executeMigration(scanResult, categories)
+			const result = await window.palot.onboarding.executeMigration(
+				provider,
+				scanResult,
+				categories,
+			)
 			onComplete(result)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Migration failed")
 			setExecuting(false)
 		}
-	}, [isElectron, scanResult, categories, onComplete])
+	}, [isElectron, provider, scanResult, categories, onComplete])
 
 	if (!preview) return null
 
@@ -80,7 +114,7 @@ export function MigrationPreviewStep({
 			<div className="mx-auto w-full max-w-3xl space-y-4">
 				{/* Header */}
 				<div className="text-center">
-					<h2 className="text-xl font-semibold text-foreground">Migration Preview</h2>
+					<h2 className="text-xl font-semibold text-foreground">{label} Migration Preview</h2>
 					<p className="mt-1 text-sm text-muted-foreground">
 						{preview.fileCount} file(s) will be created. Review the changes below.
 					</p>
@@ -213,7 +247,7 @@ export function MigrationPreviewStep({
 						{executing ? (
 							<>
 								<Spinner className="size-3.5" />
-								Migrating...
+								{formatProgressLabel(progress)}
 							</>
 						) : (
 							<>
@@ -231,6 +265,27 @@ export function MigrationPreviewStep({
 // ============================================================
 // Helpers
 // ============================================================
+
+/** Format migration progress into a short label for the button. */
+function formatProgressLabel(progress: MigrationProgress | null): string {
+	if (!progress) return "Migrating..."
+
+	switch (progress.phase) {
+		case "converting":
+			return "Converting sessions..."
+		case "dedup-check":
+			return "Checking for duplicates..."
+		case "writing":
+			if (progress.total > 0) {
+				return `Writing session ${progress.current}/${progress.total}...`
+			}
+			return "Writing sessions..."
+		case "complete":
+			return "Finishing..."
+		default:
+			return "Migrating..."
+	}
+}
 
 /** Shorten a file path for display by replacing the home directory with ~. */
 function shortenPath(filePath: string): string {

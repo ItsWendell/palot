@@ -5,7 +5,7 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite"
 
 export default defineConfig({
 	main: {
-		plugins: [externalizeDepsPlugin({ exclude: ["@palot/cc2oc"] })],
+		plugins: [externalizeDepsPlugin({ exclude: ["@palot/configconv"] })],
 		build: {
 			rollupOptions: {
 				input: { index: path.resolve(__dirname, "src/main/index.ts") },

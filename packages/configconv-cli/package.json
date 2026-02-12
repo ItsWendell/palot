@@ -1,0 +1,23 @@
+{
+	"name": "configconv",
+	"version": "0.1.0",
+	"private": false,
+	"type": "module",
+	"bin": {
+		"configconv": "./src/index.ts"
+	},
+	"scripts": {
+		"check-types": "tsgo --noEmit",
+		"lint": "biome check .",
+		"clean": "rm -rf node_modules .turbo"
+	},
+	"dependencies": {
+		"@palot/configconv": "workspace:*",
+		"citty": "^0.1.6",
+		"consola": "^3.4.2"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"typescript": "^5.8.3"
+	}
+}

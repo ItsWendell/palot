@@ -1,0 +1,39 @@
+{
+	"name": "@palot/configconv",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./scanner": "./src/scanner/index.ts",
+		"./scanner/*": "./src/scanner/*.ts",
+		"./converter": "./src/converter/index.ts",
+		"./converter/*": "./src/converter/*.ts",
+		"./converter/universal": "./src/converter/universal.ts",
+		"./converter/to-canonical/*": "./src/converter/to-canonical/*.ts",
+		"./converter/from-canonical/*": "./src/converter/from-canonical/*.ts",
+		"./writer": "./src/writer/index.ts",
+		"./writer/*": "./src/writer/*.ts",
+		"./validator": "./src/validator/index.ts",
+		"./differ": "./src/differ/index.ts",
+		"./types": "./src/types/index.ts",
+		"./types/*": "./src/types/*.ts",
+		"./utils/*": "./src/utils/*.ts"
+	},
+	"scripts": {
+		"check-types": "tsgo --noEmit",
+		"test": "bun test",
+		"lint": "biome check .",
+		"clean": "rm -rf node_modules .turbo"
+	},
+	"dependencies": {
+		"@opencode-ai/sdk": "^1.1.53",
+		"jsonc-parser": "^3.3.1",
+		"yaml": "^2.7.1",
+		"zod": "^3.24.4"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"typescript": "^5.8.3"
+	}
+}

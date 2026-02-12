@@ -5,13 +5,13 @@
  * Uses Framer Motion for step transitions and a progress indicator at the top.
  *
  * Core flow: Welcome -> Environment Check -> Complete (3 steps).
- * Migration from Claude Code is an optional detour the user can trigger
- * from the Complete screen. It does NOT auto-scan.
+ * Migration from any detected provider (Claude Code, Cursor, OpenCode) is an
+ * optional detour the user can trigger from the Complete screen.
  */
 
 import { AnimatePresence, motion } from "motion/react"
 import { useCallback, useState } from "react"
-import type { MigrationPreview, MigrationResult } from "../../../preload/api"
+import type { MigrationPreview, MigrationProvider, MigrationResult } from "../../../preload/api"
 import { APP_BAR_HEIGHT } from "../app-bar"
 import { OnboardingProgress } from "./onboarding-progress"
 import { CompleteStep } from "./steps/complete-step"
@@ -35,6 +35,7 @@ interface OnboardingOverlayProps {
 	onComplete: (state: {
 		skippedSteps: string[]
 		migrationPerformed: boolean
+		migratedFrom: string[]
 		opencodeVersion: string | null
 	}) => void
 }
@@ -61,9 +62,10 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 	const [currentStep, setCurrentStep] = useState<OnboardingStep>("welcome")
 	const [skippedSteps, setSkippedSteps] = useState<string[]>([])
 	const [opencodeVersion, setOpencodeVersion] = useState<string | null>(null)
-	const [migrationPerformed, setMigrationPerformed] = useState(false)
+	const [migratedProviders, setMigratedProviders] = useState<string[]>([])
 
 	// Migration state (only populated if user opts in from complete screen)
+	const [activeProvider, setActiveProvider] = useState<MigrationProvider | null>(null)
 	const [scanResult, setScanResult] = useState<unknown>(null)
 	const [selectedCategories, setSelectedCategories] = useState<string[]>([])
 	const [migrationPreview, setMigrationPreview] = useState<MigrationPreview | null>(null)
@@ -101,10 +103,18 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 		goToStep("complete")
 	}, [goToStep, skipStep])
 
-	// Migration opt-in from complete screen
-	const handleStartMigration = useCallback(() => {
-		goToStep("migration-offer")
-	}, [goToStep])
+	// Migration opt-in from complete screen (now with provider selection)
+	const handleStartMigration = useCallback(
+		(provider: MigrationProvider) => {
+			setActiveProvider(provider)
+			// Reset migration state for this new provider
+			setScanResult(null)
+			setSelectedCategories([])
+			setMigrationPreview(null)
+			goToStep("migration-offer")
+		},
+		[goToStep],
+	)
 
 	const handleMigrationOfferPreview = useCallback(
 		(scan: unknown, categories: string[], preview: MigrationPreview) => {
@@ -117,16 +127,22 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 	)
 
 	const handleMigrationOfferSkip = useCallback(() => {
+		setActiveProvider(null)
 		goToStep("complete")
 	}, [goToStep])
 
 	const handleMigrationComplete = useCallback(
 		(result: MigrationResult) => {
 			setMigrationResult(result)
-			setMigrationPerformed(true)
+			if (activeProvider) {
+				setMigratedProviders((prev) =>
+					prev.includes(activeProvider) ? prev : [...prev, activeProvider],
+				)
+			}
+			setActiveProvider(null)
 			goToStep("complete")
 		},
-		[goToStep],
+		[goToStep, activeProvider],
 	)
 
 	const handleMigrationBack = useCallback(() => {
@@ -134,16 +150,18 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 	}, [goToStep])
 
 	const handleMigrationSkip = useCallback(() => {
+		setActiveProvider(null)
 		goToStep("complete")
 	}, [goToStep])
 
 	const handleFinish = useCallback(() => {
 		onComplete({
 			skippedSteps,
-			migrationPerformed,
+			migrationPerformed: migratedProviders.length > 0,
+			migratedFrom: migratedProviders,
 			opencodeVersion,
 		})
-	}, [onComplete, skippedSteps, migrationPerformed, opencodeVersion])
+	}, [onComplete, skippedSteps, migratedProviders, opencodeVersion])
 
 	return (
 		<div
@@ -204,7 +222,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 						>
 							<CompleteStep
 								opencodeVersion={opencodeVersion}
-								migrationPerformed={migrationPerformed}
+								migratedProviders={migratedProviders}
 								migrationResult={migrationResult}
 								onStartMigration={handleStartMigration}
 								onFinish={handleFinish}
@@ -212,26 +230,28 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 						</motion.div>
 					)}
 
-					{currentStep === "migration-offer" && (
+					{currentStep === "migration-offer" && activeProvider && (
 						<motion.div
-							key="migration-offer"
+							key={`migration-offer-${activeProvider}`}
 							className="absolute inset-0 overflow-y-auto"
 							{...STEP_TRANSITION}
 						>
 							<MigrationOfferStep
+								provider={activeProvider}
 								onPreview={handleMigrationOfferPreview}
 								onSkip={handleMigrationOfferSkip}
 							/>
 						</motion.div>
 					)}
 
-					{currentStep === "migration-preview" && (
+					{currentStep === "migration-preview" && activeProvider && (
 						<motion.div
-							key="migration-preview"
+							key={`migration-preview-${activeProvider}`}
 							className="absolute inset-0 overflow-y-auto"
 							{...STEP_TRANSITION}
 						>
 							<MigrationPreviewStep
+								provider={activeProvider}
 								scanResult={scanResult}
 								categories={selectedCategories}
 								preview={migrationPreview}

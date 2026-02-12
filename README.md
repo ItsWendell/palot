@@ -178,7 +178,7 @@ bun run lint:fix         # Lint and auto-fix
 bun run check-types      # Type-check all packages
 
 # Testing
-cd packages/cc2oc && bun test   # Run tests
+cd packages/configconv && bun test   # Run tests
 
 # Versioning
 bun changeset            # Add a changeset

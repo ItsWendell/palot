@@ -1,15 +1,19 @@
 /**
  * Onboarding: Complete / Ready.
  *
- * Shows a success state, quick tips, and an optional prompt to migrate
- * from Claude Code. The migration card only appears if the user hasn't
- * already migrated. Clicking it triggers the migration flow as a detour.
+ * Shows a success state, quick tips, and optional prompts to migrate
+ * from detected providers (Claude Code, Cursor, OpenCode). Migration
+ * cards only appear for providers that have config on disk and haven't
+ * already been migrated.
  */
 
+import { Badge } from "@palot/ui/components/badge"
 import { Button } from "@palot/ui/components/button"
-import { ArrowRightIcon, CheckCircle2Icon, CommandIcon } from "lucide-react"
+import { Spinner } from "@palot/ui/components/spinner"
+import { ArrowRightIcon, CheckCircle2Icon, CommandIcon, FlaskConicalIcon } from "lucide-react"
 import { motion } from "motion/react"
-import type { MigrationResult } from "../../../../preload/api"
+import { useEffect, useRef, useState } from "react"
+import type { MigrationProvider, MigrationResult, ProviderDetection } from "../../../../preload/api"
 
 // ============================================================
 // Types
@@ -17,9 +21,9 @@ import type { MigrationResult } from "../../../../preload/api"
 
 interface CompleteStepProps {
 	opencodeVersion: string | null
-	migrationPerformed: boolean
+	migratedProviders: string[]
 	migrationResult: MigrationResult | null
-	onStartMigration: () => void
+	onStartMigration: (provider: MigrationProvider) => void
 	onFinish: () => void
 }
 
@@ -27,17 +31,44 @@ interface CompleteStepProps {
 // Component
 // ============================================================
 
-const isMac =
-	typeof window !== "undefined" && "palot" in window && window.palot.platform === "darwin"
+const isElectron = typeof window !== "undefined" && "palot" in window
+const isMac = isElectron && window.palot.platform === "darwin"
 
 export function CompleteStep({
 	opencodeVersion,
-	migrationPerformed,
+	migratedProviders,
 	migrationResult,
 	onStartMigration,
 	onFinish,
 }: CompleteStepProps) {
 	const modKey = isMac ? "Cmd" : "Ctrl"
+
+	// Detect available providers on mount
+	const [providers, setProviders] = useState<ProviderDetection[]>([])
+	const [detecting, setDetecting] = useState(false)
+	const hasDetected = useRef(false)
+
+	useEffect(() => {
+		if (!isElectron || hasDetected.current) return
+		hasDetected.current = true
+		setDetecting(true)
+
+		window.palot.onboarding
+			.detectProviders()
+			.then((detections) => {
+				// Only show providers that were found and aren't OpenCode itself
+				// (no point migrating OpenCode -> OpenCode)
+				setProviders(detections.filter((d) => d.found && d.provider !== "opencode"))
+				setDetecting(false)
+			})
+			.catch(() => {
+				setDetecting(false)
+			})
+	}, [])
+
+	// Filter out already-migrated providers
+	const availableProviders = providers.filter((p) => !migratedProviders.includes(p.provider))
+	const hasMigrated = migratedProviders.length > 0
 
 	return (
 		<div className="flex h-full flex-col items-center justify-center px-6">
@@ -71,7 +102,7 @@ export function CompleteStep({
 						{opencodeVersion
 							? `Palot is connected to OpenCode ${formatVersion(opencodeVersion)}`
 							: "Palot is ready to go"}
-						{migrationPerformed ? " and your Claude Code configuration has been migrated." : "."}
+						{hasMigrated ? " and your configuration has been migrated." : "."}
 					</p>
 				</motion.div>
 
@@ -91,6 +122,11 @@ export function CompleteStep({
 							{migrationResult.filesSkipped.length > 0 && (
 								<p>{migrationResult.filesSkipped.length} file(s) skipped (already exist)</p>
 							)}
+							{migrationResult.historyDuplicatesSkipped > 0 && (
+								<p>
+									{migrationResult.historyDuplicatesSkipped} session(s) skipped (already imported)
+								</p>
+							)}
 							{migrationResult.backupDir && <p>Backup saved</p>}
 							{migrationResult.manualActions.length > 0 && (
 								<p className="text-amber-500">
@@ -101,32 +137,55 @@ export function CompleteStep({
 					</motion.div>
 				)}
 
-				{/* Claude Code migration opt-in (only if not already migrated) */}
-				{!migrationPerformed && (
+				{/* Provider migration cards */}
+				{detecting && (
 					<motion.div
 						initial={{ opacity: 0, y: 8 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ delay: 0.45, duration: 0.3 }}
+						className="flex items-center justify-center gap-2 text-sm text-muted-foreground"
 					>
-						<button
-							type="button"
-							onClick={onStartMigration}
-							data-slot="onboarding-card"
-							className="group w-full cursor-pointer rounded-lg border border-border bg-muted/20 p-4 text-left transition-colors hover:bg-muted/40"
-						>
-							<div className="flex items-center justify-between">
-								<div className="space-y-1">
-									<p className="text-sm font-medium text-foreground">Migrate from Claude Code?</p>
-									<p className="text-xs text-muted-foreground">
-										Import your settings, MCP servers, agents, and rules.
-									</p>
+						<Spinner className="size-3.5" />
+						Checking for existing configurations...
+					</motion.div>
+				)}
+
+				{!detecting && availableProviders.length > 0 && (
+					<motion.div
+						initial={{ opacity: 0, y: 8 }}
+						animate={{ opacity: 1, y: 0 }}
+						transition={{ delay: 0.45, duration: 0.3 }}
+						className="space-y-2"
+					>
+						{availableProviders.map((provider) => (
+							<button
+								key={provider.provider}
+								type="button"
+								onClick={() => onStartMigration(provider.provider)}
+								data-slot="onboarding-card"
+								className="group w-full cursor-pointer rounded-lg border border-border bg-muted/20 p-4 text-left transition-colors hover:bg-muted/40"
+							>
+								<div className="flex items-center justify-between">
+									<div className="space-y-1">
+										<p className="flex items-center gap-2 text-sm font-medium text-foreground">
+											Migrate from {provider.label}?
+											<Badge
+												variant="outline"
+												className="gap-1 px-1.5 py-0 text-[10px] text-muted-foreground"
+											>
+												<FlaskConicalIcon aria-hidden="true" className="size-2.5" />
+												Experimental
+											</Badge>
+										</p>
+										<p className="text-xs text-muted-foreground">{provider.summary}</p>
+									</div>
+									<ArrowRightIcon
+										aria-hidden="true"
+										className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+									/>
 								</div>
-								<ArrowRightIcon
-									aria-hidden="true"
-									className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-								/>
-							</div>
-						</button>
+							</button>
+						))}
 					</motion.div>
 				)}
 

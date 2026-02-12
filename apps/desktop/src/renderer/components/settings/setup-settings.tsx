@@ -20,6 +20,16 @@ import { SettingsSection } from "./settings-section"
 
 const isElectron = typeof window !== "undefined" && "palot" in window
 
+// ============================================================
+// Provider display metadata
+// ============================================================
+
+const PROVIDER_LABELS: Record<string, string> = {
+	"claude-code": "Claude Code",
+	cursor: "Cursor",
+	opencode: "OpenCode",
+}
+
 export function SetupSettings() {
 	return (
 		<div className="space-y-8">
@@ -128,9 +138,11 @@ function MigrationSection() {
 		}
 	}, [])
 
-	if (!onboardingState.migrationPerformed) {
+	const migratedFrom = onboardingState.migratedFrom ?? []
+
+	if (!onboardingState.migrationPerformed || migratedFrom.length === 0) {
 		return (
-			<SettingsSection title="Claude Code Migration">
+			<SettingsSection title="Configuration Migration">
 				<SettingsRow label="Status" description="No migration has been performed">
 					<span className="text-sm text-muted-foreground">N/A</span>
 				</SettingsRow>
@@ -138,8 +150,13 @@ function MigrationSection() {
 		)
 	}
 
+	const migratedLabels = migratedFrom.map((p) => PROVIDER_LABELS[p] ?? p).join(", ")
+
 	return (
-		<SettingsSection title="Claude Code Migration">
+		<SettingsSection title="Configuration Migration">
+			<SettingsRow label="Migrated from" description={migratedLabels}>
+				<CheckCircle2Icon className="size-4 text-emerald-500" />
+			</SettingsRow>
 			<SettingsRow
 				label="Last migrated"
 				description={
@@ -148,7 +165,9 @@ function MigrationSection() {
 						: "Unknown"
 				}
 			>
-				<CheckCircle2Icon className="size-4 text-emerald-500" />
+				<span className="text-xs text-muted-foreground">
+					{migratedFrom.length} provider{migratedFrom.length === 1 ? "" : "s"}
+				</span>
 			</SettingsRow>
 			<SettingsRow
 				label="Restore backup"
@@ -189,6 +208,7 @@ function OnboardingSection() {
 			completedAt: null,
 			skippedSteps: [],
 			migrationPerformed: false,
+			migratedFrom: [],
 			opencodeVersion: null,
 		})
 		// Relaunch the app to show onboarding fresh

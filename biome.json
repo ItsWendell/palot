@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.3.14/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.3.15/schema.json",
 	"files": {
 		"includes": [
 			"**/*.ts",
@@ -12,6 +12,7 @@
 			"!out",
 			"!**/out",
 			"!release",
+			"!**/release",
 			"!.turbo",
 			"!src-tauri/target",
 			"!*.min.js"

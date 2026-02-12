@@ -7,14 +7,15 @@ import { createLogger } from "./logger"
 import { readSessionMessages } from "./messages"
 import { readModelState, updateModelRecent } from "./model-state"
 import { dismissNotification, updateBadgeCount } from "./notifications"
+import type { MigrationProvider } from "./onboarding"
 import {
 	checkOpenCodeInstallation,
-	detectClaudeCode,
+	detectProviders,
 	executeMigration,
 	installOpenCode,
 	previewMigration,
 	restoreMigrationBackup,
-	scanClaudeCode,
+	scanProvider,
 } from "./onboarding"
 import { getOpenInTargets, openInTarget, setPreferredTarget } from "./open-in-targets"
 import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
@@ -322,21 +323,24 @@ export function registerIpcHandlers(): void {
 	)
 
 	ipcMain.handle(
-		"onboarding:detect-claude-code",
-		withLogging("onboarding:detect-claude-code", async () => await detectClaudeCode()),
+		"onboarding:detect-providers",
+		withLogging("onboarding:detect-providers", async () => await detectProviders()),
 	)
 
 	ipcMain.handle(
-		"onboarding:scan-claude-code",
-		withLogging("onboarding:scan-claude-code", async () => await scanClaudeCode()),
+		"onboarding:scan-provider",
+		withLogging(
+			"onboarding:scan-provider",
+			async (_, provider: MigrationProvider) => await scanProvider(provider),
+		),
 	)
 
 	ipcMain.handle(
 		"onboarding:preview-migration",
 		withLogging(
 			"onboarding:preview-migration",
-			async (_, scanResult: unknown, categories: string[]) =>
-				await previewMigration(scanResult, categories),
+			async (_, provider: MigrationProvider, scanResult: unknown, categories: string[]) =>
+				await previewMigration(provider, scanResult, categories),
 		),
 	)
 
@@ -344,8 +348,8 @@ export function registerIpcHandlers(): void {
 		"onboarding:execute-migration",
 		withLogging(
 			"onboarding:execute-migration",
-			async (_, scanResult: unknown, categories: string[]) =>
-				await executeMigration(scanResult, categories),
+			async (_, provider: MigrationProvider, scanResult: unknown, categories: string[]) =>
+				await executeMigration(provider, scanResult, categories),
 		),
 	)
 

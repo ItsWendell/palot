@@ -1,0 +1,20 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"noEmit": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"types": ["bun"],
+		"paths": {
+			"@palot/configconv": ["../configconv/src/index.ts"],
+			"@palot/configconv/*": ["../configconv/src/*"]
+		}
+	},
+	"include": ["src/**/*.ts"]
+}
