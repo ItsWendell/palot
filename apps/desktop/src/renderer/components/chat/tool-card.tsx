@@ -136,8 +136,8 @@ export const ToolCard = memo(function ToolCard({
 				</span>
 				{subtitle && (
 					<Tooltip>
-						<TooltipTrigger asChild>
-							<span className="min-w-0 truncate text-muted-foreground/60">{subtitle}</span>
+						<TooltipTrigger render={<span className="min-w-0 truncate text-muted-foreground/60" />}>
+							{subtitle}
 						</TooltipTrigger>
 						<TooltipContent side="top" className="max-w-sm">
 							<p className="break-all text-xs">{subtitle}</p>
@@ -159,44 +159,46 @@ export const ToolCard = memo(function ToolCard({
 					isError && "bg-red-500/5",
 				)}
 			>
-				<CollapsibleTrigger asChild>
-					<button
-						type="button"
-						className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
-					>
-						<ChevronRightIcon
-							className={cn(
-								"size-3 shrink-0 text-muted-foreground/50 transition-transform",
-								(forceOpen || isOpen) && "rotate-90",
-							)}
+				<CollapsibleTrigger
+					render={
+						<button
+							type="button"
+							className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
 						/>
-						<span
-							className={cn(
-								"shrink-0",
-								isError
-									? "text-red-400"
-									: isRunning
-										? "text-muted-foreground animate-pulse"
-										: "text-muted-foreground",
-							)}
-						>
-							{icon}
-						</span>
-						<span
-							className={cn(
-								"min-w-0 truncate font-medium",
-								isError ? "text-red-400" : "text-foreground/80",
-							)}
-						>
-							{title}
-						</span>
-						{subtitle && (
-							<span className="min-w-0 truncate text-muted-foreground/60">{subtitle}</span>
+					}
+				>
+					<ChevronRightIcon
+						className={cn(
+							"size-3 shrink-0 text-muted-foreground/50 transition-transform",
+							(forceOpen || isOpen) && "rotate-90",
 						)}
-						{trailing && (
-							<span className="ml-auto shrink-0 text-muted-foreground/40">{trailing}</span>
+					/>
+					<span
+						className={cn(
+							"shrink-0",
+							isError
+								? "text-red-400"
+								: isRunning
+									? "text-muted-foreground animate-pulse"
+									: "text-muted-foreground",
 						)}
-					</button>
+					>
+						{icon}
+					</span>
+					<span
+						className={cn(
+							"min-w-0 truncate font-medium",
+							isError ? "text-red-400" : "text-foreground/80",
+						)}
+					>
+						{title}
+					</span>
+					{subtitle && (
+						<span className="min-w-0 truncate text-muted-foreground/60">{subtitle}</span>
+					)}
+					{trailing && (
+						<span className="ml-auto shrink-0 text-muted-foreground/40">{trailing}</span>
+					)}
 				</CollapsibleTrigger>
 				<CollapsibleContent>
 					<div className="border-t border-border/50">{children}</div>

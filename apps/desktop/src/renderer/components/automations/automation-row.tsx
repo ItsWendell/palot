@@ -60,34 +60,38 @@ export const AutomationRow = memo(function AutomationRow({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>
-				<button
-					type="button"
-					onClick={onClick}
-					onMouseEnter={() => setHovered(true)}
-					onMouseLeave={() => setHovered(false)}
-					className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors ${
-						isSelected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-					} ${isPaused ? "opacity-60" : ""}`}
-				>
-					<StatusIcon
-						className={`size-4 shrink-0 ${
-							automation.status === "active" ? "text-muted-foreground" : "text-muted-foreground/60"
-						}`}
+			<ContextMenuTrigger
+				render={
+					<button
+						type="button"
+						onClick={onClick}
+						onMouseEnter={() => setHovered(true)}
+						onMouseLeave={() => setHovered(false)}
+						className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors ${
+							isSelected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+						} ${isPaused ? "opacity-60" : ""}`}
 					/>
+				}
+			>
+				<StatusIcon
+					className={`size-4 shrink-0 ${
+						automation.status === "active" ? "text-muted-foreground" : "text-muted-foreground/60"
+					}`}
+				/>
 
-					<div className="min-w-0 flex-1">
-						<div className="flex items-center gap-1.5">
-							<span className="truncate font-medium text-sm">{automation.name}</span>
-							{projectLabel && (
-								<span className="truncate text-xs text-muted-foreground">{projectLabel}</span>
-							)}
-						</div>
+				<div className="min-w-0 flex-1">
+					<div className="flex items-center gap-1.5">
+						<span className="truncate font-medium text-sm">{automation.name}</span>
+						{projectLabel && (
+							<span className="truncate text-xs text-muted-foreground">{projectLabel}</span>
+						)}
 					</div>
+				</div>
 
-					{hovered ? (
-						<Tooltip>
-							<TooltipTrigger asChild>
+				{hovered ? (
+					<Tooltip>
+						<TooltipTrigger
+							render={
 								<button
 									type="button"
 									className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
@@ -95,18 +99,18 @@ export const AutomationRow = memo(function AutomationRow({
 										e.stopPropagation()
 										onEdit(automation)
 									}}
-								>
-									<PencilIcon className="size-3.5" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent>Edit automation</TooltipContent>
-						</Tooltip>
-					) : (
-						countdownText && (
-							<span className="shrink-0 text-xs text-muted-foreground">{countdownText}</span>
-						)
-					)}
-				</button>
+								/>
+							}
+						>
+							<PencilIcon className="size-3.5" />
+						</TooltipTrigger>
+						<TooltipContent>Edit automation</TooltipContent>
+					</Tooltip>
+				) : (
+					countdownText && (
+						<span className="shrink-0 text-xs text-muted-foreground">{countdownText}</span>
+					)
+				)}
 			</ContextMenuTrigger>
 
 			<ContextMenuContent>

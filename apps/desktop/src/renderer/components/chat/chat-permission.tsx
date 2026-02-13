@@ -87,15 +87,17 @@ export const PermissionItem = memo(function PermissionItem({
 						Allow
 					</Button>
 					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button
-								size="sm"
-								disabled={!isConnected || responding}
-								className="h-7 rounded-l-none border-l border-primary-foreground/20 px-1"
-								aria-label="More approval options"
-							>
-								<ChevronDownIcon className="size-3" aria-hidden="true" />
-							</Button>
+						<DropdownMenuTrigger
+							render={
+								<Button
+									size="sm"
+									disabled={!isConnected || responding}
+									className="h-7 rounded-l-none border-l border-primary-foreground/20 px-1"
+									aria-label="More approval options"
+								/>
+							}
+						>
+							<ChevronDownIcon className="size-3" aria-hidden="true" />
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="end">
 							<DropdownMenuItem onClick={() => handleApprove("once")}>Allow once</DropdownMenuItem>

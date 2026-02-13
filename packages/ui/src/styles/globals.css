@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
 @source "../components";
 
@@ -52,6 +53,9 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
 }
 
 /*
@@ -431,15 +435,15 @@
  * utility class which lives in @layer utilities. */
 :root.electron-transparent [data-slot="sidebar-menu-button"]:hover,
 :root.electron-transparent [data-slot="sidebar-menu-button"]:active,
-:root.electron-transparent [data-slot="sidebar-menu-button"][data-active="true"],
-:root.electron-transparent [data-slot="sidebar-menu-button"][data-state="open"] {
+:root.electron-transparent [data-slot="sidebar-menu-button"][data-active],
+:root.electron-transparent [data-slot="sidebar-menu-button"][data-open] {
   background: color-mix(in srgb, var(--sidebar-accent) var(--glass-sidebar-accent), transparent);
 }
 
 :root.electron-vibrancy [data-slot="sidebar-menu-button"]:hover,
 :root.electron-vibrancy [data-slot="sidebar-menu-button"]:active,
-:root.electron-vibrancy [data-slot="sidebar-menu-button"][data-active="true"],
-:root.electron-vibrancy [data-slot="sidebar-menu-button"][data-state="open"] {
+:root.electron-vibrancy [data-slot="sidebar-menu-button"][data-active],
+:root.electron-vibrancy [data-slot="sidebar-menu-button"][data-open] {
   background: color-mix(in srgb, var(--sidebar-accent) var(--glass-sidebar-accent), transparent);
 }
 
@@ -453,10 +457,10 @@
  * Small icon buttons (SidebarGroupAction, SidebarMenuAction)
  * keep their hover states as they are true buttons, not list rows.
  * ──────────────────────────────────────────────────────────── */
-:root[data-platform="darwin"] [data-slot="sidebar-menu-button"]:not([data-active="true"]):not([data-state="open"]):hover,
-:root[data-platform="darwin"] [data-slot="sidebar-menu-button"]:not([data-active="true"]):not([data-state="open"]):active,
-:root[data-platform="darwin"] [data-slot="sidebar-menu-sub-button"]:not([data-active="true"]):hover,
-:root[data-platform="darwin"] [data-slot="sidebar-menu-sub-button"]:not([data-active="true"]):active {
+:root[data-platform="darwin"] [data-slot="sidebar-menu-button"]:not([data-active]):not([data-open]):hover,
+:root[data-platform="darwin"] [data-slot="sidebar-menu-button"]:not([data-active]):not([data-open]):active,
+:root[data-platform="darwin"] [data-slot="sidebar-menu-sub-button"]:not([data-active]):hover,
+:root[data-platform="darwin"] [data-slot="sidebar-menu-sub-button"]:not([data-active]):active {
   background: transparent;
   color: inherit;
 }
@@ -607,11 +611,11 @@
   animation-timing-function: var(--ease-out) !important;
 }
 
-[data-slot="dialog-content"][data-variant="command"][data-state="open"] {
+[data-slot="dialog-content"][data-variant="command"][data-open] {
   --tw-enter-scale: 1 !important;
 }
 
-[data-slot="dialog-content"][data-variant="command"][data-state="closed"] {
+[data-slot="dialog-content"][data-variant="command"][data-closed] {
   --tw-exit-scale: 1 !important;
 }
 

@@ -122,30 +122,32 @@ export const FileTreeFolder = ({
 		<FileTreeFolderContext.Provider value={folderContextValue}>
 			<Collapsible onOpenChange={handleOpenChange} open={isExpanded}>
 				<div className={cn("", className)} role="treeitem" tabIndex={0} {...props}>
-					<CollapsibleTrigger asChild>
-						<button
-							className={cn(
-								"flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50",
-								isSelected && "bg-muted",
-							)}
-							onClick={handleSelect}
-							type="button"
-						>
-							<ChevronRightIcon
+					<CollapsibleTrigger
+						render={
+							<button
 								className={cn(
-									"size-4 shrink-0 text-muted-foreground transition-transform",
-									isExpanded && "rotate-90",
+									"flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50",
+									isSelected && "bg-muted",
 								)}
+								onClick={handleSelect}
+								type="button"
 							/>
-							<FileTreeIcon>
-								{isExpanded ? (
-									<FolderOpenIcon className="size-4 text-blue-500" />
-								) : (
-									<FolderIcon className="size-4 text-blue-500" />
-								)}
-							</FileTreeIcon>
-							<FileTreeName>{name}</FileTreeName>
-						</button>
+						}
+					>
+						<ChevronRightIcon
+							className={cn(
+								"size-4 shrink-0 text-muted-foreground transition-transform",
+								isExpanded && "rotate-90",
+							)}
+						/>
+						<FileTreeIcon>
+							{isExpanded ? (
+								<FolderOpenIcon className="size-4 text-blue-500" />
+							) : (
+								<FolderIcon className="size-4 text-blue-500" />
+							)}
+						</FileTreeIcon>
+						<FileTreeName>{name}</FileTreeName>
 					</CollapsibleTrigger>
 					<CollapsibleContent>
 						<div className="ml-4 border-l pl-2">{children}</div>

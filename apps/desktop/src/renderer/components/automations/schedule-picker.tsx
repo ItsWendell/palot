@@ -122,16 +122,18 @@ export function SchedulePicker({ value, onChange }: SchedulePickerProps) {
 						const isSelected = config.weekdays.includes(day)
 						return (
 							<Tooltip key={day}>
-								<TooltipTrigger asChild>
-									<Button
-										type="button"
-										variant={isSelected ? "default" : "outline"}
-										size="icon"
-										className="size-7 text-[10px] font-medium"
-										onClick={() => toggleWeekday(day)}
-									>
-										{WEEKDAY_LABELS[day]}
-									</Button>
+								<TooltipTrigger
+									render={
+										<Button
+											type="button"
+											variant={isSelected ? "default" : "outline"}
+											size="icon"
+											className="size-7 text-[10px] font-medium"
+											onClick={() => toggleWeekday(day)}
+										/>
+									}
+								>
+									{WEEKDAY_LABELS[day]}
 								</TooltipTrigger>
 								<TooltipContent>{isSelected ? "Included" : "Excluded"}</TooltipContent>
 							</Tooltip>

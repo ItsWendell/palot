@@ -39,6 +39,11 @@ export function NotificationSettings() {
 					<Select
 						value={notif.completionMode}
 						onValueChange={(v) => updateNotif("completionMode", v)}
+						items={{
+							off: "Never",
+							unfocused: "Only when unfocused",
+							always: "Always",
+						}}
 					>
 						<SelectTrigger className="min-w-[180px]">
 							<SelectValue />

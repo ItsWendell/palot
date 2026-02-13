@@ -14,8 +14,8 @@ import {
 } from "@palot/ui/components/command"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@palot/ui/components/dialog"
 import { Spinner } from "@palot/ui/components/spinner"
+import { useControllableState } from "@palot/ui/hooks/use-controllable-state"
 import { cn } from "@palot/ui/lib/utils"
-import { useControllableState } from "@radix-ui/react-use-controllable-state"
 import {
 	CircleSmallIcon,
 	MarsIcon,
@@ -69,11 +69,25 @@ export const VoiceSelector = ({
 		prop: valueProp,
 	})
 
+	const handleExternalOpenChange = useCallback(
+		(value: boolean) => {
+			onOpenChange?.(value, {} as never)
+		},
+		[onOpenChange],
+	)
+
 	const [open, setOpen] = useControllableState({
 		defaultProp: defaultOpen,
-		onChange: onOpenChange,
+		onChange: handleExternalOpenChange,
 		prop: openProp,
 	})
+
+	const handleOpenChange = useCallback(
+		(nextOpen: boolean) => {
+			setOpen(nextOpen)
+		},
+		[setOpen],
+	)
 
 	const voiceSelectorContext = useMemo(
 		() => ({ open, setOpen, setValue, value }),
@@ -82,7 +96,7 @@ export const VoiceSelector = ({
 
 	return (
 		<VoiceSelectorContext.Provider value={voiceSelectorContext}>
-			<Dialog onOpenChange={setOpen} open={open} {...props}>
+			<Dialog onOpenChange={handleOpenChange} open={open} {...props}>
 				{children}
 			</Dialog>
 		</VoiceSelectorContext.Provider>

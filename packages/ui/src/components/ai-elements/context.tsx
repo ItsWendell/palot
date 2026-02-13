@@ -46,7 +46,7 @@ export const Context = ({ usedTokens, maxTokens, usage, modelId, ...props }: Con
 
 	return (
 		<ContextContext.Provider value={contextValue}>
-			<HoverCard closeDelay={0} openDelay={0} {...props} />
+			<HoverCard {...props} />
 		</ContextContext.Provider>
 	)
 }
@@ -102,14 +102,16 @@ export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
 		style: "percent",
 	}).format(usedPercent)
 
+	const defaultButton = (
+		<Button type="button" variant="ghost" {...props}>
+			<span className="font-medium text-muted-foreground">{renderedPercent}</span>
+			<ContextIcon />
+		</Button>
+	)
+
 	return (
-		<HoverCardTrigger asChild>
-			{children ?? (
-				<Button type="button" variant="ghost" {...props}>
-					<span className="font-medium text-muted-foreground">{renderedPercent}</span>
-					<ContextIcon />
-				</Button>
-			)}
+		<HoverCardTrigger delay={0} closeDelay={0} render={defaultButton}>
+			{children}
 		</HoverCardTrigger>
 	)
 }

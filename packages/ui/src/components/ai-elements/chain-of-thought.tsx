@@ -6,8 +6,8 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@palot/ui/components/collapsible"
+import { useControllableState } from "@palot/ui/hooks/use-controllable-state"
 import { cn } from "@palot/ui/lib/utils"
-import { useControllableState } from "@radix-ui/react-use-controllable-state"
 import type { LucideIcon } from "lucide-react"
 import { BrainIcon, ChevronDownIcon, DotIcon } from "lucide-react"
 import type { ComponentProps, ReactNode } from "react"

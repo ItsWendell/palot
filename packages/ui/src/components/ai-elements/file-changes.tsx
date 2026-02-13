@@ -77,10 +77,18 @@ export const FileChanges = ({
 export type FileChangesHeaderProps = ComponentProps<typeof CollapsibleTrigger>
 
 export const FileChangesHeader = ({ className, children, ...props }: FileChangesHeaderProps) => (
-	<CollapsibleTrigger asChild className={cn("group w-full", className)} {...props}>
-		<div className="flex cursor-pointer items-center justify-between bg-muted/50 px-4 py-3 transition-colors hover:bg-muted/70">
-			{children}
-		</div>
+	<CollapsibleTrigger
+		render={
+			<div
+				className={cn(
+					"group w-full flex cursor-pointer items-center justify-between bg-muted/50 px-4 py-3 transition-colors hover:bg-muted/70",
+					className,
+				)}
+			/>
+		}
+		{...props}
+	>
+		{children}
 	</CollapsibleTrigger>
 )
 

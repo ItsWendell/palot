@@ -104,33 +104,35 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 
 	return (
 		<Tooltip>
-			<TooltipTrigger asChild>
-				<Button
-					size="sm"
-					variant="ghost"
-					className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-					onClick={handleApply}
-					disabled={loading}
-				>
-					{loading ? (
-						<Loader2Icon className="size-3 animate-spin" />
-					) : result ? (
-						result.success ? (
-							<CheckIcon className="size-3 text-green-500" />
-						) : (
-							<XIcon className="size-3 text-red-500" />
-						)
+			<TooltipTrigger
+				render={
+					<Button
+						size="sm"
+						variant="ghost"
+						className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+						onClick={handleApply}
+						disabled={loading}
+					/>
+				}
+			>
+				{loading ? (
+					<Loader2Icon className="size-3 animate-spin" />
+				) : result ? (
+					result.success ? (
+						<CheckIcon className="size-3 text-green-500" />
 					) : (
-						<ArrowDownToLineIcon className="size-3" />
-					)}
-					{result ? (
-						<span className={result.success ? "text-green-500" : "text-red-500"}>
-							{result.message}
-						</span>
-					) : (
-						"Apply to local"
-					)}
-				</Button>
+						<XIcon className="size-3 text-red-500" />
+					)
+				) : (
+					<ArrowDownToLineIcon className="size-3" />
+				)}
+				{result ? (
+					<span className={result.success ? "text-green-500" : "text-red-500"}>
+						{result.message}
+					</span>
+				) : (
+					"Apply to local"
+				)}
 			</TooltipTrigger>
 			<TooltipContent side="bottom">
 				Apply worktree changes to your local checkout as uncommitted changes
@@ -151,16 +153,18 @@ function CommitPushButton({ agent }: { agent: Agent }) {
 	return (
 		<>
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<Button
-						size="sm"
-						variant="ghost"
-						className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-						onClick={() => setOpen(true)}
-					>
-						<ArrowUpFromLineIcon className="size-3" />
-						Commit & push
-					</Button>
+				<TooltipTrigger
+					render={
+						<Button
+							size="sm"
+							variant="ghost"
+							className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+							onClick={() => setOpen(true)}
+						/>
+					}
+				>
+					<ArrowUpFromLineIcon className="size-3" />
+					Commit & push
 				</TooltipTrigger>
 				<TooltipContent side="bottom">Commit all changes and push to remote</TooltipContent>
 			</Tooltip>

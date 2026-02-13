@@ -518,13 +518,15 @@ function OpenInButton({ directory }: { directory: string }) {
 			</button>
 
 			<DropdownMenu onOpenChange={(open) => open && loadTargets()}>
-				<DropdownMenuTrigger asChild>
-					<button
-						type="button"
-						className="rounded-r-md border-l border-border/60 px-1 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-					>
-						<ChevronDownIcon className="size-3" />
-					</button>
+				<DropdownMenuTrigger
+					render={
+						<button
+							type="button"
+							className="rounded-r-md border-l border-border/60 px-1 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+						/>
+					}
+				>
+					<ChevronDownIcon className="size-3" />
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="end" className="min-w-[180px]">
 					{!loaded ? (
@@ -573,16 +575,18 @@ function WorktreeBranchBadge({ branch }: { branch: string }) {
 
 	return (
 		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					type="button"
-					onClick={handleCopy}
-					className="flex shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-				>
-					<GitForkIcon className="size-2.5" aria-hidden="true" />
-					<span className="max-w-[120px] truncate">{branch}</span>
-					{copied && <CheckIcon className="size-2.5 text-green-500" />}
-				</button>
+			<TooltipTrigger
+				render={
+					<button
+						type="button"
+						onClick={handleCopy}
+						className="flex shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					/>
+				}
+			>
+				<GitForkIcon className="size-2.5" aria-hidden="true" />
+				<span className="max-w-[120px] truncate">{branch}</span>
+				{copied && <CheckIcon className="size-2.5 text-green-500" />}
 			</TooltipTrigger>
 			<TooltipContent>Click to copy branch name</TooltipContent>
 		</Tooltip>
@@ -620,15 +624,19 @@ function AttachCommand({ sessionId, directory }: { sessionId: string; directory:
 	return (
 		<Popover open={open} onOpenChange={handleOpen}>
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<PopoverTrigger asChild>
-						<button
-							type="button"
-							className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-						>
-							<TerminalIcon className="size-3.5" />
-						</button>
-					</PopoverTrigger>
+				<TooltipTrigger
+					render={
+						<PopoverTrigger
+							render={
+								<button
+									type="button"
+									className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+								/>
+							}
+						/>
+					}
+				>
+					<TerminalIcon className="size-3.5" />
 				</TooltipTrigger>
 				<TooltipContent>Open in terminal</TooltipContent>
 			</Tooltip>

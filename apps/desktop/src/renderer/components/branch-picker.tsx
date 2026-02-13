@@ -214,22 +214,24 @@ export function BranchPicker({
 	return (
 		<>
 			<SearchableListPopover open={open} onOpenChange={setOpen}>
-				<SearchableListPopoverTrigger asChild>
-					<button
-						type="button"
-						disabled={switching}
-						className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
-					>
-						{switching ? (
-							<Loader2Icon className="size-3 animate-spin" />
-						) : (
-							<GitBranchIcon className="size-3" />
-						)}
-						<span className="max-w-[140px] truncate">
-							{switching ? "Switching..." : effectiveCurrent || "no branch"}
-						</span>
-						<ChevronsUpDownIcon className="size-3 opacity-50" />
-					</button>
+				<SearchableListPopoverTrigger
+					render={
+						<button
+							type="button"
+							disabled={switching}
+							className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+						/>
+					}
+				>
+					{switching ? (
+						<Loader2Icon className="size-3 animate-spin" />
+					) : (
+						<GitBranchIcon className="size-3" />
+					)}
+					<span className="max-w-[140px] truncate">
+						{switching ? "Switching..." : effectiveCurrent || "no branch"}
+					</span>
+					<ChevronsUpDownIcon className="size-3 opacity-50" />
 				</SearchableListPopoverTrigger>
 				<SearchableListPopoverContent align="end" side="top">
 					<SearchableListPopoverSearch

@@ -1060,17 +1060,19 @@ function ToolAttachments({ attachments }: { attachments: FilePart[] }) {
 		<div className="ml-6 flex flex-wrap gap-2">
 			{imageAttachments.map((file) => (
 				<Dialog key={file.id}>
-					<DialogTrigger asChild>
-						<button
-							type="button"
-							className="group/att relative size-12 shrink-0 overflow-hidden rounded border border-border bg-muted transition-colors hover:border-muted-foreground/30"
-						>
-							<img
-								src={file.url}
-								alt={file.filename ?? "Tool output image"}
-								className="size-full object-cover"
+					<DialogTrigger
+						render={
+							<button
+								type="button"
+								className="group/att relative size-12 shrink-0 overflow-hidden rounded border border-border bg-muted transition-colors hover:border-muted-foreground/30"
 							/>
-						</button>
+						}
+					>
+						<img
+							src={file.url}
+							alt={file.filename ?? "Tool output image"}
+							className="size-full object-cover"
+						/>
 					</DialogTrigger>
 					<DialogContent className="max-h-[90vh] max-w-4xl overflow-auto p-0">
 						<DialogTitle className="sr-only">{file.filename ?? "Tool output preview"}</DialogTitle>

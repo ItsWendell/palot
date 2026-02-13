@@ -9,8 +9,8 @@ import {
 	CommandList,
 } from "@palot/ui/components/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
+import { useControllableState } from "@palot/ui/hooks/use-controllable-state"
 import { cn } from "@palot/ui/lib/utils"
-import { useControllableState } from "@radix-ui/react-use-controllable-state"
 import { ChevronsUpDownIcon } from "lucide-react"
 import type { ComponentProps, ReactNode } from "react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
@@ -121,12 +121,14 @@ export const MicSelectorTrigger = ({ children, ...props }: MicSelectorTriggerPro
 	}, [setWidth])
 
 	return (
-		<PopoverTrigger asChild>
-			<Button variant="outline" {...props} ref={ref}>
-				{children}
-				<ChevronsUpDownIcon className="shrink-0 text-muted-foreground" size={16} />
-			</Button>
-		</PopoverTrigger>
+		<PopoverTrigger
+			render={
+				<Button variant="outline" {...props} ref={ref}>
+					{children}
+					<ChevronsUpDownIcon className="shrink-0 text-muted-foreground" size={16} />
+				</Button>
+			}
+		/>
 	)
 }
 

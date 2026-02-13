@@ -247,7 +247,7 @@ export const SlashCommandPopover = memo(
 				</div>
 
 				{/* Results */}
-				<ScrollArea className="max-h-72 overflow-hidden [&>[data-radix-scroll-area-viewport]]:max-h-[inherit]">
+				<ScrollArea className="max-h-72 overflow-hidden [&>[data-slot=scroll-area-viewport]]:max-h-[inherit]">
 					<div ref={listRef} className="py-1">
 						{flatList.length === 0 && (
 							<div className="py-4 text-center text-sm text-muted-foreground">

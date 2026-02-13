@@ -58,36 +58,40 @@ function WorktreeToggle({
 	return (
 		<div className="flex items-center rounded-md border border-border/40">
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						type="button"
-						onClick={() => onModeChange("local")}
-						className={`flex items-center gap-1 rounded-l-md px-1.5 py-0.5 text-[11px] transition-colors ${
-							mode === "local"
-								? "bg-muted/80 text-foreground"
-								: "text-muted-foreground/60 hover:text-muted-foreground"
-						}`}
-					>
-						<MonitorIcon className="size-3" />
-						<span>Local</span>
-					</button>
+				<TooltipTrigger
+					render={
+						<button
+							type="button"
+							onClick={() => onModeChange("local")}
+							className={`flex items-center gap-1 rounded-l-md px-1.5 py-0.5 text-[11px] transition-colors ${
+								mode === "local"
+									? "bg-muted/80 text-foreground"
+									: "text-muted-foreground/60 hover:text-muted-foreground"
+							}`}
+						/>
+					}
+				>
+					<MonitorIcon className="size-3" />
+					<span>Local</span>
 				</TooltipTrigger>
 				<TooltipContent side="top">Run in your current working directory</TooltipContent>
 			</Tooltip>
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						type="button"
-						onClick={() => onModeChange("worktree")}
-						className={`flex items-center gap-1 rounded-r-md px-1.5 py-0.5 text-[11px] transition-colors ${
-							mode === "worktree"
-								? "bg-muted/80 text-foreground"
-								: "text-muted-foreground/60 hover:text-muted-foreground"
-						}`}
-					>
-						<GitForkIcon className="size-3" />
-						<span>Worktree</span>
-					</button>
+				<TooltipTrigger
+					render={
+						<button
+							type="button"
+							onClick={() => onModeChange("worktree")}
+							className={`flex items-center gap-1 rounded-r-md px-1.5 py-0.5 text-[11px] transition-colors ${
+								mode === "worktree"
+									? "bg-muted/80 text-foreground"
+									: "text-muted-foreground/60 hover:text-muted-foreground"
+							}`}
+						/>
+					}
+				>
+					<GitForkIcon className="size-3" />
+					<span>Worktree</span>
 				</TooltipTrigger>
 				<TooltipContent side="top">
 					Run in an isolated git worktree (your working copy stays untouched)
@@ -419,14 +423,16 @@ export function NewChat() {
 						<h1 className="text-2xl font-semibold text-foreground">Let's build</h1>
 						{projects.length > 1 ? (
 							<Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
-								<PopoverTrigger asChild>
-									<button
-										type="button"
-										className="mt-1 inline-flex items-center gap-1 text-xl text-muted-foreground transition-colors hover:text-foreground"
-									>
-										{selectedProject?.name ?? "select project"}
-										<ChevronDownIcon className="size-4" />
-									</button>
+								<PopoverTrigger
+									render={
+										<button
+											type="button"
+											className="mt-1 inline-flex items-center gap-1 text-xl text-muted-foreground transition-colors hover:text-foreground"
+										/>
+									}
+								>
+									{selectedProject?.name ?? "select project"}
+									<ChevronDownIcon className="size-4" />
 								</PopoverTrigger>
 								<PopoverContent className="w-64 p-1" align="center">
 									{projects.map((p) => (

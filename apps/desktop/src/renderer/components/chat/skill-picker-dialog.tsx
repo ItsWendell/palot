@@ -176,7 +176,7 @@ export const SkillPickerDialog = memo(function SkillPickerDialog({
 				</div>
 
 				{/* Skills list */}
-				<ScrollArea className="max-h-72 px-2 py-2 [&>[data-radix-scroll-area-viewport]]:max-h-[inherit]">
+				<ScrollArea className="max-h-72 px-2 py-2 [&>[data-slot=scroll-area-viewport]]:max-h-[inherit]">
 					<div ref={listRef}>
 						{isLoading && (
 							<div className="py-8 text-center text-sm text-muted-foreground">

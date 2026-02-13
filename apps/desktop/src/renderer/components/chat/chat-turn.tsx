@@ -162,11 +162,13 @@ const ToolPill = memo(function ToolPill({ pill }: { pill: CategoryPill }) {
 	const Icon = pill.icon
 	return (
 		<Tooltip>
-			<TooltipTrigger asChild>
-				<span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
-					<Icon className="size-3" />
-					<span>{pill.count}</span>
-				</span>
+			<TooltipTrigger
+				render={
+					<span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground" />
+				}
+			>
+				<Icon className="size-3" />
+				<span>{pill.count}</span>
 			</TooltipTrigger>
 			<TooltipContent side="top">
 				<p className="text-xs">
@@ -241,28 +243,30 @@ function AttachmentThumbnail({ file }: { file: FilePart }) {
 	const isImage = file.mime.startsWith("image/")
 	return (
 		<Dialog>
-			<DialogTrigger asChild>
-				<button
-					type="button"
-					className="group/thumb relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted transition-colors hover:border-muted-foreground/30"
-				>
-					{isImage ? (
-						<img
-							src={file.url}
-							alt={file.filename ?? "Image attachment"}
-							className="size-full object-cover"
-						/>
-					) : (
-						<div className="flex size-full items-center justify-center">
-							<FileIcon className="size-6 text-muted-foreground" />
-						</div>
-					)}
-					{file.filename && (
-						<div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5 text-[9px] leading-tight text-white opacity-0 transition-opacity group-hover/thumb:opacity-100">
-							<span className="line-clamp-1">{file.filename}</span>
-						</div>
-					)}
-				</button>
+			<DialogTrigger
+				render={
+					<button
+						type="button"
+						className="group/thumb relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted transition-colors hover:border-muted-foreground/30"
+					/>
+				}
+			>
+				{isImage ? (
+					<img
+						src={file.url}
+						alt={file.filename ?? "Image attachment"}
+						className="size-full object-cover"
+					/>
+				) : (
+					<div className="flex size-full items-center justify-center">
+						<FileIcon className="size-6 text-muted-foreground" />
+					</div>
+				)}
+				{file.filename && (
+					<div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5 text-[9px] leading-tight text-white opacity-0 transition-opacity group-hover/thumb:opacity-100">
+						<span className="line-clamp-1">{file.filename}</span>
+					</div>
+				)}
 			</DialogTrigger>
 			<DialogContent className="max-h-[90vh] max-w-4xl overflow-auto p-0">
 				<DialogTitle className="sr-only">{file.filename ?? "Attachment preview"}</DialogTitle>

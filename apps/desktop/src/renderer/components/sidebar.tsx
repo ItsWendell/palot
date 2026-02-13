@@ -184,19 +184,21 @@ export function AppSidebarContent({
 					<div className="absolute top-3.5 right-3 flex items-center gap-0.5">
 						{subAgentCount > 0 && (
 							<Tooltip>
-								<TooltipTrigger asChild>
-									<button
-										type="button"
-										onClick={onToggleSubAgents}
-										className={`inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10px] transition-colors ${
-											showSubAgents
-												? "bg-sidebar-accent text-sidebar-accent-foreground"
-												: "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-										}`}
-									>
-										<NetworkIcon className="size-3.5" />
-										<span>{subAgentCount}</span>
-									</button>
+								<TooltipTrigger
+									render={
+										<button
+											type="button"
+											onClick={onToggleSubAgents}
+											className={`inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10px] transition-colors ${
+												showSubAgents
+													? "bg-sidebar-accent text-sidebar-accent-foreground"
+													: "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+											}`}
+										/>
+									}
+								>
+									<NetworkIcon className="size-3.5" />
+									<span>{subAgentCount}</span>
 								</TooltipTrigger>
 								<TooltipContent side="bottom">
 									{showSubAgents ? "Hide" : "Show"} sub-agents ({subAgentCount})
@@ -204,29 +206,33 @@ export function AppSidebarContent({
 							</Tooltip>
 						)}
 						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									onClick={onOpenCommandPalette}
-									className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
-								>
-									<SearchIcon className="size-4 shrink-0" />
-									<span className="sr-only">Search sessions</span>
-								</button>
+							<TooltipTrigger
+								render={
+									<button
+										type="button"
+										onClick={onOpenCommandPalette}
+										className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
+									/>
+								}
+							>
+								<SearchIcon className="size-4 shrink-0" />
+								<span className="sr-only">Search sessions</span>
 							</TooltipTrigger>
 							<TooltipContent side="bottom">Search sessions (&#8984;K)</TooltipContent>
 						</Tooltip>
 						{onAddProject && (
 							<Tooltip>
-								<TooltipTrigger asChild>
-									<button
-										type="button"
-										onClick={onAddProject}
-										className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
-									>
-										<PlusIcon className="size-4 shrink-0" />
-										<span className="sr-only">Add Project</span>
-									</button>
+								<TooltipTrigger
+									render={
+										<button
+											type="button"
+											onClick={onAddProject}
+											className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
+										/>
+									}
+								>
+									<PlusIcon className="size-4 shrink-0" />
+									<span className="sr-only">Add Project</span>
 								</TooltipTrigger>
 								<TooltipContent side="bottom">Add project</TooltipContent>
 							</Tooltip>
@@ -510,7 +516,7 @@ const SessionItem = memo(function SessionItem({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>{btn}</ContextMenuTrigger>
+			<ContextMenuTrigger render={btn} />
 			<ContextMenuContent>
 				{onRename && (
 					<ContextMenuItem onSelect={startEditing}>

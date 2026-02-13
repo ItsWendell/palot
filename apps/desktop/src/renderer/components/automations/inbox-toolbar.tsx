@@ -24,11 +24,11 @@ export function InboxToolbar({ onNewClick }: InboxToolbarProps) {
 
 			<div className="ml-auto flex items-center gap-1">
 				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button variant="ghost" size="icon" className="size-7" disabled>
-							<FilterIcon className="size-3.5" />
-							<span className="sr-only">Filter</span>
-						</Button>
+					<TooltipTrigger
+						render={<Button variant="ghost" size="icon" className="size-7" disabled />}
+					>
+						<FilterIcon className="size-3.5" />
+						<span className="sr-only">Filter</span>
 					</TooltipTrigger>
 					<TooltipContent>Filter automations</TooltipContent>
 				</Tooltip>

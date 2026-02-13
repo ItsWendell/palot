@@ -62,7 +62,12 @@ function OpenDestinationRow() {
 			label="Default open destination"
 			description="Where files and folders open by default"
 		>
-			<Select value={preferred ?? undefined} onValueChange={handleChange}>
+			<Select
+				value={preferred ?? undefined}
+				onValueChange={(v) => {
+					if (v !== null) handleChange(v)
+				}}
+			>
 				<SelectTrigger className="min-w-[180px]">
 					<SelectValue placeholder="Select..." />
 				</SelectTrigger>
@@ -150,7 +155,11 @@ function DisplayModeRow() {
 			label="Display mode"
 			description="Adjust how much detail is shown in conversations"
 		>
-			<Select value={displayMode} onValueChange={(v) => setDisplayMode(v as DisplayMode)}>
+			<Select
+				value={displayMode}
+				onValueChange={(v) => setDisplayMode(v as DisplayMode)}
+				items={{ default: "Default", compact: "Compact", verbose: "Verbose" }}
+			>
 				<SelectTrigger className="min-w-[140px]">
 					<SelectValue />
 				</SelectTrigger>

@@ -6,8 +6,8 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@palot/ui/components/collapsible"
+import { useControllableState } from "@palot/ui/hooks/use-controllable-state"
 import { cn } from "@palot/ui/lib/utils"
-import { useControllableState } from "@radix-ui/react-use-controllable-state"
 import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, CopyIcon } from "lucide-react"
 import type { ComponentProps } from "react"
 import {
@@ -210,15 +210,18 @@ export const StackTraceHeader = memo(({ className, children, ...props }: StackTr
 
 	return (
 		<Collapsible onOpenChange={setIsOpen} open={isOpen}>
-			<CollapsibleTrigger asChild {...props}>
-				<div
-					className={cn(
-						"flex w-full cursor-pointer items-center gap-3 p-3 text-left transition-colors hover:bg-muted/50",
-						className,
-					)}
-				>
-					{children}
-				</div>
+			<CollapsibleTrigger
+				render={
+					<div
+						className={cn(
+							"flex w-full cursor-pointer items-center gap-3 p-3 text-left transition-colors hover:bg-muted/50",
+							className,
+						)}
+					/>
+				}
+				{...props}
+			>
+				{children}
 			</CollapsibleTrigger>
 		</Collapsible>
 	)

@@ -117,7 +117,7 @@ export const InboxRunRow = memo(function InboxRunRow({
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+			<ContextMenuTrigger render={row} />
 			<ContextMenuContent>
 				{onMarkRead && !isArchived && (
 					<ContextMenuItem onSelect={() => onMarkRead(run.id)}>

@@ -360,13 +360,15 @@ function ConnectedProviderRow({
 					) : (
 						<>
 							<Tooltip>
-								<TooltipTrigger asChild>
-									<Badge
-										variant={isEnvConnected ? "secondary" : "outline"}
-										className="cursor-default"
-									>
-										{sourceLabel}
-									</Badge>
+								<TooltipTrigger
+									render={
+										<Badge
+											variant={isEnvConnected ? "secondary" : "outline"}
+											className="cursor-default"
+										/>
+									}
+								>
+									{sourceLabel}
 								</TooltipTrigger>
 								<TooltipContent>
 									<SourceTooltip
@@ -379,15 +381,19 @@ function ConnectedProviderRow({
 
 							{keyUrl && (
 								<Tooltip>
-									<TooltipTrigger asChild>
-										<a
-											href={keyUrl.url}
-											target="_blank"
-											rel="noopener noreferrer"
-											className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-										>
-											<ExternalLinkIcon className="size-3.5" aria-hidden="true" />
-										</a>
+									<TooltipTrigger
+										render={
+											// biome-ignore lint/a11y/useAnchorContent: content provided via Base UI render prop
+											<a
+												aria-label="Get API key"
+												href={keyUrl.url}
+												target="_blank"
+												rel="noopener noreferrer"
+												className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+											/>
+										}
+									>
+										<ExternalLinkIcon className="size-3.5" aria-hidden="true" />
 									</TooltipTrigger>
 									<TooltipContent>
 										<p>Manage keys on {new URL(keyUrl.url).hostname}</p>
@@ -397,16 +403,18 @@ function ConnectedProviderRow({
 
 							{canDisconnect && (
 								<Tooltip>
-									<TooltipTrigger asChild>
-										<Button
-											variant="ghost"
-											size="sm"
-											onClick={handleRemoveAuth}
-											disabled={disconnecting}
-											className="text-muted-foreground hover:text-destructive"
-										>
-											<UnlinkIcon className="size-4" aria-hidden="true" />
-										</Button>
+									<TooltipTrigger
+										render={
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={handleRemoveAuth}
+												disabled={disconnecting}
+												className="text-muted-foreground hover:text-destructive"
+											/>
+										}
+									>
+										<UnlinkIcon className="size-4" aria-hidden="true" />
 									</TooltipTrigger>
 									<TooltipContent>
 										<p>Disconnect {provider.name}</p>

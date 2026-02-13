@@ -67,23 +67,32 @@ function WindowControls() {
 			}}
 		>
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={toggleSidebar}>
-						<PanelLeftIcon className="size-3.5" />
-					</Button>
+				<TooltipTrigger
+					render={
+						<Button
+							variant="ghost"
+							size="icon"
+							className="size-7 shrink-0"
+							onClick={toggleSidebar}
+						/>
+					}
+				>
+					<PanelLeftIcon className="size-3.5" />
 				</TooltipTrigger>
 				<TooltipContent>Toggle sidebar (&#8984;B)</TooltipContent>
 			</Tooltip>
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<Button
-						variant="ghost"
-						size="icon"
-						className="size-7 shrink-0"
-						onClick={() => navigate({ to: "/" })}
-					>
-						<PlusIcon className="size-3.5" />
-					</Button>
+				<TooltipTrigger
+					render={
+						<Button
+							variant="ghost"
+							size="icon"
+							className="size-7 shrink-0"
+							onClick={() => navigate({ to: "/" })}
+						/>
+					}
+				>
+					<PlusIcon className="size-3.5" />
 				</TooltipTrigger>
 				<TooltipContent>New session (&#8984;N)</TooltipContent>
 			</Tooltip>
