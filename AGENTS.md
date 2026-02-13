@@ -21,6 +21,16 @@ Do NOT add one-time setup notes, general knowledge, or things discoverable from 
 - **`preload/`** -- Electron preload bridge: exposes `window.palot` API via `contextBridge`
 - **`renderer/`** -- React app (browser context): components, hooks, services, atoms (Jotai)
 
+## Skills
+
+Project-specific skills live in `.agents/skills/`. Load a skill before starting
+work that matches its domain -- they contain patterns and footguns that override
+generic knowledge.
+
+| Skill | When to load |
+|---|---|
+| `react-best-practices` | Writing or reviewing renderer components, optimizing re-renders or bundle size |
+
 ## Commands
 
 - **Electron dev**: `cd apps/desktop && bun run dev` (electron-vite, renderer on port 1420)
@@ -146,6 +156,14 @@ Always pass the resolved model to `promptAsync`. The server has no single "curre
 ### Server type regeneration (browser mode only)
 
 When adding routes to `apps/server`, run `cd apps/server && bun run build:types` to regenerate `.d.ts` files. Without this, new routes won't have type inference in the frontend RPC client.
+
+### Electron -- Preload Timing
+
+The `window.palot` bridge is not available until the preload script finishes. Early-running renderer code (e.g., module-level calls, top-of-file side effects) must guard with optional chaining: `window.palot?.someMethod()`.
+
+### Electron -- External Links
+
+Never open external URLs inside the Electron window. Use `setWindowOpenHandler` in the main process to deny and redirect to `shell.openExternal()`. This prevents navigation to untrusted content inside the app.
 
 ### electron-vite -- Three Build Targets
 

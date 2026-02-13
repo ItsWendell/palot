@@ -44,3 +44,6 @@ AGENTS.local.md
 
 # Git worktrees
 .worktrees/
+
+# Local working directory
+.local/

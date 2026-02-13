@@ -15,7 +15,9 @@
 			"!**/release",
 			"!.turbo",
 			"!src-tauri/target",
-			"!*.min.js"
+			"!*.min.js",
+			"!.worktrees",
+			"!.local"
 		]
 	},
 	"formatter": {
