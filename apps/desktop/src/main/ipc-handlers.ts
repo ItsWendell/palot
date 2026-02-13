@@ -1,4 +1,18 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, systemPreferences } from "electron"
+import {
+	acceptRun,
+	archiveRun,
+	createAutomation,
+	deleteAutomation,
+	getAutomation,
+	listAutomations,
+	listRuns,
+	markRunRead,
+	previewSchedule,
+	runNow,
+	updateAutomation,
+} from "./automation"
+import type { CreateAutomationInput, UpdateAutomationInput } from "./automation/types"
 import { installCli, isCliInstalled, uninstallCli } from "./cli-install"
 import { discover } from "./discovery"
 import { checkout, getStatus, listBranches, stashAndCheckout, stashPop } from "./git-service"
@@ -356,6 +370,72 @@ export function registerIpcHandlers(): void {
 	ipcMain.handle(
 		"onboarding:restore-backup",
 		withLogging("onboarding:restore-backup", async () => await restoreMigrationBackup()),
+	)
+
+	// --- Automations ---
+
+	ipcMain.handle(
+		"automation:list",
+		withLogging("automation:list", () => listAutomations()),
+	)
+
+	ipcMain.handle(
+		"automation:get",
+		withLogging("automation:get", (_, id: string) => getAutomation(id)),
+	)
+
+	ipcMain.handle(
+		"automation:create",
+		withLogging("automation:create", (_, input: CreateAutomationInput) => createAutomation(input)),
+	)
+
+	ipcMain.handle(
+		"automation:update",
+		withLogging("automation:update", (_, input: UpdateAutomationInput) => updateAutomation(input)),
+	)
+
+	ipcMain.handle(
+		"automation:delete",
+		withLogging("automation:delete", (_, id: string) => deleteAutomation(id)),
+	)
+
+	ipcMain.handle(
+		"automation:run-now",
+		withLogging("automation:run-now", async (_, id: string) => {
+			const result = await runNow(id)
+			// Broadcast run updates to all renderer windows
+			for (const win of BrowserWindow.getAllWindows()) {
+				win.webContents.send("automation:runs-updated")
+			}
+			return result
+		}),
+	)
+
+	ipcMain.handle(
+		"automation:list-runs",
+		withLogging("automation:list-runs", (_, automationId?: string) => listRuns(automationId)),
+	)
+
+	ipcMain.handle(
+		"automation:archive-run",
+		withLogging("automation:archive-run", (_, runId: string) => archiveRun(runId)),
+	)
+
+	ipcMain.handle(
+		"automation:accept-run",
+		withLogging("automation:accept-run", (_, runId: string) => acceptRun(runId)),
+	)
+
+	ipcMain.handle(
+		"automation:mark-run-read",
+		withLogging("automation:mark-run-read", (_, runId: string) => markRunRead(runId)),
+	)
+
+	ipcMain.handle(
+		"automation:preview-schedule",
+		withLogging("automation:preview-schedule", (_, rrule: string, timezone: string) =>
+			previewSchedule(rrule, timezone),
+		),
 	)
 
 	// --- Settings push channel (main -> renderer) ---

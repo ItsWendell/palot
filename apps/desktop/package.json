@@ -37,11 +37,13 @@
 	"dependencies": {
 		"@fontsource-variable/inter": "^5.2.8",
 		"@fontsource/ibm-plex-mono": "^5.2.7",
+		"@libsql/client": "^0.17.0",
 		"@opencode-ai/sdk": "^1.1.53",
 		"@palot/configconv": "workspace:*",
 		"@palot/ui": "workspace:*",
 		"@tanstack/react-query": "^5.90.20",
 		"@tanstack/react-router": "^1.158.4",
+		"drizzle-orm": "^1.0.0-beta.15-859cf75",
 		"electron-updater": "^6.7.3",
 		"fuzzysort": "^3.1.0",
 		"hono": "4.11.9",
@@ -56,12 +58,14 @@
 		"react-syntax-highlighter": "^16.1.0",
 		"remark-gfm": "^4.0.1",
 		"rich-textarea": "^0.27.0",
+		"rrule": "^2.8.1",
 		"simple-git": "^3.30.0"
 	},
 	"optionalDependencies": {
 		"electron-liquid-glass": "^1.1.1"
 	},
 	"devDependencies": {
+		"@electron/rebuild": "^4.0.3",
 		"@palot/server": "workspace:*",
 		"@tailwindcss/vite": "^4.0.0",
 		"@types/node": "^22.0.0",
@@ -69,12 +73,14 @@
 		"@types/react-dom": "^19.0.0",
 		"@types/react-syntax-highlighter": "^15.5.13",
 		"@vitejs/plugin-react": "^4.3.0",
+		"drizzle-kit": "^1.0.0-beta.15-859cf75",
 		"electron": "^40.2.1",
 		"electron-builder": "^26.0.0",
 		"electron-vite": "^5.0.0",
 		"shiki": "^3.22.0",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.0",
-		"vite": "^6.1.0"
+		"vite": "^6.1.0",
+		"vite-plugin-static-copy": "^3.2.0"
 	}
 }

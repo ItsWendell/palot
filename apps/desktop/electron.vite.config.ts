@@ -2,10 +2,21 @@ import path from "node:path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig, externalizeDepsPlugin } from "electron-vite"
+import { viteStaticCopy } from "vite-plugin-static-copy"
 
 export default defineConfig({
 	main: {
-		plugins: [externalizeDepsPlugin({ exclude: ["@palot/configconv"] })],
+		plugins: [
+			externalizeDepsPlugin({ exclude: ["@palot/configconv", "drizzle-orm"] }),
+			viteStaticCopy({
+				targets: [
+					{
+						src: path.resolve(__dirname, "drizzle"),
+						dest: ".",
+					},
+				],
+			}),
+		],
 		build: {
 			rollupOptions: {
 				input: { index: path.resolve(__dirname, "src/main/index.ts") },

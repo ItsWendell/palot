@@ -195,6 +195,31 @@ contextBridge.exposeInMainWorld("palot", {
 		}
 	},
 
+	// --- Automations ---
+
+	automation: {
+		list: () => ipcRenderer.invoke("automation:list"),
+		get: (id: string) => ipcRenderer.invoke("automation:get", id),
+		create: (input: unknown) => ipcRenderer.invoke("automation:create", input),
+		update: (input: unknown) => ipcRenderer.invoke("automation:update", input),
+		delete: (id: string) => ipcRenderer.invoke("automation:delete", id),
+		runNow: (id: string) => ipcRenderer.invoke("automation:run-now", id),
+		listRuns: (automationId?: string) => ipcRenderer.invoke("automation:list-runs", automationId),
+		archiveRun: (runId: string) => ipcRenderer.invoke("automation:archive-run", runId),
+		acceptRun: (runId: string) => ipcRenderer.invoke("automation:accept-run", runId),
+		markRunRead: (runId: string) => ipcRenderer.invoke("automation:mark-run-read", runId),
+		previewSchedule: (rrule: string, timezone: string) =>
+			ipcRenderer.invoke("automation:preview-schedule", rrule, timezone),
+	},
+
+	onAutomationRunsUpdated: (callback: () => void) => {
+		const listener = () => callback()
+		ipcRenderer.on("automation:runs-updated", listener)
+		return () => {
+			ipcRenderer.removeListener("automation:runs-updated", listener)
+		}
+	},
+
 	// --- Onboarding ---
 
 	onboarding: {

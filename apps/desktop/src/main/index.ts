@@ -1,6 +1,8 @@
 import { execSync } from "node:child_process"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, Menu, session, shell } from "electron"
+import { initAutomations, shutdownAutomations } from "./automation"
 import { getOpaqueWindowsPref, registerIpcHandlers } from "./ipc-handlers"
 import { installLiquidGlass, resolveWindowChrome } from "./liquid-glass"
 import { createLogger } from "./logger"
@@ -11,6 +13,10 @@ import { createTray, destroyTray } from "./tray"
 import { initAutoUpdater, stopAutoUpdater } from "./updater"
 
 const log = createLogger("app")
+
+// ESM equivalent for __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // Fix process.env early — Electron GUI launches on macOS/Linux get a minimal
 // launchd environment missing user PATH additions (homebrew, nvm, bun, etc.).
@@ -219,6 +225,7 @@ if (!gotLock) {
 
 		initSettingsStore()
 		registerIpcHandlers()
+		initAutomations().catch(console.error)
 		createWindow()
 		createTray(() => BrowserWindow.getAllWindows()[0])
 		initAutoUpdater().catch(console.error)
@@ -229,8 +236,9 @@ if (!gotLock) {
 	})
 
 	app.on("window-all-closed", () => {
-		// Clean up the managed opencode server, tray, and auto-updater
+		// Clean up the managed opencode server, automations, tray, and auto-updater
 		destroyTray()
+		shutdownAutomations()
 		stopServer()
 		stopAutoUpdater()
 		if (process.platform !== "darwin") app.quit()

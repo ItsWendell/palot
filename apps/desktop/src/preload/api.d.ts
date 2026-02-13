@@ -248,6 +248,92 @@ export interface AppInfo {
 
 export type WindowChromeTier = "liquid-glass" | "vibrancy" | "opaque"
 
+// ============================================================
+// Automation types
+// ============================================================
+
+export interface AutomationSchedule {
+	rrule: string
+	timezone: string
+}
+
+export interface ExecutionConfig {
+	model?: string
+	effort: "low" | "medium" | "high"
+	timeout: number
+	retries: number
+	retryDelay: number
+	parallelWorkspaces: boolean
+	approvalPolicy: "never" | "auto-edit"
+}
+
+export type AutomationStatus = "active" | "paused" | "archived"
+
+export interface Automation {
+	id: string
+	name: string
+	prompt: string
+	status: AutomationStatus
+	schedule: AutomationSchedule
+	workspaces: string[]
+	execution: ExecutionConfig
+	nextRunAt: number | null
+	lastRunAt: number | null
+	runCount: number
+	consecutiveFailures: number
+	createdAt: number
+	updatedAt: number
+}
+
+export type AutomationRunStatus =
+	| "queued"
+	| "running"
+	| "pending_review"
+	| "accepted"
+	| "archived"
+	| "failed"
+
+export interface AutomationRun {
+	id: string
+	automationId: string
+	workspace: string
+	status: AutomationRunStatus
+	attempt: number
+	sessionId: string | null
+	startedAt: number | null
+	completedAt: number | null
+	timeoutAt: number | null
+	resultTitle: string | null
+	resultSummary: string | null
+	resultHasActionable: boolean | null
+	resultBranch: string | null
+	resultPrUrl: string | null
+	errorMessage: string | null
+	archivedReason: string | null
+	archivedAssistantMessage: string | null
+	readAt: number | null
+	createdAt: number
+	updatedAt: number
+}
+
+export interface CreateAutomationInput {
+	name: string
+	prompt: string
+	schedule: { rrule: string; timezone?: string }
+	workspaces: string[]
+	execution?: Partial<ExecutionConfig>
+}
+
+export interface UpdateAutomationInput {
+	id: string
+	name?: string
+	prompt?: string
+	status?: AutomationStatus
+	schedule?: { rrule: string; timezone?: string }
+	workspaces?: string[]
+	execution?: Partial<ExecutionConfig>
+}
+
 export interface PalotAPI {
 	/** The host platform: "darwin", "win32", or "linux". */
 	platform: NodeJS.Platform
@@ -347,6 +433,23 @@ export interface PalotAPI {
 	onSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
 
 	// Onboarding
+	// Automations
+	automation: {
+		list: () => Promise<Automation[]>
+		get: (id: string) => Promise<Automation | null>
+		create: (input: CreateAutomationInput) => Promise<Automation>
+		update: (input: UpdateAutomationInput) => Promise<Automation | null>
+		delete: (id: string) => Promise<boolean>
+		runNow: (id: string) => Promise<boolean>
+		listRuns: (automationId?: string) => Promise<AutomationRun[]>
+		archiveRun: (runId: string) => Promise<boolean>
+		acceptRun: (runId: string) => Promise<boolean>
+		markRunRead: (runId: string) => Promise<boolean>
+		previewSchedule: (rrule: string, timezone: string) => Promise<string[]>
+	}
+	/** Subscribe to automation run state changes. */
+	onAutomationRunsUpdated: (callback: () => void) => () => void
+
 	onboarding: {
 		checkOpenCode: () => Promise<OpenCodeCheckResult>
 		installOpenCode: () => Promise<{ success: boolean; error?: string }>
