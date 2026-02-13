@@ -28,7 +28,7 @@
         "@tanstack/react-router": "^1.158.4",
         "electron-updater": "^6.7.3",
         "fuzzysort": "^3.1.0",
-        "hono": "4.7.10",
+        "hono": "4.11.9",
         "jotai": "^2.17.1",
         "jotai-family": "^1.0.1",
         "lucide-react": "^0.563.0",
@@ -67,7 +67,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@opencode-ai/sdk": "^1.1.53",
-        "hono": "4.7.10",
+        "hono": "4.11.9",
       },
       "devDependencies": {
         "@types/bun": "^1.2.14",
@@ -1401,7 +1401,7 @@
 
     "highlightjs-vue": ["highlightjs-vue@1.0.0", "", {}, "sha512-PDEfEF102G23vHmPhLyPboFCD+BkMGu+GuJe2d9/eH4FsCwvgBpnc9n0pGE+ffKdph38s6foEZiEjdgHdzp+IA=="],
 
-    "hono": ["hono@4.7.10", "", {}, "sha512-QkACju9MiN59CKSY5JsGZCYmPZkA6sIW6OFCUp7qDjZu6S6KHtJHhAc9Uy9mV9F8PJ1/HQ3ybZF2yjCa/73fvQ=="],
+    "hono": ["hono@4.11.9", "", {}, "sha512-Eaw2YTGM6WOxA6CXbckaEvslr2Ne4NFsKrvc0v97JD5awbmeBLO5w9Ho9L9kmKonrwF9RJlW6BxT1PVv/agBHQ=="],
 
     "hosted-git-info": ["hosted-git-info@4.1.0", "", { "dependencies": { "lru-cache": "^6.0.0" } }, "sha512-kyCuEOWjJqZuDbRHzL8V93NzQhwIB71oFWSyzVo+KPZI+pnQPPxucdkrOZvkLRnrf5URsQM+IJ09Dw29cRALIA=="],
 
