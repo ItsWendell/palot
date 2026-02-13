@@ -1,3 +1,4 @@
+// @ts-nocheck -- Automations feature hidden; routes removed from router
 /**
  * Scrollable list with sticky section headers: "Scheduled", "Completed", "Archived".
  *

@@ -36,11 +36,9 @@ import {
 	SettingsIcon,
 	TimerIcon,
 	TrashIcon,
-	ZapIcon,
 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { formatElapsed } from "../hooks/use-agents"
-import { useUnreadRunCount } from "../hooks/use-automations"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
 
 // ============================================================
@@ -109,7 +107,6 @@ export function AppSidebarContent({
 	const navigate = useNavigate()
 	const routeParams = useParams({ strict: false }) as { sessionId?: string }
 	const selectedSessionId = routeParams.sessionId ?? null
-	const unreadCount = useUnreadRunCount()
 
 	// Derive sections
 	const activeSessions = useMemo(
@@ -135,29 +132,6 @@ export function AppSidebarContent({
 		<>
 			{/* Scrollable content */}
 			<SidebarContent>
-				{/* Automations */}
-				<SidebarGroup>
-					<SidebarGroupContent>
-						<SidebarMenu>
-							<SidebarMenuItem>
-								<SidebarMenuButton
-									tooltip="Automations"
-									onClick={() => navigate({ to: "/automations" })}
-									className="text-muted-foreground"
-								>
-									<ZapIcon className="size-4" />
-									<span>Automations</span>
-									{unreadCount > 0 && (
-										<Badge variant="secondary" className="ml-auto shrink-0 px-1.5 py-0 text-[10px]">
-											{unreadCount}
-										</Badge>
-									)}
-								</SidebarMenuButton>
-							</SidebarMenuItem>
-						</SidebarMenu>
-					</SidebarGroupContent>
-				</SidebarGroup>
-
 				{/* Active Now */}
 				{activeSessions.length > 0 && (
 					<SidebarGroup>
