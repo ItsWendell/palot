@@ -88,6 +88,13 @@ if (disabledFeatures.length > 0) {
 
 const isDev = !app.isPackaged
 
+// Enable Chrome DevTools Protocol (CDP) in dev mode so external tools
+// (agent-browser, Playwright, etc.) can connect for visual testing.
+// Usage: `agent-browser connect 9222` or Playwright's `connectOverCDP`.
+if (isDev) {
+	app.commandLine.appendSwitch("remote-debugging-port", "9222")
+}
+
 // Use a separate identity for dev so dev and production can run side-by-side.
 // The single-instance lock and user-data directory are both keyed on app name,
 // so changing it here prevents the two from conflicting.

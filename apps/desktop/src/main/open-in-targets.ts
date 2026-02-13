@@ -6,8 +6,8 @@
  */
 
 import { execFileSync, spawn } from "node:child_process"
-import { existsSync, readdirSync, statSync } from "node:fs"
-import { homedir } from "node:os"
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { app } from "electron"
 import { createLogger } from "./logger"
@@ -369,8 +369,9 @@ let preferredTargetId: string | null = null
 const iconCache = new Map<string, string>()
 
 /**
- * Resolve an app icon from the .app bundle path using Electron's native API.
- * Returns a data URL (PNG) or undefined if the icon cannot be resolved.
+ * Resolve an app icon from the .app bundle path using sips to convert
+ * the .icns file to PNG. Falls back to Electron's app.getFileIcon() API.
+ * Returns a data URL (PNG) or undefined.
  */
 async function resolveAppIcon(targetDef: TargetDef): Promise<string | undefined> {
 	const cached = iconCache.get(targetDef.id)
@@ -380,13 +381,71 @@ async function resolveAppIcon(targetDef: TargetDef): Promise<string | undefined>
 	if (!appBundlePath) return undefined
 
 	try {
-		const icon = await app.getFileIcon(appBundlePath, { size: "normal" })
+		// Try converting the .icns file to PNG via sips (macOS built-in tool).
+		// This avoids Electron's nativeImage.createFromPath() which can crash
+		// on certain macOS / Electron version combinations with .icns files.
+		const pngData = convertIcnsToPng(appBundlePath)
+		if (pngData) {
+			const dataUrl = `data:image/png;base64,${pngData}`
+			iconCache.set(targetDef.id, dataUrl)
+			return dataUrl
+		}
+
+		// Fallback to Electron's file icon API
+		const icon = await app.getFileIcon(appBundlePath, { size: "large" })
 		const dataUrl = `data:image/png;base64,${icon.toPNG().toString("base64")}`
 		iconCache.set(targetDef.id, dataUrl)
 		return dataUrl
 	} catch (err) {
 		log.warn(`Failed to resolve icon for "${targetDef.id}"`, err)
 		return undefined
+	}
+}
+
+/**
+ * Extract the app icon from a .app bundle and convert it to a base64 PNG
+ * using macOS `sips` (Scriptable Image Processing System). This is safer
+ * than using Electron's nativeImage.createFromPath() on .icns files, which
+ * can crash on certain macOS / Electron version combinations.
+ */
+function convertIcnsToPng(appBundlePath: string): string | null {
+	try {
+		// Read CFBundleIconFile from Info.plist
+		const iconName = execFileSync(
+			"defaults",
+			["read", join(appBundlePath, "Contents", "Info"), "CFBundleIconFile"],
+			{ encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] },
+		).trim()
+
+		const iconFileName = iconName.endsWith(".icns") ? iconName : `${iconName}.icns`
+		const icnsPath = join(appBundlePath, "Contents", "Resources", iconFileName)
+
+		if (!existsSync(icnsPath)) return null
+
+		// Use sips to convert .icns to PNG via a temp file
+		const tmpPath = join(
+			tmpdir(),
+			`palot-icon-${Date.now()}-${Math.random().toString(36).slice(2)}.png`,
+		)
+		try {
+			execFileSync("sips", ["-s", "format", "png", "-z", "64", "64", icnsPath, "--out", tmpPath], {
+				timeout: 5000,
+				stdio: ["ignore", "ignore", "ignore"],
+			})
+
+			if (!existsSync(tmpPath)) return null
+			const pngData = readFileSync(tmpPath)
+			if (pngData.length === 0) return null
+			return pngData.toString("base64")
+		} finally {
+			try {
+				unlinkSync(tmpPath)
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+	} catch {
+		return null
 	}
 }
 

@@ -210,10 +210,9 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 		case "permission.updated": {
 			const sessionId = props.sessionID as string
 			const title = props.title as string
-			pendingCount++
-			updateBadgeCount(pendingCount)
-			scheduleNotify()
 			if (!isSubAgent(sessionId)) {
+				pendingCount++
+				updateBadgeCount(pendingCount)
 				showNotification({
 					type: "permission",
 					sessionId,
@@ -223,12 +222,16 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 					meta: { permissionId: props.id as string },
 				})
 			}
+			scheduleNotify()
 			break
 		}
 
 		case "permission.replied": {
-			pendingCount = Math.max(0, pendingCount - 1)
-			updateBadgeCount(pendingCount)
+			const sessionId = props.sessionID as string
+			if (!isSubAgent(sessionId)) {
+				pendingCount = Math.max(0, pendingCount - 1)
+				updateBadgeCount(pendingCount)
+			}
 			scheduleNotify()
 			break
 		}
@@ -237,10 +240,9 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 			const sessionId = props.sessionID as string
 			const questions = props.questions as Array<{ header?: string }> | undefined
 			const header = questions?.[0]?.header ?? "Question"
-			pendingCount++
-			updateBadgeCount(pendingCount)
-			scheduleNotify()
 			if (!isSubAgent(sessionId)) {
+				pendingCount++
+				updateBadgeCount(pendingCount)
 				showNotification({
 					type: "question",
 					sessionId,
@@ -250,13 +252,17 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 					meta: { requestId: props.id as string },
 				})
 			}
+			scheduleNotify()
 			break
 		}
 
 		case "question.replied":
 		case "question.rejected": {
-			pendingCount = Math.max(0, pendingCount - 1)
-			updateBadgeCount(pendingCount)
+			const sessionId = props.sessionID as string
+			if (!isSubAgent(sessionId)) {
+				pendingCount = Math.max(0, pendingCount - 1)
+				updateBadgeCount(pendingCount)
+			}
 			scheduleNotify()
 			break
 		}

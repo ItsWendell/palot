@@ -10,6 +10,7 @@
  * - Tray title badge showing pending permission/question count
  * - Status indicators via Unicode symbols (●/◐/○)
  */
+import fs from "node:fs"
 import path from "node:path"
 import { app, type BrowserWindow, Menu, nativeImage, Tray } from "electron"
 import {
@@ -75,11 +76,21 @@ export function createTray(windowGetter: () => BrowserWindow | undefined): void 
 
 	if (IS_MAC) {
 		const templatePath = path.join(resourcesPath, "iconTemplate.png")
+		if (!fs.existsSync(templatePath)) {
+			log.error(`Tray icon not found at ${templatePath} — tray will be invisible`)
+		}
 		icon = nativeImage.createFromPath(templatePath)
 		icon.setTemplateImage(true)
 	} else {
 		const iconPath = path.join(resourcesPath, "icon.png")
+		if (!fs.existsSync(iconPath)) {
+			log.error(`Tray icon not found at ${iconPath} — tray will be invisible`)
+		}
 		icon = nativeImage.createFromPath(iconPath)
+	}
+
+	if (icon.isEmpty()) {
+		log.error("Tray icon is empty — file may be missing or corrupt")
 	}
 
 	tray = new Tray(icon)

@@ -20,6 +20,14 @@ extraResources:
     to: bin
     filter:
       - "**/*"
+  # Tray icon assets — must be at the root of process.resourcesPath
+  # so tray.ts can find them via path.join(process.resourcesPath, "iconTemplate.png")
+  - from: resources/iconTemplate.png
+    to: iconTemplate.png
+  - from: resources/iconTemplate@2x.png
+    to: iconTemplate@2x.png
+  - from: resources/icon.png
+    to: icon.png
 
 # Rebuild native modules for Electron's Node.js ABI during packaging.
 npmRebuild: true
