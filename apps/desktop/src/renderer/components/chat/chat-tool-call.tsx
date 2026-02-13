@@ -60,15 +60,14 @@ function truncateOutput(output: string, max = MAX_OUTPUT_LENGTH): string {
 // Read output parsing — strip cat -n prefixes and <file> tags
 // ============================================================
 
-/** Pre-compiled regex for cat -n line-number format (hoisted to avoid re-creation per call) */
-const LINE_NUM_REGEX = /^\s*(\d{4,5})[|\t]\s?(.*)$/
+/** Pre-compiled regex for line-number formats (hoisted to avoid re-creation per call) */
+const LINE_NUM_REGEX = /^\s*(\d+)[|:\t]\s?(.*)$/
 
 /**
- * Claude Code's read tool returns output in `cat -n` format:
- *   <file>
- *   00001| import {
- *   00002|     Foo,
- *   </file>
+ * Parses output from various read tools.
+ * Handles:
+ * 1. Claude Code's `cat -n` format: <file>00001| content</file>
+ * 2. OpenCode's XML-wrapped format: <path>...</path><content>1: content</content>
  *
  * This function strips the wrapper tags, removes the line-number
  * prefixes, and returns the clean content + the starting line number.
@@ -76,15 +75,31 @@ const LINE_NUM_REGEX = /^\s*(\d{4,5})[|\t]\s?(.*)$/
 function parseReadOutput(raw: string): { content: string; startLine: number } {
 	let text = raw
 
-	// Strip <file> / </file> wrapper lines
-	text = text.replace(/^\s*<file>\s*\n?/, "")
-	text = text.replace(/\n?\s*<\/file>\s*$/, "")
-	// Also handle (End of file ...) trailing line
+	// 1. Strip OpenCode XML-style tags
+	text = text.replace(/<path>[\s\S]*?<\/path>\s*\n?/g, "")
+	text = text.replace(/<type>[\s\S]*?<\/type>\s*\n?/g, "")
+
+	// Extract content from <content> or <entries> if present
+	const contentMatch = text.match(/<content>([\s\S]*?)<\/content>/)
+	const entriesMatch = text.match(/<entries>([\s\S]*?)<\/entries>/)
+
+	if (contentMatch) {
+		text = contentMatch[1]
+	} else if (entriesMatch) {
+		text = entriesMatch[1]
+	} else {
+		// 2. Fallback: Strip <file> / </file> wrapper lines (Claude Code)
+		text = text.replace(/^\s*<file>\s*\n?/, "")
+		text = text.replace(/\n?\s*<\/file>\s*$/, "")
+	}
+
+	// 3. Clean up trailing metadata lines
 	text = text.replace(/\n?\s*\(End of file[^)]*\)\s*$/, "")
+	text = text.replace(/\n?\s*\(File has more lines[^)]*\)\s*$/, "")
+	text = text.replace(/\n?\s*\(Output truncated[^)]*\)\s*$/, "")
 
 	const lines = text.split("\n")
-
-	// Detect cat -n format: "  00001| content" or "00001\tcontent"
+	// If first line has a line number, use it as startLine
 	const firstMatch = lines[0]?.match(LINE_NUM_REGEX)
 
 	if (!firstMatch) {
