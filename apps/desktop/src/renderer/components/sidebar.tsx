@@ -1,4 +1,5 @@
 import { Badge } from "@palot/ui/components/badge"
+import { Collapsible, CollapsibleContent } from "@palot/ui/components/collapsible"
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -23,9 +24,8 @@ import { useNavigate, useParams } from "@tanstack/react-router"
 import {
 	AlertCircleIcon,
 	CheckCircle2Icon,
-	ChevronDownIcon,
+	ChevronRightIcon,
 	CircleDotIcon,
-	FolderIcon,
 	GitBranchIcon,
 	GitForkIcon,
 	Loader2Icon,
@@ -38,7 +38,7 @@ import {
 	TrashIcon,
 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
-import { formatWorkDuration } from "../lib/session-metrics"
+
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
 
 // ============================================================
@@ -113,7 +113,7 @@ export function AppSidebarContent({
 		() =>
 			agents
 				.filter((a) => a.status === "running" || a.status === "waiting" || a.status === "failed")
-				.sort((a, b) => b.createdAt - a.createdAt),
+				.sort((a, b) => b.createdAt - a.createdAt), // createdAt for stable order during parallel work
 		[agents],
 	)
 
@@ -307,7 +307,14 @@ const ProjectFolder = memo(function ProjectFolder({
 		() =>
 			agents
 				.filter((a) => a.project === project.name)
-				.sort((a, b) => b.lastActiveAt - a.lastActiveAt),
+				.sort((a, b) => {
+					// Active sessions float to top
+					const aActive = a.status === "running" || a.status === "waiting" || a.status === "failed"
+					const bActive = b.status === "running" || b.status === "waiting" || b.status === "failed"
+					if (aActive !== bActive) return aActive ? -1 : 1
+					// Within same group, sort by createdAt for stable order
+					return b.createdAt - a.createdAt
+				}),
 		[agents, project.name],
 	)
 
@@ -316,88 +323,85 @@ const ProjectFolder = memo(function ProjectFolder({
 
 	return (
 		<SidebarMenuItem>
-			<SidebarMenuButton
-				tooltip={project.name}
-				onClick={() => {
-					setExpanded(!expanded)
-					navigate({
-						to: "/project/$projectSlug",
-						params: { projectSlug: project.slug },
-					})
-				}}
-			>
-				{expanded ? (
-					<ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
-				) : (
-					<FolderIcon className="size-4 shrink-0" />
-				)}
-				<span className="truncate font-medium">{project.name}</span>
-				<Badge variant="secondary" className="ml-auto shrink-0 px-1.5 py-0 text-[10px]">
-					{project.agentCount}
-				</Badge>
-			</SidebarMenuButton>
+			<Collapsible open={expanded} onOpenChange={setExpanded}>
+				<SidebarMenuButton
+					tooltip={project.name}
+					onClick={() => {
+						setExpanded(!expanded)
+						navigate({
+							to: "/project/$projectSlug",
+							params: { projectSlug: project.slug },
+						})
+					}}
+				>
+					<ChevronRightIcon
+						className="size-3 shrink-0 text-muted-foreground transition-transform duration-150 ease-out"
+						style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+					/>
+					<span className="truncate font-medium">{project.name}</span>
+					<Badge variant="secondary" className="ml-auto shrink-0 px-1.5 py-0 text-[10px]">
+						{project.agentCount}
+					</Badge>
+				</SidebarMenuButton>
 
-			{expanded && (
-				<div className="ml-3 border-l border-sidebar-border/25 pl-1">
-					{projectSessions.length === 0 ? (
-						<p className="px-2 py-1.5 text-xs text-muted-foreground/60">No sessions yet</p>
-					) : (
-						<SidebarMenu>
-							{visibleSessions.map((agent) => (
-								<SessionItem
-									key={agent.id}
-									agent={agent}
-									isSelected={agent.id === selectedSessionId}
-									onRename={onRename}
-									onDelete={onDelete}
-									compact
-								/>
-							))}
-							{hiddenCount > 0 && !showAll && (
-								<button
-									type="button"
-									onClick={() => setShowAll(true)}
-									className="w-full cursor-pointer px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
-								>
-									Show {hiddenCount} more...
-								</button>
-							)}
-						</SidebarMenu>
-					)}
-				</div>
-			)}
+				<CollapsibleContent
+					keepMounted
+					className="flex h-[var(--collapsible-panel-height)] flex-col overflow-hidden transition-[height] duration-200 ease-out data-[ending-style]:h-0 data-[starting-style]:h-0 [&[hidden]:not([hidden='until-found'])]:hidden"
+				>
+					<div className="ml-3 border-l border-sidebar-border/25 pl-1">
+						{projectSessions.length === 0 ? (
+							<p className="px-2 py-1.5 text-xs text-muted-foreground/60">No sessions yet</p>
+						) : (
+							<SidebarMenu>
+								{visibleSessions.map((agent) => (
+									<SessionItem
+										key={agent.id}
+										agent={agent}
+										isSelected={agent.id === selectedSessionId}
+										onRename={onRename}
+										onDelete={onDelete}
+										compact
+									/>
+								))}
+								{hiddenCount > 0 && !showAll && (
+									<button
+										type="button"
+										onClick={() => setShowAll(true)}
+										className="w-full cursor-pointer px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+									>
+										Show {hiddenCount} more...
+									</button>
+								)}
+							</SidebarMenu>
+						)}
+					</div>
+				</CollapsibleContent>
+			</Collapsible>
 		</SidebarMenuItem>
 	)
 })
 
 /**
- * Hook that returns a live-updating work time string.
- * For active (running) sessions, ticks every second by adding elapsed time
- * since the last atom snapshot. For idle/completed sessions, returns the
- * static work time from the agent atom.
+ * Hook that returns a live-updating relative "last active" time string.
+ * For active (running/waiting) sessions, ticks every minute.
+ * For idle/completed sessions, returns the static duration from the agent atom.
  */
-function useLiveWorkTime(agent: Agent): string {
-	const isRunning = agent.status === "running"
+function useLiveLastActive(agent: Agent): string {
+	const isActive = agent.status === "running" || agent.status === "waiting"
 
-	const [display, setDisplay] = useState(() =>
-		isRunning ? formatWorkDuration(agent.workTimeMs) : agent.workTime,
-	)
+	const [display, setDisplay] = useState(agent.duration)
 
 	useEffect(() => {
-		if (!isRunning) {
-			setDisplay(agent.workTime)
+		if (!isActive) {
+			setDisplay(agent.duration)
 			return
 		}
 
-		// Snapshot the base work time and start ticking
-		const baseMs = agent.workTimeMs
-		const startedAt = Date.now()
-
-		const tick = () => setDisplay(formatWorkDuration(baseMs + (Date.now() - startedAt)))
-		tick()
-		const id = setInterval(tick, 1_000)
+		// Active sessions: show "now" and tick every 60s to stay fresh
+		setDisplay("now")
+		const id = setInterval(() => setDisplay("now"), 60_000)
 		return () => clearInterval(id)
-	}, [isRunning, agent.workTimeMs, agent.workTime])
+	}, [isActive, agent.duration])
 
 	return display
 }
@@ -423,7 +427,7 @@ const SessionItem = memo(function SessionItem({
 	const statusColor = STATUS_COLOR[agent.status]
 	const isSubAgent = !!agent.parentId
 	const isWorktree = !!agent.worktreePath
-	const workTime = useLiveWorkTime(agent)
+	const lastActive = useLiveLastActive(agent)
 
 	const [isEditing, setIsEditing] = useState(false)
 	const [editValue, setEditValue] = useState(agent.name)
@@ -514,17 +518,7 @@ const SessionItem = memo(function SessionItem({
 				)}
 
 				{!isEditing && (
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-								{workTime}
-								{agent.cost > 0 && ` · ${agent.costFormatted}`}
-							</span>
-						</TooltipTrigger>
-						<TooltipContent side="right" className="text-xs">
-							Last active {agent.duration} ago
-						</TooltipContent>
-					</Tooltip>
+					<span className="shrink-0 text-xs tabular-nums text-muted-foreground">{lastActive}</span>
 				)}
 			</SidebarMenuButton>
 		</SidebarMenuItem>
