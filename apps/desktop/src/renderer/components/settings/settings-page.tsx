@@ -7,7 +7,7 @@ import {
 	SidebarMenuItem,
 } from "@palot/ui/components/sidebar"
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { ArrowLeftIcon, BellIcon, InfoIcon, SettingsIcon, WrenchIcon } from "lucide-react"
+import { ArrowLeftIcon, BellIcon, InfoIcon, PlugIcon, SettingsIcon, WrenchIcon } from "lucide-react"
 import { useEffect } from "react"
 import { useSetSidebarSlot } from "../sidebar-slot-context"
 
@@ -15,11 +15,12 @@ import { useSetSidebarSlot } from "../sidebar-slot-context"
 // Tab definitions
 // ============================================================
 
-type SettingsTab = "general" | "notifications" | "setup" | "about"
+type SettingsTab = "general" | "notifications" | "providers" | "setup" | "about"
 
 const tabs: { id: SettingsTab; label: string; icon: typeof SettingsIcon }[] = [
 	{ id: "general", label: "General", icon: SettingsIcon },
 	{ id: "notifications", label: "Notifications", icon: BellIcon },
+	{ id: "providers", label: "Providers", icon: PlugIcon },
 	{ id: "setup", label: "Setup", icon: WrenchIcon },
 	{ id: "about", label: "About", icon: InfoIcon },
 ]
@@ -41,8 +42,10 @@ export function SettingsPage() {
 	}, [setContent, setFooter])
 
 	return (
-		<div className="mx-auto max-w-2xl px-8 py-6 overflow-y-auto h-full">
-			<Outlet />
+		<div className="h-full overflow-y-auto">
+			<div className="mx-auto max-w-2xl px-8 py-6">
+				<Outlet />
+			</div>
 		</div>
 	)
 }

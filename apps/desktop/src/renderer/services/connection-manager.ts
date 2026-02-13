@@ -162,6 +162,30 @@ export function getProjectClient(directory: string): OpencodeClient | null {
 }
 
 /**
+ * Get the base SDK client (no directory scope).
+ * Used for global operations like auth set/remove, provider list, global config.
+ * Returns null if not connected.
+ */
+export function getBaseClient(): OpencodeClient | null {
+	if (!connection) {
+		// HMR recovery
+		const storeUrl = appStore.get(serverUrlAtom)
+		if (storeUrl) {
+			const baseClient = connectToServer(storeUrl)
+			const abortController = new AbortController()
+			eventLoopGeneration++
+			connection = { url: storeUrl, baseClient, abortController }
+			setGlobalAbort(abortController)
+			startEventLoop(baseClient, abortController.signal, eventLoopGeneration)
+			appStore.set(serverConnectedAtom, true)
+		} else {
+			return null
+		}
+	}
+	return connection.baseClient
+}
+
+/**
  * Check if we're connected to the OpenCode server.
  */
 export function isConnected(): boolean {

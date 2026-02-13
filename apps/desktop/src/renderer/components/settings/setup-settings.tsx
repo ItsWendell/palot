@@ -210,6 +210,7 @@ function OnboardingSection() {
 			migrationPerformed: false,
 			migratedFrom: [],
 			opencodeVersion: null,
+			providersConnected: 0,
 		})
 		// Relaunch the app to show onboarding fresh
 		if (isElectron) {

@@ -19,6 +19,8 @@ export interface OnboardingState {
 	/** Which provider(s) were migrated from (e.g. ["claude-code", "cursor"]). */
 	migratedFrom: string[]
 	opencodeVersion: string | null
+	/** Number of AI providers connected during onboarding. */
+	providersConnected: number
 }
 
 // ============================================================
@@ -32,4 +34,5 @@ export const onboardingStateAtom = atomWithStorage<OnboardingState>("palot:onboa
 	migrationPerformed: false,
 	migratedFrom: [],
 	opencodeVersion: null,
+	providersConnected: 0,
 })

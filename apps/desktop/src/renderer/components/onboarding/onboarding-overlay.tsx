@@ -18,6 +18,7 @@ import { CompleteStep } from "./steps/complete-step"
 import { EnvironmentCheckStep } from "./steps/environment-check-step"
 import { MigrationOfferStep } from "./steps/migration-offer-step"
 import { MigrationPreviewStep } from "./steps/migration-preview-step"
+import { ProviderSetupStep } from "./steps/provider-setup-step"
 import { WelcomeStep } from "./steps/welcome-step"
 
 // ============================================================
@@ -27,6 +28,7 @@ import { WelcomeStep } from "./steps/welcome-step"
 export type OnboardingStep =
 	| "welcome"
 	| "environment"
+	| "providers"
 	| "complete"
 	| "migration-offer"
 	| "migration-preview"
@@ -37,6 +39,7 @@ interface OnboardingOverlayProps {
 		migrationPerformed: boolean
 		migratedFrom: string[]
 		opencodeVersion: string | null
+		providersConnected: number
 	}) => void
 }
 
@@ -45,7 +48,7 @@ interface OnboardingOverlayProps {
 // ============================================================
 
 /** Core steps shown in the progress indicator. Migration steps are a detour. */
-const CORE_STEPS: OnboardingStep[] = ["welcome", "environment", "complete"]
+const CORE_STEPS: OnboardingStep[] = ["welcome", "environment", "providers", "complete"]
 
 const STEP_TRANSITION = {
 	initial: { opacity: 0, y: 16 },
@@ -62,6 +65,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 	const [currentStep, setCurrentStep] = useState<OnboardingStep>("welcome")
 	const [skippedSteps, setSkippedSteps] = useState<string[]>([])
 	const [opencodeVersion, setOpencodeVersion] = useState<string | null>(null)
+	const [providersConnected, setProvidersConnected] = useState(0)
 	const [migratedProviders, setMigratedProviders] = useState<string[]>([])
 
 	// Migration state (only populated if user opts in from complete screen)
@@ -93,13 +97,26 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 	const handleEnvironmentComplete = useCallback(
 		(version: string | null) => {
 			setOpencodeVersion(version)
-			goToStep("complete")
+			goToStep("providers")
 		},
 		[goToStep],
 	)
 
 	const handleEnvironmentSkip = useCallback(() => {
 		skipStep("environment")
+		goToStep("providers")
+	}, [goToStep, skipStep])
+
+	const handleProvidersComplete = useCallback(
+		(count: number) => {
+			setProvidersConnected(count)
+			goToStep("complete")
+		},
+		[goToStep],
+	)
+
+	const handleProvidersSkip = useCallback(() => {
+		skipStep("providers")
 		goToStep("complete")
 	}, [goToStep, skipStep])
 
@@ -160,8 +177,9 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 			migrationPerformed: migratedProviders.length > 0,
 			migratedFrom: migratedProviders,
 			opencodeVersion,
+			providersConnected,
 		})
-	}, [onComplete, skippedSteps, migratedProviders, opencodeVersion])
+	}, [onComplete, skippedSteps, migratedProviders, opencodeVersion, providersConnected])
 
 	return (
 		<div
@@ -210,6 +228,19 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 							<EnvironmentCheckStep
 								onComplete={handleEnvironmentComplete}
 								onSkip={handleEnvironmentSkip}
+							/>
+						</motion.div>
+					)}
+
+					{currentStep === "providers" && (
+						<motion.div
+							key="providers"
+							className="absolute inset-0 overflow-y-auto"
+							{...STEP_TRANSITION}
+						>
+							<ProviderSetupStep
+								onComplete={handleProvidersComplete}
+								onSkip={handleProvidersSkip}
 							/>
 						</motion.div>
 					)}

@@ -11,7 +11,7 @@ import { serverConnectedAtom } from "../atoms/connection"
 import { isMockModeAtom } from "../atoms/mock-mode"
 import { MOCK_AGENTS, MOCK_CONFIG, MOCK_PROVIDERS } from "../lib/mock-data"
 import { fetchModelState, updateModelRecent } from "../services/backend"
-import { getProjectClient } from "../services/connection-manager"
+import { getBaseClient, getProjectClient } from "../services/connection-manager"
 
 // ============================================================
 // Re-exports — use SDK types directly
@@ -145,6 +145,9 @@ export const queryKeys = {
 	agents: (directory: string) => ["agents", directory] as const,
 	commands: (directory: string) => ["commands", directory] as const,
 	modelState: ["modelState"] as const,
+	allProviders: ["allProviders"] as const,
+	connectedProviders: ["connectedProviders"] as const,
+	providerAuthMethods: ["providerAuthMethods"] as const,
 }
 
 // ============================================================
@@ -423,4 +426,170 @@ export function useServerCommands(directory: string | null): ServerCommand[] {
 	})
 
 	return data ?? []
+}
+
+// ============================================================
+// Provider catalog types
+// ============================================================
+
+/** A provider from the full catalog (GET /provider/) */
+export interface CatalogProvider {
+	id: string
+	name: string
+	api?: string
+	npm?: string
+	env: string[]
+	models: Record<string, unknown>
+}
+
+/** Full provider list response */
+export interface AllProvidersData {
+	all: CatalogProvider[]
+	defaults: Record<string, string>
+	connected: string[]
+}
+
+/** A connected provider with source info (from GET /config/providers) */
+export interface ConnectedProviderInfo {
+	id: string
+	name: string
+	source: "env" | "config" | "custom" | "api"
+	env: string[]
+}
+
+/** Auth method for a provider */
+export interface ProviderAuthMethod {
+	type: "oauth" | "api"
+	label: string
+}
+
+// ============================================================
+// Provider management hooks
+// ============================================================
+
+/**
+ * Fetches the full provider catalog (connected and unconnected).
+ * Uses GET /provider/ instead of GET /config/providers.
+ */
+export function useAllProviders(): {
+	data: AllProvidersData | null
+	loading: boolean
+	error: string | null
+	reload: () => void
+} {
+	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
+	const queryClient = useQueryClient()
+
+	const { data, isLoading, error } = useQuery({
+		queryKey: queryKeys.allProviders,
+		queryFn: async (): Promise<AllProvidersData> => {
+			const client = getBaseClient()
+			if (!client) throw new Error("Not connected to server")
+			const result = await client.provider.list()
+			const raw = result.data as {
+				all: CatalogProvider[]
+				default: Record<string, string>
+				connected: string[]
+			}
+			return {
+				all: raw.all ?? [],
+				defaults: raw.default ?? {},
+				connected: raw.connected ?? [],
+			}
+		},
+		enabled: connected && !isMockMode,
+	})
+
+	const reload = useCallback(() => {
+		queryClient.invalidateQueries({ queryKey: queryKeys.allProviders })
+	}, [queryClient])
+
+	return {
+		data: data ?? null,
+		loading: isLoading,
+		error: error ? (error instanceof Error ? error.message : "Failed to load providers") : null,
+		reload,
+	}
+}
+
+/**
+ * Fetches connected providers with their `source` field.
+ * Uses GET /config/providers via the base client (no directory scope).
+ * This gives us source info ("env" | "config" | "custom" | "api") that
+ * the catalog endpoint (GET /provider/) does not provide.
+ */
+export function useConnectedProviders(): {
+	data: Map<string, ConnectedProviderInfo> | null
+	loading: boolean
+	error: string | null
+	reload: () => void
+} {
+	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
+	const queryClient = useQueryClient()
+
+	const { data, isLoading, error } = useQuery({
+		queryKey: queryKeys.connectedProviders,
+		queryFn: async (): Promise<Map<string, ConnectedProviderInfo>> => {
+			const client = getBaseClient()
+			if (!client) throw new Error("Not connected to server")
+			const result = await client.config.providers()
+			const raw = result.data as {
+				providers: Array<{
+					id: string
+					name: string
+					source: "env" | "config" | "custom" | "api"
+					env: string[]
+				}>
+			}
+			const map = new Map<string, ConnectedProviderInfo>()
+			for (const p of raw.providers ?? []) {
+				map.set(p.id, { id: p.id, name: p.name, source: p.source, env: p.env })
+			}
+			return map
+		},
+		enabled: connected && !isMockMode,
+	})
+
+	const reload = useCallback(() => {
+		queryClient.invalidateQueries({ queryKey: queryKeys.connectedProviders })
+	}, [queryClient])
+
+	return {
+		data: data ?? null,
+		loading: isLoading,
+		error: error ? (error instanceof Error ? error.message : "Failed to load providers") : null,
+		reload,
+	}
+}
+
+/**
+ * Fetches auth methods available for each provider.
+ * Uses GET /provider/auth.
+ */
+export function useProviderAuthMethods(): {
+	data: Record<string, ProviderAuthMethod[]> | null
+	loading: boolean
+	error: string | null
+} {
+	const connected = useAtomValue(serverConnectedAtom)
+	const isMockMode = useAtomValue(isMockModeAtom)
+
+	const { data, isLoading, error } = useQuery({
+		queryKey: queryKeys.providerAuthMethods,
+		queryFn: async (): Promise<Record<string, ProviderAuthMethod[]>> => {
+			const client = getBaseClient()
+			if (!client) throw new Error("Not connected to server")
+			const result = await client.provider.auth()
+			return (result.data ?? {}) as Record<string, ProviderAuthMethod[]>
+		},
+		enabled: connected && !isMockMode,
+	})
+
+	return {
+		data: data ?? null,
+		loading: isLoading,
+		error: error ? (error instanceof Error ? error.message : "Failed to load auth methods") : null,
+	}
 }

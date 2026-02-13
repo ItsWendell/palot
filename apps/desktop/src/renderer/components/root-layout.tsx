@@ -124,6 +124,7 @@ export function RootLayout() {
 			migrationPerformed: boolean
 			migratedFrom: string[]
 			opencodeVersion: string | null
+			providersConnected: number
 		}) => {
 			setOnboardingState({
 				completed: true,
@@ -132,6 +133,7 @@ export function RootLayout() {
 				migrationPerformed: state.migrationPerformed,
 				migratedFrom: state.migratedFrom,
 				opencodeVersion: state.opencodeVersion,
+				providersConnected: state.providersConnected,
 			})
 		},
 		[setOnboardingState],
