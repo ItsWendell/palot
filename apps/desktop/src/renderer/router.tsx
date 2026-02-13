@@ -19,6 +19,7 @@ import { NotificationSettings } from "./components/settings/notification-setting
 import { ProviderSettings } from "./components/settings/provider-settings"
 import { SettingsPage } from "./components/settings/settings-page"
 import { SetupSettings } from "./components/settings/setup-settings"
+import { WorktreeSettings } from "./components/settings/worktree-settings"
 import { SidebarLayout } from "./components/sidebar-layout"
 
 // ============================================================
@@ -98,6 +99,12 @@ const settingsProvidersRoute = createRoute({
 	component: ProviderSettings,
 })
 
+const settingsWorktreesRoute = createRoute({
+	getParentRoute: () => settingsRoute,
+	path: "worktrees",
+	component: WorktreeSettings,
+})
+
 const settingsAboutRoute = createRoute({
 	getParentRoute: () => settingsRoute,
 	path: "about",
@@ -133,6 +140,7 @@ const routeTree = rootRoute.addChildren([
 			settingsGeneralRoute,
 			settingsNotificationsRoute,
 			settingsProvidersRoute,
+			settingsWorktreesRoute,
 			settingsSetupRoute,
 			settingsAboutRoute,
 		]),

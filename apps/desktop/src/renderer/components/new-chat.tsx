@@ -7,12 +7,20 @@ import {
 	usePromptInputController,
 } from "@palot/ui/components/ai-elements/prompt-input"
 import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue } from "jotai"
-import { ChevronDownIcon, CodeIcon, FileTextIcon, GitPullRequestIcon } from "lucide-react"
+import {
+	ChevronDownIcon,
+	CodeIcon,
+	FileTextIcon,
+	GitForkIcon,
+	GitPullRequestIcon,
+	MonitorIcon,
+} from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { projectModelsAtom, setProjectModelAtom } from "../atoms/preferences"
-import { setSessionBranchAtom } from "../atoms/sessions"
+import { setSessionBranchAtom, setSessionWorktreeAtom, upsertSessionAtom } from "../atoms/sessions"
 import { appStore } from "../atoms/store"
 import { useAgents, useProjectList } from "../hooks/use-agents"
 import { NEW_CHAT_DRAFT_KEY, useDraft, useDraftActions } from "../hooks/use-draft"
@@ -29,11 +37,65 @@ import {
 } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import type { FileAttachment } from "../lib/types"
+import { createWorktree, isElectron } from "../services/backend"
 import { useSetAppBarContent } from "./app-bar-context"
 import { BranchPicker } from "./branch-picker"
 import { PromptAttachmentPreview } from "./chat/prompt-attachments"
 import { PromptToolbar, StatusBar } from "./chat/prompt-toolbar"
 import { PalotWordmark } from "./palot-wordmark"
+
+// ============================================================
+// Worktree mode toggle
+// ============================================================
+
+function WorktreeToggle({
+	mode,
+	onModeChange,
+}: {
+	mode: "local" | "worktree"
+	onModeChange: (mode: "local" | "worktree") => void
+}) {
+	return (
+		<div className="flex items-center rounded-md border border-border/40">
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						type="button"
+						onClick={() => onModeChange("local")}
+						className={`flex items-center gap-1 rounded-l-md px-1.5 py-0.5 text-[11px] transition-colors ${
+							mode === "local"
+								? "bg-muted/80 text-foreground"
+								: "text-muted-foreground/60 hover:text-muted-foreground"
+						}`}
+					>
+						<MonitorIcon className="size-3" />
+						<span>Local</span>
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="top">Run in your current working directory</TooltipContent>
+			</Tooltip>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						type="button"
+						onClick={() => onModeChange("worktree")}
+						className={`flex items-center gap-1 rounded-r-md px-1.5 py-0.5 text-[11px] transition-colors ${
+							mode === "worktree"
+								? "bg-muted/80 text-foreground"
+								: "text-muted-foreground/60 hover:text-muted-foreground"
+						}`}
+					>
+						<GitForkIcon className="size-3" />
+						<span>Worktree</span>
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="top">
+					Run in an isolated git worktree (your working copy stays untouched)
+				</TooltipContent>
+			</Tooltip>
+		</div>
+	)
+}
 
 const SUGGESTIONS = [
 	{
@@ -88,6 +150,7 @@ export function NewChat() {
 	const [selectedDirectory, setSelectedDirectory] = useState<string>("")
 	const [launching, setLaunching] = useState(false)
 	const [error, setError] = useState<string | null>(null)
+	const [worktreeMode, setWorktreeMode] = useState<"local" | "worktree">("local")
 
 	// Draft persistence — survives page reloads
 	const draft = useDraft(NEW_CHAT_DRAFT_KEY)
@@ -226,12 +289,66 @@ export function NewChat() {
 			setLaunching(true)
 			setError(null)
 			try {
-				const session = await createSession(selectedDirectory)
+				// Generate a session slug from the first few words of the prompt
+				const sessionSlug = promptText
+					.toLowerCase()
+					.replace(/[^a-z0-9\s-]/g, "")
+					.trim()
+					.split(/\s+/)
+					.slice(0, 4)
+					.join("-")
+					.slice(0, 40)
+
+				// If worktree mode, create the worktree before the session.
+				// The session is always created under the original project directory
+				// so it groups correctly in the sidebar. The worktree workspace path
+				// is only used for the SDK calls (session creation + prompt sending)
+				// so the agent operates in the isolated worktree.
+				let worktreeResult: {
+					worktreeRoot: string
+					worktreeWorkspace: string
+					branchName: string
+				} | null = null
+
+				if (worktreeMode === "worktree" && isElectron) {
+					try {
+						worktreeResult = await createWorktree(selectedDirectory, sessionSlug)
+					} catch (err) {
+						// Fall back to local mode with a warning
+						console.warn("Worktree creation failed, falling back to local mode:", err)
+						setError(
+							`Worktree creation failed (running locally): ${err instanceof Error ? err.message : "Unknown error"}`,
+						)
+					}
+				}
+
+				// Use the worktree workspace for the SDK session (so the agent works there),
+				// but store the original project directory on the SessionEntry for grouping.
+				const sdkDirectory = worktreeResult?.worktreeWorkspace ?? selectedDirectory
+				const session = await createSession(sdkDirectory)
 				if (session) {
+					// Override the session's directory back to the original project
+					// so it groups under the correct project in the sidebar.
+					if (worktreeResult) {
+						appStore.set(upsertSessionAtom, {
+							session,
+							directory: selectedDirectory,
+						})
+					}
+
 					// Capture the current branch at session creation time
-					const currentBranch = vcs?.branch ?? ""
+					const currentBranch = worktreeResult?.branchName ?? vcs?.branch ?? ""
 					if (currentBranch) {
 						appStore.set(setSessionBranchAtom, { sessionId: session.id, branch: currentBranch })
+					}
+
+					// Store worktree metadata on the session
+					if (worktreeResult) {
+						appStore.set(setSessionWorktreeAtom, {
+							sessionId: session.id,
+							worktreePath: worktreeResult.worktreeRoot,
+							worktreeBranch: worktreeResult.branchName,
+						})
 					}
 
 					// Persist the model + variant + agent for this project so new sessions remember it
@@ -246,7 +363,7 @@ export function NewChat() {
 						})
 					}
 
-					await sendPrompt(selectedDirectory, session.id, promptText, {
+					await sendPrompt(sdkDirectory, session.id, promptText, {
 						model: effectiveModel ?? undefined,
 						agent: selectedAgent ?? undefined,
 						variant: selectedVariant,
@@ -270,6 +387,7 @@ export function NewChat() {
 		},
 		[
 			selectedDirectory,
+			worktreeMode,
 			createSession,
 			sendPrompt,
 			projects,
@@ -425,6 +543,11 @@ export function NewChat() {
 										onBranchChanged={handleBranchChanged}
 										activeSessionCount={activeSessionCount}
 									/>
+								) : undefined
+							}
+							extraSlot={
+								vcs && isElectron ? (
+									<WorktreeToggle mode={worktreeMode} onModeChange={setWorktreeMode} />
 								) : undefined
 							}
 						/>

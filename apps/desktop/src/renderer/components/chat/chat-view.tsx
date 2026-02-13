@@ -19,7 +19,9 @@ import { useAtomValue } from "jotai"
 import {
 	ArrowUpToLineIcon,
 	ChevronUpIcon,
+	GitForkIcon,
 	Loader2Icon,
+	MonitorIcon,
 	PlusIcon,
 	Redo2Icon,
 	Undo2Icon,
@@ -1281,6 +1283,19 @@ export function ChatView({
 						isConnected={isConnected}
 						isWorking={isWorking}
 						interruptCount={interruptCount}
+						extraSlot={
+							agent.worktreeBranch ? (
+								<div className="flex items-center gap-1">
+									<GitForkIcon className="size-3" />
+									<span>Worktree</span>
+								</div>
+							) : (
+								<div className="flex items-center gap-1">
+									<MonitorIcon className="size-3" />
+									<span>Local</span>
+								</div>
+							)
+						}
 					/>
 				</div>
 			</div>

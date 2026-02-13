@@ -17,6 +17,7 @@ import {
 	ChevronDownIcon,
 	CopyIcon,
 	ExternalLinkIcon,
+	GitForkIcon,
 	PencilIcon,
 	SquareIcon,
 	TerminalIcon,
@@ -38,6 +39,7 @@ import { fetchOpenInTargets, isElectron, openInTarget } from "../services/backen
 import { useSetAppBarContent } from "./app-bar-context"
 import { ChatView } from "./chat"
 import { PalotWordmark } from "./palot-wordmark"
+import { WorktreeActions } from "./worktree-actions"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
 	running: "Running",
@@ -297,7 +299,7 @@ function SessionAppBarContent({
 			{/* Separator */}
 			<div className="h-3 w-px shrink-0 bg-border/60" />
 
-			{/* Breadcrumb: project / session name */}
+			{/* Breadcrumb: project / [branch badge] / session name */}
 			<div
 				className="flex min-w-0 items-center gap-1.5"
 				style={{
@@ -307,6 +309,10 @@ function SessionAppBarContent({
 			>
 				{/* Project name */}
 				<span className="shrink-0 text-xs leading-none text-muted-foreground">{agent.project}</span>
+
+				{/* Worktree branch badge */}
+				{agent.worktreeBranch && <WorktreeBranchBadge branch={agent.worktreeBranch} />}
+
 				<span className="shrink-0 text-xs leading-none text-muted-foreground/40">/</span>
 
 				{/* Session name — click to edit */}
@@ -351,6 +357,11 @@ function SessionAppBarContent({
 					WebkitAppRegion: "no-drag",
 				}}
 			>
+				{/* Worktree actions (Apply to local, Commit & push) */}
+				{agent.worktreePath && <WorktreeActions agent={agent} />}
+
+				{agent.worktreePath && <div className="h-3 w-px shrink-0 bg-border/60" />}
+
 				{/* Status dot + label */}
 				<div className="flex items-center gap-1.5 text-xs leading-none text-muted-foreground">
 					<span
@@ -365,10 +376,13 @@ function SessionAppBarContent({
 				)}
 
 				{/* Open in external editor */}
-				<OpenInButton directory={agent.directory} />
+				<OpenInButton directory={agent.worktreePath ?? agent.directory} />
 
 				{/* Open in terminal */}
-				<AttachCommand sessionId={agent.sessionId} directory={agent.directory} />
+				<AttachCommand
+					sessionId={agent.sessionId}
+					directory={agent.worktreePath ?? agent.directory}
+				/>
 
 				{/* Stop button (when running) */}
 				{agent.status === "running" && (
@@ -542,6 +556,36 @@ function OpenInButton({ directory }: { directory: string }) {
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</div>
+	)
+}
+
+/**
+ * Compact badge showing the worktree branch name with a copy action.
+ */
+function WorktreeBranchBadge({ branch }: { branch: string }) {
+	const [copied, setCopied] = useState(false)
+
+	const handleCopy = useCallback(async () => {
+		await navigator.clipboard.writeText(branch)
+		setCopied(true)
+		setTimeout(() => setCopied(false), 2000)
+	}, [branch])
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					type="button"
+					onClick={handleCopy}
+					className="flex shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+				>
+					<GitForkIcon className="size-2.5" aria-hidden="true" />
+					<span className="max-w-[120px] truncate">{branch}</span>
+					{copied && <CheckIcon className="size-2.5 text-green-500" />}
+				</button>
+			</TooltipTrigger>
+			<TooltipContent>Click to copy branch name</TooltipContent>
+		</Tooltip>
 	)
 }
 

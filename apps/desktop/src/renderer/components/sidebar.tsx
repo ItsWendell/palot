@@ -27,6 +27,7 @@ import {
 	CircleDotIcon,
 	FolderIcon,
 	GitBranchIcon,
+	GitForkIcon,
 	Loader2Icon,
 	NetworkIcon,
 	PencilIcon,
@@ -435,6 +436,7 @@ const SessionItem = memo(function SessionItem({
 	const StatusIcon = STATUS_ICON[agent.status]
 	const statusColor = STATUS_COLOR[agent.status]
 	const isSubAgent = !!agent.parentId
+	const isWorktree = !!agent.worktreePath
 	const duration = useLiveDuration(agent)
 
 	const [isEditing, setIsEditing] = useState(false)
@@ -487,6 +489,10 @@ const SessionItem = memo(function SessionItem({
 			>
 				{isSubAgent ? (
 					<GitBranchIcon className={`shrink-0 ${statusColor}`} />
+				) : isWorktree ? (
+					<GitForkIcon
+						className={`shrink-0 ${statusColor} ${agent.status === "running" ? "animate-pulse" : ""}`}
+					/>
 				) : (
 					<StatusIcon
 						className={`shrink-0 ${statusColor} ${agent.status === "running" ? "animate-spin" : ""}`}

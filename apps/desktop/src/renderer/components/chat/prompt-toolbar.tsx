@@ -493,6 +493,8 @@ interface StatusBarProps {
 	interruptCount?: number
 	/** Optional slot to replace the default branch display (e.g. interactive BranchPicker) */
 	branchSlot?: React.ReactNode
+	/** Optional extra slot rendered on the left side (e.g. worktree toggle) */
+	extraSlot?: React.ReactNode
 }
 
 const DISPLAY_MODE_CYCLE: DisplayMode[] = ["default", "compact", "verbose"]
@@ -513,6 +515,7 @@ export function StatusBar({
 	isWorking,
 	interruptCount,
 	branchSlot,
+	extraSlot,
 }: StatusBarProps) {
 	const displayMode = useDisplayMode()
 	const setDisplayMode = useSetDisplayMode()
@@ -529,10 +532,12 @@ export function StatusBar({
 		<div className="flex items-center gap-3 px-2 pt-2 text-[11px] text-muted-foreground/60">
 			{/* Left side — environment + connection + interrupt hint */}
 			<div className="flex items-center gap-3">
-				<div className="flex items-center gap-1">
-					<MonitorIcon className="size-3" />
-					<span>Local</span>
-				</div>
+				{extraSlot ?? (
+					<div className="flex items-center gap-1">
+						<MonitorIcon className="size-3" />
+						<span>Local</span>
+					</div>
+				)}
 
 				{!isConnected && (
 					<div className="flex items-center gap-1 text-yellow-500/70">

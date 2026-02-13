@@ -23,6 +23,10 @@ export interface SessionEntry {
 	directory: string
 	/** Git branch at the time this session was created */
 	branch?: string
+	/** If set, the session runs in a git worktree at this path */
+	worktreePath?: string
+	/** The branch name auto-created for the worktree (e.g. "palot/fix-auth-bug") */
+	worktreeBranch?: string
 	/** Last session-level error (from session.error events) */
 	error?: SessionError
 }
@@ -63,6 +67,8 @@ export const upsertSessionAtom = atom(
 			permissions: existing?.permissions ?? [],
 			questions: existing?.questions ?? [],
 			branch: existing?.branch,
+			worktreePath: existing?.worktreePath,
+			worktreeBranch: existing?.worktreeBranch,
 			error: existing?.error,
 		})
 
@@ -132,6 +138,27 @@ export const setSessionBranchAtom = atom(
 		const entry = get(sessionFamily(args.sessionId))
 		if (!entry) return
 		set(sessionFamily(args.sessionId), { ...entry, branch: args.branch })
+	},
+)
+
+export const setSessionWorktreeAtom = atom(
+	null,
+	(
+		get,
+		set,
+		args: {
+			sessionId: string
+			worktreePath: string
+			worktreeBranch: string
+		},
+	) => {
+		const entry = get(sessionFamily(args.sessionId))
+		if (!entry) return
+		set(sessionFamily(args.sessionId), {
+			...entry,
+			worktreePath: args.worktreePath,
+			worktreeBranch: args.worktreeBranch,
+		})
 	},
 )
 
@@ -241,6 +268,8 @@ export const setSessionsAtom = atom(
 				questions: existing?.questions ?? [],
 				directory: args.directory,
 				branch: existing?.branch,
+				worktreePath: existing?.worktreePath,
+				worktreeBranch: existing?.worktreeBranch,
 				error: existing?.error,
 			})
 			nextIds.add(session.id)

@@ -208,6 +208,8 @@ export const agentFamily = atomFamily((sessionId: string) =>
 			permissions,
 			questions,
 			parentId: session.parentID,
+			worktreePath: entry.worktreePath,
+			worktreeBranch: entry.worktreeBranch,
 			createdAt: created,
 			lastActiveAt,
 		}

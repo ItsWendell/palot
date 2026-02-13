@@ -7,7 +7,15 @@ import {
 	SidebarMenuItem,
 } from "@palot/ui/components/sidebar"
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { ArrowLeftIcon, BellIcon, InfoIcon, PlugIcon, SettingsIcon, WrenchIcon } from "lucide-react"
+import {
+	ArrowLeftIcon,
+	BellIcon,
+	GitForkIcon,
+	InfoIcon,
+	PlugIcon,
+	SettingsIcon,
+	WrenchIcon,
+} from "lucide-react"
 import { useEffect } from "react"
 import { useSetSidebarSlot } from "../sidebar-slot-context"
 
@@ -15,12 +23,13 @@ import { useSetSidebarSlot } from "../sidebar-slot-context"
 // Tab definitions
 // ============================================================
 
-type SettingsTab = "general" | "notifications" | "providers" | "setup" | "about"
+type SettingsTab = "general" | "notifications" | "providers" | "worktrees" | "setup" | "about"
 
 const tabs: { id: SettingsTab; label: string; icon: typeof SettingsIcon }[] = [
 	{ id: "general", label: "General", icon: SettingsIcon },
 	{ id: "notifications", label: "Notifications", icon: BellIcon },
 	{ id: "providers", label: "Providers", icon: PlugIcon },
+	{ id: "worktrees", label: "Worktrees", icon: GitForkIcon },
 	{ id: "setup", label: "Setup", icon: WrenchIcon },
 	{ id: "about", label: "About", icon: InfoIcon },
 ]

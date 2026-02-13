@@ -133,6 +133,10 @@ export interface Agent {
 	questions: SdkQuestionRequest[]
 	/** If set, this is a sub-agent spawned by the parent session */
 	parentId?: string
+	/** If set, the session runs in a git worktree at this root path */
+	worktreePath?: string
+	/** The branch name auto-created for the worktree (e.g. "palot/fix-auth-bug") */
+	worktreeBranch?: string
 	/** Timestamp (ms) of session creation — stable, never changes */
 	createdAt: number
 	/** Timestamp (ms) of last activity — for sorting and relative time display */
