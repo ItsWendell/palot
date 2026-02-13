@@ -59,16 +59,18 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 		<div className="flex items-center gap-1.5">
 			{/* Work time */}
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60">
-						<TimerIcon className="size-3" aria-hidden="true" />
-						{metrics.workTime}
-					</span>
+				<TooltipTrigger
+					render={
+						<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60" />
+					}
+				>
+					<TimerIcon className="size-3" aria-hidden="true" />
+					{metrics.workTime}
 				</TooltipTrigger>
 				<TooltipContent side="bottom" align="end">
 					<div className="space-y-1 text-xs">
 						<p className="font-medium">Work Time</p>
-						<p className="text-muted-foreground">Avg per turn: {metrics.avgTurnTime}</p>
+						<p className="text-background/60">Avg per turn: {metrics.avgTurnTime}</p>
 					</div>
 				</TooltipContent>
 			</Tooltip>
@@ -79,16 +81,18 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 			{metrics.costRaw > 0 && (
 				<>
 					<Tooltip>
-						<TooltipTrigger asChild>
-							<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60">
-								<CoinsIcon className="size-3" aria-hidden="true" />
-								{metrics.cost}
-							</span>
+						<TooltipTrigger
+							render={
+								<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60" />
+							}
+						>
+							<CoinsIcon className="size-3" aria-hidden="true" />
+							{metrics.cost}
 						</TooltipTrigger>
 						<TooltipContent side="bottom" align="end">
 							<div className="space-y-1 text-xs">
 								<p className="font-medium">Cost</p>
-								<p className="text-muted-foreground">Avg per turn: {metrics.avgTurnCost}</p>
+								<p className="text-background/60">Avg per turn: {metrics.avgTurnCost}</p>
 							</div>
 						</TooltipContent>
 					</Tooltip>
@@ -101,16 +105,18 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 			{metrics.tokensRaw > 0 && (
 				<>
 					<Tooltip>
-						<TooltipTrigger asChild>
-							<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60">
-								<ZapIcon className="size-3" aria-hidden="true" />
-								{metrics.tokens}
-							</span>
+						<TooltipTrigger
+							render={
+								<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60" />
+							}
+						>
+							<ZapIcon className="size-3" aria-hidden="true" />
+							{metrics.tokens}
 						</TooltipTrigger>
 						<TooltipContent side="bottom" align="end">
 							<div className="space-y-1.5 text-xs">
 								<p className="font-medium">Token Breakdown</p>
-								<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-muted-foreground">
+								<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-background/60">
 									<span>Input</span>
 									<span className="text-right tabular-nums">{formatTokens(raw.tokens.input)}</span>
 									<span>Output</span>
@@ -137,7 +143,7 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 									)}
 								</div>
 								{metrics.cacheEfficiency > 0 && (
-									<p className="border-t border-border pt-1 text-muted-foreground">
+									<p className="border-t border-background/15 pt-1 text-background/60">
 										Cache hit rate: {metrics.cacheEfficiencyFormatted}
 									</p>
 								)}
@@ -151,11 +157,13 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 
 			{/* Turns + model distribution */}
 			<Tooltip>
-				<TooltipTrigger asChild>
-					<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60">
-						<MessageSquareIcon className="size-3" aria-hidden="true" />
-						{metrics.turnCount}
-					</span>
+				<TooltipTrigger
+					render={
+						<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60" />
+					}
+				>
+					<MessageSquareIcon className="size-3" aria-hidden="true" />
+					{metrics.turnCount}
 				</TooltipTrigger>
 				<TooltipContent side="bottom" align="end">
 					<div className="space-y-1.5 text-xs">
@@ -163,7 +171,7 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 							{metrics.turnCount} {metrics.turnCount === 1 ? "turn" : "turns"}
 						</p>
 						{metrics.modelDistributionDisplay.length > 0 && (
-							<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-muted-foreground">
+							<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-background/60">
 								{metrics.modelDistributionDisplay.map(({ name, count }) => (
 									<Fragment key={name}>
 										<span>{name}</span>
@@ -183,16 +191,18 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 				<>
 					<Separator />
 					<Tooltip>
-						<TooltipTrigger asChild>
-							<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60">
-								<WrenchIcon className="size-3" aria-hidden="true" />
-								{metrics.toolCallCount}
-							</span>
+						<TooltipTrigger
+							render={
+								<span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground/60" />
+							}
+						>
+							<WrenchIcon className="size-3" aria-hidden="true" />
+							{metrics.toolCallCount}
 						</TooltipTrigger>
 						<TooltipContent side="bottom" align="end">
 							<div className="space-y-1.5 text-xs">
 								<p className="font-medium">Tool Calls</p>
-								<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-muted-foreground">
+								<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-background/60">
 									{Object.entries(metrics.toolBreakdown)
 										.sort(([, a], [, b]) => (Number(b) || 0) - (Number(a) || 0))
 										.map(([cat, count]) => (
@@ -213,11 +223,13 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 				<>
 					<Separator />
 					<Tooltip>
-						<TooltipTrigger asChild>
-							<span className="inline-flex items-center gap-1 text-xs tabular-nums text-red-400/70">
-								<AlertTriangleIcon className="size-3" aria-hidden="true" />
-								{metrics.errorCount}
-							</span>
+						<TooltipTrigger
+							render={
+								<span className="inline-flex items-center gap-1 text-xs tabular-nums text-red-400/70" />
+							}
+						>
+							<AlertTriangleIcon className="size-3" aria-hidden="true" />
+							{metrics.errorCount}
 						</TooltipTrigger>
 						<TooltipContent side="bottom" align="end">
 							<p className="text-xs">
@@ -235,11 +247,13 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 				<>
 					<Separator />
 					<Tooltip>
-						<TooltipTrigger asChild>
-							<span className="inline-flex items-center gap-1 text-xs tabular-nums text-yellow-500/70">
-								<RefreshCwIcon className="size-3" aria-hidden="true" />
-								{metrics.retryCount}
-							</span>
+						<TooltipTrigger
+							render={
+								<span className="inline-flex items-center gap-1 text-xs tabular-nums text-yellow-500/70" />
+							}
+						>
+							<RefreshCwIcon className="size-3" aria-hidden="true" />
+							{metrics.retryCount}
 						</TooltipTrigger>
 						<TooltipContent side="bottom" align="end">
 							<p className="text-xs">
