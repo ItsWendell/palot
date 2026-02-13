@@ -10,6 +10,7 @@ import type {
 import { discoveryAtom } from "../discovery"
 import { sessionFamily, sessionIdsAtom } from "../sessions"
 import { showSubAgentsAtom } from "../ui"
+import { sessionMetricsFamily } from "./session-metrics"
 
 // ============================================================
 // Structural equality for Agent objects
@@ -33,6 +34,13 @@ function agentEqual(prev: Agent | null, next: Agent | null): boolean {
 		prev.directory === next.directory &&
 		prev.branch === next.branch &&
 		prev.duration === next.duration &&
+		prev.workTime === next.workTime &&
+		prev.workTimeMs === next.workTimeMs &&
+		prev.tokens === next.tokens &&
+		prev.cost === next.cost &&
+		prev.costFormatted === next.costFormatted &&
+		prev.tokensFormatted === next.tokensFormatted &&
+		prev.turnCount === next.turnCount &&
 		prev.currentActivity === next.currentActivity &&
 		prev.parentId === next.parentId &&
 		prev.worktreePath === next.worktreePath &&
@@ -208,6 +216,7 @@ export const agentFamily = atomFamily((sessionId: string) => {
 		}
 
 		const slugMap = get(projectSlugMapAtom)
+		const metrics = get(sessionMetricsFamily(sessionId))
 		const { session, status, permissions, questions, directory } = entry
 		const projectInfo = slugMap.get(directory)
 		const agentStatus = deriveAgentStatus(status, permissions.length > 0, questions.length > 0)
@@ -225,8 +234,13 @@ export const agentFamily = atomFamily((sessionId: string) => {
 			directory,
 			branch: entry.branch ?? "",
 			duration: formatRelativeTime(lastActiveAt),
-			tokens: 0,
-			cost: 0,
+			workTime: metrics.workTime,
+			workTimeMs: metrics.workTimeMs,
+			tokens: metrics.tokensRaw,
+			cost: metrics.costRaw,
+			costFormatted: metrics.cost,
+			tokensFormatted: metrics.tokens,
+			turnCount: metrics.turnCount,
 			currentActivity:
 				questions.length > 0
 					? `Asking: ${questions[0].questions[0]?.header ?? "Question"}`

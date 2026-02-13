@@ -329,7 +329,8 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 									<GitBranchIcon />
 									<span>{agent.name}</span>
 									<span className="text-xs text-muted-foreground">
-										{agent.project} &middot; {agent.duration}
+										{agent.project} &middot; {agent.workTime}
+										{agent.cost > 0 && ` · ${agent.costFormatted}`}
 									</span>
 								</CommandItem>
 							))}

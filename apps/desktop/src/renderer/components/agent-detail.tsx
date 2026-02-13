@@ -39,6 +39,7 @@ import { fetchOpenInTargets, isElectron, openInTarget } from "../services/backen
 import { useSetAppBarContent } from "./app-bar-context"
 import { ChatView } from "./chat"
 import { PalotWordmark } from "./palot-wordmark"
+import { SessionMetricsBar } from "./session-metrics-bar"
 import { WorktreeActions } from "./worktree-actions"
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
@@ -370,10 +371,8 @@ function SessionAppBarContent({
 					{STATUS_LABEL[agent.status]}
 				</div>
 
-				{/* Duration */}
-				{agent.duration && (
-					<span className="text-xs leading-none text-muted-foreground/60">{agent.duration}</span>
-				)}
+				{/* Session metrics bar */}
+				<SessionMetricsBar sessionId={agent.sessionId} />
 
 				{/* Open in external editor */}
 				<OpenInButton directory={agent.worktreePath ?? agent.directory} />

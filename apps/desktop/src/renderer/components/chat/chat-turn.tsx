@@ -33,6 +33,13 @@ import {
 import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from "react"
 import { useDisplayMode } from "../../hooks/use-agents"
 import type { ChatMessageEntry, ChatTurn as ChatTurnType } from "../../hooks/use-session-chat"
+import {
+	computeTurnCost,
+	computeTurnWorkTime,
+	formatCost,
+	formatWorkDuration,
+	shortModelName,
+} from "../../lib/session-metrics"
 import type { FilePart, Part, ReasoningPart, TextPart, ToolPart } from "../../lib/types"
 import { ChatToolCall } from "./chat-tool-call"
 import { getToolCategory, type ToolCategory } from "./tool-card"
@@ -47,18 +54,6 @@ import { getToolCategory, type ToolCategory } from "./tool-card"
 export function formatTimestamp(ms: number): string {
 	const date = new Date(ms)
 	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-}
-
-/**
- * Computes duration between two timestamps.
- */
-function computeDuration(start: number, end?: number): string {
-	const ms = (end ?? Date.now()) - start
-	const seconds = Math.floor(ms / 1000)
-	if (seconds < 60) return `${seconds}s`
-	const minutes = Math.floor(seconds / 60)
-	const remainingSeconds = seconds % 60
-	return `${minutes}m ${remainingSeconds}s`
 }
 
 // ============================================================
@@ -486,12 +481,20 @@ export const ChatTurnComponent = memo(
 		const hasSteps = toolParts.length > 0
 		const hasReasoning = orderedParts.some((p) => p.kind === "reasoning")
 		const hasErrors = useMemo(() => hasToolErrors(toolParts), [toolParts])
-		const lastAssistant = turn.assistantMessages.at(-1)
-		const duration = useMemo(() => {
-			const lastInfo = lastAssistant?.info
-			const completed = lastInfo?.role === "assistant" ? lastInfo.time.completed : undefined
-			return computeDuration(turn.userMessage.info.time.created, completed)
-		}, [turn.userMessage.info.time.created, lastAssistant?.info])
+		const duration = useMemo(() => formatWorkDuration(computeTurnWorkTime(turn)), [turn])
+		const turnCostStr = useMemo(() => {
+			const cost = computeTurnCost(turn)
+			return cost > 0 ? formatCost(cost) : ""
+		}, [turn])
+		const turnModel = useMemo(() => {
+			for (let i = turn.assistantMessages.length - 1; i >= 0; i--) {
+				const info = turn.assistantMessages[i].info
+				if (info.role === "assistant" && info.modelID) {
+					return shortModelName(info.modelID)
+				}
+			}
+			return ""
+		}, [turn.assistantMessages])
 
 		// Icon pills for the compact summary bar
 		const pills = useMemo(() => getToolPills(toolParts), [toolParts])
@@ -599,7 +602,11 @@ export const ChatTurnComponent = memo(
 										<ToolPill key={pill.category} pill={pill} />
 									))}
 								</div>
-								<span className="text-muted-foreground/40">{duration}</span>
+								<span className="text-muted-foreground/40">
+									{turnModel && `${turnModel} · `}
+									{duration}
+									{turnCostStr && ` · ${turnCostStr}`}
+								</span>
 								{hasErrors && (
 									<span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
 										errors
@@ -648,7 +655,11 @@ export const ChatTurnComponent = memo(
 								<span className="text-muted-foreground/60">
 									{toolParts.length} {toolParts.length === 1 ? "step" : "steps"}
 								</span>
-								<span className="text-muted-foreground/40">{duration}</span>
+								<span className="text-muted-foreground/40">
+									{turnModel && `${turnModel} · `}
+									{duration}
+									{turnCostStr && ` · ${turnCostStr}`}
+								</span>
 							</button>
 						)}
 

@@ -38,7 +38,7 @@ import {
 	TrashIcon,
 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
-import { formatElapsed } from "../hooks/use-agents"
+import { formatWorkDuration } from "../lib/session-metrics"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
 
 // ============================================================
@@ -365,29 +365,35 @@ const ProjectFolder = memo(function ProjectFolder({
 })
 
 /**
- * Hook that returns a live-updating duration string for active sessions.
+ * Hook that returns a live-updating work time string.
+ * For active (running) sessions, ticks every second by adding elapsed time
+ * since the last atom snapshot. For idle/completed sessions, returns the
+ * static work time from the agent atom.
  */
-function useLiveDuration(agent: Agent): string {
-	const isActive = agent.status === "running" || agent.status === "waiting"
+function useLiveWorkTime(agent: Agent): string {
+	const isRunning = agent.status === "running"
 
-	const [elapsed, setElapsed] = useState(() =>
-		isActive ? formatElapsed(agent.createdAt) : agent.duration,
+	const [display, setDisplay] = useState(() =>
+		isRunning ? formatWorkDuration(agent.workTimeMs) : agent.workTime,
 	)
 
 	useEffect(() => {
-		if (!isActive) {
-			setElapsed(agent.duration)
+		if (!isRunning) {
+			setDisplay(agent.workTime)
 			return
 		}
 
-		setElapsed(formatElapsed(agent.createdAt))
-		const id = setInterval(() => {
-			setElapsed(formatElapsed(agent.createdAt))
-		}, 1_000)
-		return () => clearInterval(id)
-	}, [isActive, agent.createdAt, agent.duration])
+		// Snapshot the base work time and start ticking
+		const baseMs = agent.workTimeMs
+		const startedAt = Date.now()
 
-	return elapsed
+		const tick = () => setDisplay(formatWorkDuration(baseMs + (Date.now() - startedAt)))
+		tick()
+		const id = setInterval(tick, 1_000)
+		return () => clearInterval(id)
+	}, [isRunning, agent.workTimeMs, agent.workTime])
+
+	return display
 }
 
 const SessionItem = memo(function SessionItem({
@@ -411,7 +417,7 @@ const SessionItem = memo(function SessionItem({
 	const statusColor = STATUS_COLOR[agent.status]
 	const isSubAgent = !!agent.parentId
 	const isWorktree = !!agent.worktreePath
-	const duration = useLiveDuration(agent)
+	const workTime = useLiveWorkTime(agent)
 
 	const [isEditing, setIsEditing] = useState(false)
 	const [editValue, setEditValue] = useState(agent.name)
@@ -502,7 +508,17 @@ const SessionItem = memo(function SessionItem({
 				)}
 
 				{!isEditing && (
-					<span className="shrink-0 text-xs tabular-nums text-muted-foreground">{duration}</span>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+								{workTime}
+								{agent.cost > 0 && ` · ${agent.costFormatted}`}
+							</span>
+						</TooltipTrigger>
+						<TooltipContent side="right" className="text-xs">
+							Last active {agent.duration} ago
+						</TooltipContent>
+					</Tooltip>
 				)}
 			</SidebarMenuButton>
 		</SidebarMenuItem>

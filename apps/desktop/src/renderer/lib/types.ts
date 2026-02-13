@@ -120,9 +120,22 @@ export interface Agent {
 	/** Full project directory path (for auto-starting servers) */
 	directory: string
 	branch: string
+	/** Relative "last active" time, e.g. "5m" */
 	duration: string
+	/** Formatted total agent work time, e.g. "1m 34s" */
+	workTime: string
+	/** Raw agent work time in ms (for live-ticking) */
+	workTimeMs: number
+	/** Total tokens used (raw count) */
 	tokens: number
+	/** Total cost in USD (raw) */
 	cost: number
+	/** Formatted cost string, e.g. "$0.45" */
+	costFormatted: string
+	/** Formatted token string, e.g. "12.3k" */
+	tokensFormatted: string
+	/** Number of assistant turns in this session */
+	turnCount: number
 	currentActivity?: string
 	activities: Activity[]
 	/** The underlying OpenCode session ID */
