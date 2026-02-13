@@ -128,6 +128,10 @@ export function SidebarLayout() {
 		[deleteSession],
 	)
 
+	const handleOpenCommandPalette = useCallback(() => {
+		setCommandPaletteOpen(true)
+	}, [setCommandPaletteOpen])
+
 	const handleAddProject = useCallback(async () => {
 		const directory = await pickDirectory()
 		if (!directory) return
@@ -162,7 +166,7 @@ export function SidebarLayout() {
 						<AppSidebarContent
 							agents={visibleAgents}
 							projects={projects}
-							onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+							onOpenCommandPalette={handleOpenCommandPalette}
 							onAddProject={handleAddProject}
 							showSubAgents={showSubAgents}
 							subAgentCount={subAgentCount}

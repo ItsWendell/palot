@@ -12,6 +12,41 @@ import { sessionFamily, sessionIdsAtom } from "../sessions"
 import { showSubAgentsAtom } from "../ui"
 
 // ============================================================
+// Structural equality for Agent objects
+// ============================================================
+
+/**
+ * Shallow-compare two Agent objects by their scalar/identity fields.
+ * Arrays like `permissions` and `questions` are compared by length + first-element
+ * identity, which is sufficient since they come from the same atom and are replaced
+ * wholesale on updates.
+ */
+function agentEqual(prev: Agent | null, next: Agent | null): boolean {
+	if (prev === next) return true
+	if (!prev || !next) return false
+	return (
+		prev.id === next.id &&
+		prev.name === next.name &&
+		prev.status === next.status &&
+		prev.project === next.project &&
+		prev.projectSlug === next.projectSlug &&
+		prev.directory === next.directory &&
+		prev.branch === next.branch &&
+		prev.duration === next.duration &&
+		prev.currentActivity === next.currentActivity &&
+		prev.parentId === next.parentId &&
+		prev.worktreePath === next.worktreePath &&
+		prev.worktreeBranch === next.worktreeBranch &&
+		prev.createdAt === next.createdAt &&
+		prev.lastActiveAt === next.lastActiveAt &&
+		prev.permissions.length === next.permissions.length &&
+		prev.questions.length === next.questions.length &&
+		prev.permissions[0] === next.permissions[0] &&
+		prev.questions[0] === next.questions[0]
+	)
+}
+
+// ============================================================
 // Helpers (moved from hooks/use-agents.ts)
 // ============================================================
 
@@ -163,10 +198,14 @@ const projectSlugMapAtom = atom((get) => {
  * `sessionFamily` atom + the shared `projectSlugMapAtom`, so status/permission
  * changes on OTHER sessions do not trigger re-derivation.
  */
-export const agentFamily = atomFamily((sessionId: string) =>
-	atom((get) => {
+export const agentFamily = atomFamily((sessionId: string) => {
+	let prev: Agent | null = null
+	return atom((get) => {
 		const entry = get(sessionFamily(sessionId))
-		if (!entry) return null
+		if (!entry) {
+			prev = null
+			return null
+		}
 
 		const slugMap = get(projectSlugMapAtom)
 		const { session, status, permissions, questions, directory } = entry
@@ -175,7 +214,7 @@ export const agentFamily = atomFamily((sessionId: string) =>
 		const created = session.time.created
 		const lastActiveAt = session.time.updated ?? session.time.created
 
-		const agent: Agent = {
+		const next: Agent = {
 			id: session.id,
 			sessionId: session.id,
 			name: session.title || "Untitled",
@@ -205,9 +244,14 @@ export const agentFamily = atomFamily((sessionId: string) =>
 			createdAt: created,
 			lastActiveAt,
 		}
-		return agent
-	}),
-)
+
+		// Return the previous reference if structurally equal to avoid
+		// downstream memo() invalidation in SessionItem and friends.
+		if (agentEqual(prev, next)) return prev!
+		prev = next
+		return next
+	})
+})
 
 /**
  * Reads just the session title for a given session ID.
@@ -230,80 +274,119 @@ export const sessionNameFamily = atomFamily((sessionId: string) =>
  * All agents derived from live sessions.
  * With API-first discovery, there are no more "offline-only" discovered sessions
  * since sessions are loaded directly from the API into the session atom family.
+ *
+ * Uses structural equality on the array elements so downstream subscribers
+ * (SidebarLayout, CommandPalette) don't re-render when individual agent
+ * references are stable.
  */
-export const agentsAtom = atom((get) => {
-	const sessionIds = get(sessionIdsAtom)
-	const agents: Agent[] = []
+export const agentsAtom = (() => {
+	let prevAgents: Agent[] = []
+	return atom((get) => {
+		const sessionIds = get(sessionIdsAtom)
+		const agents: Agent[] = []
 
-	for (const id of sessionIds) {
-		const agent = get(agentFamily(id))
-		if (agent) agents.push(agent)
-	}
+		for (const id of sessionIds) {
+			const agent = get(agentFamily(id))
+			if (agent) agents.push(agent)
+		}
 
-	return agents
-})
+		// Return the previous array if every element is referentially identical.
+		// This is cheap because agentFamily already stabilizes references.
+		if (agents.length === prevAgents.length && agents.every((a, i) => a === prevAgents[i])) {
+			return prevAgents
+		}
+		prevAgents = agents
+		return agents
+	})
+})()
 
 // ============================================================
 // Derived atom: project list for sidebar
 // ============================================================
 
-export const projectListAtom = atom((get) => {
-	const sessionIds = get(sessionIdsAtom)
-	const discovery = get(discoveryAtom)
-	const showSubAgents = get(showSubAgentsAtom)
-	const slugMap = get(projectSlugMapAtom)
+export const projectListAtom = (() => {
+	let prevProjects: SidebarProject[] = []
 
-	const projects = new Map<string, SidebarProject>()
-
-	// Live sessions grouped by directory
-	for (const id of sessionIds) {
-		const entry = get(sessionFamily(id))
-		if (!entry) continue
-		if (!showSubAgents && entry.session.parentID) continue
-		if (!entry.directory) continue
-
-		const dir = entry.directory
-		const projectInfo = slugMap.get(dir)
-		const name = projectNameFromDir(dir)
-		const t = entry.session.time.updated ?? entry.session.time.created ?? 0
-
-		const existing = projects.get(dir)
-		if (existing) {
-			existing.agentCount += 1
-			if (t > existing.lastActiveAt) existing.lastActiveAt = t
-		} else {
-			projects.set(dir, {
-				id: projectInfo?.id ?? dir,
-				slug: projectInfo?.slug ?? name,
-				name,
-				directory: dir,
-				agentCount: 1,
-				lastActiveAt: t,
-			})
+	function projectListEqual(a: SidebarProject[], b: SidebarProject[]): boolean {
+		if (a.length !== b.length) return false
+		for (let i = 0; i < a.length; i++) {
+			const pa = a[i]
+			const pb = b[i]
+			if (
+				pa.id !== pb.id ||
+				pa.slug !== pb.slug ||
+				pa.name !== pb.name ||
+				pa.directory !== pb.directory ||
+				pa.agentCount !== pb.agentCount ||
+				pa.lastActiveAt !== pb.lastActiveAt
+			) {
+				return false
+			}
 		}
+		return true
 	}
 
-	// Discovered projects from API that have no live sessions yet
-	// (show them in sidebar so users can start new agents)
-	if (discovery.loaded) {
-		for (const project of discovery.projects) {
-			if (!project.worktree) continue
-			if (projects.has(project.worktree)) continue
+	return atom((get) => {
+		const sessionIds = get(sessionIdsAtom)
+		const discovery = get(discoveryAtom)
+		const showSubAgents = get(showSubAgentsAtom)
+		const slugMap = get(projectSlugMapAtom)
 
-			const projectInfo = slugMap.get(project.worktree)
-			const name = project.name ?? projectNameFromDir(project.worktree)
-			const lastActiveAt = project.time.updated ?? project.time.created ?? 0
+		const projects = new Map<string, SidebarProject>()
 
-			projects.set(project.worktree, {
-				id: projectInfo?.id ?? project.id,
-				slug: projectInfo?.slug ?? name,
-				name,
-				directory: project.worktree,
-				agentCount: 0,
-				lastActiveAt,
-			})
+		// Live sessions grouped by directory
+		for (const id of sessionIds) {
+			const entry = get(sessionFamily(id))
+			if (!entry) continue
+			if (!showSubAgents && entry.session.parentID) continue
+			if (!entry.directory) continue
+
+			const dir = entry.directory
+			const projectInfo = slugMap.get(dir)
+			const name = projectNameFromDir(dir)
+			const t = entry.session.time.updated ?? entry.session.time.created ?? 0
+
+			const existing = projects.get(dir)
+			if (existing) {
+				existing.agentCount += 1
+				if (t > existing.lastActiveAt) existing.lastActiveAt = t
+			} else {
+				projects.set(dir, {
+					id: projectInfo?.id ?? dir,
+					slug: projectInfo?.slug ?? name,
+					name,
+					directory: dir,
+					agentCount: 1,
+					lastActiveAt: t,
+				})
+			}
 		}
-	}
 
-	return Array.from(projects.values()).sort((a, b) => b.lastActiveAt - a.lastActiveAt)
-})
+		// Discovered projects from API that have no live sessions yet
+		// (show them in sidebar so users can start new agents)
+		if (discovery.loaded) {
+			for (const project of discovery.projects) {
+				if (!project.worktree) continue
+				if (projects.has(project.worktree)) continue
+
+				const projectInfo = slugMap.get(project.worktree)
+				const name = project.name ?? projectNameFromDir(project.worktree)
+				const lastActiveAt = project.time.updated ?? project.time.created ?? 0
+
+				projects.set(project.worktree, {
+					id: projectInfo?.id ?? project.id,
+					slug: projectInfo?.slug ?? name,
+					name,
+					directory: project.worktree,
+					agentCount: 0,
+					lastActiveAt,
+				})
+			}
+		}
+
+		const next = Array.from(projects.values()).sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+		if (projectListEqual(prevProjects, next)) return prevProjects
+		prevProjects = next
+		return next
+	})
+})()

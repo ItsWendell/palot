@@ -280,7 +280,7 @@ export function AppSidebarContent({
 // Sub-components
 // ============================================================
 
-function ProjectFolder({
+const ProjectFolder = memo(function ProjectFolder({
 	project,
 	agents,
 	selectedSessionId,
@@ -362,7 +362,7 @@ function ProjectFolder({
 			)}
 		</SidebarMenuItem>
 	)
-}
+})
 
 /**
  * Hook that returns a live-updating duration string for active sessions.
