@@ -11,6 +11,7 @@ import { initSettingsStore } from "./settings-store"
 import { fixProcessEnv } from "./shell-env"
 import { createTray, destroyTray } from "./tray"
 import { initAutoUpdater, stopAutoUpdater } from "./updater"
+import { pruneStaleWorktrees } from "./worktree-manager"
 
 const log = createLogger("app")
 
@@ -226,6 +227,7 @@ if (!gotLock) {
 		initSettingsStore()
 		registerIpcHandlers()
 		initAutomations().catch(console.error)
+		pruneStaleWorktrees(7).catch((err) => log.warn("Worktree pruning failed", err))
 		createWindow()
 		createTray(() => BrowserWindow.getAllWindows()[0])
 		initAutoUpdater().catch(console.error)

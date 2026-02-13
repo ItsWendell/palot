@@ -86,6 +86,29 @@ contextBridge.exposeInMainWorld("palot", {
 		stashAndCheckout: (directory: string, branch: string) =>
 			ipcRenderer.invoke("git:stash-and-checkout", directory, branch),
 		stashPop: (directory: string) => ipcRenderer.invoke("git:stash-pop", directory),
+		getRoot: (directory: string) => ipcRenderer.invoke("git:root", directory),
+		getDefaultBranch: (repoDir: string) => ipcRenderer.invoke("git:default-branch", repoDir),
+		diffStat: (directory: string) => ipcRenderer.invoke("git:diff-stat", directory),
+		commitAll: (directory: string, message: string) =>
+			ipcRenderer.invoke("git:commit-all", directory, message),
+		push: (directory: string, remote?: string) => ipcRenderer.invoke("git:push", directory, remote),
+		createBranch: (directory: string, branchName: string) =>
+			ipcRenderer.invoke("git:create-branch", directory, branchName),
+		applyToLocal: (worktreeDir: string, localDir: string) =>
+			ipcRenderer.invoke("git:apply-to-local", worktreeDir, localDir),
+		getRemoteUrl: (directory: string, remote?: string) =>
+			ipcRenderer.invoke("git:remote-url", directory, remote),
+	},
+
+	// --- Worktree manager ---
+
+	worktree: {
+		create: (sourceDir: string, sessionSlug: string) =>
+			ipcRenderer.invoke("worktree:create", sourceDir, sessionSlug),
+		remove: (worktreeRoot: string, sourceDir: string) =>
+			ipcRenderer.invoke("worktree:remove", worktreeRoot, sourceDir),
+		list: () => ipcRenderer.invoke("worktree:list"),
+		prune: (maxAgeDays?: number) => ipcRenderer.invoke("worktree:prune", maxAgeDays),
 	},
 
 	// --- Window preferences (opaque windows / transparency) ---

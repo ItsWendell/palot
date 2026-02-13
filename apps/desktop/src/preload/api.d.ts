@@ -117,6 +117,51 @@ export interface GitStashResult {
 	error?: string
 }
 
+export interface GitDiffStat {
+	filesChanged: number
+	insertions: number
+	deletions: number
+	files: { path: string; insertions: number; deletions: number }[]
+}
+
+export interface GitCommitResult {
+	success: boolean
+	commitHash?: string
+	error?: string
+}
+
+export interface GitPushResult {
+	success: boolean
+	error?: string
+}
+
+export interface GitApplyResult {
+	success: boolean
+	filesApplied: string[]
+	error?: string
+}
+
+// ============================================================
+// Worktree types
+// ============================================================
+
+export interface WorktreeCreateResult {
+	worktreeRoot: string
+	worktreeWorkspace: string
+	branchName: string
+	copiedFiles: string[]
+}
+
+export interface ManagedWorktree {
+	path: string
+	branch: string
+	diskUsageBytes: number
+	lastModifiedAt: number
+	slug: string
+	sourceRepo: string
+	projectName: string
+}
+
 // ============================================================
 // Open-in-targets types
 // ============================================================
@@ -366,6 +411,22 @@ export interface PalotAPI {
 		checkout: (directory: string, branch: string) => Promise<GitCheckoutResult>
 		stashAndCheckout: (directory: string, branch: string) => Promise<GitStashResult>
 		stashPop: (directory: string) => Promise<GitStashResult>
+		getRoot: (directory: string) => Promise<string | null>
+		getDefaultBranch: (repoDir: string) => Promise<string>
+		diffStat: (directory: string) => Promise<GitDiffStat>
+		commitAll: (directory: string, message: string) => Promise<GitCommitResult>
+		push: (directory: string, remote?: string) => Promise<GitPushResult>
+		createBranch: (directory: string, branchName: string) => Promise<GitCheckoutResult>
+		applyToLocal: (worktreeDir: string, localDir: string) => Promise<GitApplyResult>
+		getRemoteUrl: (directory: string, remote?: string) => Promise<string | null>
+	}
+
+	// Worktree manager
+	worktree: {
+		create: (sourceDir: string, sessionSlug: string) => Promise<WorktreeCreateResult>
+		remove: (worktreeRoot: string, sourceDir: string) => Promise<void>
+		list: () => Promise<ManagedWorktree[]>
+		prune: (maxAgeDays?: number) => Promise<number>
 	}
 
 	// Window preferences (opaque windows / transparency)

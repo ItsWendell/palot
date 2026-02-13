@@ -15,7 +15,24 @@ import {
 import type { CreateAutomationInput, UpdateAutomationInput } from "./automation/types"
 import { installCli, isCliInstalled, uninstallCli } from "./cli-install"
 import { discover } from "./discovery"
-import { checkout, getStatus, listBranches, stashAndCheckout, stashPop } from "./git-service"
+import {
+	addWorktree,
+	applyChangesToLocal,
+	checkout,
+	commitAll,
+	createBranch,
+	getDefaultBranch,
+	getDiffStat,
+	getGitRoot,
+	getRemoteUrl,
+	getStatus,
+	listBranches,
+	listWorktrees,
+	push,
+	removeWorktree,
+	stashAndCheckout,
+	stashPop,
+} from "./git-service"
 import { getResolvedChromeTier } from "./liquid-glass"
 import { createLogger } from "./logger"
 import { readSessionMessages } from "./messages"
@@ -35,6 +52,12 @@ import { getOpenInTargets, openInTarget, setPreferredTarget } from "./open-in-ta
 import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
 import { getOpaqueWindows, getSettings, onSettingsChanged, updateSettings } from "./settings-store"
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from "./updater"
+import {
+	createSessionWorktree,
+	listAllWorktrees,
+	pruneStaleWorktrees,
+	removeSessionWorktree,
+} from "./worktree-manager"
 
 const log = createLogger("ipc")
 
@@ -215,6 +238,128 @@ export function registerIpcHandlers(): void {
 	ipcMain.handle(
 		"git:stash-pop",
 		withLogging("git:stash-pop", async (_, directory: string) => await stashPop(directory)),
+	)
+
+	ipcMain.handle(
+		"git:diff-stat",
+		withLogging("git:diff-stat", async (_, directory: string) => await getDiffStat(directory)),
+	)
+
+	ipcMain.handle(
+		"git:commit-all",
+		withLogging(
+			"git:commit-all",
+			async (_, directory: string, message: string) => await commitAll(directory, message),
+		),
+	)
+
+	ipcMain.handle(
+		"git:push",
+		withLogging(
+			"git:push",
+			async (_, directory: string, remote?: string) => await push(directory, remote),
+		),
+	)
+
+	ipcMain.handle(
+		"git:create-branch",
+		withLogging(
+			"git:create-branch",
+			async (_, directory: string, branchName: string) => await createBranch(directory, branchName),
+		),
+	)
+
+	ipcMain.handle(
+		"git:apply-to-local",
+		withLogging(
+			"git:apply-to-local",
+			async (_, worktreeDir: string, localDir: string) =>
+				await applyChangesToLocal(worktreeDir, localDir),
+		),
+	)
+
+	ipcMain.handle(
+		"git:worktree-list",
+		withLogging(
+			"git:worktree-list",
+			async (_, directory: string) => await listWorktrees(directory),
+		),
+	)
+
+	ipcMain.handle(
+		"git:worktree-add",
+		withLogging(
+			"git:worktree-add",
+			async (
+				_,
+				repoDir: string,
+				worktreePath: string,
+				options: { newBranch?: string; ref?: string },
+			) => await addWorktree(repoDir, worktreePath, options),
+		),
+	)
+
+	ipcMain.handle(
+		"git:worktree-remove",
+		withLogging(
+			"git:worktree-remove",
+			async (_, repoDir: string, worktreePath: string, force?: boolean) =>
+				await removeWorktree(repoDir, worktreePath, force),
+		),
+	)
+
+	ipcMain.handle(
+		"git:root",
+		withLogging("git:root", async (_, directory: string) => await getGitRoot(directory)),
+	)
+
+	ipcMain.handle(
+		"git:default-branch",
+		withLogging(
+			"git:default-branch",
+			async (_, repoDir: string) => await getDefaultBranch(repoDir),
+		),
+	)
+
+	ipcMain.handle(
+		"git:remote-url",
+		withLogging(
+			"git:remote-url",
+			async (_, directory: string, remote?: string) => await getRemoteUrl(directory, remote),
+		),
+	)
+
+	// --- Worktree manager (high-level lifecycle) ---
+
+	ipcMain.handle(
+		"worktree:create",
+		withLogging(
+			"worktree:create",
+			async (_, sourceDir: string, sessionSlug: string) =>
+				await createSessionWorktree(sourceDir, sessionSlug),
+		),
+	)
+
+	ipcMain.handle(
+		"worktree:remove",
+		withLogging(
+			"worktree:remove",
+			async (_, worktreeRoot: string, sourceDir: string) =>
+				await removeSessionWorktree(worktreeRoot, sourceDir),
+		),
+	)
+
+	ipcMain.handle(
+		"worktree:list",
+		withLogging("worktree:list", async () => await listAllWorktrees()),
+	)
+
+	ipcMain.handle(
+		"worktree:prune",
+		withLogging(
+			"worktree:prune",
+			async (_, maxAgeDays?: number) => await pruneStaleWorktrees(maxAgeDays),
+		),
 	)
 
 	// --- Directory picker ---

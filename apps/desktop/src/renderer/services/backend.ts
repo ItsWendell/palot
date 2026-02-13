@@ -14,14 +14,20 @@ import type {
 	AutomationRun,
 	CreateAutomationInput,
 	DiscoveryResult,
+	GitApplyResult,
 	GitBranchInfo,
 	GitCheckoutResult,
+	GitCommitResult,
+	GitDiffStat,
+	GitPushResult,
 	GitStashResult,
 	GitStatusInfo,
+	ManagedWorktree,
 	MessagesResult,
 	ModelState,
 	OpenInTargetsResult,
 	UpdateAutomationInput,
+	WorktreeCreateResult,
 } from "../../preload/api"
 import { createLogger } from "../lib/logger"
 
@@ -211,6 +217,129 @@ export async function gitStashAndCheckout(
 export async function gitStashPop(directory: string): Promise<GitStashResult> {
 	if (isElectron) {
 		return window.palot.git.stashPop(directory)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+// ============================================================
+// Worktree operations — Electron-only (main process via IPC)
+// ============================================================
+
+/**
+ * Creates a worktree for a session with auto-branch creation and .env copying.
+ */
+export async function createWorktree(
+	sourceDir: string,
+	sessionSlug: string,
+): Promise<WorktreeCreateResult> {
+	if (isElectron) {
+		return window.palot.worktree.create(sourceDir, sessionSlug)
+	}
+	throw new Error("Worktree operations are only available in Electron mode")
+}
+
+/**
+ * Removes a worktree and cleans up.
+ */
+export async function removeWorktree(worktreeRoot: string, sourceDir: string): Promise<void> {
+	if (isElectron) {
+		return window.palot.worktree.remove(worktreeRoot, sourceDir)
+	}
+	throw new Error("Worktree operations are only available in Electron mode")
+}
+
+/**
+ * Lists all managed worktrees with metadata.
+ */
+export async function listWorktrees(): Promise<ManagedWorktree[]> {
+	if (isElectron) {
+		return window.palot.worktree.list()
+	}
+	throw new Error("Worktree operations are only available in Electron mode")
+}
+
+/**
+ * Prunes worktrees older than maxAgeDays.
+ */
+export async function pruneWorktrees(maxAgeDays?: number): Promise<number> {
+	if (isElectron) {
+		return window.palot.worktree.prune(maxAgeDays)
+	}
+	throw new Error("Worktree operations are only available in Electron mode")
+}
+
+/**
+ * Gets the git repository root for a directory.
+ */
+export async function getGitRoot(directory: string): Promise<string | null> {
+	if (isElectron) {
+		return window.palot.git.getRoot(directory)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+/**
+ * Gets a summary of uncommitted changes in a directory.
+ */
+export async function fetchDiffStat(directory: string): Promise<GitDiffStat> {
+	if (isElectron) {
+		return window.palot.git.diffStat(directory)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+/**
+ * Commits all changes (staged + unstaged) with the given message.
+ */
+export async function gitCommitAll(directory: string, message: string): Promise<GitCommitResult> {
+	if (isElectron) {
+		return window.palot.git.commitAll(directory, message)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+/**
+ * Pushes the current branch to the remote.
+ */
+export async function gitPush(directory: string, remote?: string): Promise<GitPushResult> {
+	if (isElectron) {
+		return window.palot.git.push(directory, remote)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+/**
+ * Creates a new branch on the given directory.
+ */
+export async function gitCreateBranch(
+	directory: string,
+	branchName: string,
+): Promise<GitCheckoutResult> {
+	if (isElectron) {
+		return window.palot.git.createBranch(directory, branchName)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+/**
+ * Gets the remote URL for a repository (defaults to "origin").
+ */
+export async function getGitRemoteUrl(directory: string, remote?: string): Promise<string | null> {
+	if (isElectron) {
+		return window.palot.git.getRemoteUrl(directory, remote)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+/**
+ * Applies uncommitted changes from a worktree to the local checkout as a patch.
+ */
+export async function gitApplyToLocal(
+	worktreeDir: string,
+	localDir: string,
+): Promise<GitApplyResult> {
+	if (isElectron) {
+		return window.palot.git.applyToLocal(worktreeDir, localDir)
 	}
 	throw new Error("Git operations are only available in Electron mode")
 }
