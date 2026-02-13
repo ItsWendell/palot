@@ -764,6 +764,19 @@ export const ChatTurnComponent = memo(
 					</Message>
 				)}
 
+				{/* Per-turn metadata — shown on completed turns so badges are visible after long responses */}
+				{!working &&
+					turn.assistantMessages.length > 0 &&
+					(turnModel || duration || turnCostStr) && (
+						<div className="flex items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground/40">
+							{turnModel && <span>{turnModel}</span>}
+							{turnModel && duration && <span>·</span>}
+							{duration && <span>{duration}</span>}
+							{turnCostStr && <span>·</span>}
+							{turnCostStr && <span>{turnCostStr}</span>}
+						</div>
+					)}
+
 				{/* Turn-level message actions — visible on hover across all display modes */}
 				{responseText && (
 					<MessageActions className="opacity-0 transition-opacity group-hover/turn:opacity-100">
