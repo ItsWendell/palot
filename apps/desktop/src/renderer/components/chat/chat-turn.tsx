@@ -622,7 +622,7 @@ export const ChatTurnComponent = memo(function ChatTurnComponent({
 
 					{/* Expanded: interleaved text + reasoning + tool calls in natural order */}
 					{showToolsExpanded && (
-						<div className="space-y-2.5">
+						<div className="space-y-3.5">
 							{visibleParts.map((item) => {
 								if (item.kind === "tool") {
 									return (
