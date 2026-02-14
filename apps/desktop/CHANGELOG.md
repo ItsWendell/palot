@@ -1,5 +1,11 @@
 # @palot/desktop
 
+## 0.4.1
+
+### Patch Changes
+
+- [`32dad30`](https://github.com/ItsWendell/palot/commit/32dad30e9f65e1991f344b606f591753d3739099) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix "Add Project" for remote servers: show a path text input dialog instead of the native folder picker (which only shows the local filesystem). Also makes the automation dialog's project picker remote-aware with an inline path input.
+
 ## 0.4.0
 
 ### Minor Changes
