@@ -418,9 +418,9 @@ export function NewChat() {
 						<PalotWordmark className="h-4 w-auto text-foreground" />
 					</div>
 
-					{/* "Let's build" + project name */}
+					{/* "Build what's next" + project name */}
 					<div className="text-center">
-						<h1 className="text-2xl font-semibold text-foreground">Let's build</h1>
+						<h1 className="text-2xl font-semibold text-foreground">Build what's next</h1>
 						{projects.length > 1 ? (
 							<Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
 								<PopoverTrigger
