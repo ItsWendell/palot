@@ -23,7 +23,7 @@ import { sessionMetricsFamily } from "./session-metrics"
  * wholesale on updates.
  *
  * **Optimization**: Volatile metrics fields (workTime, workTimeMs, tokens, cost,
- * costFormatted, tokensFormatted, turnCount) are intentionally excluded from this
+ * costFormatted, tokensFormatted, exchangeCount) are intentionally excluded from this
  * comparison. These change on every streaming part update but are NOT displayed
  * in the sidebar or most agent consumers. Components that need live metrics
  * (e.g., SessionMetricsBar) subscribe to `sessionMetricsFamily` directly.
@@ -241,7 +241,7 @@ export const agentFamily = atomFamily((sessionId: string) => {
 			cost: metrics.costRaw,
 			costFormatted: metrics.cost,
 			tokensFormatted: metrics.tokens,
-			turnCount: metrics.turnCount,
+			exchangeCount: metrics.exchangeCount,
 			currentActivity:
 				questions.length > 0
 					? `Asking: ${questions[0].questions[0]?.header ?? "Question"}`

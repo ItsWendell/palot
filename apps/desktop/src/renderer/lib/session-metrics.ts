@@ -39,18 +39,22 @@ export interface SessionMetrics {
 	cost: number
 	/** Aggregated token counts */
 	tokens: SessionTokens
-	/** Number of assistant turns (one turn = one assistant response to a user message) */
-	turnCount: number
-	/** Map of modelID -> number of turns using that model */
+	/** Number of exchanges (one exchange = one user message + all its assistant responses) */
+	exchangeCount: number
+	/** Number of user messages in the session */
+	userMessageCount: number
+	/** Number of assistant messages (LLM invocations) in the session */
+	assistantMessageCount: number
+	/** Map of modelID -> number of assistant messages using that model */
 	modelDistribution: ModelDistribution
 	/** Cache hit ratio: cacheRead / (input + cacheRead), as a percentage 0-100 */
 	cacheEfficiency: number
 	/** Number of assistant messages that had an error */
 	errorCount: number
-	/** Average cost per turn (USD) */
-	avgTurnCost: number
-	/** Average work time per turn (ms) */
-	avgTurnTimeMs: number
+	/** Average cost per exchange (USD) */
+	avgExchangeCost: number
+	/** Average work time per exchange (ms) */
+	avgExchangeTimeMs: number
 }
 
 /** Extended metrics that include parts-derived data (tool breakdown, retry count) */
@@ -98,21 +102,40 @@ export function computeAgentWorkTime(messages: Message[]): number {
 
 /**
  * Compute agent work time for a single turn.
- * Spans from the first assistant message's `created` to the last assistant
- * message's `completed` (or Date.now() if still in progress).
+ * Sums `(completed - created)` for each assistant message in the turn,
+ * which is the actual agent work time (excluding gaps between messages).
  */
 export function computeTurnWorkTime(turn: ChatTurn): number {
-	const assistants = turn.assistantMessages
-	if (assistants.length === 0) return 0
+	let total = 0
+	for (const entry of turn.assistantMessages) {
+		if (entry.info.role !== "assistant") continue
+		const end = entry.info.time.completed ?? Date.now()
+		total += Math.max(0, end - entry.info.time.created)
+	}
+	return total
+}
 
-	const first = assistants[0].info
-	const last = assistants[assistants.length - 1].info
-
-	if (first.role !== "assistant") return 0
-
-	const start = first.time.created
-	const end = last.role === "assistant" ? (last.time.completed ?? Date.now()) : Date.now()
-	return Math.max(0, end - start)
+/**
+ * Compute the completed vs in-progress work time split for a single turn.
+ * Used by the LiveTurnTimer to show accurate ticking work time.
+ * Returns `completedMs` (sum of finished assistant messages) and
+ * `activeStartMs` (created time of the in-progress message, or null if idle).
+ */
+export function computeTurnWorkTimeSplit(turn: ChatTurn): {
+	completedMs: number
+	activeStartMs: number | null
+} {
+	let completedMs = 0
+	let activeStartMs: number | null = null
+	for (const entry of turn.assistantMessages) {
+		if (entry.info.role !== "assistant") continue
+		if (entry.info.time.completed != null) {
+			completedMs += Math.max(0, entry.info.time.completed - entry.info.time.created)
+		} else {
+			activeStartMs = entry.info.time.created
+		}
+	}
+	return { completedMs, activeStartMs }
 }
 
 /**
@@ -188,7 +211,8 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 	let completedWorkTimeMs = 0
 	let activeStartMs: number | null = null
 	let cost = 0
-	let turnCount = 0
+	let userMessageCount = 0
+	let assistantMessageCount = 0
 	let errorCount = 0
 	const modelDistribution: ModelDistribution = {}
 	const tokens: SessionTokens = {
@@ -200,10 +224,23 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 		total: 0,
 	}
 
-	for (const msg of messages) {
-		if (msg.role !== "assistant") continue
+	// Track which user messages have at least one assistant response to count exchanges.
+	// An exchange = one user message that triggered at least one assistant response.
+	const userIdsWithResponses = new Set<string>()
 
-		turnCount++
+	for (const msg of messages) {
+		if (msg.role === "user") {
+			userMessageCount++
+			continue
+		}
+
+		// assistant message
+		assistantMessageCount++
+
+		// Track the parent user message for exchange counting
+		if (msg.parentID) {
+			userIdsWithResponses.add(msg.parentID)
+		}
 
 		// Work time
 		const end = msg.time.completed ?? Date.now()
@@ -247,9 +284,13 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 	const totalInput = tokens.input + tokens.cacheRead
 	const cacheEfficiency = totalInput > 0 ? (tokens.cacheRead / totalInput) * 100 : 0
 
-	// Turn averages
-	const avgTurnCost = turnCount > 0 ? cost / turnCount : 0
-	const avgTurnTimeMs = turnCount > 0 ? workTimeMs / turnCount : 0
+	// Exchange count: number of user messages that got at least one assistant response.
+	// Falls back to userMessageCount if parentID tracking is unavailable.
+	const exchangeCount = userIdsWithResponses.size > 0 ? userIdsWithResponses.size : userMessageCount
+
+	// Per-exchange averages
+	const avgExchangeCost = exchangeCount > 0 ? cost / exchangeCount : 0
+	const avgExchangeTimeMs = exchangeCount > 0 ? workTimeMs / exchangeCount : 0
 
 	return {
 		workTimeMs,
@@ -257,12 +298,14 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 		activeStartMs,
 		cost,
 		tokens,
-		turnCount,
+		exchangeCount,
+		userMessageCount,
+		assistantMessageCount,
 		modelDistribution,
 		cacheEfficiency,
 		errorCount,
-		avgTurnCost,
-		avgTurnTimeMs,
+		avgExchangeCost,
+		avgExchangeTimeMs,
 	}
 }
 

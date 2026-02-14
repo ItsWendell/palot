@@ -56,7 +56,7 @@ import {
 } from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
 import { createLogger } from "../../lib/logger"
-import { formatWorkDuration } from "../../lib/session-metrics"
+import { computeTurnWorkTimeSplit, formatWorkDuration } from "../../lib/session-metrics"
 import type { Agent, FileAttachment, FilePart, QuestionAnswer, TextPart } from "../../lib/types"
 import { getProjectClient } from "../../services/connection-manager"
 
@@ -440,13 +440,14 @@ export function ChatView({
 	const isWorking = agent.status === "running"
 	const [sending, setSending] = useState(false)
 
-	// Start time of the current (last) turn — used for the live timer on the submit button
-	const currentTurnStartMs = useMemo(() => {
-		if (!isWorking || turns.length === 0) return 0
+	// Work time split for the current (last) turn — used for the live timer on the submit button.
+	// Splits into completed work time (finished assistant messages) and the active start time
+	// (in-progress message), so the timer shows actual agent work time, not wall-clock elapsed.
+	const currentTurnWorkSplit = useMemo(() => {
+		if (!isWorking || turns.length === 0) return null
 		const lastTurn = turns[turns.length - 1]
-		const firstAssistant = lastTurn.assistantMessages[0]
-		if (!firstAssistant || firstAssistant.info.role !== "assistant") return 0
-		return firstAssistant.info.time.created
+		if (lastTurn.assistantMessages.length === 0) return null
+		return computeTurnWorkTimeSplit(lastTurn)
 	}, [isWorking, turns])
 
 	// Mention tracking — files and agents referenced via @
@@ -1280,10 +1281,13 @@ export function ChatView({
 											disabled={!canSend}
 											status={isWorking ? "streaming" : undefined}
 											onStop={handleStop}
-											size={isWorking && currentTurnStartMs > 0 ? "xs" : "icon-sm"}
+											size={isWorking && currentTurnWorkSplit ? "xs" : "icon-sm"}
 										>
-											{isWorking && currentTurnStartMs > 0 ? (
-												<LiveTurnTimer startMs={currentTurnStartMs} />
+											{isWorking && currentTurnWorkSplit ? (
+												<LiveTurnTimer
+													completedMs={currentTurnWorkSplit.completedMs}
+													activeStartMs={currentTurnWorkSplit.activeStartMs}
+												/>
 											) : undefined}
 										</PromptInputSubmit>
 									</PromptInputFooter>
@@ -1331,18 +1335,35 @@ export function ChatView({
 // ============================================================
 
 /**
- * Compact live timer that shows how long the current turn has been running.
- * Renders a stop icon + ticking duration inside the submit button.
+ * Compact live timer that shows how long the current exchange has been working.
+ * Uses the same completed + active split as the header's LiveWorkTime, so it
+ * shows actual agent work time (sum of assistant message durations) rather than
+ * wall-clock elapsed time.
  */
-function LiveTurnTimer({ startMs }: { startMs: number }) {
-	const [elapsed, setElapsed] = useState(() => formatWorkDuration(Date.now() - startMs))
+function LiveTurnTimer({
+	completedMs,
+	activeStartMs,
+}: {
+	completedMs: number
+	activeStartMs: number | null
+}) {
+	const computeDisplay = useCallback(
+		() =>
+			formatWorkDuration(completedMs + (activeStartMs != null ? Date.now() - activeStartMs : 0)),
+		[completedMs, activeStartMs],
+	)
+
+	const [elapsed, setElapsed] = useState(computeDisplay)
 
 	useEffect(() => {
-		const tick = () => setElapsed(formatWorkDuration(Date.now() - startMs))
+		const tick = () => setElapsed(computeDisplay())
 		tick()
-		const id = setInterval(tick, 1_000)
-		return () => clearInterval(id)
-	}, [startMs])
+		// Only tick if there's an active (in-progress) message
+		if (activeStartMs != null) {
+			const id = setInterval(tick, 1_000)
+			return () => clearInterval(id)
+		}
+	}, [computeDisplay, activeStartMs])
 
 	return (
 		<span className="inline-flex items-center gap-1.5 text-xs tabular-nums">

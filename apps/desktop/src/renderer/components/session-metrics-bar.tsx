@@ -51,7 +51,7 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 }: SessionMetricsBarProps) {
 	const metrics = useAtomValue(sessionMetricsFamily(sessionId))
 
-	if (metrics.turnCount === 0) return null
+	if (metrics.exchangeCount === 0 && metrics.assistantMessageCount === 0) return null
 
 	const { raw } = metrics
 
@@ -77,7 +77,7 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 				<TooltipContent side="bottom" align="end">
 					<div className="space-y-1 text-xs">
 						<p className="font-medium">Work Time</p>
-						<p className="text-background/60">Avg per turn: {metrics.avgTurnTime}</p>
+						<p className="text-background/60">Avg per exchange: {metrics.avgExchangeTime}</p>
 					</div>
 				</TooltipContent>
 			</Tooltip>
@@ -99,7 +99,7 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 						<TooltipContent side="bottom" align="end">
 							<div className="space-y-1 text-xs">
 								<p className="font-medium">Cost</p>
-								<p className="text-background/60">Avg per turn: {metrics.avgTurnCost}</p>
+								<p className="text-background/60">Avg per exchange: {metrics.avgExchangeCost}</p>
 							</div>
 						</TooltipContent>
 					</Tooltip>
@@ -162,7 +162,7 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 				</>
 			)}
 
-			{/* Turns + model distribution */}
+			{/* Exchanges + message breakdown */}
 			<Tooltip>
 				<TooltipTrigger
 					render={
@@ -170,23 +170,30 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 					}
 				>
 					<MessageSquareIcon className="size-3" aria-hidden="true" />
-					{metrics.turnCount}
+					{metrics.exchangeCount}
 				</TooltipTrigger>
 				<TooltipContent side="bottom" align="end">
 					<div className="space-y-1.5 text-xs">
 						<p className="font-medium">
-							{metrics.turnCount} {metrics.turnCount === 1 ? "turn" : "turns"}
+							{metrics.exchangeCount} {metrics.exchangeCount === 1 ? "exchange" : "exchanges"}
 						</p>
+						<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-background/60">
+							<span>User messages</span>
+							<span className="text-right tabular-nums">{metrics.userMessageCount}</span>
+							<span>Agent responses</span>
+							<span className="text-right tabular-nums">{metrics.assistantMessageCount}</span>
+						</div>
 						{metrics.modelDistributionDisplay.length > 0 && (
-							<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-background/60">
-								{metrics.modelDistributionDisplay.map(({ name, count }) => (
-									<Fragment key={name}>
-										<span>{name}</span>
-										<span className="text-right tabular-nums">
-											{count} {count === 1 ? "turn" : "turns"}
-										</span>
-									</Fragment>
-								))}
+							<div className="border-t border-background/15 pt-1">
+								<p className="mb-0.5 font-medium text-background/80">Models</p>
+								<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-background/60">
+									{metrics.modelDistributionDisplay.map(({ name, count }) => (
+										<Fragment key={name}>
+											<span>{name}</span>
+											<span className="text-right tabular-nums">{count}</span>
+										</Fragment>
+									))}
+								</div>
 							</div>
 						)}
 					</div>

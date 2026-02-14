@@ -133,8 +133,8 @@ export interface Agent {
 	costFormatted: string
 	/** Formatted token string, e.g. "12.3k" */
 	tokensFormatted: string
-	/** Number of assistant turns in this session */
-	turnCount: number
+	/** Number of exchanges (user message + assistant responses) in this session */
+	exchangeCount: number
 	currentActivity?: string
 	activities: Activity[]
 	/** The underlying OpenCode session ID */
