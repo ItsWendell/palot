@@ -84,7 +84,7 @@ export function ServerIndicator() {
 						render={
 							<SidebarMenuButton
 								tooltip={`Server: ${activeServer.name}`}
-								className="text-muted-foreground"
+								className="text-muted-foreground hover:bg-transparent active:bg-transparent"
 							/>
 						}
 					>
