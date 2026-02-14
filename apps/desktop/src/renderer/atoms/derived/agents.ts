@@ -246,7 +246,7 @@ export const agentFamily = atomFamily((sessionId: string) => {
 				questions.length > 0
 					? `Asking: ${questions[0].questions[0]?.header ?? "Question"}`
 					: permissions.length > 0
-						? `Waiting for approval: ${permissions[0].title}`
+						? `Waiting for approval: ${permissions[0].permission}`
 						: status.type === "busy"
 							? "Working..."
 							: undefined,

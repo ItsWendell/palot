@@ -1,13 +1,16 @@
 // Import SDK types we reference in our own interfaces
-import type { Permission as SdkPermission } from "@opencode-ai/sdk"
-import type { QuestionRequest as SdkQuestionRequest } from "@opencode-ai/sdk/v2/client"
+import type {
+	PermissionRequest as SdkPermissionRequest,
+	QuestionRequest as SdkQuestionRequest,
+} from "@opencode-ai/sdk/v2/client"
 
-// Re-export SDK types that we use across the app
+// Re-export all SDK types from v2
 export type {
 	AssistantMessage,
 	Event,
+	EventMessagePartDelta,
 	EventMessagePartUpdated,
-	EventPermissionUpdated,
+	EventPermissionAsked,
 	EventSessionCreated,
 	EventSessionDeleted,
 	EventSessionError,
@@ -18,7 +21,12 @@ export type {
 	FilePartInput,
 	Message,
 	Part,
-	Permission,
+	PermissionRequest,
+	Project as OpenCodeProject,
+	QuestionAnswer,
+	QuestionInfo,
+	QuestionOption,
+	QuestionRequest,
 	ReasoningPart,
 	Session,
 	SessionStatus,
@@ -28,15 +36,6 @@ export type {
 	ToolState,
 	ToolStateCompleted,
 	UserMessage,
-} from "@opencode-ai/sdk"
-
-// Re-export types from v2 SDK (newer schema with full Project type)
-export type {
-	Project as OpenCodeProject,
-	QuestionAnswer,
-	QuestionInfo,
-	QuestionOption,
-	QuestionRequest,
 } from "@opencode-ai/sdk/v2/client"
 
 // ============================================================
@@ -141,7 +140,7 @@ export interface Agent {
 	/** The underlying OpenCode session ID */
 	sessionId: string
 	/** Pending permission requests for this agent */
-	permissions: SdkPermission[]
+	permissions: SdkPermissionRequest[]
 	/** Pending question requests for this agent */
 	questions: SdkQuestionRequest[]
 	/** If set, this is a sub-agent spawned by the parent session */

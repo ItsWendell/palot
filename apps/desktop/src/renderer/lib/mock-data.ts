@@ -10,7 +10,7 @@ import type {
 	AssistantMessage,
 	Message,
 	Part,
-	Permission,
+	PermissionRequest,
 	ReasoningPart,
 	Session,
 	TextPart,
@@ -241,6 +241,7 @@ function makeSession(
 ): Session {
 	return {
 		id,
+		slug: id.slice(0, 12),
 		projectID,
 		directory,
 		title,
@@ -328,16 +329,15 @@ export const MOCK_SESSION_ENTRIES: Map<string, SessionEntry> = new Map([
 			permissions: [
 				{
 					id: "perm-mock-001",
-					type: "file.write",
+					permission: "file.write",
 					sessionID: IDS.sessionAuthFix,
-					messageID: IDS.afAssistant1,
-					title: "Write to src/middleware/auth.ts",
+					patterns: ["src/middleware/auth.ts"],
 					metadata: {
-						file: "src/middleware/auth.ts",
-						description: "Update token refresh logic to handle concurrent requests",
+						tool: "file.write",
+						command: "Write to src/middleware/auth.ts",
 					},
-					time: { created: NOW - 12 * MINUTE },
-				} satisfies Permission,
+					always: ["allow", "deny"],
+				} satisfies PermissionRequest,
 			],
 			questions: [],
 			directory: DIRS.acmeApi,
@@ -423,6 +423,7 @@ function assistantMsg(
 		modelID: "anthropic.claude-opus-4-6",
 		providerID: "bedrock",
 		mode: "Adaptive",
+		agent: "code",
 		path: { cwd: DIRS.palot, root: DIRS.palot },
 		cost: 0.003 + Math.random() * 0.01,
 		tokens: {

@@ -119,7 +119,8 @@ export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 				<div className="border-t border-border px-3 pb-2.5 pt-2">
 					<ol className="space-y-1">
 						{todos.map((todo, index) => (
-							<li key={todo.id || `todo-${index}`} className="flex items-start gap-2 text-sm">
+							// biome-ignore lint/suspicious/noArrayIndexKey: Todo items have no stable ID in the v2 SDK
+							<li key={index} className="flex items-start gap-2 text-sm">
 								<span className="mt-0.5 shrink-0">
 									<TodoStatusIcon status={todo.status} />
 								</span>

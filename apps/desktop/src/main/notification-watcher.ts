@@ -207,9 +207,9 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 	const directory = globalEvent.directory
 
 	switch (eventType) {
-		case "permission.updated": {
+		case "permission.asked": {
 			const sessionId = props.sessionID as string
-			const title = props.title as string
+			const permission = (props as { permission?: string }).permission
 			if (!isSubAgent(sessionId)) {
 				pendingCount++
 				updateBadgeCount(pendingCount)
@@ -217,7 +217,7 @@ function processGlobalEvent(globalEvent: GlobalSSEEvent): void {
 					type: "permission",
 					sessionId,
 					title: "Agent needs permission",
-					body: title || "Approval required",
+					body: permission || "Approval required",
 					directory,
 					meta: { permissionId: props.id as string },
 				})

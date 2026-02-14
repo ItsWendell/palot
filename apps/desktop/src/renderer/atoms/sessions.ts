@@ -1,6 +1,6 @@
 import { atom } from "jotai"
 import { atomFamily } from "jotai-family"
-import type { Permission, QuestionRequest, Session, SessionStatus } from "../lib/types"
+import type { PermissionRequest, QuestionRequest, Session, SessionStatus } from "../lib/types"
 
 // ============================================================
 // Types
@@ -16,7 +16,7 @@ export interface SessionEntry {
 	session: Session
 	status: SessionStatus
 	/** Pending permission requests */
-	permissions: Permission[]
+	permissions: PermissionRequest[]
 	/** Pending question requests */
 	questions: QuestionRequest[]
 	/** Project directory this session belongs to */
@@ -169,7 +169,7 @@ export const addPermissionAtom = atom(
 		set,
 		args: {
 			sessionId: string
-			permission: Permission
+			permission: PermissionRequest
 		},
 	) => {
 		const entry = get(sessionFamily(args.sessionId))

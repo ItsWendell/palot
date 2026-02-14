@@ -7,11 +7,11 @@ import {
 } from "@palot/ui/components/dropdown-menu"
 import { ChevronDownIcon, Loader2Icon, ShieldCheckIcon } from "lucide-react"
 import { memo, useState } from "react"
-import type { Agent } from "../../lib/types"
+import type { Agent, PermissionRequest } from "../../lib/types"
 
 interface PermissionItemProps {
 	agent: Agent
-	permission: { id: string; title: string; metadata?: Record<string, unknown> }
+	permission: PermissionRequest
 	onApprove?: (agent: Agent, permissionId: string, response?: "once" | "always") => Promise<void>
 	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
 	isConnected?: boolean
@@ -57,7 +57,7 @@ export const PermissionItem = memo(function PermissionItem({
 			<div className="px-3 py-2">
 				<div className="flex items-center gap-1.5">
 					<ShieldCheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-					<span className="text-sm text-foreground">{permission.title}</span>
+					<span className="text-sm text-foreground">{permission.permission}</span>
 				</div>
 				{(tool || command) && (
 					<code className="mt-1 block truncate text-xs text-muted-foreground">

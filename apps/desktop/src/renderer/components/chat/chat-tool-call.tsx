@@ -894,7 +894,7 @@ interface ChatToolCallProps {
 	/** Whether this tool is in the active (last) turn */
 	isActiveTurn?: boolean
 	/** Permission data to render inline */
-	permission?: { id: string; title: string; metadata?: Record<string, unknown> }
+	permission?: { id: string; permission: string; metadata?: Record<string, unknown> }
 	onApprove?: (permissionId: string, response: "once" | "always") => void
 	onDeny?: (permissionId: string) => void
 }
@@ -1026,7 +1026,7 @@ export const ChatToolCall = memo(
 					{permission && (status === "pending" || status === "running") && (
 						<div className="mx-3.5 my-2.5 flex items-center gap-2.5 rounded-md border border-blue-500/30 bg-blue-500/[0.03] px-3 py-2">
 							<span className="flex-1 truncate text-xs text-muted-foreground">
-								{permission.title}
+								{permission.permission}
 							</span>
 							<button
 								type="button"
