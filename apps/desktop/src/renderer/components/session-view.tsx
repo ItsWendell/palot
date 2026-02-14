@@ -9,9 +9,10 @@
  * AutomationRunDetail (for automation sessions) use this component.
  */
 
-import { useAtomValue } from "jotai"
-import { useCallback } from "react"
+import { useAtomValue, useSetAtom } from "jotai"
+import { useCallback, useEffect } from "react"
 import { agentFamily, sessionNameFamily } from "../atoms/derived/agents"
+import { viewedSessionIdAtom } from "../atoms/ui"
 import { useSessionRevert } from "../hooks/use-commands"
 import type { ModelRef } from "../hooks/use-opencode-data"
 import { useConfig, useOpenCodeAgents, useProviders, useVcs } from "../hooks/use-opencode-data"
@@ -31,6 +32,14 @@ interface SessionViewProps {
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { abort, sendPrompt, renameSession, respondToPermission, replyToQuestion, rejectQuestion } =
 		useAgentActions()
+
+	// Track which session is currently viewed so background sessions can
+	// skip expensive metric recomputation.
+	const setViewedSessionId = useSetAtom(viewedSessionIdAtom)
+	useEffect(() => {
+		setViewedSessionId(sessionId)
+		return () => setViewedSessionId(null)
+	}, [sessionId, setViewedSessionId])
 
 	const selectedAgent = useAtomValue(agentFamily(sessionId))
 

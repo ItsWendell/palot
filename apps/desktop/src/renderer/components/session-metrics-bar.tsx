@@ -15,9 +15,9 @@ import {
 	WrenchIcon,
 	ZapIcon,
 } from "lucide-react"
-import { Fragment, memo } from "react"
+import { Fragment, memo, useEffect, useState } from "react"
 import { sessionMetricsFamily } from "../atoms/derived/session-metrics"
-import { formatTokens } from "../lib/session-metrics"
+import { formatTokens, formatWorkDuration } from "../lib/session-metrics"
 
 // ============================================================
 // Tool category display labels
@@ -65,7 +65,14 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 					}
 				>
 					<TimerIcon className="size-3" aria-hidden="true" />
-					{metrics.workTime}
+					{metrics.activeStartMs != null ? (
+						<LiveWorkTime
+							completedMs={metrics.completedWorkTimeMs}
+							activeStartMs={metrics.activeStartMs}
+						/>
+					) : (
+						metrics.workTime
+					)}
 				</TooltipTrigger>
 				<TooltipContent side="bottom" align="end">
 					<div className="space-y-1 text-xs">
@@ -267,6 +274,36 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 		</div>
 	)
 })
+
+// ============================================================
+// Live work-time ticker — updates every second while active
+// ============================================================
+
+/**
+ * Tiny leaf component that ticks every second to show live work time.
+ * Only mounts when the agent has an in-progress message, so the rest of
+ * the metrics bar is not affected by the interval.
+ */
+function LiveWorkTime({
+	completedMs,
+	activeStartMs,
+}: {
+	completedMs: number
+	activeStartMs: number
+}) {
+	const [display, setDisplay] = useState(() =>
+		formatWorkDuration(completedMs + (Date.now() - activeStartMs)),
+	)
+
+	useEffect(() => {
+		const tick = () => setDisplay(formatWorkDuration(completedMs + (Date.now() - activeStartMs)))
+		tick()
+		const id = setInterval(tick, 1_000)
+		return () => clearInterval(id)
+	}, [completedMs, activeStartMs])
+
+	return <>{display}</>
+}
 
 // ============================================================
 // Small separator dot

@@ -31,6 +31,10 @@ export type ToolBreakdown = Partial<Record<ToolCategory, number>>
 export interface SessionMetrics {
 	/** Total agent work time in milliseconds */
 	workTimeMs: number
+	/** Work time from completed messages only (excludes in-progress) */
+	completedWorkTimeMs: number
+	/** Start time (epoch ms) of the in-progress assistant message, or null if idle */
+	activeStartMs: number | null
 	/** Total cost in USD */
 	cost: number
 	/** Aggregated token counts */
@@ -181,6 +185,8 @@ export function computeSessionTokens(messages: Message[]): SessionTokens {
  */
 export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 	let workTimeMs = 0
+	let completedWorkTimeMs = 0
+	let activeStartMs: number | null = null
 	let cost = 0
 	let turnCount = 0
 	let errorCount = 0
@@ -202,6 +208,13 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 		// Work time
 		const end = msg.time.completed ?? Date.now()
 		workTimeMs += Math.max(0, end - msg.time.created)
+
+		// Track completed vs in-progress for live ticking
+		if (msg.time.completed != null) {
+			completedWorkTimeMs += Math.max(0, msg.time.completed - msg.time.created)
+		} else {
+			activeStartMs = msg.time.created
+		}
 
 		// Cost
 		cost += msg.cost ?? 0
@@ -240,6 +253,8 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 
 	return {
 		workTimeMs,
+		completedWorkTimeMs,
+		activeStartMs,
 		cost,
 		tokens,
 		turnCount,

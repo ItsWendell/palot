@@ -22,6 +22,8 @@ import {
 import type { Part } from "../../lib/types"
 import { messagesFamily } from "../messages"
 import { partsFamily } from "../parts"
+import { appStore } from "../store"
+import { viewedSessionIdAtom } from "../ui"
 
 // ============================================================
 // Types
@@ -38,6 +40,10 @@ export interface SessionMetricsValue {
 	tokens: string
 	/** Raw work time in ms (for live-ticking in the sidebar) */
 	workTimeMs: number
+	/** Work time from completed messages only (for live-ticking base) */
+	completedWorkTimeMs: number
+	/** Start time (epoch ms) of in-progress assistant message, or null if idle */
+	activeStartMs: number | null
 	/** Raw cost number (for comparisons) */
 	costRaw: number
 	/** Raw total token count (for comparisons) */
@@ -77,6 +83,8 @@ function metricsEqual(prev: SessionMetricsValue | null, next: SessionMetricsValu
 		prev.cost === next.cost &&
 		prev.tokens === next.tokens &&
 		prev.workTimeMs === next.workTimeMs &&
+		prev.completedWorkTimeMs === next.completedWorkTimeMs &&
+		prev.activeStartMs === next.activeStartMs &&
 		prev.costRaw === next.costRaw &&
 		prev.tokensRaw === next.tokensRaw &&
 		prev.turnCount === next.turnCount &&
@@ -118,8 +126,14 @@ function toolBreakdownEqual(a: ToolBreakdown, b: ToolBreakdown): boolean {
 /**
  * Derives session metrics (work time, cost, tokens, model distribution,
  * cache efficiency, tool breakdown, errors, averages) for a given session ID.
- * Subscribes to that session's `messagesFamily` atom and all associated
- * `partsFamily` atoms, so changes to other sessions do not trigger re-computation.
+ *
+ * **Optimization**: For the currently viewed session, subscribes reactively to
+ * each message's `partsFamily` atom so the metrics panel updates in real time.
+ * For background sessions (not currently viewed), reads parts via `appStore.get()`
+ * without creating Jotai subscriptions. This means background metrics only
+ * recompute when the message list changes (new message added), not on every
+ * individual part update. The metrics will catch up when the user navigates
+ * to that session (which triggers the reactive path).
  *
  * Uses structural equality to prevent downstream re-renders when the
  * formatted values haven't actually changed (e.g., streaming updates
@@ -129,11 +143,16 @@ export const sessionMetricsFamily = atomFamily((sessionId: string) => {
 	let prev: SessionMetricsValue | null = null
 	return atom((get): SessionMetricsValue => {
 		const messages = get(messagesFamily(sessionId))
+		const viewedSessionId = get(viewedSessionIdAtom)
+		const isViewed = viewedSessionId === sessionId
 
-		// Collect all parts across all messages for tool breakdown / retry counting
+		// Collect all parts across all messages for tool breakdown / retry counting.
+		// For the viewed session, use reactive `get()` to subscribe to part changes.
+		// For background sessions, use non-reactive `appStore.get()` to avoid
+		// creating subscriptions that would trigger recomputation on every part update.
 		const allParts: Part[] = []
 		for (const msg of messages) {
-			const parts = get(partsFamily(msg.id))
+			const parts = isViewed ? get(partsFamily(msg.id)) : appStore.get(partsFamily(msg.id))
 			if (parts.length > 0) {
 				for (const p of parts) {
 					allParts.push(p)
@@ -154,6 +173,8 @@ export const sessionMetricsFamily = atomFamily((sessionId: string) => {
 			cost: formatCost(raw.cost),
 			tokens: formatTokens(raw.tokens.total),
 			workTimeMs: raw.workTimeMs,
+			completedWorkTimeMs: raw.completedWorkTimeMs,
+			activeStartMs: raw.activeStartMs,
 			costRaw: raw.cost,
 			tokensRaw: raw.tokens.total,
 			turnCount: raw.turnCount,

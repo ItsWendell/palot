@@ -1,4 +1,3 @@
-import { Badge } from "@palot/ui/components/badge"
 import { Collapsible, CollapsibleContent } from "@palot/ui/components/collapsible"
 import {
 	ContextMenu,
@@ -21,6 +20,7 @@ import {
 } from "@palot/ui/components/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
 import { useNavigate, useParams } from "@tanstack/react-router"
+import { useAtomValue } from "jotai"
 import {
 	AlertCircleIcon,
 	CheckCircle2Icon,
@@ -38,7 +38,8 @@ import {
 	TrashIcon,
 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
-
+import { agentFamily, projectSessionIdsFamily } from "../atoms/derived/agents"
+import { appStore } from "../atoms/store"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
 
 // ============================================================
@@ -50,6 +51,22 @@ const SESSIONS_PER_PROJECT = 3
 
 /** How many recent sessions to show */
 const RECENT_COUNT = 5
+
+/** How many sessions to show per time group before progressive "load more" */
+const SESSIONS_PER_GROUP_PAGE = 10
+
+/** Time bucket labels in display order */
+type TimeBucket = "today" | "thisWeek" | "thisMonth" | "older"
+
+const TIME_BUCKET_LABELS: Record<TimeBucket, string> = {
+	today: "Today",
+	thisWeek: "This Week",
+	thisMonth: "This Month",
+	older: "Older",
+}
+
+/** All buckets in display order */
+const TIME_BUCKET_ORDER: TimeBucket[] = ["today", "thisWeek", "thisMonth", "older"]
 
 const STATUS_ICON: Record<AgentStatus, typeof Loader2Icon> = {
 	running: Loader2Icon,
@@ -67,6 +84,64 @@ const STATUS_COLOR: Record<AgentStatus, string> = {
 	completed: "text-muted-foreground",
 	failed: "text-red-500",
 	idle: "text-muted-foreground",
+}
+
+// ============================================================
+// Time bucketing
+// ============================================================
+
+interface TimeBucketGroup {
+	bucket: TimeBucket
+	label: string
+	sessions: Agent[]
+}
+
+/**
+ * Partition a sorted session list into time-based groups.
+ * Sessions are assumed to be pre-sorted (active first, then by createdAt desc).
+ * Only non-empty buckets are returned.
+ */
+function groupByTimeBucket(sessions: Agent[]): TimeBucketGroup[] {
+	const now = new Date()
+	const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+
+	// Start of this week (Monday)
+	const dayOfWeek = now.getDay()
+	const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+	const weekStart = new Date(
+		now.getFullYear(),
+		now.getMonth(),
+		now.getDate() - mondayOffset,
+	).getTime()
+
+	const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+
+	const buckets: Record<TimeBucket, Agent[]> = {
+		today: [],
+		thisWeek: [],
+		thisMonth: [],
+		older: [],
+	}
+
+	for (const session of sessions) {
+		const t = session.createdAt
+		if (t >= todayStart) {
+			buckets.today.push(session)
+		} else if (t >= weekStart) {
+			buckets.thisWeek.push(session)
+		} else if (t >= monthStart) {
+			buckets.thisMonth.push(session)
+		} else {
+			buckets.older.push(session)
+		}
+	}
+
+	// Only return non-empty groups
+	return TIME_BUCKET_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
+		bucket: b,
+		label: TIME_BUCKET_LABELS[b],
+		sessions: buckets[b],
+	}))
 }
 
 // ============================================================
@@ -176,7 +251,7 @@ export function AppSidebarContent({
 
 				{/* Projects -- always render so search/sub-agent actions are accessible */}
 				{(activeSessions.length > 0 || recentSessions.length > 0) && (
-					<SidebarSeparator className="bg-sidebar-border/25" />
+					<SidebarSeparator className="bg-sidebar-border/5" />
 				)}
 				<SidebarGroup>
 					<SidebarGroupLabel>Projects</SidebarGroupLabel>
@@ -244,7 +319,6 @@ export function AppSidebarContent({
 								<ProjectFolder
 									key={project.id}
 									project={project}
-									agents={agents}
 									selectedSessionId={selectedSessionId}
 									onRename={onRenameSession}
 									onDelete={onDeleteSession}
@@ -286,40 +360,80 @@ export function AppSidebarContent({
 // Sub-components
 // ============================================================
 
+/**
+ * Wrapper that subscribes to a single agent via agentFamily and renders
+ * a SessionItem. Used by ProjectFolder so each item only re-renders
+ * when its own agent changes, not when any agent in the project changes.
+ */
+const ProjectSessionItem = memo(function ProjectSessionItem({
+	sessionId,
+	selectedSessionId,
+	onRename,
+	onDelete,
+}: {
+	sessionId: string
+	selectedSessionId: string | null
+	onRename?: (agent: Agent, title: string) => Promise<void>
+	onDelete?: (agent: Agent) => Promise<void>
+}) {
+	const agent = useAtomValue(agentFamily(sessionId))
+	if (!agent) return null
+	return (
+		<SessionItem
+			agent={agent}
+			isSelected={agent.id === selectedSessionId}
+			onRename={onRename}
+			onDelete={onDelete}
+			compact
+		/>
+	)
+})
+
 const ProjectFolder = memo(function ProjectFolder({
 	project,
-	agents,
 	selectedSessionId,
 	onRename,
 	onDelete,
 }: {
 	project: SidebarProject
-	agents: Agent[]
 	selectedSessionId: string | null
 	onRename?: (agent: Agent, title: string) => Promise<void>
 	onDelete?: (agent: Agent) => Promise<void>
 }) {
 	const navigate = useNavigate()
 	const [expanded, setExpanded] = useState(false)
-	const [showAll, setShowAll] = useState(false)
 
-	const projectSessions = useMemo(
-		() =>
-			agents
-				.filter((a) => a.project === project.name)
-				.sort((a, b) => {
-					// Active sessions float to top
-					const aActive = a.status === "running" || a.status === "waiting" || a.status === "failed"
-					const bActive = b.status === "running" || b.status === "waiting" || b.status === "failed"
-					if (aActive !== bActive) return aActive ? -1 : 1
-					// Within same group, sort by createdAt for stable order
-					return b.createdAt - a.createdAt
-				}),
-		[agents, project.name],
-	)
+	// Subscribe to just this project's session IDs. Other projects
+	// adding/removing sessions won't cause this component to re-render.
+	const sessionIds = useAtomValue(projectSessionIdsFamily(project.directory))
 
-	const visibleSessions = showAll ? projectSessions : projectSessions.slice(0, SESSIONS_PER_PROJECT)
-	const hiddenCount = projectSessions.length - SESSIONS_PER_PROJECT
+	// Read agents non-reactively (via appStore.get) for sorting and time bucketing.
+	// Individual items render reactively via ProjectSessionItem -> agentFamily.
+	// This means sort order updates when sessionIds changes (new/removed sessions)
+	// or when the component re-renders for other reasons. Status changes within
+	// a session are reflected in the SessionItem itself, not in the sort order
+	// (which is acceptable since active sessions already float to top via the
+	// Active Now section above).
+	const projectSessions = useMemo(() => {
+		const agents: Agent[] = []
+		for (const id of sessionIds) {
+			const agent = appStore.get(agentFamily(id))
+			if (agent) agents.push(agent)
+		}
+		return agents.sort((a, b) => {
+			// Active sessions float to top
+			const aActive = a.status === "running" || a.status === "waiting" || a.status === "failed"
+			const bActive = b.status === "running" || b.status === "waiting" || b.status === "failed"
+			if (aActive !== bActive) return aActive ? -1 : 1
+			// Within same group, sort by createdAt for stable order
+			return b.createdAt - a.createdAt
+		})
+	}, [sessionIds])
+
+	const timeGroups = useMemo(() => groupByTimeBucket(projectSessions), [projectSessions])
+
+	// When there are few enough sessions, skip time grouping entirely
+	const useFlat = projectSessions.length <= SESSIONS_PER_PROJECT
 
 	return (
 		<SidebarMenuItem>
@@ -339,45 +453,119 @@ const ProjectFolder = memo(function ProjectFolder({
 						style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
 					/>
 					<span className="truncate font-medium">{project.name}</span>
-					<Badge variant="secondary" className="ml-auto shrink-0 px-1.5 py-0 text-[10px]">
-						{project.agentCount}
-					</Badge>
 				</SidebarMenuButton>
 
 				<CollapsibleContent
 					keepMounted
 					className="flex h-[var(--collapsible-panel-height)] flex-col overflow-hidden transition-[height] duration-200 ease-out data-[ending-style]:h-0 data-[starting-style]:h-0 [&[hidden]:not([hidden='until-found'])]:hidden"
 				>
-					<div className="ml-3 border-l border-sidebar-border/25 pl-1">
+					<div className="ml-3 border-l border-sidebar-border/5 pl-1">
 						{projectSessions.length === 0 ? (
 							<p className="px-2 py-1.5 text-xs text-muted-foreground/60">No sessions yet</p>
-						) : (
+						) : useFlat ? (
+							/* Few sessions: flat list, no time headers */
 							<SidebarMenu>
-								{visibleSessions.map((agent) => (
-									<SessionItem
+								{projectSessions.map((agent) => (
+									<ProjectSessionItem
 										key={agent.id}
-										agent={agent}
-										isSelected={agent.id === selectedSessionId}
+										sessionId={agent.id}
+										selectedSessionId={selectedSessionId}
 										onRename={onRename}
 										onDelete={onDelete}
-										compact
 									/>
 								))}
-								{hiddenCount > 0 && !showAll && (
-									<button
-										type="button"
-										onClick={() => setShowAll(true)}
-										className="w-full cursor-pointer px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
-									>
-										Show {hiddenCount} more...
-									</button>
-								)}
 							</SidebarMenu>
+						) : (
+							/* Many sessions: time-grouped with progressive pagination */
+							<div className="flex flex-col">
+								{timeGroups.map((group, idx) => (
+									<SessionTimeGroup
+										key={group.bucket}
+										group={group}
+										selectedSessionId={selectedSessionId}
+										onRename={onRename}
+										onDelete={onDelete}
+										defaultExpanded={idx === 0}
+									/>
+								))}
+							</div>
 						)}
 					</div>
 				</CollapsibleContent>
 			</Collapsible>
 		</SidebarMenuItem>
+	)
+})
+
+/**
+ * A collapsible time-bucket group within a project folder.
+ * First group ("Today") is expanded by default; others are collapsed.
+ * Uses progressive pagination so only N sessions render at a time.
+ */
+const SessionTimeGroup = memo(function SessionTimeGroup({
+	group,
+	selectedSessionId,
+	onRename,
+	onDelete,
+	defaultExpanded,
+}: {
+	group: TimeBucketGroup
+	selectedSessionId: string | null
+	onRename?: (agent: Agent, title: string) => Promise<void>
+	onDelete?: (agent: Agent) => Promise<void>
+	defaultExpanded: boolean
+}) {
+	const [expanded, setExpanded] = useState(defaultExpanded)
+	const [visibleCount, setVisibleCount] = useState(SESSIONS_PER_GROUP_PAGE)
+
+	const visibleSessions = group.sessions.slice(0, visibleCount)
+	const remaining = group.sessions.length - visibleCount
+
+	const showMore = useCallback(() => {
+		setVisibleCount((prev) => prev + SESSIONS_PER_GROUP_PAGE)
+	}, [])
+
+	return (
+		<Collapsible open={expanded} onOpenChange={setExpanded}>
+			<button
+				type="button"
+				onClick={() => setExpanded(!expanded)}
+				className="flex w-full cursor-pointer items-center gap-1 px-2 py-1 text-left"
+			>
+				<ChevronRightIcon
+					className="size-2.5 shrink-0 text-muted-foreground/60 transition-transform duration-150 ease-out"
+					style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+				/>
+				<span className="text-[11px] font-medium text-muted-foreground/60">{group.label}</span>
+				<span className="text-[10px] tabular-nums text-muted-foreground/40">
+					{group.sessions.length}
+				</span>
+			</button>
+			<CollapsibleContent className="flex h-[var(--collapsible-panel-height)] flex-col overflow-hidden transition-[height] duration-150 ease-out data-[ending-style]:h-0 data-[starting-style]:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+				<SidebarMenu>
+					{visibleSessions.map((agent) => (
+						<SessionItem
+							key={agent.id}
+							agent={agent}
+							isSelected={agent.id === selectedSessionId}
+							onRename={onRename}
+							onDelete={onDelete}
+							compact
+						/>
+					))}
+					{remaining > 0 && (
+						<button
+							type="button"
+							onClick={showMore}
+							className="w-full cursor-pointer px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+						>
+							Show {Math.min(remaining, SESSIONS_PER_GROUP_PAGE)} more
+							{remaining > SESSIONS_PER_GROUP_PAGE && ` of ${remaining}`}...
+						</button>
+					)}
+				</SidebarMenu>
+			</CollapsibleContent>
+		</Collapsible>
 	)
 })
 

@@ -17,10 +17,18 @@ import { sessionMetricsFamily } from "./session-metrics"
 // ============================================================
 
 /**
- * Shallow-compare two Agent objects by their scalar/identity fields.
+ * Shallow-compare two Agent objects by their identity and UI-relevant fields.
  * Arrays like `permissions` and `questions` are compared by length + first-element
  * identity, which is sufficient since they come from the same atom and are replaced
  * wholesale on updates.
+ *
+ * **Optimization**: Volatile metrics fields (workTime, workTimeMs, tokens, cost,
+ * costFormatted, tokensFormatted, turnCount) are intentionally excluded from this
+ * comparison. These change on every streaming part update but are NOT displayed
+ * in the sidebar or most agent consumers. Components that need live metrics
+ * (e.g., SessionMetricsBar) subscribe to `sessionMetricsFamily` directly.
+ * Excluding them prevents the agentFamily -> agentsAtom -> sidebar cascade
+ * that previously caused all sidebar items to re-render on every streamed token.
  */
 function agentEqual(prev: Agent | null, next: Agent | null): boolean {
 	if (prev === next) return true
@@ -34,13 +42,6 @@ function agentEqual(prev: Agent | null, next: Agent | null): boolean {
 		prev.directory === next.directory &&
 		prev.branch === next.branch &&
 		prev.duration === next.duration &&
-		prev.workTime === next.workTime &&
-		prev.workTimeMs === next.workTimeMs &&
-		prev.tokens === next.tokens &&
-		prev.cost === next.cost &&
-		prev.costFormatted === next.costFormatted &&
-		prev.tokensFormatted === next.tokensFormatted &&
-		prev.turnCount === next.turnCount &&
 		prev.currentActivity === next.currentActivity &&
 		prev.parentId === next.parentId &&
 		prev.worktreePath === next.worktreePath &&
@@ -313,6 +314,40 @@ export const agentsAtom = (() => {
 		return agents
 	})
 })()
+
+// ============================================================
+// Per-project session IDs for granular sidebar subscriptions
+// ============================================================
+
+/**
+ * Returns the list of session IDs belonging to a specific project directory.
+ * Keyed by directory path. Each ProjectFolder subscribes to its own family
+ * member, so adding/removing sessions in project A does not re-render project B.
+ *
+ * Uses structural equality on the array to avoid unnecessary re-renders
+ * when the same set of IDs is returned.
+ */
+export const projectSessionIdsFamily = atomFamily((directory: string) => {
+	let prev: string[] = []
+	return atom((get) => {
+		const sessionIds = get(sessionIdsAtom)
+		const showSubAgents = get(showSubAgentsAtom)
+		const ids: string[] = []
+		for (const id of sessionIds) {
+			const entry = get(sessionFamily(id))
+			if (!entry) continue
+			if (entry.directory !== directory) continue
+			if (!showSubAgents && entry.session.parentID) continue
+			ids.push(id)
+		}
+		// Structural equality: return previous array if contents are the same
+		if (ids.length === prev.length && ids.every((id, i) => id === prev[i])) {
+			return prev
+		}
+		prev = ids
+		return ids
+	})
+})
 
 // ============================================================
 // Derived atom: project list for sidebar
