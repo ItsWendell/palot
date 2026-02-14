@@ -244,6 +244,14 @@ export const removeQuestionAtom = atom(
  * Bulk-set sessions (used during project load).
  * Merges new sessions into the store without overwriting
  * permissions/questions that arrived via SSE before the fetch completed.
+ *
+ * Uses each session's own `directory` field from the API (falling back to
+ * `args.directory`). This preserves sandbox (worktree) paths so the mapping
+ * system in `agents.ts` can group them under the parent project.
+ *
+ * When `sandboxDirs` is provided, sessions whose directory matches a sandbox
+ * get their `worktreePath` restored automatically, which makes the sidebar
+ * show the worktree icon even after a window reload.
  */
 export const setSessionsAtom = atom(
 	null,
@@ -254,6 +262,8 @@ export const setSessionsAtom = atom(
 			sessions: Session[]
 			statuses: Record<string, SessionStatus>
 			directory: string
+			/** Known sandbox directories for this project (from project.sandboxes) */
+			sandboxDirs?: Set<string>
 		},
 	) => {
 		const currentIds = get(sessionIdsAtom)
@@ -261,14 +271,17 @@ export const setSessionsAtom = atom(
 
 		for (const session of args.sessions) {
 			const existing = get(sessionFamily(session.id))
+			const sessionDir = session.directory || args.directory
+			const isSandbox = args.sandboxDirs?.has(sessionDir) ?? false
+
 			set(sessionFamily(session.id), {
 				session,
 				status: args.statuses[session.id] ?? existing?.status ?? { type: "idle" },
 				permissions: existing?.permissions ?? [],
 				questions: existing?.questions ?? [],
-				directory: args.directory,
+				directory: existing?.directory ?? sessionDir,
 				branch: existing?.branch,
-				worktreePath: existing?.worktreePath,
+				worktreePath: existing?.worktreePath ?? (isSandbox ? sessionDir : undefined),
 				worktreeBranch: existing?.worktreeBranch,
 				error: existing?.error,
 			})

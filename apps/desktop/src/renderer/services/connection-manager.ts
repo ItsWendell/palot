@@ -138,8 +138,15 @@ export async function loadAllProjects() {
 /**
  * Load sessions for a specific project directory from the server.
  * Merges them into the Jotai store.
+ *
+ * @param directory    The project's main worktree directory
+ * @param sandboxDirs  Known sandbox (worktree) directories for this project,
+ *                     used to restore worktree metadata on sessions after reload
  */
-export async function loadProjectSessions(directory: string): Promise<void> {
+export async function loadProjectSessions(
+	directory: string,
+	sandboxDirs?: Set<string>,
+): Promise<void> {
 	const client = getProjectClient(directory)
 	if (!client) return
 
@@ -149,7 +156,7 @@ export async function loadProjectSessions(directory: string): Promise<void> {
 			getSessionStatuses(client),
 		])
 		log.debug("Loaded sessions for project", { directory, count: sessions.length })
-		appStore.set(setSessionsAtom, { sessions, statuses, directory })
+		appStore.set(setSessionsAtom, { sessions, statuses, directory, sandboxDirs })
 	} catch (err) {
 		log.error("Failed to load sessions", { directory }, err)
 	}
