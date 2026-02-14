@@ -2,12 +2,8 @@
  * Worktree service layer.
  *
  * Provides worktree lifecycle operations (create, list, remove, reset) via
- * the OpenCode experimental worktree API. Falls back to Electron IPC-based
- * worktree management when the API is unavailable (older servers or non-git
- * projects).
- *
- * This enables worktree support for both local and remote OpenCode servers
- * without any upstream code changes.
+ * the OpenCode experimental worktree API. Works for both local and remote
+ * OpenCode servers without any upstream code changes.
  */
 
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
@@ -31,12 +27,6 @@ export interface WorktreeCreateResult {
 	directory: string
 }
 
-/** Info about a worktree from the list endpoint */
-export interface WorktreeListItem {
-	/** Absolute path to the worktree directory */
-	directory: string
-}
-
 /** Result shaped for the existing Palot UI (compatible with new-chat.tsx flow) */
 export interface WorktreeResult {
 	/** Absolute path to the worktree root (git worktree directory) */
@@ -48,8 +38,13 @@ export interface WorktreeResult {
 	worktreeWorkspace: string
 	/** The branch name created (e.g. "opencode/fix-auth-bug") */
 	branchName: string
-	/** Whether the worktree was created via the API or the Electron fallback */
-	source: "api" | "electron-fallback"
+}
+
+/** Result from the remote apply-to-local operation */
+export interface RemoteApplyResult {
+	success: boolean
+	message: string
+	error?: string
 }
 
 // ============================================================
@@ -64,7 +59,6 @@ export interface WorktreeResult {
  */
 function buildEnvSyncCommand(sourceDir: string, worktreeDir: string): string {
 	// Use a bash snippet that copies .env* files excluding .example/.sample
-	// The `find` + `cp` approach handles nested .env files too
 	return [
 		`for f in "${sourceDir}"/.env*; do`,
 		`  [ -f "$f" ] || continue`,
@@ -80,13 +74,11 @@ function buildEnvSyncCommand(sourceDir: string, worktreeDir: string): string {
  * returns "packages/app". Returns "" if sourceDir IS the repo root.
  */
 function computeSubPath(repoRoot: string, sourceDir: string): string {
-	// Normalize paths (remove trailing slashes)
 	const normalizedRoot = repoRoot.replace(/\/+$/, "")
 	const normalizedSource = sourceDir.replace(/\/+$/, "")
 
 	if (normalizedSource === normalizedRoot) return ""
 
-	// sourceDir should be under repoRoot
 	if (normalizedSource.startsWith(`${normalizedRoot}/`)) {
 		return normalizedSource.slice(normalizedRoot.length + 1)
 	}
@@ -95,11 +87,9 @@ function computeSubPath(repoRoot: string, sourceDir: string): string {
 }
 
 /**
- * Wait for a worktree.ready or worktree.failed event by polling the project's
- * sandbox list. We check if the directory appears in the list, which means the
- * worktree has been fully bootstrapped.
- *
- * The timeout prevents waiting indefinitely if the event is missed.
+ * Wait for a worktree.ready event by polling the project's sandbox list.
+ * Checks if the directory appears in the list, meaning the worktree has been
+ * fully bootstrapped.
  */
 async function waitForWorktreeReady(
 	client: OpencodeClient,
@@ -123,113 +113,7 @@ async function waitForWorktreeReady(
 		await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
 	}
 
-	// Timeout reached, but the worktree was likely created. Proceed anyway with a warning.
 	log.warn("Worktree readiness check timed out, proceeding anyway", { directory, timeoutMs })
-}
-
-// ============================================================
-// API-based operations
-// ============================================================
-
-/**
- * Creates a worktree via the OpenCode experimental API.
- *
- * @param projectDir  The project's main directory (used to scope the SDK client)
- * @param sourceDir   The actual source directory (may be a monorepo subdirectory)
- * @param sessionSlug  Short slug derived from the prompt (used for naming)
- * @returns WorktreeResult with paths, or null if the API is unavailable
- */
-async function createViaApi(
-	projectDir: string,
-	sourceDir: string,
-	sessionSlug: string,
-): Promise<WorktreeResult | null> {
-	const client = getProjectClient(projectDir)
-	if (!client) {
-		log.warn("No project client available for worktree creation", { projectDir })
-		return null
-	}
-
-	try {
-		// Create the worktree via the experimental API
-		const result = await client.experimental.worktree.create({
-			body: {
-				name: sessionSlug,
-				startCommand: buildEnvSyncCommand(sourceDir, "$PWD"),
-			},
-		})
-
-		const data = result.data as WorktreeCreateResult | undefined
-		if (!data?.directory) {
-			log.error("Worktree API returned unexpected response", { result })
-			return null
-		}
-
-		log.info("Worktree created via API", {
-			name: data.name,
-			branch: data.branch,
-			directory: data.directory,
-		})
-
-		// Wait for the worktree to be fully bootstrapped.
-		// The API returns immediately but checkout + bootstrap happen async.
-		await waitForWorktreeReady(client, data.directory)
-
-		// Compute the workspace subpath for monorepo support
-		// The API creates the worktree at the repo root level.
-		// If sourceDir was a subdirectory, we need to calculate the equivalent path.
-		const subPath = computeSubPath(projectDir, sourceDir)
-		const worktreeWorkspace = subPath ? `${data.directory}/${subPath}` : data.directory
-
-		return {
-			worktreeRoot: data.directory,
-			worktreeWorkspace,
-			branchName: data.branch,
-			source: "api",
-		}
-	} catch (err) {
-		// Check if this is a 404 (API not available on this server)
-		const status = (err as { status?: number })?.status
-		if (status === 404) {
-			log.info("Worktree API not available (404), will use fallback")
-			return null
-		}
-
-		log.error("Worktree API call failed", err)
-		return null
-	}
-}
-
-/**
- * Creates a worktree via the Electron IPC fallback.
- * Used when the OpenCode experimental API is unavailable.
- */
-async function createViaElectron(
-	sourceDir: string,
-	sessionSlug: string,
-): Promise<WorktreeResult | null> {
-	if (!isElectron) {
-		log.warn("Electron fallback not available in browser mode")
-		return null
-	}
-
-	try {
-		const result = await window.palot.worktree.create(sourceDir, sessionSlug)
-		log.info("Worktree created via Electron fallback", {
-			worktreeRoot: result.worktreeRoot,
-			branchName: result.branchName,
-		})
-
-		return {
-			worktreeRoot: result.worktreeRoot,
-			worktreeWorkspace: result.worktreeWorkspace,
-			branchName: result.branchName,
-			source: "electron-fallback",
-		}
-	} catch (err) {
-		log.error("Electron worktree creation failed", err)
-		throw err
-	}
 }
 
 // ============================================================
@@ -237,10 +121,7 @@ async function createViaElectron(
 // ============================================================
 
 /**
- * Creates a worktree for a session.
- *
- * Tries the OpenCode experimental API first (works for both local and remote
- * servers). Falls back to Electron IPC if the API is unavailable.
+ * Creates a worktree for a session via the OpenCode experimental API.
  *
  * @param projectDir  The project's main directory (for SDK client scoping)
  * @param sourceDir   The source directory (may differ from projectDir in monorepos)
@@ -251,80 +132,92 @@ export async function createWorktree(
 	sourceDir: string,
 	sessionSlug: string,
 ): Promise<WorktreeResult> {
-	// Try API first (works for local and remote servers)
-	const apiResult = await createViaApi(projectDir, sourceDir, sessionSlug)
-	if (apiResult) return apiResult
+	const client = getProjectClient(projectDir)
+	if (!client) {
+		throw new Error("Not connected to server")
+	}
 
-	// Fall back to Electron IPC
-	const electronResult = await createViaElectron(sourceDir, sessionSlug)
-	if (electronResult) return electronResult
+	try {
+		const result = await client.experimental.worktree.create({
+			body: {
+				name: sessionSlug,
+				startCommand: buildEnvSyncCommand(sourceDir, "$PWD"),
+			},
+		})
 
-	throw new Error("Failed to create worktree: no available backend")
+		const data = result.data as WorktreeCreateResult | undefined
+		if (!data?.directory) {
+			throw new Error("Worktree API returned unexpected response")
+		}
+
+		log.info("Worktree created via API", {
+			name: data.name,
+			branch: data.branch,
+			directory: data.directory,
+		})
+
+		// Wait for the worktree to be fully bootstrapped
+		await waitForWorktreeReady(client, data.directory)
+
+		// Compute the workspace subpath for monorepo support
+		const subPath = computeSubPath(projectDir, sourceDir)
+		const worktreeWorkspace = subPath ? `${data.directory}/${subPath}` : data.directory
+
+		return {
+			worktreeRoot: data.directory,
+			worktreeWorkspace,
+			branchName: data.branch,
+		}
+	} catch (err) {
+		log.error("Worktree creation failed", err)
+		throw new Error(
+			`Failed to create worktree: ${err instanceof Error ? err.message : "Unknown error"}`,
+		)
+	}
 }
 
 /**
- * Lists worktrees for a project via the OpenCode API.
- * Falls back to Electron IPC if the API is unavailable.
+ * Lists worktree directories for a project via the OpenCode API.
  */
 export async function listWorktrees(projectDir: string): Promise<string[]> {
 	const client = getProjectClient(projectDir)
-	if (client) {
-		try {
-			const result = await client.experimental.worktree.list()
-			return (result.data ?? []) as string[]
-		} catch {
-			log.debug("Worktree list API not available, falling back to Electron IPC")
-		}
+	if (!client) {
+		return []
 	}
 
-	// Electron fallback: list from the filesystem
-	if (isElectron) {
-		try {
-			const worktrees = await window.palot.worktree.list()
-			return worktrees.map((wt) => wt.path)
-		} catch {
-			log.debug("Electron worktree list also failed")
-		}
+	try {
+		const result = await client.experimental.worktree.list()
+		return (result.data ?? []) as string[]
+	} catch {
+		log.debug("Worktree list API not available")
+		return []
 	}
-
-	return []
 }
 
 /**
  * Removes a worktree via the OpenCode API.
- * Falls back to Electron IPC if the API is unavailable.
  */
-export async function removeWorktree(
-	projectDir: string,
-	worktreeDir: string,
-	sourceRepo?: string,
-): Promise<void> {
+export async function removeWorktree(projectDir: string, worktreeDir: string): Promise<void> {
 	const client = getProjectClient(projectDir)
-	if (client) {
-		try {
-			await client.experimental.worktree.remove({
-				body: { directory: worktreeDir },
-			})
-			log.info("Worktree removed via API", { worktreeDir })
-			return
-		} catch {
-			log.debug("Worktree remove API not available, falling back to Electron IPC")
-		}
+	if (!client) {
+		throw new Error("Not connected to server")
 	}
 
-	// Electron fallback
-	if (isElectron) {
-		const source = sourceRepo ?? projectDir
-		await window.palot.worktree.remove(worktreeDir, source)
-		return
+	try {
+		await client.experimental.worktree.remove({
+			body: { directory: worktreeDir },
+		})
+		log.info("Worktree removed via API", { worktreeDir })
+	} catch (err) {
+		log.error("Worktree removal failed", err)
+		throw new Error(
+			`Failed to remove worktree: ${err instanceof Error ? err.message : "Unknown error"}`,
+		)
 	}
-
-	throw new Error("Failed to remove worktree: no available backend")
 }
 
 /**
  * Resets a worktree back to the default branch via the OpenCode API.
- * This is API-only; no Electron fallback (this is a new feature).
  */
 export async function resetWorktree(projectDir: string, worktreeDir: string): Promise<void> {
 	const client = getProjectClient(projectDir)
@@ -342,5 +235,100 @@ export async function resetWorktree(projectDir: string, worktreeDir: string): Pr
 		throw new Error(
 			`Failed to reset worktree: ${err instanceof Error ? err.message : "Unknown error"}`,
 		)
+	}
+}
+
+// ============================================================
+// Remote apply-to-local (via session.diff API)
+// ============================================================
+
+/**
+ * Fetches the diff from a remote worktree session via the OpenCode `session.diff` API,
+ * then applies it to the local checkout using Electron IPC (`git apply`).
+ *
+ * This enables "apply to local" for worktrees running on remote servers, where
+ * Palot cannot directly access the worktree filesystem.
+ *
+ * @param projectDir  The project directory (for SDK client scoping)
+ * @param sessionId   The OpenCode session ID running in the remote worktree
+ * @param localDir    The local directory to apply changes to
+ */
+export async function applyRemoteDiffToLocal(
+	projectDir: string,
+	sessionId: string,
+	localDir: string,
+): Promise<RemoteApplyResult> {
+	const client = getProjectClient(projectDir)
+	if (!client) {
+		return { success: false, message: "", error: "Not connected to server" }
+	}
+
+	if (!isElectron) {
+		return {
+			success: false,
+			message: "",
+			error: "Local git access required (Electron only)",
+		}
+	}
+
+	try {
+		log.info("Fetching remote diff for apply-to-local", { sessionId })
+		const result = await client.session.diff({ sessionID: sessionId })
+		const diffs = result.data as unknown
+
+		if (!diffs || (Array.isArray(diffs) && diffs.length === 0)) {
+			return { success: true, message: "No changes to apply" }
+		}
+
+		// Build a unified diff string from the API response
+		let diffText: string
+		if (typeof diffs === "string") {
+			diffText = diffs
+		} else if (Array.isArray(diffs)) {
+			diffText = diffs
+				.map((d) => {
+					if (typeof d === "string") return d
+					if (typeof d === "object" && d !== null && "diff" in d) {
+						return (d as { diff: string }).diff
+					}
+					return ""
+				})
+				.filter(Boolean)
+				.join("\n")
+		} else {
+			return { success: false, message: "", error: "Unexpected diff response format" }
+		}
+
+		if (!diffText.trim()) {
+			return { success: true, message: "No changes to apply" }
+		}
+
+		log.info("Remote diff fetched, applying locally", {
+			diffLength: diffText.length,
+			localDir,
+		})
+
+		const { gitApplyDiffText } = await import("./backend")
+		const applyResult = await gitApplyDiffText(localDir, diffText)
+
+		if (applyResult.success) {
+			return {
+				success: true,
+				message: `Applied ${applyResult.filesApplied.length} file${applyResult.filesApplied.length !== 1 ? "s" : ""} to local`,
+			}
+		}
+
+		return {
+			success: false,
+			message: "",
+			error: applyResult.error ?? "Failed to apply diff",
+		}
+	} catch (err) {
+		log.error("Remote apply-to-local failed", err)
+		return {
+			success: false,
+			message: "",
+			error: err instanceof Error ? err.message : "Failed to fetch or apply remote diff",
+		}
 	}
 }

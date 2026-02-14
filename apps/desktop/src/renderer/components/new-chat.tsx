@@ -16,6 +16,7 @@ import {
 	FileTextIcon,
 	GitForkIcon,
 	GitPullRequestIcon,
+	Loader2Icon,
 	MonitorIcon,
 } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
@@ -37,7 +38,6 @@ import {
 } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import type { FileAttachment } from "../lib/types"
-import { isElectron } from "../services/backend"
 import { createWorktree } from "../services/worktree-service"
 import { useSetAppBarContent } from "./app-bar-context"
 import { BranchPicker } from "./branch-picker"
@@ -154,6 +154,7 @@ export function NewChat() {
 
 	const [selectedDirectory, setSelectedDirectory] = useState<string>("")
 	const [launching, setLaunching] = useState(false)
+	const [launchPhase, setLaunchPhase] = useState<string | null>(null)
 	const [error, setError] = useState<string | null>(null)
 	const [worktreeMode, setWorktreeMode] = useState<"local" | "worktree">("local")
 
@@ -294,6 +295,7 @@ export function NewChat() {
 		async (promptText: string, files?: FileAttachment[]) => {
 			if (!selectedDirectory || !promptText) return
 			setLaunching(true)
+			setLaunchPhase(null)
 			setError(null)
 			try {
 				// Generate a session slug from the first few words of the prompt
@@ -322,6 +324,7 @@ export function NewChat() {
 
 				if (worktreeMode === "worktree") {
 					try {
+						setLaunchPhase("Creating worktree...")
 						const result = await createWorktree(selectedDirectory, selectedDirectory, sessionSlug)
 						worktreeResult = {
 							worktreeRoot: result.worktreeRoot,
@@ -339,6 +342,7 @@ export function NewChat() {
 
 				// Use the worktree workspace for the SDK session (so the agent works there),
 				// but store the original project directory on the SessionEntry for grouping.
+				setLaunchPhase("Starting session...")
 				const sdkDirectory = worktreeResult?.worktreeWorkspace ?? selectedDirectory
 				const session = await createSession(sdkDirectory)
 				if (session) {
@@ -398,6 +402,7 @@ export function NewChat() {
 				setError(err instanceof Error ? err.message : "Failed to create session")
 			} finally {
 				setLaunching(false)
+				setLaunchPhase(null)
 			}
 		},
 		[
@@ -563,11 +568,19 @@ export function NewChat() {
 								) : undefined
 							}
 							extraSlot={
-								vcs && isElectron ? (
+								vcs ? (
 									<WorktreeToggle mode={worktreeMode} onModeChange={setWorktreeMode} />
 								) : undefined
 							}
 						/>
+					)}
+
+					{/* Launch phase indicator */}
+					{launching && launchPhase && (
+						<div className="mt-2 flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+							<Loader2Icon className="size-3.5 animate-spin" />
+							{launchPhase}
+						</div>
 					)}
 
 					{/* Error */}

@@ -295,6 +295,53 @@ export async function createBranch(
 }
 
 /**
+ * Applies a raw diff string to a target directory using `git apply`.
+ * Used for remote worktree apply-to-local, where the diff is fetched
+ * from the OpenCode session.diff API.
+ */
+export async function applyDiffTextToLocal(
+	localDir: string,
+	diffText: string,
+): Promise<{ success: boolean; filesApplied: string[]; error?: string }> {
+	if (!diffText.trim()) {
+		return { success: true, filesApplied: [], error: "No changes to apply" }
+	}
+
+	const os = await import("node:os")
+	const fs = await import("node:fs/promises")
+	const tmpFile = path.join(os.tmpdir(), `palot-remote-patch-${Date.now()}.patch`)
+
+	try {
+		await fs.writeFile(tmpFile, diffText)
+
+		const localGit = getGit(localDir)
+		try {
+			try {
+				await localGit.raw(["apply", "--3way", tmpFile])
+			} catch {
+				// --3way failed, try without it
+				await localGit.raw(["apply", tmpFile])
+			}
+		} finally {
+			await fs.unlink(tmpFile).catch(() => {})
+		}
+
+		// Get list of files that changed
+		const status = await localGit.status()
+		const filesApplied = [...status.modified, ...status.created, ...status.not_added]
+
+		return { success: true, filesApplied }
+	} catch (err) {
+		await import("node:fs/promises").then((f) => f.unlink(tmpFile)).catch(() => {})
+		return {
+			success: false,
+			filesApplied: [],
+			error: err instanceof Error ? err.message : "Failed to apply diff",
+		}
+	}
+}
+
+/**
  * Applies uncommitted changes from a source directory (worktree) to a target directory
  * (local checkout) as a patch. This lets users "cherry-pick" worktree changes into
  * their working copy without any branch/commit requirements.
@@ -372,123 +419,8 @@ export async function getRemoteUrl(directory: string, remote = "origin"): Promis
 }
 
 // ============================================================
-// Worktree operations
+// Repository info
 // ============================================================
-
-export interface WorktreeEntry {
-	/** Absolute path to the worktree directory */
-	path: string
-	/** HEAD commit hash */
-	head: string
-	/** Branch name (empty string if detached) */
-	branch: string
-	/** Whether this is a bare repository worktree */
-	bare: boolean
-}
-
-export interface WorktreeAddResult {
-	success: boolean
-	/** Absolute path to the created worktree */
-	worktreePath?: string
-	/** Branch name created or checked out */
-	branchName?: string
-	error?: string
-}
-
-export interface WorktreeRemoveResult {
-	success: boolean
-	error?: string
-}
-
-/**
- * Adds a git worktree. Creates a new branch if `newBranch` is provided,
- * otherwise checks out an existing ref.
- */
-export async function addWorktree(
-	repoDir: string,
-	worktreePath: string,
-	options: { newBranch?: string; ref?: string } = {},
-): Promise<WorktreeAddResult> {
-	const git = getGit(repoDir)
-	try {
-		const args = ["worktree", "add"]
-		if (options.newBranch) {
-			args.push("-b", options.newBranch)
-		}
-		args.push(worktreePath)
-		if (options.ref) {
-			args.push(options.ref)
-		}
-		await git.raw(args)
-		return {
-			success: true,
-			worktreePath: path.resolve(repoDir, worktreePath),
-			branchName: options.newBranch ?? options.ref ?? "",
-		}
-	} catch (err) {
-		return {
-			success: false,
-			error: err instanceof Error ? err.message : "Failed to add worktree",
-		}
-	}
-}
-
-/**
- * Removes a git worktree. Optionally forces removal even with uncommitted changes.
- */
-export async function removeWorktree(
-	repoDir: string,
-	worktreePath: string,
-	force = false,
-): Promise<WorktreeRemoveResult> {
-	const git = getGit(repoDir)
-	try {
-		const args = ["worktree", "remove"]
-		if (force) args.push("--force")
-		args.push(worktreePath)
-		await git.raw(args)
-		return { success: true }
-	} catch (err) {
-		return {
-			success: false,
-			error: err instanceof Error ? err.message : "Failed to remove worktree",
-		}
-	}
-}
-
-/**
- * Lists all worktrees for a repository by parsing `git worktree list --porcelain`.
- */
-export async function listWorktrees(repoDir: string): Promise<WorktreeEntry[]> {
-	const git = getGit(repoDir)
-	const raw = await git.raw(["worktree", "list", "--porcelain"])
-	const entries: WorktreeEntry[] = []
-	let current: Partial<WorktreeEntry> = {}
-
-	for (const line of raw.split("\n")) {
-		if (line.startsWith("worktree ")) {
-			if (current.path) entries.push(current as WorktreeEntry)
-			current = { path: line.slice("worktree ".length), head: "", branch: "", bare: false }
-		} else if (line.startsWith("HEAD ")) {
-			current.head = line.slice("HEAD ".length)
-		} else if (line.startsWith("branch ")) {
-			// branch refs/heads/main -> main
-			current.branch = line.slice("branch ".length).replace(/^refs\/heads\//, "")
-		} else if (line === "bare") {
-			current.bare = true
-		} else if (line === "detached") {
-			current.branch = ""
-		} else if (line === "" && current.path) {
-			entries.push(current as WorktreeEntry)
-			current = {}
-		}
-	}
-
-	// Push final entry if exists
-	if (current.path) entries.push(current as WorktreeEntry)
-
-	return entries
-}
 
 /**
  * Gets the git repository root for a directory.
@@ -502,87 +434,4 @@ export async function getGitRoot(directory: string): Promise<string | null> {
 	} catch {
 		return null
 	}
-}
-
-/**
- * Resolves the default remote branch.
- * Checks origin/HEAD first, falls back to origin/main, origin/master, then HEAD.
- */
-export async function getDefaultBranch(repoDir: string): Promise<string> {
-	const git = getGit(repoDir)
-	try {
-		// Try origin/HEAD -> origin/main symbolic ref
-		const symbolic = await git.raw(["symbolic-ref", "refs/remotes/origin/HEAD"]).catch(() => null)
-		if (symbolic) {
-			return symbolic.trim().replace(/^refs\/remotes\/origin\//, "")
-		}
-	} catch {
-		// Fall through
-	}
-
-	try {
-		// Check if origin/main exists
-		await git.raw(["rev-parse", "--verify", "origin/main"])
-		return "main"
-	} catch {
-		// Fall through
-	}
-
-	try {
-		// Check if origin/master exists
-		await git.raw(["rev-parse", "--verify", "origin/master"])
-		return "master"
-	} catch {
-		// Fall through
-	}
-
-	// Final fallback: current branch
-	try {
-		const branch = await git.raw(["rev-parse", "--abbrev-ref", "HEAD"])
-		return branch.trim()
-	} catch {
-		return "main"
-	}
-}
-
-/**
- * Copies gitignored environment files (.env*) from source to target directory.
- * Skips .env*.example files. Uses fs to read and write.
- */
-export async function copyGitIgnoredFiles(
-	sourceDir: string,
-	targetDir: string,
-	patterns: string[] = [".env*"],
-): Promise<{ copied: string[]; errors: string[] }> {
-	const fs = await import("node:fs/promises")
-	const copied: string[] = []
-	const errors: string[] = []
-
-	for (const pattern of patterns) {
-		try {
-			const entries = await fs.readdir(sourceDir)
-			const globBase = pattern.replace("*", "")
-			const matching = entries.filter(
-				(e) => e.startsWith(globBase) && !e.endsWith(".example") && !e.endsWith(".sample"),
-			)
-
-			for (const filename of matching) {
-				try {
-					const src = path.join(sourceDir, filename)
-					const dest = path.join(targetDir, filename)
-					const stat = await fs.stat(src)
-					if (stat.isFile()) {
-						await fs.copyFile(src, dest)
-						copied.push(filename)
-					}
-				} catch (err) {
-					errors.push(`${filename}: ${err instanceof Error ? err.message : "copy failed"}`)
-				}
-			}
-		} catch (err) {
-			errors.push(`${pattern}: ${err instanceof Error ? err.message : "readdir failed"}`)
-		}
-	}
-
-	return { copied, errors }
 }

@@ -5,10 +5,10 @@
  * "Apply to local" patches the worktree's changes into the user's local checkout.
  * "Commit & Push" commits all changes and pushes the branch to origin.
  *
- * These go beyond Codex's multi-dialog flow by providing:
- * - A live diff summary on hover
- * - One-click commit+push in a single action
- * - Apply-to-local as uncommitted changes (simpler than Codex's overwrite/apply split)
+ * Apply-to-local supports two modes:
+ * - **Local worktree**: uses `git diff` + `git apply` via Electron IPC (fast, direct)
+ * - **Remote worktree**: fetches diff from OpenCode's `session.diff` API, then applies
+ *   locally via Electron IPC. Requires Electron for the local `git apply` step.
  */
 
 import { Button } from "@palot/ui/components/button"
@@ -44,6 +44,7 @@ import {
 	gitPush,
 	isElectron,
 } from "../services/backend"
+import { applyRemoteDiffToLocal } from "../services/worktree-service"
 
 // ============================================================
 // Types
@@ -78,23 +79,43 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 	const [loading, setLoading] = useState(false)
 	const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
 
-	// Apply-to-local requires local git access (Electron IPC).
-	// On remote servers this isn't available yet.
+	// Apply-to-local always requires Electron (for the local `git apply` step).
+	// The diff source can be either local (IPC git diff) or remote (session.diff API).
 	const canApply = isElectron
+
+	// Determine if the worktree is on a remote server.
+	// If the worktree path doesn't match a local filesystem path pattern, it's remote.
+	// We detect this by checking if the worktree path starts with the project directory.
+	const isRemoteWorktree =
+		!!agent.worktreePath &&
+		!agent.worktreePath.startsWith(
+			agent.directory.charAt(0) === "/" ? "/" : agent.directory.slice(0, 3),
+		)
 
 	const handleApply = useCallback(async () => {
 		if (!agent.worktreePath || !canApply) return
 		setLoading(true)
 		setResult(null)
 		try {
-			const res = await gitApplyToLocal(agent.worktreePath, agent.directory)
-			if (res.success) {
-				setResult({
-					success: true,
-					message: `Applied ${res.filesApplied.length} file${res.filesApplied.length !== 1 ? "s" : ""} to local`,
-				})
+			if (isRemoteWorktree) {
+				// Remote worktree: fetch diff from OpenCode API, apply locally
+				const res = await applyRemoteDiffToLocal(agent.directory, agent.sessionId, agent.directory)
+				if (res.success) {
+					setResult({ success: true, message: res.message })
+				} else {
+					setResult({ success: false, message: res.error ?? "Apply failed" })
+				}
 			} else {
-				setResult({ success: false, message: res.error ?? "Apply failed" })
+				// Local worktree: use direct git diff + apply via IPC
+				const res = await gitApplyToLocal(agent.worktreePath, agent.directory)
+				if (res.success) {
+					setResult({
+						success: true,
+						message: `Applied ${res.filesApplied.length} file${res.filesApplied.length !== 1 ? "s" : ""} to local`,
+					})
+				} else {
+					setResult({ success: false, message: res.error ?? "Apply failed" })
+				}
 			}
 		} catch (err) {
 			setResult({
@@ -105,7 +126,7 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 			setLoading(false)
 			setTimeout(() => setResult(null), 4000)
 		}
-	}, [agent.worktreePath, agent.directory])
+	}, [agent.worktreePath, agent.directory, agent.sessionId, isRemoteWorktree])
 
 	return (
 		<Tooltip>
@@ -142,7 +163,7 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 			<TooltipContent side="bottom">
 				{canApply
 					? "Apply worktree changes to your local checkout as uncommitted changes"
-					: "Apply to local is only available when the server runs locally"}
+					: "Apply to local requires the Electron desktop app"}
 			</TooltipContent>
 		</Tooltip>
 	)

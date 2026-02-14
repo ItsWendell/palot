@@ -16,20 +16,17 @@ import type { CreateAutomationInput, UpdateAutomationInput } from "./automation/
 import { installCli, isCliInstalled, uninstallCli } from "./cli-install"
 import { deleteCredential, getCredential, storeCredential } from "./credential-store"
 import {
-	addWorktree,
 	applyChangesToLocal,
+	applyDiffTextToLocal,
 	checkout,
 	commitAll,
 	createBranch,
-	getDefaultBranch,
 	getDiffStat,
 	getGitRoot,
 	getRemoteUrl,
 	getStatus,
 	listBranches,
-	listWorktrees,
 	push,
-	removeWorktree,
 	stashAndCheckout,
 	stashPop,
 } from "./git-service"
@@ -53,12 +50,6 @@ import { getOpenInTargets, openInTarget, setPreferredTarget } from "./open-in-ta
 import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
 import { getOpaqueWindows, getSettings, onSettingsChanged, updateSettings } from "./settings-store"
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from "./updater"
-import {
-	createSessionWorktree,
-	listAllWorktrees,
-	pruneStaleWorktrees,
-	removeSessionWorktree,
-} from "./worktree-manager"
 
 const log = createLogger("ipc")
 
@@ -263,32 +254,11 @@ export function registerIpcHandlers(): void {
 	)
 
 	ipcMain.handle(
-		"git:worktree-list",
+		"git:apply-diff-text",
 		withLogging(
-			"git:worktree-list",
-			async (_, directory: string) => await listWorktrees(directory),
-		),
-	)
-
-	ipcMain.handle(
-		"git:worktree-add",
-		withLogging(
-			"git:worktree-add",
-			async (
-				_,
-				repoDir: string,
-				worktreePath: string,
-				options: { newBranch?: string; ref?: string },
-			) => await addWorktree(repoDir, worktreePath, options),
-		),
-	)
-
-	ipcMain.handle(
-		"git:worktree-remove",
-		withLogging(
-			"git:worktree-remove",
-			async (_, repoDir: string, worktreePath: string, force?: boolean) =>
-				await removeWorktree(repoDir, worktreePath, force),
+			"git:apply-diff-text",
+			async (_, localDir: string, diffText: string) =>
+				await applyDiffTextToLocal(localDir, diffText),
 		),
 	)
 
@@ -298,51 +268,10 @@ export function registerIpcHandlers(): void {
 	)
 
 	ipcMain.handle(
-		"git:default-branch",
-		withLogging(
-			"git:default-branch",
-			async (_, repoDir: string) => await getDefaultBranch(repoDir),
-		),
-	)
-
-	ipcMain.handle(
 		"git:remote-url",
 		withLogging(
 			"git:remote-url",
 			async (_, directory: string, remote?: string) => await getRemoteUrl(directory, remote),
-		),
-	)
-
-	// --- Worktree manager (high-level lifecycle) ---
-
-	ipcMain.handle(
-		"worktree:create",
-		withLogging(
-			"worktree:create",
-			async (_, sourceDir: string, sessionSlug: string) =>
-				await createSessionWorktree(sourceDir, sessionSlug),
-		),
-	)
-
-	ipcMain.handle(
-		"worktree:remove",
-		withLogging(
-			"worktree:remove",
-			async (_, worktreeRoot: string, sourceDir: string) =>
-				await removeSessionWorktree(worktreeRoot, sourceDir),
-		),
-	)
-
-	ipcMain.handle(
-		"worktree:list",
-		withLogging("worktree:list", async () => await listAllWorktrees()),
-	)
-
-	ipcMain.handle(
-		"worktree:prune",
-		withLogging(
-			"worktree:prune",
-			async (_, maxAgeDays?: number) => await pruneStaleWorktrees(maxAgeDays),
 		),
 	)
 

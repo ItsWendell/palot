@@ -21,7 +21,6 @@ import type {
 	GitPushResult,
 	GitStashResult,
 	GitStatusInfo,
-	ManagedWorktree,
 	ModelState,
 	OpenInTargetsResult,
 	UpdateAutomationInput,
@@ -229,41 +228,16 @@ export async function gitStashPop(directory: string): Promise<GitStashResult> {
 }
 
 // ============================================================
-// Worktree operations — OpenCode API with Electron IPC fallback
+// Worktree operations — OpenCode API only
 // ============================================================
 
 export type { WorktreeResult } from "./worktree-service"
-// Re-export from the dedicated worktree service for consumers that need
-// the new API-based worktree operations (e.g. new-chat.tsx).
 export {
 	createWorktree as createWorktreeViaApi,
 	listWorktrees as listWorktreesViaApi,
 	removeWorktree as removeWorktreeViaApi,
 	resetWorktree,
 } from "./worktree-service"
-
-/**
- * Lists all managed worktrees with metadata.
- * Uses the Electron IPC for the detailed view (disk usage, timestamps, etc.)
- * that the settings page needs. The API-based list only returns directories.
- */
-export async function listManagedWorktrees(): Promise<ManagedWorktree[]> {
-	if (isElectron) {
-		return window.palot.worktree.list()
-	}
-	return []
-}
-
-/**
- * Prunes worktrees older than maxAgeDays.
- * Electron-only since it needs filesystem access for time-based pruning.
- */
-export async function pruneWorktrees(maxAgeDays?: number): Promise<number> {
-	if (isElectron) {
-		return window.palot.worktree.prune(maxAgeDays)
-	}
-	return 0
-}
 
 /**
  * Gets the git repository root for a directory.
@@ -337,6 +311,21 @@ export async function gitApplyToLocal(
 ): Promise<GitApplyResult> {
 	if (isElectron) {
 		return window.palot.git.applyToLocal(worktreeDir, localDir)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+/**
+ * Applies a raw diff string to a local directory using `git apply`.
+ * Used for remote worktree apply-to-local, where the diff is fetched
+ * from the OpenCode session.diff API rather than from a local worktree.
+ */
+export async function gitApplyDiffText(
+	localDir: string,
+	diffText: string,
+): Promise<GitApplyResult> {
+	if (isElectron) {
+		return window.palot.git.applyDiffText(localDir, diffText)
 	}
 	throw new Error("Git operations are only available in Electron mode")
 }
