@@ -16,12 +16,17 @@ import {
 	FileTextIcon,
 	GitForkIcon,
 	GitPullRequestIcon,
-	Loader2Icon,
 	MonitorIcon,
 } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { projectModelsAtom, setProjectModelAtom } from "../atoms/preferences"
-import { setSessionBranchAtom, setSessionWorktreeAtom, upsertSessionAtom } from "../atoms/sessions"
+import {
+	removeSessionAtom,
+	setSessionBranchAtom,
+	setSessionSetupPhaseAtom,
+	setSessionWorktreeAtom,
+	upsertSessionAtom,
+} from "../atoms/sessions"
 import { appStore } from "../atoms/store"
 import { useAgents, useProjectList } from "../hooks/use-agents"
 import { NEW_CHAT_DRAFT_KEY, useDraftActions, useDraftSnapshot } from "../hooks/use-draft"
@@ -154,7 +159,6 @@ export function NewChat() {
 
 	const [selectedDirectory, setSelectedDirectory] = useState<string>("")
 	const [launching, setLaunching] = useState(false)
-	const [launchPhase, setLaunchPhase] = useState<string | null>(null)
 	const [error, setError] = useState<string | null>(null)
 	const [worktreeMode, setWorktreeMode] = useState<"local" | "worktree">("local")
 
@@ -291,133 +295,208 @@ export function NewChat() {
 		setSelectedDirectory(projects[0].directory)
 	}, [projectSlug, projects])
 
-	const handleLaunch = useCallback(
+	// ---
+	// Launch helpers
+	// ---
+
+	/** Persist the model + variant + agent for this project so new sessions remember it. */
+	const persistProjectModel = useCallback(() => {
+		if (!effectiveModel || !selectedDirectory) return
+		appStore.set(setProjectModelAtom, {
+			directory: selectedDirectory,
+			model: {
+				...effectiveModel,
+				variant: selectedVariant,
+				agent: selectedAgent ?? undefined,
+			},
+		})
+	}, [effectiveModel, selectedDirectory, selectedVariant, selectedAgent])
+
+	/** Navigate to the chat view for a given session. */
+	const navigateToSession = useCallback(
+		(sessionId: string) => {
+			const project = projects.find((p) => p.directory === selectedDirectory)
+			navigate({
+				to: "/project/$projectSlug/session/$sessionId",
+				params: {
+					projectSlug: project?.slug ?? "unknown",
+					sessionId,
+				},
+			})
+		},
+		[projects, selectedDirectory, navigate],
+	)
+
+	/** Launch a session in local mode (no worktree). */
+	const launchLocal = useCallback(
 		async (promptText: string, files?: FileAttachment[]) => {
-			if (!selectedDirectory || !promptText) return
-			setLaunching(true)
-			setLaunchPhase(null)
-			setError(null)
-			try {
-				// Generate a session slug from the first few words of the prompt
-				const sessionSlug = promptText
-					.toLowerCase()
-					.replace(/[^a-z0-9\s-]/g, "")
-					.trim()
-					.split(/\s+/)
-					.slice(0, 4)
-					.join("-")
-					.slice(0, 40)
+			const session = await createSession(selectedDirectory)
+			if (!session) return
 
-				// If worktree mode, create the worktree before the session.
-				// The session is always created under the original project directory
-				// so it groups correctly in the sidebar. The worktree workspace path
-				// is only used for the SDK calls (session creation + prompt sending)
-				// so the agent operates in the isolated worktree.
-				//
-				// Uses the OpenCode experimental worktree API first (works for both
-				// local and remote servers), with automatic fallback to Electron IPC.
-				let worktreeResult: {
-					worktreeRoot: string
-					worktreeWorkspace: string
-					branchName: string
-				} | null = null
+			const currentBranch = vcs?.branch ?? ""
+			if (currentBranch) {
+				appStore.set(setSessionBranchAtom, { sessionId: session.id, branch: currentBranch })
+			}
 
-				if (worktreeMode === "worktree") {
-					try {
-						setLaunchPhase("Creating worktree...")
-						const result = await createWorktree(selectedDirectory, selectedDirectory, sessionSlug)
-						worktreeResult = {
-							worktreeRoot: result.worktreeRoot,
-							worktreeWorkspace: result.worktreeWorkspace,
-							branchName: result.branchName,
-						}
-					} catch (err) {
-						// Fall back to local mode with a warning
-						console.warn("Worktree creation failed, falling back to local mode:", err)
-						setError(
-							`Worktree creation failed (running locally): ${err instanceof Error ? err.message : "Unknown error"}`,
-						)
+			persistProjectModel()
+
+			await sendPrompt(selectedDirectory, session.id, promptText, {
+				model: effectiveModel ?? undefined,
+				agent: selectedAgent ?? undefined,
+				variant: selectedVariant,
+				files,
+			})
+			clearDraft()
+			navigateToSession(session.id)
+		},
+		[
+			selectedDirectory,
+			createSession,
+			sendPrompt,
+			effectiveModel,
+			selectedAgent,
+			selectedVariant,
+			clearDraft,
+			persistProjectModel,
+			navigateToSession,
+			vcs,
+		],
+	)
+
+	/**
+	 * Launch a session in worktree mode.
+	 *
+	 * Creates a stub session immediately and navigates to the chat view so
+	 * the user sees progress in the main content area instead of waiting
+	 * on the new-chat screen. The actual worktree creation, real session
+	 * creation, and prompt sending happen in the background.
+	 */
+	const launchWorktree = useCallback(
+		(promptText: string, files?: FileAttachment[]) => {
+			const sessionSlug = promptText
+				.toLowerCase()
+				.replace(/[^a-z0-9\s-]/g, "")
+				.trim()
+				.split(/\s+/)
+				.slice(0, 4)
+				.join("-")
+				.slice(0, 40)
+
+			// Create a stub session so the chat view can render immediately.
+			const stubId = crypto.randomUUID()
+			const now = Date.now()
+			appStore.set(upsertSessionAtom, {
+				session: {
+					id: stubId,
+					slug: sessionSlug,
+					projectID: "",
+					directory: selectedDirectory,
+					title: "Setting up worktree...",
+					version: "",
+					time: { created: now, updated: now },
+				},
+				directory: selectedDirectory,
+			})
+			appStore.set(setSessionSetupPhaseAtom, {
+				sessionId: stubId,
+				setupPhase: "creating-worktree",
+			})
+
+			persistProjectModel()
+			clearDraft()
+			navigateToSession(stubId)
+
+			// Background: create worktree -> create real session -> send prompt.
+			// The chat view shows the setup phase while this runs.
+			const run = async () => {
+				try {
+					// Phase 1: Create the worktree
+					const result = await createWorktree(selectedDirectory, selectedDirectory, sessionSlug)
+					const sdkDirectory = result.worktreeWorkspace
+
+					// Phase 2: Create the real session
+					appStore.set(setSessionSetupPhaseAtom, {
+						sessionId: stubId,
+						setupPhase: "starting-session",
+					})
+					const session = await createSession(sdkDirectory)
+					if (!session) {
+						throw new Error("Failed to create session in worktree")
 					}
-				}
 
-				// Use the worktree workspace for the SDK session (so the agent works there),
-				// but store the original project directory on the SessionEntry for grouping.
-				setLaunchPhase("Starting session...")
-				const sdkDirectory = worktreeResult?.worktreeWorkspace ?? selectedDirectory
-				const session = await createSession(sdkDirectory)
-				if (session) {
-					// Override the session's directory back to the original project
-					// so it groups under the correct project in the sidebar.
-					if (worktreeResult) {
-						appStore.set(upsertSessionAtom, {
-							session,
-							directory: selectedDirectory,
-						})
-					}
+					// Replace the stub with the real session data. Override the
+					// directory back to the parent so it groups correctly in the sidebar.
+					appStore.set(upsertSessionAtom, {
+						session,
+						directory: selectedDirectory,
+					})
+					appStore.set(setSessionWorktreeAtom, {
+						sessionId: session.id,
+						worktreePath: result.worktreeRoot,
+						worktreeBranch: result.branchName,
+					})
+					appStore.set(setSessionBranchAtom, {
+						sessionId: session.id,
+						branch: result.branchName,
+					})
 
-					// Capture the current branch at session creation time
-					const currentBranch = worktreeResult?.branchName ?? vcs?.branch ?? ""
-					if (currentBranch) {
-						appStore.set(setSessionBranchAtom, { sessionId: session.id, branch: currentBranch })
-					}
+					// Navigate to the real session, then clean up the stub
+					navigateToSession(session.id)
+					appStore.set(removeSessionAtom, stubId)
 
-					// Store worktree metadata on the session
-					if (worktreeResult) {
-						appStore.set(setSessionWorktreeAtom, {
-							sessionId: session.id,
-							worktreePath: worktreeResult.worktreeRoot,
-							worktreeBranch: worktreeResult.branchName,
-						})
-					}
-
-					// Persist the model + variant + agent for this project so new sessions remember it
-					if (effectiveModel) {
-						appStore.set(setProjectModelAtom, {
-							directory: selectedDirectory,
-							model: {
-								...effectiveModel,
-								variant: selectedVariant,
-								agent: selectedAgent ?? undefined,
-							},
-						})
-					}
-
+					// Phase 3: Send the prompt
 					await sendPrompt(sdkDirectory, session.id, promptText, {
 						model: effectiveModel ?? undefined,
 						agent: selectedAgent ?? undefined,
 						variant: selectedVariant,
 						files,
 					})
-					clearDraft()
-					const project = projects.find((p) => p.directory === selectedDirectory)
-					navigate({
-						to: "/project/$projectSlug/session/$sessionId",
-						params: {
-							projectSlug: project?.slug ?? "unknown",
-							sessionId: session.id,
-						},
-					})
+				} catch (err) {
+					console.error("Worktree launch failed:", err)
+					// Remove the stub and navigate back to new chat
+					appStore.set(removeSessionAtom, stubId)
+					setError(`Worktree setup failed: ${err instanceof Error ? err.message : "Unknown error"}`)
+					navigate({ to: "/" })
+				}
+			}
+
+			run()
+		},
+		[
+			selectedDirectory,
+			createSession,
+			sendPrompt,
+			effectiveModel,
+			selectedAgent,
+			selectedVariant,
+			clearDraft,
+			persistProjectModel,
+			navigateToSession,
+			navigate,
+		],
+	)
+
+	const handleLaunch = useCallback(
+		async (promptText: string, files?: FileAttachment[]) => {
+			if (!selectedDirectory || !promptText) return
+			setLaunching(true)
+			setError(null)
+			try {
+				if (worktreeMode === "worktree") {
+					// Worktree mode navigates immediately and runs setup in the background.
+					// The launching state is cleared right away since the chat view takes over.
+					launchWorktree(promptText, files)
+					setLaunching(false)
+				} else {
+					await launchLocal(promptText, files)
 				}
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Failed to create session")
 			} finally {
 				setLaunching(false)
-				setLaunchPhase(null)
 			}
 		},
-		[
-			selectedDirectory,
-			worktreeMode,
-			createSession,
-			sendPrompt,
-			projects,
-			navigate,
-			effectiveModel,
-			selectedAgent,
-			selectedVariant,
-			clearDraft,
-			vcs,
-		],
+		[selectedDirectory, worktreeMode, launchLocal, launchWorktree],
 	)
 
 	const hasToolbar = providers
@@ -573,14 +652,6 @@ export function NewChat() {
 								) : undefined
 							}
 						/>
-					)}
-
-					{/* Launch phase indicator */}
-					{launching && launchPhase && (
-						<div className="mt-2 flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-							<Loader2Icon className="size-3.5 animate-spin" />
-							{launchPhase}
-						</div>
 					)}
 
 					{/* Error */}

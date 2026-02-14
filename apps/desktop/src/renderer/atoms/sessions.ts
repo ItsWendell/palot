@@ -12,6 +12,9 @@ export type SessionError = {
 	data: Record<string, unknown>
 }
 
+/** Phases of worktree setup shown in the chat view's empty state */
+export type SessionSetupPhase = "creating-worktree" | "starting-session" | null
+
 export interface SessionEntry {
 	session: Session
 	status: SessionStatus
@@ -29,6 +32,8 @@ export interface SessionEntry {
 	worktreeBranch?: string
 	/** Last session-level error (from session.error events) */
 	error?: SessionError
+	/** Worktree setup phase (shown in chat empty state while worktree is being created) */
+	setupPhase?: SessionSetupPhase
 }
 
 // ============================================================
@@ -70,6 +75,7 @@ export const upsertSessionAtom = atom(
 			worktreePath: existing?.worktreePath,
 			worktreeBranch: existing?.worktreeBranch,
 			error: existing?.error,
+			setupPhase: existing?.setupPhase,
 		})
 
 		// Add to index
@@ -159,6 +165,22 @@ export const setSessionWorktreeAtom = atom(
 			worktreePath: args.worktreePath,
 			worktreeBranch: args.worktreeBranch,
 		})
+	},
+)
+
+export const setSessionSetupPhaseAtom = atom(
+	null,
+	(
+		get,
+		set,
+		args: {
+			sessionId: string
+			setupPhase: SessionSetupPhase
+		},
+	) => {
+		const entry = get(sessionFamily(args.sessionId))
+		if (!entry) return
+		set(sessionFamily(args.sessionId), { ...entry, setupPhase: args.setupPhase })
 	},
 )
 
@@ -284,6 +306,7 @@ export const setSessionsAtom = atom(
 				worktreePath: existing?.worktreePath ?? (isSandbox ? sessionDir : undefined),
 				worktreeBranch: existing?.worktreeBranch,
 				error: existing?.error,
+				setupPhase: existing?.setupPhase,
 			})
 			nextIds.add(session.id)
 		}
