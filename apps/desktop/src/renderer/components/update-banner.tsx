@@ -1,12 +1,13 @@
-import { ArrowDownToLineIcon, RefreshCwIcon, XIcon } from "lucide-react"
+import { ArrowDownToLineIcon, RefreshCwIcon, SparklesIcon, XIcon } from "lucide-react"
 import { useState } from "react"
 import { useUpdater } from "../hooks/use-updater"
 
 /**
- * Non-intrusive update banner that appears at the top of the app
- * when a new version is available, downloading, or ready to install.
+ * Floating toast-style update notification that appears in the bottom-right
+ * corner when a new version is available, downloading, or ready to install.
  *
- * Hidden when idle, checking, or dismissed by the user.
+ * Overlays content instead of pushing it down. Hidden when idle, checking,
+ * or dismissed by the user.
  */
 export function UpdateBanner() {
 	const { status, version, progress, downloadUpdate, installUpdate } = useUpdater()
@@ -18,63 +19,103 @@ export function UpdateBanner() {
 	}
 
 	return (
-		<div className="flex items-center gap-3 border-b border-border bg-muted/50 px-4 py-2 text-sm">
-			{status === "available" && (
-				<>
-					<span className="flex-1">
-						A new version{version ? ` (v${version})` : ""} is available.
-					</span>
-					<button
-						type="button"
-						onClick={() => downloadUpdate()}
-						className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-					>
-						<ArrowDownToLineIcon className="size-3.5" aria-hidden="true" />
-						Download
-					</button>
-				</>
-			)}
+		<div className="fixed right-4 bottom-4 z-50 w-72 animate-in fade-in slide-in-from-bottom-2 duration-300">
+			<div className="rounded-xl border border-border bg-popover p-3.5 shadow-lg">
+				{status === "available" && (
+					<>
+						<div className="mb-3 flex items-start justify-between gap-2">
+							<div className="flex items-start gap-2.5">
+								<div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+									<SparklesIcon className="size-4 text-primary" aria-hidden="true" />
+								</div>
+								<div className="min-w-0">
+									<p className="text-sm font-medium leading-tight">Update available</p>
+									<p className="mt-0.5 text-xs text-muted-foreground">
+										{version ? `Version ${version}` : "A new version"} is ready to download
+									</p>
+								</div>
+							</div>
+							<button
+								type="button"
+								onClick={() => setDismissed(true)}
+								className="-m-1 rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
+								aria-label="Dismiss update notification"
+							>
+								<XIcon className="size-3.5" aria-hidden="true" />
+							</button>
+						</div>
+						<button
+							type="button"
+							onClick={() => downloadUpdate()}
+							className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+						>
+							<ArrowDownToLineIcon className="size-3.5" aria-hidden="true" />
+							Download update
+						</button>
+					</>
+				)}
 
-			{status === "downloading" && (
-				<>
-					<span className="flex-1">
-						Downloading update{version ? ` v${version}` : ""}
-						{progress ? ` — ${Math.round(progress.percent)}%` : "..."}
-					</span>
-					<div className="h-1.5 w-32 overflow-hidden rounded-full bg-muted">
-						<div
-							className="h-full rounded-full bg-primary transition-all duration-300"
-							style={{ width: `${progress?.percent ?? 0}%` }}
-						/>
-					</div>
-				</>
-			)}
+				{status === "downloading" && (
+					<>
+						<div className="mb-3 flex items-start gap-2.5">
+							<div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+								<ArrowDownToLineIcon
+									className="size-4 animate-pulse text-primary"
+									aria-hidden="true"
+								/>
+							</div>
+							<div className="min-w-0">
+								<p className="text-sm font-medium leading-tight">
+									Downloading{version ? ` v${version}` : ""}
+								</p>
+								<p className="mt-0.5 text-xs text-muted-foreground">
+									{progress ? `${Math.round(progress.percent)}% complete` : "Starting download..."}
+								</p>
+							</div>
+						</div>
+						<div className="h-1.5 overflow-hidden rounded-full bg-muted">
+							<div
+								className="h-full rounded-full bg-primary transition-all duration-300"
+								style={{ width: `${progress?.percent ?? 0}%` }}
+							/>
+						</div>
+					</>
+				)}
 
-			{status === "ready" && (
-				<>
-					<span className="flex-1">
-						Update{version ? ` v${version}` : ""} is ready. Restart to apply.
-					</span>
-					<button
-						type="button"
-						onClick={() => installUpdate()}
-						className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-					>
-						<RefreshCwIcon className="size-3.5" aria-hidden="true" />
-						Restart now
-					</button>
-				</>
-			)}
-
-			{/* Dismiss button — always visible */}
-			<button
-				type="button"
-				onClick={() => setDismissed(true)}
-				className="rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-				aria-label="Dismiss update notification"
-			>
-				<XIcon className="size-4" aria-hidden="true" />
-			</button>
+				{status === "ready" && (
+					<>
+						<div className="mb-3 flex items-start justify-between gap-2">
+							<div className="flex items-start gap-2.5">
+								<div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+									<RefreshCwIcon className="size-4 text-primary" aria-hidden="true" />
+								</div>
+								<div className="min-w-0">
+									<p className="text-sm font-medium leading-tight">Ready to install</p>
+									<p className="mt-0.5 text-xs text-muted-foreground">
+										{version ? `Version ${version}` : "Update"} downloaded. Restart to apply.
+									</p>
+								</div>
+							</div>
+							<button
+								type="button"
+								onClick={() => setDismissed(true)}
+								className="-m-1 rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
+								aria-label="Dismiss update notification"
+							>
+								<XIcon className="size-3.5" aria-hidden="true" />
+							</button>
+						</div>
+						<button
+							type="button"
+							onClick={() => installUpdate()}
+							className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+						>
+							<RefreshCwIcon className="size-3.5" aria-hidden="true" />
+							Restart now
+						</button>
+					</>
+				)}
+			</div>
 		</div>
 	)
 }
