@@ -37,7 +37,8 @@ import {
 } from "../hooks/use-opencode-data"
 import { useAgentActions } from "../hooks/use-server"
 import type { FileAttachment } from "../lib/types"
-import { createWorktree, isElectron } from "../services/backend"
+import { isElectron } from "../services/backend"
+import { createWorktree } from "../services/worktree-service"
 import { useSetAppBarContent } from "./app-bar-context"
 import { BranchPicker } from "./branch-picker"
 import { PromptAttachmentPreview } from "./chat/prompt-attachments"
@@ -310,15 +311,23 @@ export function NewChat() {
 				// so it groups correctly in the sidebar. The worktree workspace path
 				// is only used for the SDK calls (session creation + prompt sending)
 				// so the agent operates in the isolated worktree.
+				//
+				// Uses the OpenCode experimental worktree API first (works for both
+				// local and remote servers), with automatic fallback to Electron IPC.
 				let worktreeResult: {
 					worktreeRoot: string
 					worktreeWorkspace: string
 					branchName: string
 				} | null = null
 
-				if (worktreeMode === "worktree" && isElectron) {
+				if (worktreeMode === "worktree") {
 					try {
-						worktreeResult = await createWorktree(selectedDirectory, sessionSlug)
+						const result = await createWorktree(selectedDirectory, selectedDirectory, sessionSlug)
+						worktreeResult = {
+							worktreeRoot: result.worktreeRoot,
+							worktreeWorkspace: result.worktreeWorkspace,
+							branchName: result.branchName,
+						}
 					} catch (err) {
 						// Fall back to local mode with a warning
 						console.warn("Worktree creation failed, falling back to local mode:", err)

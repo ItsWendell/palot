@@ -191,5 +191,20 @@ export function processEvent(event: Event): void {
 		case "todo.updated":
 			set(todosFamily(event.properties.sessionID), event.properties.todos)
 			break
+
+		// --- Worktree lifecycle events (from OpenCode experimental API) ---
+
+		case "worktree.ready":
+			log.info("Worktree ready", {
+				name: event.properties.name,
+				branch: event.properties.branch,
+			})
+			break
+
+		case "worktree.failed":
+			log.warn("Worktree creation failed", {
+				message: event.properties.message,
+			})
+			break
 	}
 }

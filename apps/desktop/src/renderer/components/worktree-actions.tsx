@@ -42,6 +42,7 @@ import {
 	gitCommitAll,
 	gitCreateBranch,
 	gitPush,
+	isElectron,
 } from "../services/backend"
 
 // ============================================================
@@ -77,8 +78,12 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 	const [loading, setLoading] = useState(false)
 	const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
 
+	// Apply-to-local requires local git access (Electron IPC).
+	// On remote servers this isn't available yet.
+	const canApply = isElectron
+
 	const handleApply = useCallback(async () => {
-		if (!agent.worktreePath) return
+		if (!agent.worktreePath || !canApply) return
 		setLoading(true)
 		setResult(null)
 		try {
@@ -111,7 +116,7 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 						variant="ghost"
 						className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
 						onClick={handleApply}
-						disabled={loading}
+						disabled={loading || !canApply}
 					/>
 				}
 			>
@@ -135,7 +140,9 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 				)}
 			</TooltipTrigger>
 			<TooltipContent side="bottom">
-				Apply worktree changes to your local checkout as uncommitted changes
+				{canApply
+					? "Apply worktree changes to your local checkout as uncommitted changes"
+					: "Apply to local is only available when the server runs locally"}
 			</TooltipContent>
 		</Tooltip>
 	)

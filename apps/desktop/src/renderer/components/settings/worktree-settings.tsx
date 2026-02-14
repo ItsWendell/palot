@@ -6,10 +6,11 @@
  */
 
 import { Button } from "@palot/ui/components/button"
-import { AlertTriangleIcon, GitForkIcon, Loader2Icon, TrashIcon } from "lucide-react"
+import { AlertTriangleIcon, GitForkIcon, Loader2Icon, RotateCcwIcon, TrashIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { ManagedWorktree } from "../../../preload/api"
-import { listWorktrees, pruneWorktrees, removeWorktree } from "../../services/backend"
+import { listManagedWorktrees, pruneWorktrees } from "../../services/backend"
+import { removeWorktree, resetWorktree } from "../../services/worktree-service"
 import { SettingsSection } from "./settings-section"
 
 // ============================================================
@@ -46,14 +47,15 @@ export function WorktreeSettings() {
 	const [worktrees, setWorktrees] = useState<ManagedWorktree[]>([])
 	const [loading, setLoading] = useState(true)
 	const [removing, setRemoving] = useState<string | null>(null)
+	const [resetting, setResetting] = useState<string | null>(null)
 	const [pruning, setPruning] = useState(false)
 
 	const loadWorktrees = useCallback(async () => {
 		try {
-			const result = await listWorktrees()
+			const result = await listManagedWorktrees()
 			setWorktrees(result)
 		} catch {
-			// Silently fail
+			// Silently fail — may not be in Electron mode
 		} finally {
 			setLoading(false)
 		}
@@ -72,12 +74,27 @@ export function WorktreeSettings() {
 		async (wt: ManagedWorktree) => {
 			setRemoving(wt.path)
 			try {
-				await removeWorktree(wt.path, wt.sourceRepo)
+				await removeWorktree(wt.sourceRepo || wt.path, wt.path, wt.sourceRepo)
 				await loadWorktrees()
 			} catch {
 				// Silently fail
 			} finally {
 				setRemoving(null)
+			}
+		},
+		[loadWorktrees],
+	)
+
+	const handleReset = useCallback(
+		async (wt: ManagedWorktree) => {
+			setResetting(wt.path)
+			try {
+				await resetWorktree(wt.sourceRepo || wt.path, wt.path)
+				await loadWorktrees()
+			} catch {
+				// Silently fail
+			} finally {
+				setResetting(null)
 			}
 		},
 		[loadWorktrees],
@@ -171,7 +188,9 @@ export function WorktreeSettings() {
 								key={wt.path}
 								worktree={wt}
 								isRemoving={removing === wt.path}
+								isResetting={resetting === wt.path}
 								onRemove={() => handleRemove(wt)}
+								onReset={() => handleReset(wt)}
 							/>
 						))}
 				</SettingsSection>
@@ -187,11 +206,15 @@ export function WorktreeSettings() {
 function WorktreeRow({
 	worktree,
 	isRemoving,
+	isResetting,
 	onRemove,
+	onReset,
 }: {
 	worktree: ManagedWorktree
 	isRemoving: boolean
+	isResetting: boolean
 	onRemove: () => void
+	onReset: () => void
 }) {
 	return (
 		<div className="flex items-center gap-3 px-4 py-3">
@@ -216,9 +239,25 @@ function WorktreeRow({
 			<Button
 				size="sm"
 				variant="ghost"
+				onClick={onReset}
+				disabled={isResetting || isRemoving}
+				className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+				title="Reset worktree to default branch"
+			>
+				{isResetting ? (
+					<Loader2Icon className="size-3.5 animate-spin" />
+				) : (
+					<RotateCcwIcon className="size-3.5" />
+				)}
+			</Button>
+
+			<Button
+				size="sm"
+				variant="ghost"
 				onClick={onRemove}
-				disabled={isRemoving}
+				disabled={isRemoving || isResetting}
 				className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-red-500"
+				title="Remove worktree"
 			>
 				{isRemoving ? (
 					<Loader2Icon className="size-3.5 animate-spin" />

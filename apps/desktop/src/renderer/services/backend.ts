@@ -25,7 +25,6 @@ import type {
 	ModelState,
 	OpenInTargetsResult,
 	UpdateAutomationInput,
-	WorktreeCreateResult,
 } from "../../preload/api"
 import { createLogger } from "../lib/logger"
 
@@ -230,50 +229,40 @@ export async function gitStashPop(directory: string): Promise<GitStashResult> {
 }
 
 // ============================================================
-// Worktree operations — Electron-only (main process via IPC)
+// Worktree operations — OpenCode API with Electron IPC fallback
 // ============================================================
 
-/**
- * Creates a worktree for a session with auto-branch creation and .env copying.
- */
-export async function createWorktree(
-	sourceDir: string,
-	sessionSlug: string,
-): Promise<WorktreeCreateResult> {
-	if (isElectron) {
-		return window.palot.worktree.create(sourceDir, sessionSlug)
-	}
-	throw new Error("Worktree operations are only available in Electron mode")
-}
-
-/**
- * Removes a worktree and cleans up.
- */
-export async function removeWorktree(worktreeRoot: string, sourceDir: string): Promise<void> {
-	if (isElectron) {
-		return window.palot.worktree.remove(worktreeRoot, sourceDir)
-	}
-	throw new Error("Worktree operations are only available in Electron mode")
-}
+export type { WorktreeResult } from "./worktree-service"
+// Re-export from the dedicated worktree service for consumers that need
+// the new API-based worktree operations (e.g. new-chat.tsx).
+export {
+	createWorktree as createWorktreeViaApi,
+	listWorktrees as listWorktreesViaApi,
+	removeWorktree as removeWorktreeViaApi,
+	resetWorktree,
+} from "./worktree-service"
 
 /**
  * Lists all managed worktrees with metadata.
+ * Uses the Electron IPC for the detailed view (disk usage, timestamps, etc.)
+ * that the settings page needs. The API-based list only returns directories.
  */
-export async function listWorktrees(): Promise<ManagedWorktree[]> {
+export async function listManagedWorktrees(): Promise<ManagedWorktree[]> {
 	if (isElectron) {
 		return window.palot.worktree.list()
 	}
-	throw new Error("Worktree operations are only available in Electron mode")
+	return []
 }
 
 /**
  * Prunes worktrees older than maxAgeDays.
+ * Electron-only since it needs filesystem access for time-based pruning.
  */
 export async function pruneWorktrees(maxAgeDays?: number): Promise<number> {
 	if (isElectron) {
 		return window.palot.worktree.prune(maxAgeDays)
 	}
-	throw new Error("Worktree operations are only available in Electron mode")
+	return 0
 }
 
 /**
