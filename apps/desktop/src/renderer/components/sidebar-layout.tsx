@@ -12,8 +12,10 @@ import {
 } from "@palot/ui/components/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
 import { Outlet, useNavigate } from "@tanstack/react-router"
+import { useAtomValue } from "jotai"
 import { PanelLeftIcon, PlusIcon } from "lucide-react"
-import { useCallback, useMemo } from "react"
+import { useCallback, useMemo, useState } from "react"
+import { activeServerConfigAtom } from "../atoms/connection"
 import {
 	useAgents,
 	useProjectList,
@@ -25,6 +27,7 @@ import { useAgentActions } from "../hooks/use-server"
 import type { Agent } from "../lib/types"
 import { pickDirectory } from "../services/backend"
 import { loadProjectSessions } from "../services/connection-manager"
+import { AddProjectDialog } from "./add-project-dialog"
 import { APP_BAR_HEIGHT, AppBar } from "./app-bar"
 import { AppSidebarContent } from "./sidebar"
 import { useSidebarSlot } from "./sidebar-slot-context"
@@ -141,12 +144,29 @@ export function SidebarLayout() {
 		setCommandPaletteOpen(true)
 	}, [setCommandPaletteOpen])
 
+	// Add project: local servers use native picker, remote servers use a dialog
+	const activeServer = useAtomValue(activeServerConfigAtom)
+	const [addProjectOpen, setAddProjectOpen] = useState(false)
+
 	const handleAddProject = useCallback(async () => {
-		const directory = await pickDirectory()
-		if (!directory) return
-		await loadProjectSessions(directory)
-		navigate({ to: "/" })
-	}, [navigate])
+		if (activeServer.type === "local") {
+			// Local server: open native folder picker directly
+			const directory = await pickDirectory()
+			if (!directory) return
+			await loadProjectSessions(directory)
+			navigate({ to: "/" })
+		} else {
+			// Remote server: show dialog with text input
+			setAddProjectOpen(true)
+		}
+	}, [activeServer.type, navigate])
+
+	const handleProjectAdded = useCallback(
+		(_directory: string) => {
+			navigate({ to: "/" })
+		},
+		[navigate],
+	)
 
 	return (
 		<div
@@ -203,6 +223,11 @@ export function SidebarLayout() {
 				    whose transition properties create stacking contexts. */}
 				<WindowControls />
 			</SidebarProvider>
+			<AddProjectDialog
+				open={addProjectOpen}
+				onOpenChange={setAddProjectOpen}
+				onAdded={handleProjectAdded}
+			/>
 		</div>
 	)
 }
