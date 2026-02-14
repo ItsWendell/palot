@@ -1,6 +1,6 @@
 import { useAtomValue } from "jotai"
 import { useEffect } from "react"
-import { activeServerConfigAtom } from "../atoms/connection"
+import { activeServerConfigAtom, serverConnectedAtom } from "../atoms/connection"
 import { discoveryAtom } from "../atoms/discovery"
 import { isMockModeAtom } from "../atoms/mock-mode"
 import { appStore } from "../atoms/store"
@@ -73,6 +73,24 @@ export function useDiscovery() {
 					authenticated: !!authHeader,
 				})
 				await connectToOpenCode(url, authHeader)
+
+				// --- Step 3b: Bail if server is unreachable ---
+				// connectToOpenCode runs a health check and sets serverConnectedAtom.
+				// If the server is offline, skip project/session loading so discovery
+				// stays in a non-loaded state, allowing the sidebar to show "Server offline".
+				// Keep discoveryInFlight = true to prevent an infinite retry loop;
+				// resetDiscoveryGuard() (called on server switch) clears it.
+				if (!appStore.get(serverConnectedAtom)) {
+					log.warn("Server is unreachable, skipping project discovery", {
+						server: activeServer.name,
+					})
+					appStore.set(discoveryAtom, (prev) => ({
+						...prev,
+						loading: false,
+						error: "Server offline",
+					}))
+					return
+				}
 
 				// --- Step 4: Discover projects from the API ---
 				log.info("Loading projects from API...")

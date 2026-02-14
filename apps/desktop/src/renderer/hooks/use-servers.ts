@@ -166,7 +166,7 @@ export function useServerActions() {
 
 		// If the removed server was active, trigger reconnection to local
 		if (activeId === serverId) {
-			triggerServerSwitch()
+			triggerServerSwitch(newActiveId ?? "local")
 		}
 
 		log.info("Server removed", { id: serverId })
@@ -186,7 +186,7 @@ export function useServerActions() {
 			},
 		})
 
-		triggerServerSwitch()
+		triggerServerSwitch(serverId)
 		log.info("Switched to server", { id: serverId })
 	}, [])
 
@@ -238,13 +238,22 @@ export function useServerActions() {
 /**
  * Disconnects from the current server and resets discovery so the app
  * reconnects to the newly active server on the next render cycle.
+ *
+ * Crucially, sets `activeServerIdAtom` synchronously so that the very
+ * first React render after this call already has the correct server.
+ * Without this, discovery would race against the async `onSettingsChanged`
+ * IPC event and could run against the old (offline) server.
  */
-function triggerServerSwitch() {
+function triggerServerSwitch(newActiveServerId: string) {
 	disconnect()
 	resetDiscoveryGuard()
 
 	// Clear all session data from the previous server
 	appStore.set(sessionIdsAtom, new Set<string>())
+
+	// Point to the new server BEFORE resetting discovery, so the
+	// discovery effect always sees the correct activeServer.
+	appStore.set(activeServerIdAtom, newActiveServerId)
 
 	// Reset discovery so it re-runs with the new server
 	appStore.set(discoveryAtom, {
