@@ -17,12 +17,15 @@ import {
 import { Input } from "@palot/ui/components/input"
 import { Label } from "@palot/ui/components/label"
 import { Textarea } from "@palot/ui/components/textarea"
-import { PauseIcon, PlayIcon, Trash2Icon, TriangleIcon } from "lucide-react"
+import { useAtomValue } from "jotai"
+import { FolderOpenIcon, PauseIcon, PlayIcon, Trash2Icon, TriangleIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import type { Automation } from "../../../preload/api"
+import { activeServerConfigAtom } from "../../atoms/connection"
 import {
 	createAutomation,
 	deleteAutomation,
+	pickDirectory,
 	runAutomationNow,
 	updateAutomation,
 } from "../../services/backend"
@@ -146,18 +149,36 @@ export function CreateAutomationDialog({
 		onOpenChange,
 	])
 
+	const activeServer = useAtomValue(activeServerConfigAtom)
+	const isRemote = activeServer.type !== "local"
+	const [remotePathInput, setRemotePathInput] = useState("")
+	const [showRemoteInput, setShowRemoteInput] = useState(false)
+
 	const handleCancel = useCallback(() => {
 		onOpenChange(false)
 	}, [onOpenChange])
 
 	const handleAddProject = useCallback(async () => {
-		if (typeof window !== "undefined" && "palot" in window) {
-			const dir = await window.palot.pickDirectory()
-			if (dir && !workspaces.includes(dir)) {
-				setWorkspaces((prev) => [...prev, dir])
-			}
+		if (isRemote) {
+			// Remote server: show inline text input for typing the path
+			setShowRemoteInput(true)
+			return
 		}
-	}, [workspaces])
+		// Local server: use native folder picker
+		const dir = await pickDirectory()
+		if (dir && !workspaces.includes(dir)) {
+			setWorkspaces((prev) => [...prev, dir])
+		}
+	}, [isRemote, workspaces])
+
+	const handleAddRemotePath = useCallback(() => {
+		const trimmed = remotePathInput.trim()
+		if (trimmed && !workspaces.includes(trimmed)) {
+			setWorkspaces((prev) => [...prev, trimmed])
+		}
+		setRemotePathInput("")
+		setShowRemoteInput(false)
+	}, [remotePathInput, workspaces])
 
 	const handleRemoveProject = useCallback((path: string) => {
 		setWorkspaces((prev) => prev.filter((w) => w !== path))
@@ -249,13 +270,49 @@ export function CreateAutomationDialog({
 							{workspaces.map((w) => (
 								<ProjectChip key={w} path={w} onRemove={() => handleRemoveProject(w)} />
 							))}
-							<button
-								type="button"
-								onClick={handleAddProject}
-								className="text-xs text-muted-foreground hover:text-foreground"
-							>
-								{workspaces.length === 0 ? "Choose a folder" : "+ Add"}
-							</button>
+							{showRemoteInput ? (
+								<div className="flex w-full items-center gap-1.5">
+									<FolderOpenIcon
+										aria-hidden="true"
+										className="size-3.5 shrink-0 text-muted-foreground"
+									/>
+									<Input
+										placeholder="/home/user/projects/my-app"
+										value={remotePathInput}
+										onChange={(e) => setRemotePathInput(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter" && remotePathInput.trim()) handleAddRemotePath()
+											if (e.key === "Escape") {
+												setShowRemoteInput(false)
+												setRemotePathInput("")
+											}
+										}}
+										className="h-7 min-w-0 flex-1 text-xs"
+										autoFocus
+									/>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="h-7 px-2 text-xs"
+										disabled={!remotePathInput.trim()}
+										onClick={handleAddRemotePath}
+									>
+										Add
+									</Button>
+								</div>
+							) : (
+								<button
+									type="button"
+									onClick={handleAddProject}
+									className="text-xs text-muted-foreground hover:text-foreground"
+								>
+									{workspaces.length === 0
+										? isRemote
+											? "Enter a path"
+											: "Choose a folder"
+										: "+ Add"}
+								</button>
+							)}
 						</div>
 						{isEditing && (
 							<p className="text-xs text-muted-foreground">
