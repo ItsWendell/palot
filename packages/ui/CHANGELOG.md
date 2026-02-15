@@ -1,5 +1,11 @@
 # @palot/ui
 
+## 0.5.3
+
+### Patch Changes
+
+- [`8171dee`](https://github.com/ItsWendell/palot/commit/8171deee90b638ea92604a20ab323da3f739b627) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix horizontal overflow and clipping in the desktop app at narrow window widths. Add `min-w-0` and `overflow-hidden` throughout the flex layout chain (SidebarInset, content area, conversation container, chat view, prompt toolbar) and make the session app bar collapse responsively with Tailwind breakpoints.
+
 ## 0.3.0
 
 ### Minor Changes

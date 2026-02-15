@@ -1,5 +1,16 @@
 # @palot/desktop
 
+## 0.5.3
+
+### Patch Changes
+
+- [`08bce3e`](https://github.com/ItsWendell/palot/commit/08bce3ebce7a7a0721770c246e38b783154f44ac) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix missing app icon in Linux dock and app selector (GNOME/Fedora) by adding StartupWMClass to the desktop entry, setting an explicit executable name, fixing the BrowserWindow icon path for packaged builds, and providing a multi-size icon set
+
+- [`8171dee`](https://github.com/ItsWendell/palot/commit/8171deee90b638ea92604a20ab323da3f739b627) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix horizontal overflow and clipping in the desktop app at narrow window widths. Add `min-w-0` and `overflow-hidden` throughout the flex layout chain (SidebarInset, content area, conversation container, chat view, prompt toolbar) and make the session app bar collapse responsively with Tailwind breakpoints.
+
+- Updated dependencies [[`8171dee`](https://github.com/ItsWendell/palot/commit/8171deee90b638ea92604a20ab323da3f739b627)]:
+  - @palot/ui@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes
