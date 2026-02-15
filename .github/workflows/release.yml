@@ -160,6 +160,7 @@ jobs:
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
             apps/desktop/release/*.rpm
+            apps/desktop/release/latest-linux.yml
           retention-days: 30
 
       - name: Upload artifacts (macOS)
@@ -170,6 +171,7 @@ jobs:
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
+            apps/desktop/release/latest-mac.yml
           retention-days: 30
 
       - name: Upload artifacts (Windows)
@@ -179,6 +181,7 @@ jobs:
           name: release-windows
           path: |
             apps/desktop/release/*.exe
+            apps/desktop/release/latest.yml
           retention-days: 30
 
   # ──────────────────────────────────────────────
@@ -211,6 +214,7 @@ jobs:
             -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \
             -o -name "*.dmg" -o -name "*.zip" \
             -o -name "*.exe" \
+            -o -name "latest*.yml" \
           \) -exec cp {} release-files/ \;
           echo "Release files:"
           ls -lh release-files/
