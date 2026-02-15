@@ -9,6 +9,7 @@ import crypto from "node:crypto"
 import { eq } from "drizzle-orm"
 import { createLogger } from "../logger"
 import { closeDb, ensureDb, getDb } from "./database"
+import { executeRun } from "./executor"
 import { createConfig, deleteConfig, listConfigs, readConfig, updateConfig } from "./registry"
 import { addTask, previewSchedule, removeTask, stopAll } from "./scheduler"
 import { automationRuns, automations } from "./schema"
@@ -224,7 +225,7 @@ export async function runNow(id: string): Promise<boolean> {
 export { previewSchedule }
 
 // ============================================================
-// Execution (placeholder -- will be expanded with OpenCode SDK)
+// Execution -- runs agent sessions via OpenCode SDK
 // ============================================================
 
 async function executeAutomation(id: string): Promise<void> {
@@ -256,22 +257,106 @@ async function executeAutomation(id: string): Promise<void> {
 				})
 				.run()
 
-			// TODO: Integrate with OpenCode SDK to actually run the agent session
-			// For now, mark as pending_review after a short delay
-			log.info("Automation run started (stub)", { automationId: id, runId, workspace })
+			log.info("Automation run started", { automationId: id, runId, workspace })
 
-			await db
-				.update(automationRuns)
-				.set({
-					status: "pending_review",
-					resultTitle: config.name,
-					resultSummary: "Automation completed (stub implementation)",
-					resultHasActionable: true,
-					completedAt: Date.now(),
-					updatedAt: Date.now(),
+			try {
+				const result = await executeRun(config, workspace)
+
+				// Update run with session info
+				if (result.sessionId) {
+					await db
+						.update(automationRuns)
+						.set({
+							sessionId: result.sessionId,
+							worktreePath: result.worktreePath,
+							updatedAt: Date.now(),
+						})
+						.where(eq(automationRuns.id, runId))
+						.run()
+				}
+
+				if (result.error) {
+					// Run completed with error
+					await db
+						.update(automationRuns)
+						.set({
+							status: "failed",
+							errorMessage: result.error,
+							resultTitle: result.title,
+							resultSummary: result.summary || result.error,
+							completedAt: Date.now(),
+							updatedAt: Date.now(),
+						})
+						.where(eq(automationRuns.id, runId))
+						.run()
+
+					log.warn("Automation run failed", {
+						automationId: id,
+						runId,
+						error: result.error,
+					})
+				} else if (!result.hasActionable) {
+					// Nothing actionable -- auto-archive
+					await db
+						.update(automationRuns)
+						.set({
+							status: "archived",
+							archivedReason: "auto",
+							archivedAssistantMessage: result.summary,
+							resultTitle: result.title,
+							resultSummary: result.summary,
+							resultHasActionable: false,
+							resultBranch: result.branch,
+							completedAt: Date.now(),
+							updatedAt: Date.now(),
+						})
+						.where(eq(automationRuns.id, runId))
+						.run()
+
+					log.info("Automation run auto-archived (not actionable)", {
+						automationId: id,
+						runId,
+					})
+				} else {
+					// Actionable results -- mark for human review
+					await db
+						.update(automationRuns)
+						.set({
+							status: "pending_review",
+							resultTitle: result.title,
+							resultSummary: result.summary,
+							resultHasActionable: true,
+							resultBranch: result.branch,
+							completedAt: Date.now(),
+							updatedAt: Date.now(),
+						})
+						.where(eq(automationRuns.id, runId))
+						.run()
+
+					log.info("Automation run completed, pending review", {
+						automationId: id,
+						runId,
+					})
+				}
+			} catch (err) {
+				// Unexpected error during execution
+				await db
+					.update(automationRuns)
+					.set({
+						status: "failed",
+						errorMessage: err instanceof Error ? err.message : "Unknown error",
+						completedAt: Date.now(),
+						updatedAt: Date.now(),
+					})
+					.where(eq(automationRuns.id, runId))
+					.run()
+
+				log.error("Automation run threw unexpected error", {
+					automationId: id,
+					runId,
+					error: err,
 				})
-				.where(eq(automationRuns.id, runId))
-				.run()
+			}
 		}
 
 		// Update timing state
