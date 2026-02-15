@@ -363,11 +363,6 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 			{/* ── Expanded state: full content ────────────────────── */}
 			{showExpanded && (
 				<>
-					{/* Task description */}
-					<div className="border-t border-border/50 px-3.5 py-2">
-						<p className="text-xs text-muted-foreground">{taskTitle}</p>
-					</div>
-
 					{/* Live activity: latest tool calls */}
 					{latestToolParts.length > 0 && (
 						<div className="border-t border-border/30 px-3.5 py-2">
