@@ -3,6 +3,13 @@ name: Release
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/PULL_REQUEST_TEMPLATE/**"
   workflow_dispatch:
 
 permissions:
@@ -23,6 +30,9 @@ jobs:
   #
   # On workflow_dispatch: always proceeds to build+release using the current
   # version in package.json (useful for manual recovery or re-releases).
+  #
+  # Uses --ignore-scripts since this job only needs the changesets CLI,
+  # not native modules.
   changeset:
     name: Changeset
     runs-on: ubuntu-latest
@@ -47,7 +57,7 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Create Release PR or Publish
         id: changesets
@@ -79,24 +89,81 @@ jobs:
           fi
 
   # ──────────────────────────────────────────────
-  # Job 2: Cross-platform Electron build
+  # Job 2: Build JS bundle (once, on Linux)
   # ──────────────────────────────────────────────
-  # Builds the app on all 3 platforms and uploads artifacts.
-  # Does NOT publish to GitHub Releases directly -- that happens in Job 3.
-  build:
-    name: Build (${{ matrix.os }})
+  # electron-vite produces platform-agnostic JS/CSS output. Building once
+  # on Linux (the fastest runner) and sharing the output as an artifact
+  # avoids repeating this work on every platform.
+  build-js:
+    name: Build JS
     needs: [changeset]
+    if: needs.changeset.outputs.should-release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.8"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Turborepo remote cache
+        uses: rharkor/caching-for-turbo@v2.3.11
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build electron-vite
+        run: bun run build
+        working-directory: apps/desktop
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: apps/desktop/out
+          retention-days: 1
+
+  # ──────────────────────────────────────────────
+  # Job 3: Package Electron app (per-platform)
+  # ──────────────────────────────────────────────
+  # Downloads the pre-built JS bundle and runs electron-builder only.
+  # macOS is split into arm64 and x64 parallel jobs to avoid sequential
+  # cross-compilation (macos-latest = ARM, macos-13 = Intel).
+  package:
+    name: Package (${{ matrix.name }})
+    needs: [changeset, build-js]
     if: needs.changeset.outputs.should-release == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - name: linux-x64
+            os: ubuntu-latest
             platform: linux
-          - os: macos-latest
+            eb-flags: "--linux"
+            artifact-name: release-linux
+          - name: macos-arm64
+            os: macos-latest
             platform: mac
-          - os: windows-latest
+            eb-flags: "--mac --arm64"
+            artifact-name: release-macos-arm64
+          - name: macos-x64
+            os: macos-13
+            platform: mac
+            eb-flags: "--mac --x64"
+            artifact-name: release-macos-x64
+          - name: windows-x64
+            os: windows-latest
             platform: win
+            eb-flags: "--win"
+            artifact-name: release-windows
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -123,24 +190,17 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('apps/desktop/package.json') }}
           restore-keys: electron-${{ runner.os }}-
 
-      - name: Cache Turborepo
-        uses: actions/cache@v4
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('bun.lock') }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ hashFiles('bun.lock') }}-
-            turbo-${{ runner.os }}-
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build electron-vite
-        run: bun run build
-        working-directory: apps/desktop
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: apps/desktop/out
 
       - name: Package Electron app
-        run: bun run eb:${{ matrix.platform }}
+        run: bunx electron-builder ${{ matrix.eb-flags }} --config electron-builder.yml --publish never
         working-directory: apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -155,7 +215,7 @@ jobs:
         if: matrix.platform == 'linux'
         uses: actions/upload-artifact@v4
         with:
-          name: release-linux
+          name: ${{ matrix.artifact-name }}
           path: |
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
@@ -167,7 +227,7 @@ jobs:
         if: matrix.platform == 'mac'
         uses: actions/upload-artifact@v4
         with:
-          name: release-macos
+          name: ${{ matrix.artifact-name }}
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
@@ -178,23 +238,24 @@ jobs:
         if: matrix.platform == 'win'
         uses: actions/upload-artifact@v4
         with:
-          name: release-windows
+          name: ${{ matrix.artifact-name }}
           path: |
             apps/desktop/release/*.exe
             apps/desktop/release/latest.yml
           retention-days: 30
 
   # ──────────────────────────────────────────────
-  # Job 3: Create GitHub Release
+  # Job 4: Create GitHub Release
   # ──────────────────────────────────────────────
-  # Downloads all build artifacts, creates a git tag (if it doesn't exist),
-  # extracts the changelog, and publishes a GitHub Release with all binaries.
+  # Downloads all build artifacts, merges the split macOS update manifests,
+  # creates a git tag (if it doesn't exist), extracts the changelog, and
+  # publishes a GitHub Release with all binaries.
   #
   # Uses softprops/action-gh-release which is idempotent: re-running will
   # update the existing release rather than fail.
   release:
     name: Publish Release
-    needs: [changeset, build]
+    needs: [changeset, package]
     if: needs.changeset.outputs.should-release == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -206,6 +267,38 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: release-*
+
+      - name: Merge macOS update manifests
+        run: |
+          # The arm64 and x64 macOS jobs each generate their own latest-mac.yml
+          # with only their architecture's files. Merge them so electron-updater
+          # can serve updates to both architectures from a single manifest.
+          python3 << 'PYEOF'
+          import yaml, os, sys
+
+          arm64_path = "artifacts/release-macos-arm64/latest-mac.yml"
+          x64_path = "artifacts/release-macos-x64/latest-mac.yml"
+
+          if not os.path.exists(arm64_path) or not os.path.exists(x64_path):
+              print("Skipping merge: one or both latest-mac.yml files missing")
+              sys.exit(0)
+
+          with open(arm64_path) as f:
+              arm64 = yaml.safe_load(f)
+          with open(x64_path) as f:
+              x64 = yaml.safe_load(f)
+
+          # Use arm64 as base (default for modern Macs), append x64 files
+          arm64["files"] = arm64.get("files", []) + x64.get("files", [])
+
+          # Overwrite both so the collect step picks up the merged version
+          for p in [arm64_path, x64_path]:
+              with open(p, "w") as f:
+                  yaml.dump(arm64, f, default_flow_style=False, sort_keys=False)
+
+          print(f"Merged latest-mac.yml: {len(arm64['files'])} files")
+          PYEOF
 
       - name: Collect release files
         run: |
