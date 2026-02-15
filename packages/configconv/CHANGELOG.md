@@ -1,5 +1,11 @@
 # @palot/configconv
 
+## 0.5.0
+
+### Minor Changes
+
+- [`755242d`](https://github.com/ItsWendell/palot/commit/755242d87f361457d00f3d56b91002f5ee1a7a6e) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Migrate history writer to SQLite for OpenCode v1.2.0+. Sessions, messages, and parts are now written directly to the SQLite database at `~/.local/share/opencode/opencode.db`. Falls back to legacy flat-file JSON storage when no database exists.
+
 ## 0.4.0
 
 ### Patch Changes
