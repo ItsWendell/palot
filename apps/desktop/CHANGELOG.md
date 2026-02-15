@@ -1,5 +1,11 @@
 # @palot/desktop
 
+## 0.5.1
+
+### Patch Changes
+
+- [`aa529d4`](https://github.com/ItsWendell/palot/commit/aa529d4b9e2887ecbad2e34b6a7d372ae4f085c8) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix macOS auto-updater failing with code signature validation error on unsigned builds
+
 ## 0.5.0
 
 ### Minor Changes
