@@ -1,5 +1,16 @@
 # @palot/desktop
 
+## 0.5.2
+
+### Patch Changes
+
+- [`57ddb2f`](https://github.com/ItsWendell/palot/commit/57ddb2fdb750f9306c2710fa898bb7d3509c9796) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix splash screen persisting on top of onboarding on first launch
+
+- [`57ddb2f`](https://github.com/ItsWendell/palot/commit/57ddb2fdb750f9306c2710fa898bb7d3509c9796) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Use semver library for OpenCode version compatibility checks with standard range syntax (supported: `>=1.2.0`, tested: `~1.2.0`)
+
+- Updated dependencies [[`098847c`](https://github.com/ItsWendell/palot/commit/098847c404f51c0954ffaba1c872910b93dd69d9)]:
+  - @palot/configconv@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes
