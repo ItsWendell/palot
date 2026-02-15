@@ -17,7 +17,7 @@
     },
     "apps/desktop": {
       "name": "@palot/desktop",
-      "version": "0.4.0",
+      "version": "0.5.1",
       "dependencies": {
         "@fontsource-variable/inter": "^5.2.8",
         "@fontsource/ibm-plex-mono": "^5.2.7",
@@ -44,6 +44,7 @@
         "remark-gfm": "^4.0.1",
         "rich-textarea": "^0.27.0",
         "rrule": "^2.8.1",
+        "semver": "^7.7.4",
         "simple-git": "^3.30.0",
         "sonner": "^2.0.7",
       },
@@ -55,6 +56,7 @@
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
         "@types/react-syntax-highlighter": "^15.5.13",
+        "@types/semver": "^7.7.1",
         "@vitejs/plugin-react": "^4.3.0",
         "drizzle-kit": "^1.0.0-beta.15-859cf75",
         "electron": "^40.2.1",
@@ -84,7 +86,7 @@
     },
     "packages/configconv": {
       "name": "@palot/configconv",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "dependencies": {
         "@opencode-ai/sdk": "^1.2.1",
         "jsonc-parser": "^3.3.1",
@@ -98,7 +100,7 @@
     },
     "packages/configconv-cli": {
       "name": "configconv",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "bin": {
         "configconv": "./src/index.ts",
       },
@@ -917,6 +919,8 @@
     "@types/readable-stream": ["@types/readable-stream@4.0.23", "", { "dependencies": { "@types/node": "*" } }, "sha512-wwXrtQvbMHxCbBgjHaMGEmImFTQxxpfMOR/ZoQnXxB1woqkUbdLGFDgauo00Py9IudiaqSeiBiulSV9i6XIPig=="],
 
     "@types/responselike": ["@types/responselike@1.0.3", "", { "dependencies": { "@types/node": "*" } }, "sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw=="],
+
+    "@types/semver": ["@types/semver@7.7.1", "", {}, "sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA=="],
 
     "@types/statuses": ["@types/statuses@2.0.6", "", {}, "sha512-xMAgYwceFhRA2zY+XbEA7mxYbA093wdiW8Vu6gZPGWy9cmOyU9XesH1tNcEWsKFd5Vzrqx5T3D38PWx1FIIXkA=="],
 

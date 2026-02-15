@@ -128,19 +128,21 @@ export function EnvironmentCheckStep({ onComplete, onSkip }: EnvironmentCheckSte
 				return
 			}
 
-			if (result.compatibility === "too-new") {
-				updateCheck("version", {
-					status: "warning",
-					label: "Newer than tested",
-					detail: result.message ?? undefined,
-				})
-			} else if (result.compatibility === "blocked") {
+			if (result.compatibility === "blocked") {
 				updateCheck("version", {
 					status: "error",
 					label: "Version blocked",
 					detail: result.message ?? undefined,
 				})
 				return
+			}
+
+			if (result.compatibility === "too-new") {
+				updateCheck("version", {
+					status: "warning",
+					label: "Newer than tested",
+					detail: result.message ?? undefined,
+				})
 			} else {
 				updateCheck("version", {
 					status: "success",

@@ -9,19 +9,20 @@
 import { execFile } from "node:child_process"
 import { homedir } from "node:os"
 import path from "node:path"
+import { coerce, satisfies, valid } from "semver"
 import { createLogger } from "./logger"
 
 const log = createLogger("compatibility")
 
 // ============================================================
-// Compatibility range
+// Compatibility ranges (standard semver range syntax)
 // ============================================================
 
 export const OPENCODE_COMPAT = {
-	/** Minimum version required for core functionality. Below this: block. */
-	min: "1.2.0",
-	/** Highest version actively tested. Above this: warn (not block). */
-	recommended: "1.2.0",
+	/** Supported range -- versions that should work. Below this: hard block. */
+	supported: ">=1.2.0",
+	/** Tested range -- versions actively tested against. Subset of supported. */
+	tested: "~1.2.0",
 	/** Known-broken versions. These are hard-blocked with a specific message. */
 	blocked: [] as string[],
 }
@@ -37,35 +38,6 @@ export interface OpenCodeCheckResult {
 	compatible: boolean
 	compatibility: "ok" | "too-old" | "too-new" | "blocked" | "unknown"
 	message: string | null
-}
-
-// ============================================================
-// Version comparison helpers
-// ============================================================
-
-/** Parse a semver-like string into [major, minor, patch]. Returns null on failure. */
-function parseSemver(version: string): [number, number, number] | null {
-	// Strip leading 'v' and any pre-release suffix for comparison
-	const clean = version.replace(/^v/, "").split("-")[0]
-	const parts = clean.split(".")
-	if (parts.length < 2) return null
-	const major = Number.parseInt(parts[0], 10)
-	const minor = Number.parseInt(parts[1], 10)
-	const patch = parts[2] ? Number.parseInt(parts[2], 10) : 0
-	if (Number.isNaN(major) || Number.isNaN(minor) || Number.isNaN(patch)) return null
-	return [major, minor, patch]
-}
-
-/** Returns -1, 0, or 1 for a < b, a == b, a > b. */
-function compareSemver(a: string, b: string): number {
-	const pa = parseSemver(a)
-	const pb = parseSemver(b)
-	if (!pa || !pb) return 0
-	for (let i = 0; i < 3; i++) {
-		if (pa[i] < pb[i]) return -1
-		if (pa[i] > pb[i]) return 1
-	}
-	return 0
 }
 
 // ============================================================
@@ -152,10 +124,11 @@ export async function checkOpenCode(): Promise<OpenCodeCheckResult> {
 
 	log.info("OpenCode found", { version, path: binaryPath })
 
+	// Coerce loose version strings (e.g. "1.3" -> "1.3.0") into valid semver.
 	// Non-semver versions (e.g. "local", "dev", "unknown") are assumed compatible --
 	// these are typically local/dev builds where the user knows what they're doing.
-	const isSemver = parseSemver(version) !== null
-	if (!isSemver) {
+	const parsed = valid(version) ?? coerce(version)?.version ?? null
+	if (!parsed) {
 		log.info("Non-semver version detected, assuming compatible", { version })
 		return {
 			installed: true,
@@ -168,41 +141,44 @@ export async function checkOpenCode(): Promise<OpenCodeCheckResult> {
 	}
 
 	// Check blocked versions
-	if (OPENCODE_COMPAT.blocked.includes(version)) {
-		return {
-			installed: true,
-			version,
-			path: binaryPath,
-			compatible: false,
-			compatibility: "blocked",
-			message: `OpenCode ${version} has known issues with this version of Palot. Please update.`,
+	for (const blocked of OPENCODE_COMPAT.blocked) {
+		if (satisfies(parsed, blocked)) {
+			return {
+				installed: true,
+				version,
+				path: binaryPath,
+				compatible: false,
+				compatibility: "blocked",
+				message: `OpenCode ${version} has known issues with this version of Palot. Please update.`,
+			}
 		}
 	}
 
-	// Check minimum version
-	if (compareSemver(version, OPENCODE_COMPAT.min) < 0) {
+	// Check supported range -- hard block if below minimum
+	if (!satisfies(parsed, OPENCODE_COMPAT.supported)) {
 		return {
 			installed: true,
 			version,
 			path: binaryPath,
 			compatible: false,
 			compatibility: "too-old",
-			message: `OpenCode ${version} is too old. Palot requires ${OPENCODE_COMPAT.min} or newer.`,
+			message: `OpenCode ${version} is too old. Palot requires ${OPENCODE_COMPAT.supported}.`,
 		}
 	}
 
-	// Check recommended range
-	if (compareSemver(version, OPENCODE_COMPAT.recommended) > 0) {
+	// Check tested range -- supported but newer than what we've tested against
+	if (!satisfies(parsed, OPENCODE_COMPAT.tested)) {
 		return {
 			installed: true,
 			version,
 			path: binaryPath,
 			compatible: true,
 			compatibility: "too-new",
-			message: `OpenCode ${version} is newer than tested. Some features may not work as expected.`,
+			message: `OpenCode ${version} is newer than tested. Palot is tested with ${OPENCODE_COMPAT.tested}. Some features may not work as expected.`,
 		}
 	}
 
+	// Within the tested range -- fully compatible
 	return {
 		installed: true,
 		version,

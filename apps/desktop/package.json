@@ -60,6 +60,7 @@
 		"remark-gfm": "^4.0.1",
 		"rich-textarea": "^0.27.0",
 		"rrule": "^2.8.1",
+		"semver": "^7.7.4",
 		"simple-git": "^3.30.0",
 		"sonner": "^2.0.7"
 	},
@@ -74,6 +75,7 @@
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
 		"@types/react-syntax-highlighter": "^15.5.13",
+		"@types/semver": "^7.7.1",
 		"@vitejs/plugin-react": "^4.3.0",
 		"drizzle-kit": "^1.0.0-beta.15-859cf75",
 		"electron": "^40.2.1",
