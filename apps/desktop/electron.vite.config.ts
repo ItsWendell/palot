@@ -1,21 +1,34 @@
+import fs from "node:fs"
 import path from "node:path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig, externalizeDepsPlugin } from "electron-vite"
-import { viteStaticCopy } from "vite-plugin-static-copy"
+import type { Plugin } from "vite"
+
+/**
+ * Copies the drizzle migrations directory into the main process output.
+ *
+ * viteStaticCopy does not reliably fire during electron-vite's dev rebuilds,
+ * so we use a plain Rollup writeBundle hook instead.
+ */
+function copyDrizzleMigrations(): Plugin {
+	const src = path.resolve(__dirname, "drizzle")
+	return {
+		name: "copy-drizzle-migrations",
+		writeBundle(options) {
+			const dest = path.join(options.dir!, "drizzle")
+			if (fs.existsSync(src)) {
+				fs.cpSync(src, dest, { recursive: true })
+			}
+		},
+	}
+}
 
 export default defineConfig({
 	main: {
 		plugins: [
 			externalizeDepsPlugin({ exclude: ["@palot/configconv", "drizzle-orm"] }),
-			viteStaticCopy({
-				targets: [
-					{
-						src: path.resolve(__dirname, "drizzle"),
-						dest: ".",
-					},
-				],
-			}),
+			copyDrizzleMigrations(),
 		],
 		build: {
 			rollupOptions: {
