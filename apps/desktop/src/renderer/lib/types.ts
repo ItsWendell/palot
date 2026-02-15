@@ -118,6 +118,10 @@ export interface Agent {
 	projectSlug: string
 	/** Full project directory path (for auto-starting servers) */
 	directory: string
+	/** The root project directory. For worktree sessions this is the parent project,
+	 *  for regular sessions it equals `directory`. Use this as the target for
+	 *  apply-to-project and other operations that should target the main checkout. */
+	projectDirectory: string
 	branch: string
 	/** Relative "last active" time, e.g. "5m" */
 	duration: string
@@ -153,10 +157,4 @@ export interface Agent {
 	createdAt: number
 	/** Timestamp (ms) of last activity — for sorting and relative time display */
 	lastActiveAt: number
-}
-
-/** Legacy Project type for sidebar display */
-export interface Project {
-	name: string
-	agentCount: number
 }

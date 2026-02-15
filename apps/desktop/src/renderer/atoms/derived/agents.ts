@@ -40,6 +40,7 @@ function agentEqual(prev: Agent | null, next: Agent | null): boolean {
 		prev.project === next.project &&
 		prev.projectSlug === next.projectSlug &&
 		prev.directory === next.directory &&
+		prev.projectDirectory === next.projectDirectory &&
 		prev.branch === next.branch &&
 		prev.duration === next.duration &&
 		prev.currentActivity === next.currentActivity &&
@@ -318,6 +319,7 @@ export const agentFamily = atomFamily((sessionId: string) => {
 			project: projectNameFromDir(displayDir),
 			projectSlug: projectInfo?.slug ?? projectNameFromDir(displayDir),
 			directory,
+			projectDirectory: displayDir,
 			branch: entry.branch ?? "",
 			duration: formatRelativeTime(lastActiveAt),
 			workTime: metrics.workTime,
