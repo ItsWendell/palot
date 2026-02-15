@@ -1,5 +1,11 @@
 # @palot/configconv
 
+## 0.5.2
+
+### Patch Changes
+
+- [`098847c`](https://github.com/ItsWendell/palot/commit/098847c404f51c0954ffaba1c872910b93dd69d9) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix prototype-polluting assignment vulnerability in Cursor permission converter
+
 ## 0.5.0
 
 ### Minor Changes
