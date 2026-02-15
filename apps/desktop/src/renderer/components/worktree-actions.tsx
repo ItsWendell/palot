@@ -256,7 +256,9 @@ function CommitDialog({
 			}
 
 			// Step 2: Commit all changes
-			const msg = commitMessage.trim() || `Changes from Palot session`
+			const msg =
+				commitMessage.trim() ||
+				`Update ${diffStat?.filesChanged || 0} file${diffStat?.filesChanged !== 1 ? "s" : ""}`
 			const commitResult = await gitCommitAll(agent.worktreePath, msg)
 			if (!commitResult.success) {
 				setError(`Commit failed: ${commitResult.error}`)
@@ -324,8 +326,8 @@ function CommitDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-md">
-				<DialogHeader>
+			<DialogContent className="flex max-h-[85vh] max-w-md flex-col">
+				<DialogHeader className="shrink-0">
 					<DialogTitle className="flex items-center gap-2">
 						<GitCommitHorizontalIcon className="size-5" />
 						Commit your changes
@@ -335,7 +337,7 @@ function CommitDialog({
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="space-y-4">
+				<div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
 					{/* Branch */}
 					<div className="space-y-1.5">
 						<div className="text-sm font-medium">Branch</div>
@@ -393,7 +395,7 @@ function CommitDialog({
 						<Textarea
 							value={commitMessage}
 							onChange={(e) => setCommitMessage(e.target.value)}
-							placeholder="Leave blank to auto-generate"
+							placeholder="Describe your changes (optional)"
 							className="min-h-[60px] resize-none text-sm"
 						/>
 					</div>
@@ -439,7 +441,7 @@ function CommitDialog({
 					)}
 				</div>
 
-				<DialogFooter>
+				<DialogFooter className="shrink-0">
 					<Button variant="outline" onClick={() => onOpenChange(false)} disabled={executing}>
 						Cancel
 					</Button>
