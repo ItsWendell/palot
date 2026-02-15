@@ -39,6 +39,7 @@ import {
 	TrashIcon,
 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
+import { activeServerConfigAtom } from "../atoms/connection"
 import { agentFamily, projectSessionIdsFamily } from "../atoms/derived/agents"
 import { automationsEnabledAtom } from "../atoms/feature-flags"
 import { appStore } from "../atoms/store"
@@ -188,6 +189,8 @@ export function AppSidebarContent({
 	const routeParams = useParams({ strict: false }) as { sessionId?: string }
 	const selectedSessionId = routeParams.sessionId ?? null
 	const automationsEnabled = useAtomValue(automationsEnabledAtom)
+	const activeServer = useAtomValue(activeServerConfigAtom)
+	const isLocalServer = activeServer.type === "local"
 
 	// Derive sections
 	const activeSessions = useMemo(
@@ -238,7 +241,7 @@ export function AppSidebarContent({
 				)}
 
 				{/* Automations */}
-				{automationsEnabled && (
+				{automationsEnabled && isLocalServer && (
 					<SidebarGroup>
 						<SidebarGroupContent>
 							<SidebarMenu>
