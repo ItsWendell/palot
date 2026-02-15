@@ -21,11 +21,9 @@ import type {
 	GitPushResult,
 	GitStashResult,
 	GitStatusInfo,
-	ManagedWorktree,
 	ModelState,
 	OpenInTargetsResult,
 	UpdateAutomationInput,
-	WorktreeCreateResult,
 } from "../../preload/api"
 import { createLogger } from "../lib/logger"
 
@@ -230,51 +228,16 @@ export async function gitStashPop(directory: string): Promise<GitStashResult> {
 }
 
 // ============================================================
-// Worktree operations — Electron-only (main process via IPC)
+// Worktree operations — OpenCode API only
 // ============================================================
 
-/**
- * Creates a worktree for a session with auto-branch creation and .env copying.
- */
-export async function createWorktree(
-	sourceDir: string,
-	sessionSlug: string,
-): Promise<WorktreeCreateResult> {
-	if (isElectron) {
-		return window.palot.worktree.create(sourceDir, sessionSlug)
-	}
-	throw new Error("Worktree operations are only available in Electron mode")
-}
-
-/**
- * Removes a worktree and cleans up.
- */
-export async function removeWorktree(worktreeRoot: string, sourceDir: string): Promise<void> {
-	if (isElectron) {
-		return window.palot.worktree.remove(worktreeRoot, sourceDir)
-	}
-	throw new Error("Worktree operations are only available in Electron mode")
-}
-
-/**
- * Lists all managed worktrees with metadata.
- */
-export async function listWorktrees(): Promise<ManagedWorktree[]> {
-	if (isElectron) {
-		return window.palot.worktree.list()
-	}
-	throw new Error("Worktree operations are only available in Electron mode")
-}
-
-/**
- * Prunes worktrees older than maxAgeDays.
- */
-export async function pruneWorktrees(maxAgeDays?: number): Promise<number> {
-	if (isElectron) {
-		return window.palot.worktree.prune(maxAgeDays)
-	}
-	throw new Error("Worktree operations are only available in Electron mode")
-}
+export type { WorktreeResult } from "./worktree-service"
+export {
+	createWorktree as createWorktreeViaApi,
+	listWorktrees as listWorktreesViaApi,
+	removeWorktree as removeWorktreeViaApi,
+	resetWorktree,
+} from "./worktree-service"
 
 /**
  * Gets the git repository root for a directory.
@@ -348,6 +311,21 @@ export async function gitApplyToLocal(
 ): Promise<GitApplyResult> {
 	if (isElectron) {
 		return window.palot.git.applyToLocal(worktreeDir, localDir)
+	}
+	throw new Error("Git operations are only available in Electron mode")
+}
+
+/**
+ * Applies a raw diff string to a local directory using `git apply`.
+ * Used for remote worktree apply-to-local, where the diff is fetched
+ * from the OpenCode session.diff API rather than from a local worktree.
+ */
+export async function gitApplyDiffText(
+	localDir: string,
+	diffText: string,
+): Promise<GitApplyResult> {
+	if (isElectron) {
+		return window.palot.git.applyDiffText(localDir, diffText)
 	}
 	throw new Error("Git operations are only available in Electron mode")
 }

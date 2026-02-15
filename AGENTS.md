@@ -149,6 +149,16 @@ Always set `CSC_IDENTITY_AUTO_DISCOVERY=false` when building locally without an 
 
 Use `/global/event` (not `/event`) to stream events from ALL projects. The SDK exposes this as `client.global.event()`.
 
+### OpenCode SDK -- Always use v2 types
+
+The `@opencode-ai/sdk` package ships both v1 and v2 type definitions. Always import from `@opencode-ai/sdk/v2/client` and check types under `dist/v2/gen/types.gen.d.ts` (NOT `dist/gen/types.gen.d.ts`). The v2 types are more complete (e.g., `session.create` accepts `permission?: PermissionRuleset`, `Permission` class has `respond`/`reply`/`list` methods). The v1 types are missing many fields and namespaces.
+
+Always prefer re-using types from the SDK rather than defining local copies. The `@opencode-ai/sdk/v2/client` entry point re-exports all types from `gen/types.gen.js`, so types like `PermissionRuleset`, `PermissionRule`, `Session`, `Event`, etc. can be imported directly:
+
+```ts
+import type { PermissionRuleset, Session } from "@opencode-ai/sdk/v2/client"
+```
+
 ### OpenCode model resolution
 
 Always pass the resolved model to `promptAsync`. The server has no single "current model" concept.
@@ -164,6 +174,10 @@ The `window.palot` bridge is not available until the preload script finishes. Ea
 ### Electron -- External Links
 
 Never open external URLs inside the Electron window. Use `setWindowOpenHandler` in the main process to deny and redirect to `shell.openExternal()`. This prevents navigation to untrusted content inside the app.
+
+### Palot storage -- XDG Base Directory
+
+Palot follows the XDG Base Directory Specification (same convention as OpenCode). Config at `~/.config/palot/`, data at `~/.local/share/palot/`. Automation configs live at `~/.config/palot/automations/<id>/`, SQLite database at `~/.local/share/palot/palot.db`. See `main/automation/paths.ts` for the implementation. Do NOT use `~/.palot/` (legacy) or Electron's `userData` path for automation storage.
 
 ### electron-vite -- Three Build Targets
 

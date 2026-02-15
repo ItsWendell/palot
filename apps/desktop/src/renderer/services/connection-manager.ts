@@ -25,6 +25,33 @@ import {
 const log = createLogger("connection-manager")
 
 // ============================================================
+// Health check
+// ============================================================
+
+/**
+ * Lightweight health probe: a single GET to /global/health with a 3s timeout.
+ * Uses plain browser fetch (bypasses the SDK's retry wrapper and IPC proxy)
+ * to avoid spamming the main process with failing requests when a server is down.
+ */
+async function checkHealth(url: string, authHeader: string | null): Promise<boolean> {
+	const controller = new AbortController()
+	const timeout = setTimeout(() => controller.abort(), 3000)
+	try {
+		const headers: Record<string, string> = {}
+		if (authHeader) headers.Authorization = authHeader
+		const res = await fetch(`${url}/global/health`, {
+			signal: controller.signal,
+			headers,
+		})
+		return res.ok
+	} catch {
+		return false
+	} finally {
+		clearTimeout(timeout)
+	}
+}
+
+// ============================================================
 // State — single server connection + per-project clients
 // ============================================================
 
@@ -109,10 +136,19 @@ export async function connectToOpenCode(url: string, authHeader?: string | null)
 
 	log.info("Connecting to OpenCode server", { url, authenticated: !!resolvedAuth, generation: gen })
 
-	// Start SSE event loop in the background
-	startEventLoop(baseClient, abortController.signal, gen)
+	// Ping the server to check if it's reachable before starting the event loop.
+	// This sets the initial connected state accurately instead of optimistically.
+	const healthy = await checkHealth(url, resolvedAuth)
+	appStore.set(serverConnectedAtom, healthy)
+	if (healthy) {
+		log.info("Server health check passed", { url })
+	} else {
+		log.warn("Server health check failed, will retry via SSE loop", { url })
+	}
 
-	appStore.set(serverConnectedAtom, true)
+	// Start SSE event loop in the background.
+	// Connected state is updated when the SSE stream opens or fails.
+	startEventLoop(baseClient, abortController.signal, gen)
 }
 
 /**
@@ -138,8 +174,15 @@ export async function loadAllProjects() {
 /**
  * Load sessions for a specific project directory from the server.
  * Merges them into the Jotai store.
+ *
+ * @param directory    The project's main worktree directory
+ * @param sandboxDirs  Known sandbox (worktree) directories for this project,
+ *                     used to restore worktree metadata on sessions after reload
  */
-export async function loadProjectSessions(directory: string): Promise<void> {
+export async function loadProjectSessions(
+	directory: string,
+	sandboxDirs?: Set<string>,
+): Promise<void> {
 	const client = getProjectClient(directory)
 	if (!client) return
 
@@ -149,7 +192,7 @@ export async function loadProjectSessions(directory: string): Promise<void> {
 			getSessionStatuses(client),
 		])
 		log.debug("Loaded sessions for project", { directory, count: sessions.length })
-		appStore.set(setSessionsAtom, { sessions, statuses, directory })
+		appStore.set(setSessionsAtom, { sessions, statuses, directory, sandboxDirs })
 	} catch (err) {
 		log.error("Failed to load sessions", { directory }, err)
 	}
@@ -182,7 +225,7 @@ export function getProjectClient(directory: string): OpencodeClient | null {
 			connection = { url: storeUrl, authHeader: storeAuth, baseClient, abortController }
 			setGlobalAbort(abortController)
 			startEventLoop(baseClient, abortController.signal, eventLoopGeneration)
-			appStore.set(serverConnectedAtom, true)
+			// Connected state is set by startEventLoop once SSE actually opens
 		} else {
 			return null
 		}
@@ -216,7 +259,7 @@ export function getBaseClient(): OpencodeClient | null {
 			connection = { url: storeUrl, authHeader: storeAuth, baseClient, abortController }
 			setGlobalAbort(abortController)
 			startEventLoop(baseClient, abortController.signal, eventLoopGeneration)
-			appStore.set(serverConnectedAtom, true)
+			// Connected state is set by startEventLoop once SSE actually opens
 		} else {
 			return null
 		}
@@ -397,16 +440,41 @@ async function startEventLoop(
 
 	const isStale = () => signal.aborted || generation !== eventLoopGeneration
 
+	/** Only write serverConnectedAtom if this event loop is still the active one. */
+	const setConnected = (value: boolean) => {
+		if (!isStale()) appStore.set(serverConnectedAtom, value)
+	}
+
 	log.info("SSE event loop started", { generation })
 
 	while (!isStale()) {
+		// Before opening the SSE stream, check if the server is reachable.
+		// This avoids firing expensive IPC/SSE requests against a dead server.
+		// On the first iteration the caller already ran a health check, so
+		// we only probe when retrying (retryDelay > 1000 means we already failed once).
+		if (retryDelay > 1000 || !appStore.get(serverConnectedAtom)) {
+			const healthy = await checkHealth(connection?.url ?? "", connection?.authHeader ?? null)
+			if (isStale()) break
+			setConnected(healthy)
+			if (!healthy) {
+				log.warn("Server health check failed, backing off", { generation, retryDelay })
+				await new Promise((resolve) => setTimeout(resolve, retryDelay))
+				retryDelay = Math.min(retryDelay * 2, 30000)
+				continue
+			}
+		}
+
 		const batcher = createEventBatcher()
 
 		try {
 			log.debug("Opening SSE stream", { generation })
 			const stream = await subscribeToGlobalEvents(client)
+			if (isStale()) break
 			retryDelay = 1000
 			log.info("SSE stream connected", { generation })
+
+			// SSE stream opened successfully, server is reachable
+			setConnected(true)
 
 			for await (const globalEvent of stream) {
 				if (isStale()) break
@@ -417,11 +485,12 @@ async function startEventLoop(
 			}
 			if (!isStale()) {
 				log.warn("SSE stream ended (server closed connection)", { generation })
+				setConnected(false)
 			}
 		} catch (err) {
 			if (isStale()) break
 			log.error("SSE stream disconnected", { generation, retryDelay }, err)
-			appStore.set(serverConnectedAtom, false)
+			setConnected(false)
 		} finally {
 			batcher.dispose()
 		}
@@ -431,12 +500,6 @@ async function startEventLoop(
 		log.info("Reconnecting SSE in", { delayMs: retryDelay, generation })
 		await new Promise((resolve) => setTimeout(resolve, retryDelay))
 		retryDelay = Math.min(retryDelay * 2, 30000)
-
-		if (isStale()) break
-
-		if (connection) {
-			appStore.set(serverConnectedAtom, true)
-		}
 	}
 
 	log.info("SSE event loop exited", { generation, stale: generation !== eventLoopGeneration })

@@ -29,6 +29,7 @@ export const automationRuns = sqliteTable(
 		status: text("status").notNull(),
 		attempt: int("attempt").notNull().default(1),
 		sessionId: text("session_id"),
+		worktreePath: text("worktree_path"),
 		startedAt: int("started_at"),
 		completedAt: int("completed_at"),
 		timeoutAt: int("timeout_at"),

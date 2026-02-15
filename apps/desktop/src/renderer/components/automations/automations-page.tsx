@@ -12,6 +12,7 @@ import {
 } from "@palot/ui/components/resizable"
 import { Outlet } from "@tanstack/react-router"
 import { useCallback, useState } from "react"
+import { toast } from "sonner"
 import type { Automation } from "../../../preload/api"
 import { useAutomationData } from "../../hooks/use-automation-data"
 import { deleteAutomation, runAutomationNow, updateAutomation } from "../../services/backend"
@@ -43,8 +44,13 @@ export function AutomationsPage() {
 	const handleRunNow = useCallback(async (automationId: string) => {
 		try {
 			await runAutomationNow(automationId)
-		} catch {
-			// TODO: error toast
+			toast.success("Automation run started", {
+				description: "Check the inbox for results.",
+			})
+		} catch (err) {
+			toast.error("Failed to run automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		}
 	}, [])
 
@@ -54,16 +60,20 @@ export function AutomationsPage() {
 				id: automation.id,
 				status: automation.status === "paused" ? "active" : "paused",
 			})
-		} catch {
-			// TODO: error toast
+		} catch (err) {
+			toast.error("Failed to update automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		}
 	}, [])
 
 	const handleDeleteAutomation = useCallback(async (automationId: string) => {
 		try {
 			await deleteAutomation(automationId)
-		} catch {
-			// TODO: error toast
+		} catch (err) {
+			toast.error("Failed to delete automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		}
 	}, [])
 

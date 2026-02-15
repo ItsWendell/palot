@@ -4,6 +4,9 @@
  * Shows the active server name with a connection status dot.
  * Clicking opens a popover with a server switcher (including mDNS-discovered
  * servers) and link to settings.
+ *
+ * When the popover opens, non-active remote servers are health-checked
+ * on demand via a quick fetch to /global/health.
  */
 
 import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
@@ -11,9 +14,78 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@palot/ui/compo
 import { useNavigate } from "@tanstack/react-router"
 import { useAtomValue } from "jotai"
 import { CheckIcon, GlobeIcon, MonitorIcon, RadarIcon, SettingsIcon } from "lucide-react"
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ServerConfig } from "../../preload/api"
 import { serverConnectedAtom } from "../atoms/connection"
 import { useServerActions, useServers } from "../hooks/use-servers"
+import { isElectron, resolveAuthHeader, resolveServerUrl } from "../services/backend"
+
+// ============================================================
+// Health probe helper
+// ============================================================
+
+/**
+ * Probes a single server's /global/health endpoint.
+ * Returns true if healthy, false otherwise. Times out after 3s.
+ */
+async function probeServerHealth(server: ServerConfig): Promise<boolean> {
+	try {
+		const url = await resolveServerUrl(server)
+		const headers: Record<string, string> = {}
+		const auth = await resolveAuthHeader(server)
+		if (auth) headers.Authorization = auth
+
+		const controller = new AbortController()
+		const timeout = setTimeout(() => controller.abort(), 3000)
+
+		if (isElectron && "palot" in window) {
+			// Use IPC fetch to bypass connection limits
+			const result = await window.palot.fetch({
+				url: `${url}/global/health`,
+				method: "GET",
+				headers,
+				body: null,
+			})
+			clearTimeout(timeout)
+			return result.status === 200
+		}
+
+		const response = await fetch(`${url}/global/health`, {
+			headers,
+			signal: controller.signal,
+		})
+		clearTimeout(timeout)
+		return response.ok
+	} catch {
+		return false
+	}
+}
+
+// ============================================================
+// Status dot component
+// ============================================================
+
+type HealthState = boolean | null
+
+function StatusDot({ health, className }: { health: HealthState; className?: string }) {
+	if (health === null) {
+		// Still checking: pulsing neutral dot
+		return (
+			<span
+				className={`size-1.5 shrink-0 rounded-full bg-muted-foreground/40 animate-pulse ${className ?? ""}`}
+			/>
+		)
+	}
+	return (
+		<span
+			className={`size-1.5 shrink-0 rounded-full ${health ? "bg-green-500" : "bg-red-500"} ${className ?? ""}`}
+		/>
+	)
+}
+
+// ============================================================
+// Main component
+// ============================================================
 
 export function ServerIndicator() {
 	const { servers, activeServer, discoveredMdns } = useServers()
@@ -21,6 +93,35 @@ export function ServerIndicator() {
 	const { switchServer, saveDiscoveredServer } = useServerActions()
 	const navigate = useNavigate()
 	const [open, setOpen] = useState(false)
+
+	// Health state for non-active servers, probed when popover opens.
+	// Map<serverId, boolean | null>  (null = still checking)
+	const [healthMap, setHealthMap] = useState<Map<string, HealthState>>(new Map())
+	const probeGeneration = useRef(0)
+
+	// Probe non-active servers when popover opens
+	useEffect(() => {
+		if (!open) return
+
+		const gen = ++probeGeneration.current
+		const nonActive = servers.filter((s) => s.id !== activeServer.id)
+		if (nonActive.length === 0) return
+
+		// Initialize all to null (checking)
+		setHealthMap((prev) => {
+			const next = new Map(prev)
+			for (const s of nonActive) next.set(s.id, null)
+			return next
+		})
+
+		// Fire probes in parallel
+		for (const server of nonActive) {
+			probeServerHealth(server).then((healthy) => {
+				if (gen !== probeGeneration.current) return // stale
+				setHealthMap((prev) => new Map(prev).set(server.id, healthy))
+			})
+		}
+	}, [open, servers, activeServer.id])
 
 	const handleSwitch = useCallback(
 		(serverId: string) => {
@@ -83,8 +184,16 @@ export function ServerIndicator() {
 					<PopoverTrigger
 						render={
 							<SidebarMenuButton
-								tooltip={`Server: ${activeServer.name}`}
-								className="text-muted-foreground hover:bg-transparent active:bg-transparent"
+								tooltip={
+									connected
+										? `Server: ${activeServer.name}`
+										: `Server offline: ${activeServer.name}`
+								}
+								className={
+									connected
+										? "text-muted-foreground hover:bg-transparent active:bg-transparent"
+										: "text-red-500 hover:bg-transparent active:bg-transparent"
+								}
 							/>
 						}
 					>
@@ -93,11 +202,12 @@ export function ServerIndicator() {
 							{/* Status dot */}
 							<span
 								className={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full border border-sidebar-background ${
-									connected ? "bg-green-500" : "bg-yellow-500"
+									connected ? "bg-green-500" : "bg-red-500"
 								}`}
 							/>
 						</div>
 						<span className="truncate">{activeServer.name}</span>
+						{!connected && <span className="text-[10px] text-red-500/70">(offline)</span>}
 					</PopoverTrigger>
 				</SidebarMenuItem>
 			</SidebarMenu>
@@ -109,6 +219,7 @@ export function ServerIndicator() {
 				{servers.map((server) => {
 					const isActive = server.id === activeServer.id
 					const Icon = server.type === "local" ? MonitorIcon : GlobeIcon
+					const health: HealthState = isActive ? connected : (healthMap.get(server.id) ?? null)
 
 					return (
 						<button
@@ -121,6 +232,7 @@ export function ServerIndicator() {
 						>
 							<Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
 							<span className="min-w-0 flex-1 truncate">{server.name}</span>
+							<StatusDot health={health} />
 							{isActive && (
 								<CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-primary" />
 							)}

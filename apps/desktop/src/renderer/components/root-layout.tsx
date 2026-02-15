@@ -7,6 +7,7 @@ import { TooltipProvider } from "@palot/ui/components/tooltip"
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue, useSetAtom } from "jotai"
 import { useCallback, useEffect, useMemo } from "react"
+import { Toaster } from "sonner"
 import { onboardingStateAtom } from "../atoms/onboarding"
 import {
 	useAgents,
@@ -157,6 +158,7 @@ export function RootLayout() {
 						onOpenChange={setCommandPaletteOpen}
 						agents={agents}
 					/>
+					<Toaster position="bottom-right" />
 				</SidebarSlotProvider>
 			</AppBarProvider>
 		</TooltipProvider>

@@ -20,6 +20,8 @@ export type {
 	CompactionPart as OpenCodeCompactionPart,
 	// Top-level config
 	Config as OpenCodeConfig,
+	// Events (v1.2.0+)
+	EventMessagePartDelta as OpenCodePartDelta,
 	FilePart as OpenCodeFilePart,
 	// MCP
 	McpLocalConfig as OpenCodeMcpLocal,

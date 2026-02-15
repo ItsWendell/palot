@@ -23,6 +23,7 @@ import { useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue } from "jotai"
 import {
 	AlertCircleIcon,
+	BotIcon,
 	CheckCircle2Icon,
 	ChevronRightIcon,
 	CircleDotIcon,
@@ -38,7 +39,9 @@ import {
 	TrashIcon,
 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
+import { activeServerConfigAtom } from "../atoms/connection"
 import { agentFamily, projectSessionIdsFamily } from "../atoms/derived/agents"
+import { automationsEnabledAtom } from "../atoms/feature-flags"
 import { appStore } from "../atoms/store"
 import type { Agent, AgentStatus, SidebarProject } from "../lib/types"
 import { ServerIndicator } from "./server-indicator"
@@ -159,6 +162,7 @@ interface AppSidebarContentProps {
 	onToggleSubAgents: () => void
 	onRenameSession?: (agent: Agent, title: string) => Promise<void>
 	onDeleteSession?: (agent: Agent) => Promise<void>
+	serverConnected: boolean
 }
 
 // ============================================================
@@ -179,10 +183,14 @@ export function AppSidebarContent({
 	onToggleSubAgents,
 	onRenameSession,
 	onDeleteSession,
+	serverConnected,
 }: AppSidebarContentProps) {
 	const navigate = useNavigate()
 	const routeParams = useParams({ strict: false }) as { sessionId?: string }
 	const selectedSessionId = routeParams.sessionId ?? null
+	const automationsEnabled = useAtomValue(automationsEnabledAtom)
+	const activeServer = useAtomValue(activeServerConfigAtom)
+	const isLocalServer = activeServer.type === "local"
 
 	// Derive sections
 	const activeSessions = useMemo(
@@ -204,10 +212,54 @@ export function AppSidebarContent({
 		[agents, activeIds],
 	)
 
+	const hasContent = agents.length > 0 || projects.length > 0
+	const showEmptyState = !hasContent
+
 	return (
 		<>
 			{/* Scrollable content */}
 			<SidebarContent>
+				{/* Empty state */}
+				{showEmptyState && (
+					<div className="flex flex-1 items-center justify-center p-4">
+						<div className="space-y-2 text-center">
+							{!serverConnected ? (
+								<>
+									<p className="text-sm text-muted-foreground">Server offline</p>
+									<p className="text-xs text-muted-foreground/60">
+										Check your connection in Settings
+									</p>
+								</>
+							) : (
+								<>
+									<p className="text-sm text-muted-foreground">No projects yet</p>
+									<p className="text-xs text-muted-foreground/60">Add a project to get started</p>
+								</>
+							)}
+						</div>
+					</div>
+				)}
+
+				{/* Automations */}
+				{automationsEnabled && isLocalServer && (
+					<SidebarGroup>
+						<SidebarGroupContent>
+							<SidebarMenu>
+								<SidebarMenuItem>
+									<SidebarMenuButton
+										tooltip="Automations"
+										onClick={() => navigate({ to: "/automations" })}
+										className="text-muted-foreground"
+									>
+										<BotIcon className="size-4" />
+										<span>Automations</span>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				)}
+
 				{/* Active Now */}
 				{activeSessions.length > 0 && (
 					<SidebarGroup>
@@ -251,83 +303,85 @@ export function AppSidebarContent({
 				)}
 
 				{/* Projects -- always render so search/sub-agent actions are accessible */}
-				{(activeSessions.length > 0 || recentSessions.length > 0) && (
+				{hasContent && (activeSessions.length > 0 || recentSessions.length > 0) && (
 					<SidebarSeparator className="bg-sidebar-border/5" />
 				)}
-				<SidebarGroup>
-					<SidebarGroupLabel>Projects</SidebarGroupLabel>
-					{/* Action buttons row -- positioned like SidebarGroupAction but holds multiple icons */}
-					<div className="absolute top-3.5 right-3 flex items-center gap-0.5">
-						{subAgentCount > 0 && (
+				{hasContent && (
+					<SidebarGroup>
+						<SidebarGroupLabel>Projects</SidebarGroupLabel>
+						{/* Action buttons row -- positioned like SidebarGroupAction but holds multiple icons */}
+						<div className="absolute top-3.5 right-3 flex items-center gap-0.5">
+							{subAgentCount > 0 && (
+								<Tooltip>
+									<TooltipTrigger
+										render={
+											<button
+												type="button"
+												onClick={onToggleSubAgents}
+												className={`inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10px] transition-colors ${
+													showSubAgents
+														? "bg-sidebar-accent text-sidebar-accent-foreground"
+														: "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+												}`}
+											/>
+										}
+									>
+										<NetworkIcon className="size-3.5" />
+										<span>{subAgentCount}</span>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">
+										{showSubAgents ? "Hide" : "Show"} sub-agents ({subAgentCount})
+									</TooltipContent>
+								</Tooltip>
+							)}
 							<Tooltip>
 								<TooltipTrigger
 									render={
 										<button
 											type="button"
-											onClick={onToggleSubAgents}
-											className={`inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10px] transition-colors ${
-												showSubAgents
-													? "bg-sidebar-accent text-sidebar-accent-foreground"
-													: "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-											}`}
-										/>
-									}
-								>
-									<NetworkIcon className="size-3.5" />
-									<span>{subAgentCount}</span>
-								</TooltipTrigger>
-								<TooltipContent side="bottom">
-									{showSubAgents ? "Hide" : "Show"} sub-agents ({subAgentCount})
-								</TooltipContent>
-							</Tooltip>
-						)}
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<button
-										type="button"
-										onClick={onOpenCommandPalette}
-										className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
-									/>
-								}
-							>
-								<SearchIcon className="size-4 shrink-0" />
-								<span className="sr-only">Search sessions</span>
-							</TooltipTrigger>
-							<TooltipContent side="bottom">Search sessions (&#8984;K)</TooltipContent>
-						</Tooltip>
-						{onAddProject && (
-							<Tooltip>
-								<TooltipTrigger
-									render={
-										<button
-											type="button"
-											onClick={onAddProject}
+											onClick={onOpenCommandPalette}
 											className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
 										/>
 									}
 								>
-									<PlusIcon className="size-4 shrink-0" />
-									<span className="sr-only">Add Project</span>
+									<SearchIcon className="size-4 shrink-0" />
+									<span className="sr-only">Search sessions</span>
 								</TooltipTrigger>
-								<TooltipContent side="bottom">Add project</TooltipContent>
+								<TooltipContent side="bottom">Search sessions (&#8984;K)</TooltipContent>
 							</Tooltip>
-						)}
-					</div>
-					<SidebarGroupContent>
-						<SidebarMenu>
-							{projects.map((project) => (
-								<ProjectFolder
-									key={project.id}
-									project={project}
-									selectedSessionId={selectedSessionId}
-									onRename={onRenameSession}
-									onDelete={onDeleteSession}
-								/>
-							))}
-						</SidebarMenu>
-					</SidebarGroupContent>
-				</SidebarGroup>
+							{onAddProject && (
+								<Tooltip>
+									<TooltipTrigger
+										render={
+											<button
+												type="button"
+												onClick={onAddProject}
+												className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
+											/>
+										}
+									>
+										<PlusIcon className="size-4 shrink-0" />
+										<span className="sr-only">Add Project</span>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">Add project</TooltipContent>
+								</Tooltip>
+							)}
+						</div>
+						<SidebarGroupContent>
+							<SidebarMenu>
+								{projects.map((project) => (
+									<ProjectFolder
+										key={project.id}
+										project={project}
+										selectedSessionId={selectedSessionId}
+										onRename={onRenameSession}
+										onDelete={onDeleteSession}
+									/>
+								))}
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				)}
 			</SidebarContent>
 			<SidebarFooter className="space-y-0 p-2">
 				<ServerIndicator />
@@ -344,16 +398,6 @@ export function AppSidebarContent({
 					</SidebarMenuItem>
 				</SidebarMenu>
 			</SidebarFooter>
-			{agents.length === 0 && projects.length === 0 && (
-				<div className="flex flex-1 items-center justify-center p-4">
-					<div className="space-y-2 text-center">
-						<p className="text-sm text-muted-foreground">No sessions yet</p>
-						<p className="text-xs text-muted-foreground/60">
-							Start an OpenCode server to see your projects
-						</p>
-					</div>
-				</div>
-			)}
 		</>
 	)
 }

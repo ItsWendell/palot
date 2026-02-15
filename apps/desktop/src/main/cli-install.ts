@@ -1,6 +1,11 @@
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { app } from "electron"
+
+// ESM equivalent for __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 /**
  * Resolves the path to the CLI shell script bundled inside the app.

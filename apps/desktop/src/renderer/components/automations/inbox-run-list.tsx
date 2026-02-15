@@ -1,4 +1,3 @@
-// @ts-nocheck -- Automations feature hidden; routes removed from router
 /**
  * Scrollable list with sticky section headers: "Scheduled", "Completed", "Archived".
  *
@@ -56,7 +55,11 @@ export function InboxRunList({
 	const automations = useAutomations()
 	const runs = useAutomationRuns()
 	const navigate = useNavigate()
-	const params = useParams({ strict: false }) as { runId?: string }
+	const params = useParams({ strict: false }) as {
+		automationId?: string
+		runId?: string
+	}
+	const selectedAutomationId = params.automationId ?? null
 	const selectedRunId = params.runId ?? null
 	const archiveLocal = useSetAtom(archiveRunLocalAtom)
 	const markReadLocal = useSetAtom(markRunReadLocalAtom)
@@ -136,8 +139,13 @@ export function InboxRunList({
 							<AutomationRow
 								key={automation.id}
 								automation={automation}
-								isSelected={false}
-								onClick={() => onEditAutomation(automation)}
+								isSelected={automation.id === selectedAutomationId && !selectedRunId}
+								onClick={() =>
+									navigate({
+										to: "/automations/$automationId",
+										params: { automationId: automation.id },
+									})
+								}
 								onEdit={onEditAutomation}
 								onRunNow={onRunNow}
 								onTogglePause={onTogglePause}
@@ -164,8 +172,8 @@ export function InboxRunList({
 									isSelected={run.id === selectedRunId}
 									onClick={() =>
 										navigate({
-											to: "/automations/$runId",
-											params: { runId: run.id },
+											to: "/automations/$automationId/runs/$runId",
+											params: { automationId: run.automationId, runId: run.id },
 										})
 									}
 									onArchive={handleArchive}
@@ -193,8 +201,8 @@ export function InboxRunList({
 									isSelected={run.id === selectedRunId}
 									onClick={() =>
 										navigate({
-											to: "/automations/$runId",
-											params: { runId: run.id },
+											to: "/automations/$automationId/runs/$runId",
+											params: { automationId: run.automationId, runId: run.id },
 										})
 									}
 									onArchive={handleArchive}

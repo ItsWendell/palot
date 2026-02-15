@@ -11,6 +11,7 @@ import {
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
+	BotIcon,
 	CheckIcon,
 	CloudIcon,
 	ContainerIcon,
@@ -31,6 +32,7 @@ import {
 	Undo2Icon,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { automationsEnabledAtom, toggleAutomationsAtom } from "../atoms/feature-flags"
 import { isMockModeAtom, toggleMockModeAtom } from "../atoms/mock-mode"
 import { opaqueWindowsAtom } from "../atoms/preferences"
 import { isReactScanAtom, toggleReactScanAtom } from "../atoms/react-scan"
@@ -83,6 +85,8 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 	const toggleMockMode = useSetAtom(toggleMockModeAtom)
 	const isReactScan = useAtomValue(isReactScanAtom)
 	const toggleReactScan = useSetAtom(toggleReactScanAtom)
+	const automationsEnabled = useAtomValue(automationsEnabledAtom)
+	const toggleAutomations = useSetAtom(toggleAutomationsAtom)
 	const [reloading, setReloading] = useState(false)
 
 	const isElectron = typeof window !== "undefined" && "palot" in window
@@ -251,6 +255,21 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 							{colorScheme === scheme && <CheckIcon className="ml-auto h-4 w-4" />}
 						</CommandItem>
 					))}
+				</CommandGroup>
+
+				<CommandSeparator />
+				<CommandGroup heading="Features">
+					<CommandItem
+						keywords={["automation", "automations", "schedule", "cron", "recurring"]}
+						onSelect={() => {
+							toggleAutomations()
+							onOpenChange(false)
+						}}
+					>
+						<BotIcon />
+						<span>{automationsEnabled ? "Disable Automations" : "Enable Automations"}</span>
+						{automationsEnabled && <CheckIcon className="ml-auto h-4 w-4" />}
+					</CommandItem>
 				</CommandGroup>
 
 				<CommandSeparator />

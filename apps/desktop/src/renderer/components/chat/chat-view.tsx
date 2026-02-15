@@ -36,8 +36,10 @@ import {
 	useRef,
 	useState,
 } from "react"
+import { sessionMetricsFamily } from "../../atoms/derived/session-metrics"
 import { messagesFamily, removeMessageAtom } from "../../atoms/messages"
 import { projectModelsAtom, setProjectModelAtom } from "../../atoms/preferences"
+import type { SessionSetupPhase } from "../../atoms/sessions"
 import { sessionFamily } from "../../atoms/sessions"
 import { appStore } from "../../atoms/store"
 import { useDraftActions, useDraftSnapshot } from "../../hooks/use-draft"
@@ -56,7 +58,7 @@ import {
 } from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
 import { createLogger } from "../../lib/logger"
-import { formatWorkDuration } from "../../lib/session-metrics"
+import { computeTurnWorkTimeSplit, formatWorkDuration } from "../../lib/session-metrics"
 import type { Agent, FileAttachment, FilePart, QuestionAnswer, TextPart } from "../../lib/types"
 import { getProjectClient } from "../../services/connection-manager"
 
@@ -440,13 +442,14 @@ export function ChatView({
 	const isWorking = agent.status === "running"
 	const [sending, setSending] = useState(false)
 
-	// Start time of the current (last) turn — used for the live timer on the submit button
-	const currentTurnStartMs = useMemo(() => {
-		if (!isWorking || turns.length === 0) return 0
+	// Work time split for the current (last) turn — used for the live timer on the submit button.
+	// Splits into completed work time (finished assistant messages) and the active start time
+	// (in-progress message), so the timer shows actual agent work time, not wall-clock elapsed.
+	const currentTurnWorkSplit = useMemo(() => {
+		if (!isWorking || turns.length === 0) return null
 		const lastTurn = turns[turns.length - 1]
-		const firstAssistant = lastTurn.assistantMessages[0]
-		if (!firstAssistant || firstAssistant.info.role !== "assistant") return 0
-		return firstAssistant.info.time.created
+		if (lastTurn.assistantMessages.length === 0) return null
+		return computeTurnWorkTimeSplit(lastTurn)
 	}, [isWorking, turns])
 
 	// Mention tracking — files and agents referenced via @
@@ -462,9 +465,11 @@ export function ChatView({
 	// <Conversation> tree (e.g. after sending a message or answering a question).
 	const scrollRef = useRef<ScrollHandle | null>(null)
 
-	// Session-level error from session.error events
+	// Session-level error and setup phase from the session atom
 	const sessionEntry = useAtomValue(sessionFamily(agent.sessionId))
 	const sessionError = sessionEntry?.error
+	const setupPhase = sessionEntry?.setupPhase
+	const sessionMetrics = useAtomValue(sessionMetricsFamily(agent.sessionId))
 
 	// Stable callbacks for question/permission handlers — agent is stable
 	// per render, but wrapping in useCallback avoids creating new inline
@@ -1114,6 +1119,8 @@ export function ChatView({
 										onSendNow={isWorking ? handleSendNow : undefined}
 									/>
 								))
+							) : setupPhase ? (
+								<WorktreeSetupProgress phase={setupPhase} />
 							) : (
 								<div className="flex items-center justify-center py-8">
 									<p className="text-sm text-muted-foreground">No messages yet</p>
@@ -1148,172 +1155,185 @@ export function ChatView({
 				/>
 			</div>
 
-			{/* Bottom input section — task list + card + status bar */}
-			<div className="px-4 pb-4 pt-2">
-				<div className="mx-auto w-full max-w-4xl">
-					{/* Session task list — collapsible todo progress */}
-					<SessionTaskList sessionId={agent.sessionId} />
+			{/* Bottom input section — hidden during worktree setup since the stub session
+			   cannot accept prompts yet */}
+			{!setupPhase && (
+				<div className="px-4 pb-4 pt-2">
+					<div className="mx-auto w-full max-w-4xl">
+						{/* Session task list — collapsible todo progress */}
+						<SessionTaskList sessionId={agent.sessionId} />
 
-					{/* Revert banner — shown when session is in undo state */}
-					{isReverted && (
-						<div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
-							<Undo2Icon className="size-3.5 shrink-0" />
-							<span className="flex-1">
-								Session reverted — type to continue from here, or redo to restore
-							</span>
-							{canRedo && onRedo && (
-								<button
-									type="button"
-									onClick={() => onRedo()}
-									className="flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
-								>
-									<Redo2Icon className="size-3" />
-									Redo
-								</button>
-							)}
-						</div>
-					)}
+						{/* Revert banner — shown when session is in undo state */}
+						{isReverted && (
+							<div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+								<Undo2Icon className="size-3.5 shrink-0" />
+								<span className="flex-1">
+									Session reverted — type to continue from here, or redo to restore
+								</span>
+								{canRedo && onRedo && (
+									<button
+										type="button"
+										onClick={() => onRedo()}
+										className="flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+									>
+										<Redo2Icon className="size-3" />
+										Redo
+									</button>
+								)}
+							</div>
+						)}
 
-					{/* Pending permissions — always shown above input/questions */}
-					{agent.permissions.length > 0 && (
-						<div className="pb-2">
-							{agent.permissions.map((permission) => (
-								<PermissionItem
-									key={permission.id}
-									agent={agent}
-									permission={permission}
-									onApprove={handleApprovePermission}
-									onDeny={handleDenyPermission}
-									isConnected={isConnected}
-								/>
-							))}
-						</div>
-					)}
+						{/* Pending permissions — always shown above input/questions */}
+						{agent.permissions.length > 0 && (
+							<div className="pb-2">
+								{agent.permissions.map((permission) => (
+									<PermissionItem
+										key={permission.id}
+										agent={agent}
+										permission={permission}
+										onApprove={handleApprovePermission}
+										onDeny={handleDenyPermission}
+										isConnected={isConnected}
+									/>
+								))}
+							</div>
+						)}
 
-					{/* When questions are pending, replace the input with a focused question flow */}
-					{agent.questions.length > 0 ? (
-						<ChatQuestionFlow
-							questions={agent.questions}
-							onReply={handleReplyQuestion}
-							onReject={handleRejectQuestion}
-							disabled={!isConnected}
-						/>
-					) : (
-						/* Input card — PromptInputProvider wraps everything,
+						{/* When questions are pending, replace the input with a focused question flow */}
+						{agent.questions.length > 0 ? (
+							<ChatQuestionFlow
+								questions={agent.questions}
+								onReply={handleReplyQuestion}
+								onReject={handleRejectQuestion}
+								disabled={!isConnected}
+							/>
+						) : (
+							/* Input card — PromptInputProvider wraps everything,
 						   popovers positioned relative to the card wrapper,
 						   textarea as a direct child of InputGroup inside PromptInput */
-						<PromptInputProvider key={agent.sessionId} initialInput={draft}>
-							<DraftSync setDraft={setDraft} />
-							<SlashCommandBridge controllerRef={slashCommandRef} />
-							<TriggerDetector
-								onSlashChange={handleSlashTriggerChange}
-								onMentionChange={handleMentionTriggerChange}
-							/>
-							<MentionReconciler mentions={mentions} onReconcile={setMentions} />
-							{/* Relative wrapper for absolutely-positioned popovers */}
-							<div className="relative">
-								{/* Popovers render above the card via bottom-full */}
-								<SlashCommandPopover
-									ref={slashPopoverRef}
-									query={slashQuery}
-									open={slashOpen}
-									enabled={isConnected}
-									directory={agent.directory}
-									onSelect={handleSlashSelect}
-									onSkillsOpen={handleSkillsOpen}
-									onClose={handleSlashClose}
+							<PromptInputProvider key={agent.sessionId} initialInput={draft}>
+								<DraftSync setDraft={setDraft} />
+								<SlashCommandBridge controllerRef={slashCommandRef} />
+								<TriggerDetector
+									onSlashChange={handleSlashTriggerChange}
+									onMentionChange={handleMentionTriggerChange}
 								/>
-								<MentionPopover
-									ref={mentionPopoverRef}
-									query={mentionQuery}
-									open={mentionOpen}
-									directory={agent.directory}
-									agents={openCodeAgents ?? []}
-									onSelect={handleMentionSelect}
-									onClose={handleMentionClose}
-								/>
-								<PromptInput
-									className="rounded-xl"
-									accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
-									multiple
-									maxFileSize={10 * 1024 * 1024}
-									onSubmit={(message) => {
-										if (message.text.trim() && canSend)
-											handleSend(message.text, message.files.length > 0 ? message.files : undefined)
-									}}
-								>
-									{/* Mention chips above the textarea */}
-									<ContextItems mentions={mentions} onRemove={handleMentionRemove} />
-									<PromptAttachmentPreview
-										supportsImages={modelCapabilities?.image}
-										supportsPdf={modelCapabilities?.pdf}
+								<MentionReconciler mentions={mentions} onReconcile={setMentions} />
+								{/* Relative wrapper for absolutely-positioned popovers */}
+								<div className="relative">
+									{/* Popovers render above the card via bottom-full */}
+									<SlashCommandPopover
+										ref={slashPopoverRef}
+										query={slashQuery}
+										open={slashOpen}
+										enabled={isConnected}
+										directory={agent.directory}
+										onSelect={handleSlashSelect}
+										onSkillsOpen={handleSkillsOpen}
+										onClose={handleSlashClose}
 									/>
-									<PromptInputTextarea
-										data-prompt-input
-										onKeyDown={handleTextareaKeyDown}
-										disabled={!isConnected}
-										placeholder={
-											isWorking ? "Send a follow-up message..." : "What would you like to do?"
-										}
+									<MentionPopover
+										ref={mentionPopoverRef}
+										query={mentionQuery}
+										open={mentionOpen}
+										directory={agent.directory}
+										agents={openCodeAgents ?? []}
+										onSelect={handleMentionSelect}
+										onClose={handleMentionClose}
 									/>
+									<PromptInput
+										className="rounded-xl"
+										accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+										multiple
+										maxFileSize={10 * 1024 * 1024}
+										onSubmit={(message) => {
+											if (message.text.trim() && canSend)
+												handleSend(
+													message.text,
+													message.files.length > 0 ? message.files : undefined,
+												)
+										}}
+									>
+										{/* Mention chips above the textarea */}
+										<ContextItems mentions={mentions} onRemove={handleMentionRemove} />
+										<PromptAttachmentPreview
+											supportsImages={modelCapabilities?.image}
+											supportsPdf={modelCapabilities?.pdf}
+										/>
+										<PromptInputTextarea
+											data-prompt-input
+											onKeyDown={handleTextareaKeyDown}
+											disabled={!isConnected}
+											placeholder={
+												isWorking ? "Send a follow-up message..." : "What would you like to do?"
+											}
+										/>
 
-									{/* Toolbar inside the card — agent + model + variant selectors + submit */}
-									<PromptInputFooter>
-										<PromptInputTools>
-											<AttachButton disabled={!isConnected} />
-											<PromptToolbar
-												agents={openCodeAgents ?? []}
-												selectedAgent={selectedAgent}
-												defaultAgent={config?.defaultAgent}
-												onSelectAgent={setSelectedAgent}
-												providers={providers ?? null}
-												effectiveModel={effectiveModel}
-												hasModelOverride={!!selectedModel}
-												onSelectModel={handleModelSelect}
-												recentModels={recentModels}
-												selectedVariant={selectedVariant}
-												onSelectVariant={setSelectedVariant}
-												disabled={!isConnected}
-											/>
-										</PromptInputTools>
-										<PromptInputSubmit
-											disabled={!canSend}
-											status={isWorking ? "streaming" : undefined}
-											onStop={handleStop}
-											size={isWorking && currentTurnStartMs > 0 ? "xs" : "icon-sm"}
-										>
-											{isWorking && currentTurnStartMs > 0 ? (
-												<LiveTurnTimer startMs={currentTurnStartMs} />
-											) : undefined}
-										</PromptInputSubmit>
-									</PromptInputFooter>
-								</PromptInput>
-							</div>
-						</PromptInputProvider>
-					)}
+										{/* Toolbar inside the card — agent + model + variant selectors + submit */}
+										<PromptInputFooter>
+											<PromptInputTools>
+												<AttachButton disabled={!isConnected} />
+												<PromptToolbar
+													agents={openCodeAgents ?? []}
+													selectedAgent={selectedAgent}
+													defaultAgent={config?.defaultAgent}
+													onSelectAgent={setSelectedAgent}
+													providers={providers ?? null}
+													effectiveModel={effectiveModel}
+													hasModelOverride={!!selectedModel}
+													onSelectModel={handleModelSelect}
+													recentModels={recentModels}
+													selectedVariant={selectedVariant}
+													onSelectVariant={setSelectedVariant}
+													disabled={!isConnected}
+												/>
+											</PromptInputTools>
+											<PromptInputSubmit
+												disabled={!canSend}
+												status={isWorking ? "streaming" : undefined}
+												onStop={handleStop}
+												size={isWorking && currentTurnWorkSplit ? "xs" : "icon-sm"}
+											>
+												{isWorking && currentTurnWorkSplit ? (
+													<LiveTurnTimer
+														completedMs={currentTurnWorkSplit.completedMs}
+														activeStartMs={currentTurnWorkSplit.activeStartMs}
+													/>
+												) : undefined}
+											</PromptInputSubmit>
+										</PromptInputFooter>
+									</PromptInput>
+								</div>
+							</PromptInputProvider>
+						)}
 
-					{/* Status bar — outside the card */}
-					<StatusBar
-						vcs={vcs ?? null}
-						isConnected={isConnected}
-						isWorking={isWorking}
-						interruptCount={interruptCount}
-						extraSlot={
-							agent.worktreeBranch ? (
-								<div className="flex items-center gap-1">
-									<GitForkIcon className="size-3" />
-									<span>Worktree</span>
-								</div>
-							) : (
-								<div className="flex items-center gap-1">
-									<MonitorIcon className="size-3" />
-									<span>Local</span>
-								</div>
-							)
-						}
-					/>
+						{/* Status bar — outside the card */}
+						<StatusBar
+							vcs={vcs ?? null}
+							isConnected={isConnected}
+							isWorking={isWorking}
+							interruptCount={interruptCount}
+							sessionId={agent.sessionId}
+							providers={providers}
+							sessionCost={sessionMetrics.costRaw}
+							compaction={config?.compaction}
+							extraSlot={
+								agent.worktreePath ? (
+									<div className="flex items-center gap-1">
+										<GitForkIcon className="size-3" />
+										<span>Worktree</span>
+									</div>
+								) : (
+									<div className="flex items-center gap-1">
+										<MonitorIcon className="size-3" />
+										<span>Local</span>
+									</div>
+								)
+							}
+						/>
+					</div>
 				</div>
-			</div>
+			)}
 
 			{/* Skills picker dialog — triggered by /skills command */}
 			<SkillPickerDialog
@@ -1331,23 +1351,68 @@ export function ChatView({
 // ============================================================
 
 /**
- * Compact live timer that shows how long the current turn has been running.
- * Renders a stop icon + ticking duration inside the submit button.
+ * Compact live timer that shows how long the current exchange has been working.
+ * Uses the same completed + active split as the header's LiveWorkTime, so it
+ * shows actual agent work time (sum of assistant message durations) rather than
+ * wall-clock elapsed time.
  */
-function LiveTurnTimer({ startMs }: { startMs: number }) {
-	const [elapsed, setElapsed] = useState(() => formatWorkDuration(Date.now() - startMs))
+function LiveTurnTimer({
+	completedMs,
+	activeStartMs,
+}: {
+	completedMs: number
+	activeStartMs: number | null
+}) {
+	const computeDisplay = useCallback(
+		() =>
+			formatWorkDuration(completedMs + (activeStartMs != null ? Date.now() - activeStartMs : 0)),
+		[completedMs, activeStartMs],
+	)
+
+	const [elapsed, setElapsed] = useState(computeDisplay)
 
 	useEffect(() => {
-		const tick = () => setElapsed(formatWorkDuration(Date.now() - startMs))
+		const tick = () => setElapsed(computeDisplay())
 		tick()
-		const id = setInterval(tick, 1_000)
-		return () => clearInterval(id)
-	}, [startMs])
+		// Only tick if there's an active (in-progress) message
+		if (activeStartMs != null) {
+			const id = setInterval(tick, 1_000)
+			return () => clearInterval(id)
+		}
+	}, [computeDisplay, activeStartMs])
 
 	return (
 		<span className="inline-flex items-center gap-1.5 text-xs tabular-nums">
 			<SquareIcon className="size-3.5" />
 			{elapsed}
 		</span>
+	)
+}
+
+// ============================================================
+// Worktree setup progress (shown in empty state during creation)
+// ============================================================
+
+const SETUP_PHASE_LABELS: Record<NonNullable<SessionSetupPhase>, string> = {
+	"creating-worktree": "Creating worktree...",
+	"starting-session": "Starting session...",
+}
+
+function WorktreeSetupProgress({ phase }: { phase: NonNullable<SessionSetupPhase> }) {
+	return (
+		<div className="flex flex-col items-center justify-center gap-4 py-16">
+			<div className="flex size-12 items-center justify-center rounded-xl border border-border/50 bg-muted/30">
+				<GitForkIcon className="size-5 text-muted-foreground" />
+			</div>
+			<div className="flex flex-col items-center gap-2">
+				<div className="flex items-center gap-2">
+					<Loader2Icon className="size-4 animate-spin text-muted-foreground" />
+					<p className="text-sm font-medium text-foreground">{SETUP_PHASE_LABELS[phase]}</p>
+				</div>
+				<p className="text-xs text-muted-foreground">
+					Setting up an isolated workspace for this session
+				</p>
+			</div>
+		</div>
 	)
 }

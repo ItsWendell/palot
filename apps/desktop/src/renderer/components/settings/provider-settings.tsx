@@ -49,7 +49,10 @@ import {
 	ZapIcon,
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { ConnectedProviderInfo, ProviderAuthMethod } from "../../hooks/use-opencode-data"
+import type {
+	ConnectedProviderInfo,
+	SdkProviderAuthMethod as ProviderAuthMethod,
+} from "../../hooks/use-opencode-data"
 import {
 	type CatalogProvider,
 	queryKeys,

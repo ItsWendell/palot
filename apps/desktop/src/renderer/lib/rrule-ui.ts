@@ -3,6 +3,9 @@
  *
  * The SchedulePicker component uses ScheduleConfig internally, and these
  * functions convert to/from the RRULE string stored in automation configs.
+ *
+ * Also provides schedule presets for common patterns and a client-side
+ * next-runs preview using the rrule library.
  */
 
 // ============================================================
@@ -33,6 +36,76 @@ export interface ScheduleConfig {
 	intervalHours: number
 	/** Active weekdays */
 	weekdays: Weekday[]
+}
+
+// ============================================================
+// Schedule presets
+// ============================================================
+
+export interface SchedulePreset {
+	key: string
+	label: string
+	rrule: string
+}
+
+export const SCHEDULE_PRESETS: SchedulePreset[] = [
+	{ key: "daily-9am", label: "Every day at 9:00 AM", rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0" },
+	{
+		key: "weekdays-9am",
+		label: "Weekdays at 9:00 AM",
+		rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYDAY=MO,TU,WE,TH,FR",
+	},
+	{ key: "every-1h", label: "Every hour", rrule: "FREQ=HOURLY;INTERVAL=1" },
+	{ key: "every-6h", label: "Every 6 hours", rrule: "FREQ=HOURLY;INTERVAL=6" },
+	{ key: "every-12h", label: "Every 12 hours", rrule: "FREQ=HOURLY;INTERVAL=12" },
+]
+
+/** Special sentinel value for custom schedules that don't match any preset. */
+export const CUSTOM_PRESET_KEY = "__custom__"
+
+/**
+ * Normalize an RRULE string for comparison: uppercase, sorted parts,
+ * strip RRULE: prefix, remove INTERVAL=1 (default).
+ */
+function normalizeRrule(rrule: string): string {
+	const clean = rrule.replace(/^RRULE:/i, "").toUpperCase()
+	const parts = clean.split(";").filter(Boolean)
+
+	// Normalize BYDAY: sort the weekdays
+	const normalized = parts.map((part) => {
+		if (part.startsWith("BYDAY=")) {
+			const days = part.slice(6).split(",").sort()
+			return `BYDAY=${days.join(",")}`
+		}
+		return part
+	})
+
+	return normalized.sort().join(";")
+}
+
+/**
+ * Find the preset key that matches the given RRULE string.
+ * Returns the preset key or CUSTOM_PRESET_KEY if no match.
+ */
+export function matchPreset(rrule: string): string {
+	const needle = normalizeRrule(rrule)
+	for (const preset of SCHEDULE_PRESETS) {
+		if (normalizeRrule(preset.rrule) === needle) return preset.key
+	}
+	return CUSTOM_PRESET_KEY
+}
+
+/**
+ * Get the label to display for a preset selector given the current RRULE.
+ * Returns the preset label or a human-readable summary for custom schedules.
+ */
+export function getPresetLabel(rrule: string): string {
+	const key = matchPreset(rrule)
+	if (key !== CUSTOM_PRESET_KEY) {
+		const preset = SCHEDULE_PRESETS.find((p) => p.key === key)
+		if (preset) return preset.label
+	}
+	return formatScheduleSummary(rruleToScheduleConfig(rrule))
 }
 
 // ============================================================
@@ -113,7 +186,9 @@ export function rruleToScheduleConfig(rrule: string): ScheduleConfig {
 export function formatScheduleSummary(config: ScheduleConfig): string {
 	if (config.mode === "interval") {
 		const h = config.intervalHours
-		return h === 1 ? "Every hour" : `Every ${h}h`
+		const weekdayDesc = formatWeekdayDesc(config.weekdays)
+		const base = h === 1 ? "Every hour" : `Every ${h} hours`
+		return weekdayDesc ? `${base}, ${weekdayDesc}` : base
 	}
 
 	// Daily mode
@@ -124,12 +199,55 @@ export function formatScheduleSummary(config: ScheduleConfig): string {
 	const weekendsOnly =
 		config.weekdays.length === 2 && config.weekdays.includes("SA") && config.weekdays.includes("SU")
 
-	if (allDays) return `Daily at ${config.time}`
-	if (weekdaysOnly) return `Weekdays at ${config.time}`
-	if (weekendsOnly) return `Weekends at ${config.time}`
+	const time12 = formatTime12h(config.time)
+
+	if (allDays) return `Every day at ${time12}`
+	if (weekdaysOnly) return `Weekdays at ${time12}`
+	if (weekendsOnly) return `Weekends at ${time12}`
 
 	const dayLabels = config.weekdays.map((d) => WEEKDAY_LABELS[d])
-	return `${dayLabels.join(", ")} at ${config.time}`
+	return `${dayLabels.join(", ")} at ${time12}`
+}
+
+// ============================================================
+// Client-side next runs preview
+// ============================================================
+
+/**
+ * Compute the next N occurrences for an RRULE string, entirely client-side.
+ * Returns ISO date strings. Falls back to empty array on parse errors.
+ */
+export async function computeNextRuns(rruleStr: string, count = 3): Promise<Date[]> {
+	try {
+		const { RRule } = await import("rrule")
+		const rule = RRule.fromString(rruleStr)
+		const dates: Date[] = []
+		let current = new Date()
+		for (let i = 0; i < count; i++) {
+			const next = rule.after(current, false)
+			if (!next) break
+			dates.push(next)
+			current = next
+		}
+		return dates
+	} catch {
+		return []
+	}
+}
+
+/**
+ * Format a Date for the next-runs preview. Shows day name, date, and time.
+ * Example: "Mon, Feb 16 at 9:00 AM"
+ */
+export function formatNextRun(date: Date): string {
+	return date.toLocaleDateString("en-US", {
+		weekday: "short",
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		hour12: true,
+	})
 }
 
 // ============================================================
@@ -149,4 +267,24 @@ function parseRruleParams(rrule: string): Record<string, string> {
 		}
 	}
 	return result
+}
+
+/** Convert 24h time string to 12h format: "09:00" -> "9:00 AM" */
+function formatTime12h(time24: string): string {
+	const [h, m] = time24.split(":").map(Number)
+	const period = h >= 12 ? "PM" : "AM"
+	const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+	return `${hour12}:${String(m).padStart(2, "0")} ${period}`
+}
+
+/** Short weekday description for interval mode summaries */
+function formatWeekdayDesc(weekdays: Weekday[]): string | null {
+	if (weekdays.length === 7 || weekdays.length === 0) return null
+	const weekdaysOnly =
+		weekdays.length === 5 &&
+		["MO", "TU", "WE", "TH", "FR"].every((d) => weekdays.includes(d as Weekday))
+	if (weekdaysOnly) return "weekdays only"
+	const weekendsOnly = weekdays.length === 2 && weekdays.includes("SA") && weekdays.includes("SU")
+	if (weekendsOnly) return "weekends only"
+	return weekdays.map((d) => WEEKDAY_LABELS[d]).join(", ")
 }

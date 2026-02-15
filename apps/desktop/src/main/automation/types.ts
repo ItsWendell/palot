@@ -24,6 +24,14 @@ export type EffortLevel = "low" | "medium" | "high"
 
 export type ApprovalPolicy = "never" | "auto-edit"
 
+/**
+ * Permission presets control how the agent handles tool permissions:
+ * - "default": Inherit project config, agent asks when needed
+ * - "allow-all": Full autonomous mode, all permissions allowed
+ * - "read-only": No file modifications allowed
+ */
+export type PermissionPreset = "default" | "allow-all" | "read-only"
+
 // ============================================================
 // Config types (stored on disk as JSON)
 // ============================================================
@@ -41,6 +49,10 @@ export interface ExecutionConfig {
 	retryDelay: number
 	parallelWorkspaces: boolean
 	approvalPolicy: ApprovalPolicy
+	/** Whether to run in an isolated git worktree (default: true) */
+	useWorktree: boolean
+	/** Permission preset controlling agent tool access */
+	permissionPreset: PermissionPreset
 }
 
 export interface AutomationConfig {
@@ -87,6 +99,7 @@ export interface AutomationRun {
 	status: AutomationRunStatus
 	attempt: number
 	sessionId: string | null
+	worktreePath: string | null
 	startedAt: number | null
 	completedAt: number | null
 	timeoutAt: number | null
@@ -136,4 +149,6 @@ export const DEFAULT_EXECUTION_CONFIG: ExecutionConfig = {
 	retryDelay: 60,
 	parallelWorkspaces: false,
 	approvalPolicy: "never",
+	useWorktree: true,
+	permissionPreset: "default",
 }

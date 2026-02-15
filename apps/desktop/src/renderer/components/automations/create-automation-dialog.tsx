@@ -8,6 +8,14 @@
 import { Badge } from "@palot/ui/components/badge"
 import { Button } from "@palot/ui/components/button"
 import {
+	Combobox,
+	ComboboxContent,
+	ComboboxEmpty,
+	ComboboxInput,
+	ComboboxItem,
+	ComboboxList,
+} from "@palot/ui/components/combobox"
+import {
 	Dialog,
 	DialogContent,
 	DialogFooter,
@@ -18,10 +26,19 @@ import { Input } from "@palot/ui/components/input"
 import { Label } from "@palot/ui/components/label"
 import { Textarea } from "@palot/ui/components/textarea"
 import { useAtomValue } from "jotai"
-import { FolderOpenIcon, PauseIcon, PlayIcon, Trash2Icon, TriangleIcon } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import {
+	FolderIcon,
+	FolderOpenIcon,
+	PauseIcon,
+	PlayIcon,
+	Trash2Icon,
+	TriangleIcon,
+} from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { toast } from "sonner"
 import type { Automation } from "../../../preload/api"
 import { activeServerConfigAtom } from "../../atoms/connection"
+import { discoveryProjectsAtom } from "../../atoms/discovery"
 import {
 	createAutomation,
 	deleteAutomation,
@@ -132,8 +149,10 @@ export function CreateAutomationDialog({
 				})
 			}
 			onOpenChange(false)
-		} catch {
-			// TODO: show error toast
+		} catch (err) {
+			toast.error(isEditing ? "Failed to save automation" : "Failed to create automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		} finally {
 			setIsSubmitting(false)
 		}
@@ -153,6 +172,20 @@ export function CreateAutomationDialog({
 	const isRemote = activeServer.type !== "local"
 	const [remotePathInput, setRemotePathInput] = useState("")
 	const [showRemoteInput, setShowRemoteInput] = useState(false)
+
+	// Discovered projects from OpenCode SDK
+	const discoveredProjects = useAtomValue(discoveryProjectsAtom)
+	const availableProjects = useMemo(
+		() =>
+			discoveredProjects
+				.filter((p) => !workspaces.includes(p.worktree))
+				.map((p) => ({
+					value: p.worktree,
+					label: p.name ?? p.worktree.split("/").pop() ?? p.worktree,
+					path: p.worktree,
+				})),
+		[discoveredProjects, workspaces],
+	)
 
 	const handleCancel = useCallback(() => {
 		onOpenChange(false)
@@ -189,8 +222,10 @@ export function CreateAutomationDialog({
 		try {
 			await deleteAutomation(editAutomation.id)
 			onOpenChange(false)
-		} catch {
-			// TODO: show error toast
+		} catch (err) {
+			toast.error("Failed to delete automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		}
 	}, [editAutomation, onOpenChange])
 
@@ -199,9 +234,14 @@ export function CreateAutomationDialog({
 		setIsTesting(true)
 		try {
 			await runAutomationNow(editAutomation.id)
+			toast.success("Automation run started", {
+				description: "Check the inbox for results.",
+			})
 			onOpenChange(false)
-		} catch {
-			// TODO: show error toast
+		} catch (err) {
+			toast.error("Failed to run automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		} finally {
 			setIsTesting(false)
 		}
@@ -215,8 +255,10 @@ export function CreateAutomationDialog({
 				status: editAutomation.status === "paused" ? "active" : "paused",
 			})
 			onOpenChange(false)
-		} catch {
-			// TODO: show error toast
+		} catch (err) {
+			toast.error("Failed to update automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		}
 	}, [editAutomation, onOpenChange])
 
@@ -266,54 +308,93 @@ export function CreateAutomationDialog({
 							If you want an automation to run on a specific branch, you can specify it in your
 							prompt.
 						</p>
-						<div className="flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2">
-							{workspaces.map((w) => (
-								<ProjectChip key={w} path={w} onRemove={() => handleRemoveProject(w)} />
-							))}
-							{showRemoteInput ? (
-								<div className="flex w-full items-center gap-1.5">
-									<FolderOpenIcon
-										aria-hidden="true"
-										className="size-3.5 shrink-0 text-muted-foreground"
-									/>
-									<Input
-										placeholder="/home/user/projects/my-app"
-										value={remotePathInput}
-										onChange={(e) => setRemotePathInput(e.target.value)}
-										onKeyDown={(e) => {
-											if (e.key === "Enter" && remotePathInput.trim()) handleAddRemotePath()
-											if (e.key === "Escape") {
-												setShowRemoteInput(false)
-												setRemotePathInput("")
-											}
-										}}
-										className="h-7 min-w-0 flex-1 text-xs"
-										autoFocus
-									/>
-									<Button
-										variant="ghost"
-										size="sm"
-										className="h-7 px-2 text-xs"
-										disabled={!remotePathInput.trim()}
-										onClick={handleAddRemotePath}
-									>
-										Add
-									</Button>
-								</div>
-							) : (
-								<button
-									type="button"
-									onClick={handleAddProject}
-									className="text-xs text-muted-foreground hover:text-foreground"
+
+						{/* Selected projects as chips */}
+						{workspaces.length > 0 && (
+							<div className="flex flex-wrap items-center gap-1.5">
+								{workspaces.map((w) => (
+									<ProjectChip key={w} path={w} onRemove={() => handleRemoveProject(w)} />
+								))}
+							</div>
+						)}
+
+						{/* Project combobox -- select from discovered projects */}
+						{availableProjects.length > 0 && (
+							<Combobox
+								value={null}
+								onValueChange={(value) => {
+									if (value && !workspaces.includes(value)) {
+										setWorkspaces((prev) => [...prev, value])
+									}
+								}}
+							>
+								<ComboboxInput placeholder="Search projects..." showClear={false} />
+								<ComboboxContent>
+									<ComboboxList>
+										{availableProjects.map((project) => (
+											<ComboboxItem key={project.value} value={project.value}>
+												<FolderIcon
+													aria-hidden="true"
+													className="size-3.5 shrink-0 text-muted-foreground"
+												/>
+												<div className="flex flex-col gap-0.5 overflow-hidden">
+													<span className="truncate text-sm">{project.label}</span>
+													{project.label !== project.path && (
+														<span className="truncate text-xs text-muted-foreground">
+															{project.path}
+														</span>
+													)}
+												</div>
+											</ComboboxItem>
+										))}
+										<ComboboxEmpty>No projects found</ComboboxEmpty>
+									</ComboboxList>
+								</ComboboxContent>
+							</Combobox>
+						)}
+
+						{/* Fallback: folder picker or manual path entry */}
+						{showRemoteInput ? (
+							<div className="flex items-center gap-1.5">
+								<FolderOpenIcon
+									aria-hidden="true"
+									className="size-3.5 shrink-0 text-muted-foreground"
+								/>
+								<Input
+									placeholder="/home/user/projects/my-app"
+									value={remotePathInput}
+									onChange={(e) => setRemotePathInput(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" && remotePathInput.trim()) handleAddRemotePath()
+										if (e.key === "Escape") {
+											setShowRemoteInput(false)
+											setRemotePathInput("")
+										}
+									}}
+									className="h-7 min-w-0 flex-1 text-xs"
+									autoFocus
+								/>
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-7 px-2 text-xs"
+									disabled={!remotePathInput.trim()}
+									onClick={handleAddRemotePath}
 								>
-									{workspaces.length === 0
-										? isRemote
-											? "Enter a path"
-											: "Choose a folder"
-										: "+ Add"}
-								</button>
-							)}
-						</div>
+									Add
+								</Button>
+							</div>
+						) : (
+							<button
+								type="button"
+								onClick={handleAddProject}
+								className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+							>
+								<FolderOpenIcon aria-hidden="true" className="size-3.5" />
+								{isRemote ? "Add custom path" : "Browse for folder"}
+							</button>
+						)}
+
 						{isEditing && (
 							<p className="text-xs text-muted-foreground">
 								Automations run in the background on dedicated worktrees. Automations in

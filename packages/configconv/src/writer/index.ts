@@ -65,13 +65,8 @@ function collectTargetPaths(conversion: ConversionResult): string[] {
 	}
 
 	if (conversion.sessions) {
-		const storageDir = paths.ocStorageDir()
-		for (const session of conversion.sessions) {
-			targetPaths.push(`${storageDir}/session/${session.projectId}/${session.session.id}.json`)
-			for (const message of session.messages) {
-				targetPaths.push(`${storageDir}/message/${session.session.id}/${message.id}.json`)
-			}
-		}
+		// SQLite mode (v1.2.0+): the database file is the only target
+		targetPaths.push(paths.ocDatabasePath())
 	}
 
 	if (conversion.promptHistory && conversion.promptHistory.length > 0) {
@@ -151,17 +146,17 @@ export async function write(
 		await writeFile(targetPath, content, { dryRun, force }, result)
 	}
 
-	// ─── Write session history (if present) ──────────────────────────
-	if (conversion.sessions && conversion.sessions.length > 0) {
-		const storageDir = paths.ocStorageDir()
-
+	// ─── Write session history to SQLite (if present) ───────────────
+	if (conversion.sessions && conversion.sessions.length > 0 && !dryRun) {
+		const { writeHistorySessionsDetailed } = await import("./history")
+		const historyResult = await writeHistorySessionsDetailed(conversion.sessions)
+		result.filesWritten.push(...historyResult.filesWritten)
+	} else if (conversion.sessions && conversion.sessions.length > 0 && dryRun) {
+		// In dry-run mode, report what would be written
 		for (const session of conversion.sessions) {
-			const sessionPath = `${storageDir}/session/${session.projectId}/${session.session.id}.json`
-			await writeFile(sessionPath, stringifyJson(session.session), { dryRun, force }, result)
-
+			result.filesWritten.push(`sqlite:session:${session.session.id}`)
 			for (const message of session.messages) {
-				const messagePath = `${storageDir}/message/${session.session.id}/${message.id}.json`
-				await writeFile(messagePath, stringifyJson(message), { dryRun, force }, result)
+				result.filesWritten.push(`sqlite:message:${message.id}`)
 			}
 		}
 	}

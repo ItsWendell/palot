@@ -16,6 +16,7 @@ import {
 	upsertSessionAtom,
 } from "../sessions"
 import { appStore } from "../store"
+import { isStreamingField, isStreamingPartType, streamingVersionFamily } from "../streaming"
 import { todosFamily } from "../todos"
 
 const log = createLogger("event-processor")
@@ -168,28 +169,57 @@ export function processEvent(event: Event): void {
 			})
 			break
 
-		case "message.part.updated":
-			set(upsertPartAtom, event.properties.part)
+		case "message.part.updated": {
+			const part = event.properties.part
+			set(upsertPartAtom, part)
+			// Non-streaming parts (tool calls, files) bypass the streaming buffer
+			// and update partsFamily directly. Since useSessionChat reads parts
+			// imperatively (appStore.get) rather than subscribing, we must bump
+			// the per-session streaming version to trigger a re-render so the UI
+			// picks up newly added or updated tool call cards.
+			if (!isStreamingPartType(part)) {
+				set(streamingVersionFamily(part.sessionID), (v) => v + 1)
+			}
 			break
+		}
 
-		case "message.part.delta":
-			set(applyPartDeltaAtom, {
-				messageId: event.properties.messageID,
-				partId: event.properties.partID,
-				field: event.properties.field,
-				delta: event.properties.delta,
-			})
+		case "message.part.delta": {
+			const { messageID, partID, field, delta, sessionID } = event.properties
+			set(applyPartDeltaAtom, { messageId: messageID, partId: partID, field, delta })
+			// Non-streaming field deltas (e.g. tool input) bypass the streaming
+			// buffer and land directly in partsFamily. Bump the version so the
+			// UI re-renders to show the updated content.
+			if (!isStreamingField(field)) {
+				set(streamingVersionFamily(sessionID), (v) => v + 1)
+			}
 			break
+		}
 
-		case "message.part.removed":
-			set(removePartAtom, {
-				messageId: event.properties.messageID,
-				partId: event.properties.partID,
-			})
+		case "message.part.removed": {
+			const { messageID, partID, sessionID } = event.properties
+			set(removePartAtom, { messageId: messageID, partId: partID })
+			// Part removal changes the visible part list, so notify the session.
+			set(streamingVersionFamily(sessionID), (v) => v + 1)
 			break
+		}
 
 		case "todo.updated":
 			set(todosFamily(event.properties.sessionID), event.properties.todos)
+			break
+
+		// --- Worktree lifecycle events (from OpenCode experimental API) ---
+
+		case "worktree.ready":
+			log.info("Worktree ready", {
+				name: event.properties.name,
+				branch: event.properties.branch,
+			})
+			break
+
+		case "worktree.failed":
+			log.warn("Worktree creation failed", {
+				message: event.properties.message,
+			})
 			break
 	}
 }

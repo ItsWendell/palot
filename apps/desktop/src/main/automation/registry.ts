@@ -8,9 +8,9 @@
 
 import crypto from "node:crypto"
 import fs from "node:fs"
-import os from "node:os"
 import path from "node:path"
 import { createLogger } from "../logger"
+import { getConfigDir } from "./paths"
 import type { AutomationConfig, CreateAutomationInput, UpdateAutomationInput } from "./types"
 
 const log = createLogger("automation-registry")
@@ -24,8 +24,7 @@ const PROMPT_FILE = "prompt.md"
 // ============================================================
 
 function getAutomationsDir(): string {
-	const home = process.env.PALOT_HOME ?? path.join(os.homedir(), ".palot")
-	return path.join(home, AUTOMATIONS_DIR)
+	return path.join(getConfigDir(), AUTOMATIONS_DIR)
 }
 
 function getAutomationDir(id: string): string {
@@ -140,6 +139,8 @@ export function createConfig(input: CreateAutomationInput): string {
 			retryDelay: input.execution?.retryDelay ?? 60,
 			parallelWorkspaces: input.execution?.parallelWorkspaces ?? false,
 			approvalPolicy: input.execution?.approvalPolicy ?? "never",
+			useWorktree: input.execution?.useWorktree ?? true,
+			permissionPreset: input.execution?.permissionPreset ?? "default",
 		},
 	}
 

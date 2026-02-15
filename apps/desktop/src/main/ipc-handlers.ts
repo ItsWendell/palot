@@ -16,20 +16,17 @@ import type { CreateAutomationInput, UpdateAutomationInput } from "./automation/
 import { installCli, isCliInstalled, uninstallCli } from "./cli-install"
 import { deleteCredential, getCredential, storeCredential } from "./credential-store"
 import {
-	addWorktree,
 	applyChangesToLocal,
+	applyDiffTextToLocal,
 	checkout,
 	commitAll,
 	createBranch,
-	getDefaultBranch,
 	getDiffStat,
 	getGitRoot,
 	getRemoteUrl,
 	getStatus,
 	listBranches,
-	listWorktrees,
 	push,
-	removeWorktree,
 	stashAndCheckout,
 	stashPop,
 } from "./git-service"
@@ -50,15 +47,9 @@ import {
 	scanProvider,
 } from "./onboarding"
 import { getOpenInTargets, openInTarget, setPreferredTarget } from "./open-in-targets"
-import { ensureServer, getServerUrl, stopServer } from "./opencode-manager"
+import { ensureServer, getServerUrl, restartServer, stopServer } from "./opencode-manager"
 import { getOpaqueWindows, getSettings, onSettingsChanged, updateSettings } from "./settings-store"
 import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from "./updater"
-import {
-	createSessionWorktree,
-	listAllWorktrees,
-	pruneStaleWorktrees,
-	removeSessionWorktree,
-} from "./worktree-manager"
 
 const log = createLogger("ipc")
 
@@ -166,6 +157,11 @@ export function registerIpcHandlers(): void {
 		withLogging("opencode:stop", () => stopServer()),
 	)
 
+	ipcMain.handle(
+		"opencode:restart",
+		withLogging("opencode:restart", async () => await restartServer()),
+	)
+
 	// --- Model state ---
 
 	ipcMain.handle(
@@ -263,32 +259,11 @@ export function registerIpcHandlers(): void {
 	)
 
 	ipcMain.handle(
-		"git:worktree-list",
+		"git:apply-diff-text",
 		withLogging(
-			"git:worktree-list",
-			async (_, directory: string) => await listWorktrees(directory),
-		),
-	)
-
-	ipcMain.handle(
-		"git:worktree-add",
-		withLogging(
-			"git:worktree-add",
-			async (
-				_,
-				repoDir: string,
-				worktreePath: string,
-				options: { newBranch?: string; ref?: string },
-			) => await addWorktree(repoDir, worktreePath, options),
-		),
-	)
-
-	ipcMain.handle(
-		"git:worktree-remove",
-		withLogging(
-			"git:worktree-remove",
-			async (_, repoDir: string, worktreePath: string, force?: boolean) =>
-				await removeWorktree(repoDir, worktreePath, force),
+			"git:apply-diff-text",
+			async (_, localDir: string, diffText: string) =>
+				await applyDiffTextToLocal(localDir, diffText),
 		),
 	)
 
@@ -298,51 +273,10 @@ export function registerIpcHandlers(): void {
 	)
 
 	ipcMain.handle(
-		"git:default-branch",
-		withLogging(
-			"git:default-branch",
-			async (_, repoDir: string) => await getDefaultBranch(repoDir),
-		),
-	)
-
-	ipcMain.handle(
 		"git:remote-url",
 		withLogging(
 			"git:remote-url",
 			async (_, directory: string, remote?: string) => await getRemoteUrl(directory, remote),
-		),
-	)
-
-	// --- Worktree manager (high-level lifecycle) ---
-
-	ipcMain.handle(
-		"worktree:create",
-		withLogging(
-			"worktree:create",
-			async (_, sourceDir: string, sessionSlug: string) =>
-				await createSessionWorktree(sourceDir, sessionSlug),
-		),
-	)
-
-	ipcMain.handle(
-		"worktree:remove",
-		withLogging(
-			"worktree:remove",
-			async (_, worktreeRoot: string, sourceDir: string) =>
-				await removeSessionWorktree(worktreeRoot, sourceDir),
-		),
-	)
-
-	ipcMain.handle(
-		"worktree:list",
-		withLogging("worktree:list", async () => await listAllWorktrees()),
-	)
-
-	ipcMain.handle(
-		"worktree:prune",
-		withLogging(
-			"worktree:prune",
-			async (_, maxAgeDays?: number) => await pruneStaleWorktrees(maxAgeDays),
 		),
 	)
 
@@ -570,28 +504,44 @@ export function registerIpcHandlers(): void {
 
 	ipcMain.handle(
 		"automation:create",
-		withLogging("automation:create", (_, input: CreateAutomationInput) => createAutomation(input)),
+		withLogging("automation:create", async (_, input: CreateAutomationInput) => {
+			const result = await createAutomation(input)
+			for (const win of BrowserWindow.getAllWindows()) {
+				win.webContents.send("automation:runs-updated")
+			}
+			return result
+		}),
 	)
 
 	ipcMain.handle(
 		"automation:update",
-		withLogging("automation:update", (_, input: UpdateAutomationInput) => updateAutomation(input)),
+		withLogging("automation:update", async (_, input: UpdateAutomationInput) => {
+			const result = await updateAutomation(input)
+			for (const win of BrowserWindow.getAllWindows()) {
+				win.webContents.send("automation:runs-updated")
+			}
+			return result
+		}),
 	)
 
 	ipcMain.handle(
 		"automation:delete",
-		withLogging("automation:delete", (_, id: string) => deleteAutomation(id)),
+		withLogging("automation:delete", async (_, id: string) => {
+			const result = await deleteAutomation(id)
+			for (const win of BrowserWindow.getAllWindows()) {
+				win.webContents.send("automation:runs-updated")
+			}
+			return result
+		}),
 	)
 
 	ipcMain.handle(
 		"automation:run-now",
 		withLogging("automation:run-now", async (_, id: string) => {
-			const result = await runNow(id)
-			// Broadcast run updates to all renderer windows
-			for (const win of BrowserWindow.getAllWindows()) {
-				win.webContents.send("automation:runs-updated")
-			}
-			return result
+			// runNow is fire-and-forget: it returns immediately after validating
+			// the automation exists. Execution happens in the background, and
+			// broadcastRunsUpdated() is called from within executeAutomation.
+			return runNow(id)
 		}),
 	)
 
@@ -602,17 +552,35 @@ export function registerIpcHandlers(): void {
 
 	ipcMain.handle(
 		"automation:archive-run",
-		withLogging("automation:archive-run", (_, runId: string) => archiveRun(runId)),
+		withLogging("automation:archive-run", async (_, runId: string) => {
+			const result = await archiveRun(runId)
+			for (const win of BrowserWindow.getAllWindows()) {
+				win.webContents.send("automation:runs-updated")
+			}
+			return result
+		}),
 	)
 
 	ipcMain.handle(
 		"automation:accept-run",
-		withLogging("automation:accept-run", (_, runId: string) => acceptRun(runId)),
+		withLogging("automation:accept-run", async (_, runId: string) => {
+			const result = await acceptRun(runId)
+			for (const win of BrowserWindow.getAllWindows()) {
+				win.webContents.send("automation:runs-updated")
+			}
+			return result
+		}),
 	)
 
 	ipcMain.handle(
 		"automation:mark-run-read",
-		withLogging("automation:mark-run-read", (_, runId: string) => markRunRead(runId)),
+		withLogging("automation:mark-run-read", async (_, runId: string) => {
+			const result = await markRunRead(runId)
+			for (const win of BrowserWindow.getAllWindows()) {
+				win.webContents.send("automation:runs-updated")
+			}
+			return result
+		}),
 	)
 
 	ipcMain.handle(

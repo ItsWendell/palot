@@ -1,8 +1,10 @@
 import type {
 	Agent as SdkAgent,
+	Command as SdkCommand,
 	Config as SdkConfig,
 	Model as SdkModel,
 	Provider as SdkProvider,
+	ProviderAuthMethod as SdkProviderAuthMethod,
 } from "@opencode-ai/sdk/v2/client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
@@ -17,7 +19,7 @@ import { getBaseClient, getProjectClient } from "../services/connection-manager"
 // Re-exports — use SDK types directly
 // ============================================================
 
-export type { SdkAgent, SdkConfig, SdkModel, SdkProvider }
+export type { SdkAgent, SdkCommand, SdkConfig, SdkModel, SdkProvider, SdkProviderAuthMethod }
 
 // ============================================================
 // Derived types for our UI layer
@@ -32,10 +34,18 @@ export interface VcsData {
 	branch: string
 }
 
+export interface CompactionConfig {
+	/** Whether automatic compaction is enabled (default: true) */
+	auto?: boolean
+	/** Token buffer reserved for compaction (default: 20,000) */
+	reserved?: number
+}
+
 export interface ConfigData {
 	model?: string
 	smallModel?: string
 	defaultAgent?: string
+	compaction?: CompactionConfig
 }
 
 export interface ModelRef {
@@ -227,6 +237,9 @@ export function useConfig(directory: string | null): {
 				model: raw.model,
 				smallModel: raw.small_model,
 				defaultAgent: raw.default_agent,
+				compaction: raw.compaction
+					? { auto: raw.compaction.auto, reserved: raw.compaction.reserved }
+					: undefined,
 			}
 		},
 		enabled: !!directory && connected && !isMockMode,
@@ -403,14 +416,7 @@ export function useModelState(): {
 	}
 }
 
-export interface ServerCommand {
-	name: string
-	description?: string
-	agent?: string
-	source?: "command" | "mcp" | "skill"
-}
-
-export function useServerCommands(directory: string | null): ServerCommand[] {
+export function useServerCommands(directory: string | null): SdkCommand[] {
 	const connected = useAtomValue(serverConnectedAtom)
 	const isMockMode = useAtomValue(isMockModeAtom)
 
@@ -420,7 +426,7 @@ export function useServerCommands(directory: string | null): ServerCommand[] {
 			const client = getProjectClient(directory!)
 			if (!client) throw new Error("No client for directory")
 			const result = await client.command.list()
-			return (result.data ?? []) as ServerCommand[]
+			return (result.data ?? []) as SdkCommand[]
 		},
 		enabled: !!directory && connected && !isMockMode,
 	})
@@ -455,12 +461,6 @@ export interface ConnectedProviderInfo {
 	name: string
 	source: "env" | "config" | "custom" | "api"
 	env: string[]
-}
-
-/** Auth method for a provider */
-export interface ProviderAuthMethod {
-	type: "oauth" | "api"
-	label: string
 }
 
 // ============================================================
@@ -569,7 +569,7 @@ export function useConnectedProviders(): {
  * Uses GET /provider/auth.
  */
 export function useProviderAuthMethods(): {
-	data: Record<string, ProviderAuthMethod[]> | null
+	data: Record<string, SdkProviderAuthMethod[]> | null
 	loading: boolean
 	error: string | null
 } {
@@ -578,11 +578,11 @@ export function useProviderAuthMethods(): {
 
 	const { data, isLoading, error } = useQuery({
 		queryKey: queryKeys.providerAuthMethods,
-		queryFn: async (): Promise<Record<string, ProviderAuthMethod[]>> => {
+		queryFn: async (): Promise<Record<string, SdkProviderAuthMethod[]>> => {
 			const client = getBaseClient()
 			if (!client) throw new Error("Not connected to server")
 			const result = await client.provider.auth()
-			return (result.data ?? {}) as Record<string, ProviderAuthMethod[]>
+			return (result.data ?? {}) as Record<string, SdkProviderAuthMethod[]>
 		},
 		enabled: connected && !isMockMode,
 	})

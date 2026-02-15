@@ -91,27 +91,6 @@ export interface GitApplyResult {
 }
 
 // ============================================================
-// Worktree types
-// ============================================================
-
-export interface WorktreeCreateResult {
-	worktreeRoot: string
-	worktreeWorkspace: string
-	branchName: string
-	copiedFiles: string[]
-}
-
-export interface ManagedWorktree {
-	path: string
-	branch: string
-	diskUsageBytes: number
-	lastModifiedAt: number
-	slug: string
-	sourceRepo: string
-	projectName: string
-}
-
-// ============================================================
 // Open-in-targets types
 // ============================================================
 
@@ -138,6 +117,12 @@ export interface LocalServerConfig {
 	id: "local"
 	name: string
 	type: "local"
+	/** Hostname the local server binds to (default "127.0.0.1"). Use "0.0.0.0" to expose on the network. */
+	hostname?: string
+	/** Port the local server listens on (default 4101). */
+	port?: number
+	/** Whether a password is configured for the local server (stored in safeStorage). */
+	hasPassword?: boolean
 }
 
 /** Remote server reachable over HTTP(S). */
@@ -325,6 +310,8 @@ export interface AutomationSchedule {
 	timezone: string
 }
 
+export type PermissionPreset = "default" | "allow-all" | "read-only"
+
 export interface ExecutionConfig {
 	model?: string
 	effort: "low" | "medium" | "high"
@@ -333,6 +320,10 @@ export interface ExecutionConfig {
 	retryDelay: number
 	parallelWorkspaces: boolean
 	approvalPolicy: "never" | "auto-edit"
+	/** Whether to run in an isolated git worktree (default: true) */
+	useWorktree: boolean
+	/** Permission preset controlling agent tool access */
+	permissionPreset: PermissionPreset
 }
 
 export type AutomationStatus = "active" | "paused" | "archived"
@@ -368,6 +359,7 @@ export interface AutomationRun {
 	status: AutomationRunStatus
 	attempt: number
 	sessionId: string | null
+	worktreePath: string | null
 	startedAt: number | null
 	completedAt: number | null
 	timeoutAt: number | null
@@ -415,6 +407,7 @@ export interface PalotAPI {
 	ensureOpenCode: () => Promise<OpenCodeServerInfo>
 	getServerUrl: () => Promise<string | null>
 	stopOpenCode: () => Promise<boolean>
+	restartOpenCode: () => Promise<OpenCodeServerInfo>
 	getModelState: () => Promise<ModelState>
 	updateModelRecent: (model: ModelRef) => Promise<ModelState>
 
@@ -458,21 +451,13 @@ export interface PalotAPI {
 		stashAndCheckout: (directory: string, branch: string) => Promise<GitStashResult>
 		stashPop: (directory: string) => Promise<GitStashResult>
 		getRoot: (directory: string) => Promise<string | null>
-		getDefaultBranch: (repoDir: string) => Promise<string>
 		diffStat: (directory: string) => Promise<GitDiffStat>
 		commitAll: (directory: string, message: string) => Promise<GitCommitResult>
 		push: (directory: string, remote?: string) => Promise<GitPushResult>
 		createBranch: (directory: string, branchName: string) => Promise<GitCheckoutResult>
 		applyToLocal: (worktreeDir: string, localDir: string) => Promise<GitApplyResult>
+		applyDiffText: (localDir: string, diffText: string) => Promise<GitApplyResult>
 		getRemoteUrl: (directory: string, remote?: string) => Promise<string | null>
-	}
-
-	// Worktree manager
-	worktree: {
-		create: (sourceDir: string, sessionSlug: string) => Promise<WorktreeCreateResult>
-		remove: (worktreeRoot: string, sourceDir: string) => Promise<void>
-		list: () => Promise<ManagedWorktree[]>
-		prune: (maxAgeDays?: number) => Promise<number>
 	}
 
 	// Window preferences (opaque windows / transparency)

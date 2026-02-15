@@ -17,7 +17,9 @@ import {
 	SelectValue,
 } from "@palot/ui/components/select"
 import { Separator } from "@palot/ui/components/separator"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
 import { cn } from "@palot/ui/lib/utils"
+import { useAtomValue } from "jotai"
 import {
 	CheckIcon,
 	ChevronDownIcon,
@@ -29,9 +31,11 @@ import {
 	SparklesIcon,
 } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
+import { messagesFamily } from "../../atoms/messages"
 import type { DisplayMode } from "../../atoms/preferences"
 import { useDisplayMode, useSetDisplayMode } from "../../hooks/use-agents"
 import type {
+	CompactionConfig,
 	ModelRef,
 	ProvidersData,
 	SdkAgent,
@@ -39,6 +43,13 @@ import type {
 	VcsData,
 } from "../../hooks/use-opencode-data"
 import { getModelVariants, parseModelRef } from "../../hooks/use-opencode-data"
+import {
+	computeContextUsage,
+	formatCost,
+	formatPercentage,
+	type ModelLimitInfo,
+	shortModelName,
+} from "../../lib/session-metrics"
 import { ProviderIcon } from "../settings/provider-icon"
 
 // ============================================================
@@ -539,6 +550,14 @@ interface StatusBarProps {
 	branchSlot?: React.ReactNode
 	/** Optional extra slot rendered on the left side (e.g. worktree toggle) */
 	extraSlot?: React.ReactNode
+	/** Session ID for context usage computation */
+	sessionId?: string
+	/** Provider data for context limit lookup */
+	providers?: ProvidersData | null
+	/** Total session cost (USD) for display in the context tooltip */
+	sessionCost?: number
+	/** Compaction config from OpenCode for accurate threshold calculation */
+	compaction?: CompactionConfig
 }
 
 const DISPLAY_MODE_CYCLE: DisplayMode[] = ["default", "compact", "verbose"]
@@ -560,6 +579,10 @@ export function StatusBar({
 	interruptCount,
 	branchSlot,
 	extraSlot,
+	sessionId,
+	providers,
+	sessionCost,
+	compaction,
 }: StatusBarProps) {
 	const displayMode = useDisplayMode()
 	const setDisplayMode = useSetDisplayMode()
@@ -605,7 +628,7 @@ export function StatusBar({
 				)}
 			</div>
 
-			{/* Right side — display mode toggle + git branch */}
+			{/* Right side — display mode toggle + context usage + git branch */}
 			<div className="ml-auto flex items-center gap-3">
 				{/* Display mode toggle */}
 				<button
@@ -618,6 +641,16 @@ export function StatusBar({
 					<span>{DISPLAY_MODE_LABELS[displayMode]}</span>
 				</button>
 
+				{/* Context window usage */}
+				{sessionId && (
+					<ContextUsageIndicator
+						sessionId={sessionId}
+						providers={providers}
+						sessionCost={sessionCost}
+						compaction={compaction}
+					/>
+				)}
+
 				{/* Git branch — interactive picker or read-only display */}
 				{branchSlot
 					? branchSlot
@@ -629,5 +662,182 @@ export function StatusBar({
 						)}
 			</div>
 		</div>
+	)
+}
+
+// ============================================================
+// Context window usage indicator (for StatusBar)
+// ============================================================
+
+/**
+ * Compact context usage indicator: circular progress + percentage + cost.
+ * Reads messages from the Jotai atom and computes context window usage
+ * against the model's context limit from provider data.
+ *
+ * Renders nothing when there are no assistant messages with token data,
+ * or when provider data is unavailable for the current model.
+ */
+function ContextUsageIndicator({
+	sessionId,
+	providers,
+	sessionCost,
+	compaction,
+}: {
+	sessionId: string
+	providers?: ProvidersData | null
+	sessionCost?: number
+	compaction?: CompactionConfig
+}) {
+	const messages = useAtomValue(messagesFamily(sessionId))
+
+	const getModelLimit = useCallback(
+		(providerID: string, modelID: string): ModelLimitInfo | undefined => {
+			if (!providers?.providers) return undefined
+			for (const provider of providers.providers) {
+				if (provider.id !== providerID) continue
+				const model = provider.models[modelID]
+				if (model?.limit?.context) return model.limit
+			}
+			return undefined
+		},
+		[providers],
+	)
+
+	const compactionOptions = useMemo(
+		() => (compaction ? { auto: compaction.auto, reserved: compaction.reserved } : undefined),
+		[compaction],
+	)
+
+	const usage = useMemo(
+		() => computeContextUsage(messages, getModelLimit, compactionOptions),
+		[messages, getModelLimit, compactionOptions],
+	)
+
+	if (!usage) return null
+
+	const pct = usage.percentage
+	const color = pct >= 90 ? "text-red-400" : pct >= 70 ? "text-yellow-400" : ""
+	const costStr = sessionCost != null && sessionCost > 0 ? formatCost(sessionCost) : null
+
+	const compPct = usage.compactionPercentage
+	const compColor =
+		compPct != null && compPct >= 100
+			? "text-red-400"
+			: compPct != null && compPct >= 80
+				? "text-yellow-400"
+				: "text-background/60"
+
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={
+					<span
+						className={cn(
+							"inline-flex items-center gap-1 tabular-nums transition-colors hover:text-foreground",
+							color,
+						)}
+					/>
+				}
+			>
+				<ContextCircle percentage={pct} size={12} strokeWidth={1.5} />
+				<span>{formatPercentage(pct)}</span>
+				{costStr && (
+					<>
+						<span className="text-muted-foreground/30">·</span>
+						<span>{costStr}</span>
+					</>
+				)}
+			</TooltipTrigger>
+			<TooltipContent side="top" align="end">
+				<div className="space-y-1.5 text-xs">
+					<p className="font-medium">Context Window</p>
+					<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-background/60">
+						<span>Usage</span>
+						<span className="text-right tabular-nums">{formatPercentage(pct)}</span>
+						<span>Tokens</span>
+						<span className="text-right tabular-nums">
+							{usage.lastMessageTokens.toLocaleString()}
+						</span>
+						<span>Limit</span>
+						<span className="text-right tabular-nums">{usage.contextLimit.toLocaleString()}</span>
+						<span>Model</span>
+						<span className="text-right">{shortModelName(usage.modelID)}</span>
+					</div>
+					{usage.compactionThreshold != null && compPct != null && (
+						<div className="border-t border-background/15 pt-1">
+							<div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-background/60">
+								<span>Compaction</span>
+								<span className={cn("text-right tabular-nums", compColor)}>
+									{compPct >= 100 ? "now" : `at ${usage.compactionThreshold.toLocaleString()}`}
+								</span>
+								<span>Remaining</span>
+								<span className={cn("text-right tabular-nums", compColor)}>
+									{compPct >= 100
+										? "overflowed"
+										: `${(usage.compactionThreshold - usage.lastMessageTokens).toLocaleString()} tokens`}
+								</span>
+							</div>
+						</div>
+					)}
+					{costStr && (
+						<p className="border-t border-background/15 pt-1 text-background/60">
+							Session cost: {costStr}
+						</p>
+					)}
+				</div>
+			</TooltipContent>
+		</Tooltip>
+	)
+}
+
+// ============================================================
+// SVG circular progress
+// ============================================================
+
+function ContextCircle({
+	percentage,
+	size = 12,
+	strokeWidth = 1.5,
+}: {
+	percentage: number
+	size?: number
+	strokeWidth?: number
+}) {
+	const radius = (size - strokeWidth) / 2
+	const circumference = 2 * Math.PI * radius
+	const offset = circumference - (Math.min(percentage, 100) / 100) * circumference
+
+	const strokeColor =
+		percentage >= 90 ? "stroke-red-400" : percentage >= 70 ? "stroke-yellow-400" : "stroke-current"
+
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox={`0 0 ${size} ${size}`}
+			className="shrink-0"
+			aria-hidden="true"
+		>
+			<circle
+				cx={size / 2}
+				cy={size / 2}
+				r={radius}
+				fill="none"
+				className="stroke-muted-foreground/15"
+				strokeWidth={strokeWidth}
+			/>
+			<circle
+				cx={size / 2}
+				cy={size / 2}
+				r={radius}
+				fill="none"
+				className={strokeColor}
+				strokeWidth={strokeWidth}
+				strokeDasharray={circumference}
+				strokeDashoffset={offset}
+				strokeLinecap="round"
+				transform={`rotate(-90 ${size / 2} ${size / 2})`}
+			/>
+		</svg>
 	)
 }

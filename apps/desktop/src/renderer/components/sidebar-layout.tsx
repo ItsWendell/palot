@@ -15,7 +15,7 @@ import { Outlet, useNavigate } from "@tanstack/react-router"
 import { useAtomValue } from "jotai"
 import { PanelLeftIcon, PlusIcon } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
-import { activeServerConfigAtom } from "../atoms/connection"
+import { activeServerConfigAtom, serverConnectedAtom } from "../atoms/connection"
 import {
 	useAgents,
 	useProjectList,
@@ -118,6 +118,7 @@ export function SidebarLayout() {
 	const toggleShowSubAgents = useToggleShowSubAgents()
 	const setCommandPaletteOpen = useSetCommandPaletteOpen()
 	const { renameSession, deleteSession } = useAgentActions()
+	const serverConnected = useAtomValue(serverConnectedAtom)
 
 	const visibleAgents = useMemo(() => {
 		if (showSubAgents) return agents
@@ -202,6 +203,7 @@ export function SidebarLayout() {
 							onToggleSubAgents={toggleShowSubAgents}
 							onRenameSession={handleRenameSession}
 							onDeleteSession={handleDeleteSession}
+							serverConnected={serverConnected}
 						/>
 					)}
 					{/* Footer: false = hide, ReactNode = render it, null = let default handle it.

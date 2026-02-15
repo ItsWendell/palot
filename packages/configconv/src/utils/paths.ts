@@ -142,9 +142,14 @@ export function ocDataDir(): string {
 	return join(xdgData, "opencode")
 }
 
-/** ~/.local/share/opencode/storage/ */
+/** ~/.local/share/opencode/storage/ (legacy flat-file storage, pre-v1.2.0) */
 export function ocStorageDir(): string {
 	return join(ocDataDir(), "storage")
+}
+
+/** ~/.local/share/opencode/opencode.db (SQLite database, v1.2.0+) */
+export function ocDatabasePath(): string {
+	return join(ocDataDir(), "opencode.db")
 }
 
 /** ~/.local/state/opencode/ */

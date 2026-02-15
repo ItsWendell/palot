@@ -1,6 +1,6 @@
 import { useAtomValue } from "jotai"
 import { useEffect } from "react"
-import { activeServerConfigAtom } from "../atoms/connection"
+import { activeServerConfigAtom, serverConnectedAtom } from "../atoms/connection"
 import { discoveryAtom } from "../atoms/discovery"
 import { isMockModeAtom } from "../atoms/mock-mode"
 import { appStore } from "../atoms/store"
@@ -74,6 +74,24 @@ export function useDiscovery() {
 				})
 				await connectToOpenCode(url, authHeader)
 
+				// --- Step 3b: Bail if server is unreachable ---
+				// connectToOpenCode runs a health check and sets serverConnectedAtom.
+				// If the server is offline, skip project/session loading so discovery
+				// stays in a non-loaded state, allowing the sidebar to show "Server offline".
+				// Keep discoveryInFlight = true to prevent an infinite retry loop;
+				// resetDiscoveryGuard() (called on server switch) clears it.
+				if (!appStore.get(serverConnectedAtom)) {
+					log.warn("Server is unreachable, skipping project discovery", {
+						server: activeServer.name,
+					})
+					appStore.set(discoveryAtom, (prev) => ({
+						...prev,
+						loading: false,
+						error: "Server offline",
+					}))
+					return
+				}
+
 				// --- Step 4: Discover projects from the API ---
 				log.info("Loading projects from API...")
 				const projects = await loadAllProjects()
@@ -88,20 +106,48 @@ export function useDiscovery() {
 				})
 
 				// --- Step 5: Load live sessions for each project directory ---
-				const directories = new Set<string>()
+				// Collect sandbox directories per project so we can:
+				// 1. Pass them to setSessionsAtom to restore worktreePath on reload
+				// 2. Also load sessions FROM sandbox dirs (worktree instances may
+				//    resolve to a different project ID, so their sessions won't
+				//    appear when querying from the parent directory alone)
+				const allSandboxDirs = new Set<string>()
+				const projectSandboxMap = new Map<string, Set<string>>()
 				for (const project of projects) {
-					if (project.worktree) {
-						directories.add(project.worktree)
+					if (!project.worktree || !project.sandboxes?.length) continue
+					const sandboxSet = projectSandboxMap.get(project.worktree) ?? new Set<string>()
+					for (const s of project.sandboxes) {
+						sandboxSet.add(s)
+						allSandboxDirs.add(s)
 					}
+					projectSandboxMap.set(project.worktree, sandboxSet)
 				}
 
-				const results = await Promise.allSettled(
-					[...directories].map((dir) => loadProjectSessions(dir)),
+				// Load sessions from main project directories
+				const mainDirs = new Set<string>()
+				for (const project of projects) {
+					if (project.worktree) mainDirs.add(project.worktree)
+				}
+
+				const mainResults = await Promise.allSettled(
+					[...mainDirs].map((dir) => {
+						const sandboxDirs = projectSandboxMap.get(dir)
+						return loadProjectSessions(dir, sandboxDirs?.size ? sandboxDirs : undefined)
+					}),
 				)
-				const failed = results.filter((r) => r.status === "rejected")
+
+				// Also load sessions from sandbox directories (they may belong to a
+				// different server instance with a separate project ID).
+				// Pass a single-element sandboxDirs set so sessions get worktreePath.
+				const sandboxResults = await Promise.allSettled(
+					[...allSandboxDirs].map((dir) => loadProjectSessions(dir, new Set([dir]))),
+				)
+
+				const allResults = [...mainResults, ...sandboxResults]
+				const failed = allResults.filter((r) => r.status === "rejected")
 				if (failed.length > 0) {
 					log.warn("Some project session loads failed", {
-						total: directories.size,
+						total: mainDirs.size + allSandboxDirs.size,
 						failed: failed.length,
 					})
 				}
@@ -110,7 +156,8 @@ export function useDiscovery() {
 					server: activeServer.name,
 					url,
 					projects: projects.length,
-					directories: directories.size,
+					directories: mainDirs.size,
+					sandboxes: allSandboxDirs.size,
 				})
 			} catch (err) {
 				log.error("Discovery failed", err)

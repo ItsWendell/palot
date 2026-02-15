@@ -3,6 +3,7 @@
  *
  * Lists all configured servers (local + remote), allows adding/editing/removing
  * remote servers, testing connections, and switching the active server.
+ * Includes configuration for the local server's hostname, port, and password.
  */
 
 import { Button } from "@palot/ui/components/button"
@@ -29,12 +30,15 @@ import {
 	PlusIcon,
 	RadarIcon,
 	SaveIcon,
+	SettingsIcon,
 	TerminalIcon,
 	TrashIcon,
 } from "lucide-react"
-import { useCallback, useMemo, useState } from "react"
-import type { RemoteServerConfig } from "../../../preload/api"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import type { LocalServerConfig, RemoteServerConfig } from "../../../preload/api"
 import { useServerActions, useServers } from "../../hooks/use-servers"
+import { useSettings } from "../../hooks/use-settings"
+import { SettingsRow } from "./settings-row"
 import { SettingsSection } from "./settings-section"
 
 // ============================================================
@@ -170,6 +174,9 @@ export function ServerSettings() {
 				})}
 			</SettingsSection>
 
+			{/* Local server configuration */}
+			<LocalServerSettings />
+
 			{/* Discovered servers (mDNS) */}
 			{unsavedDiscovered.length > 0 && (
 				<>
@@ -232,6 +239,199 @@ export function ServerSettings() {
 				/>
 			)}
 		</div>
+	)
+}
+
+// ============================================================
+// Local server configuration
+// ============================================================
+
+const isElectron = typeof window !== "undefined" && "palot" in window
+
+function LocalServerSettings() {
+	const { settings, updateSettings } = useSettings()
+	const localServer = settings.servers.servers.find((s) => s.id === "local") as
+		| LocalServerConfig
+		| undefined
+
+	const [hostname, setHostname] = useState(localServer?.hostname ?? "")
+	const [port, setPort] = useState(localServer?.port?.toString() ?? "")
+	const [password, setPassword] = useState("")
+	const [hasPassword, setHasPassword] = useState(localServer?.hasPassword ?? false)
+	const [saving, setSaving] = useState(false)
+	const [saved, setSaved] = useState(false)
+
+	// Sync form state when settings are loaded asynchronously
+	useEffect(() => {
+		setHostname(localServer?.hostname ?? "")
+		setPort(localServer?.port?.toString() ?? "")
+		setHasPassword(localServer?.hasPassword ?? false)
+	}, [localServer?.hostname, localServer?.port, localServer?.hasPassword])
+
+	// Track whether form values differ from persisted settings
+	const isDirty = useMemo(() => {
+		const currentHostname = localServer?.hostname ?? ""
+		const currentPort = localServer?.port?.toString() ?? ""
+		const currentHasPassword = localServer?.hasPassword ?? false
+
+		return (
+			hostname !== currentHostname ||
+			port !== currentPort ||
+			password.length > 0 ||
+			hasPassword !== currentHasPassword
+		)
+	}, [hostname, port, password, hasPassword, localServer])
+
+	const handleSave = useCallback(async () => {
+		setSaving(true)
+		setSaved(false)
+
+		try {
+			// Store password in secure storage if provided
+			if (password && isElectron) {
+				await window.palot.credential.store("local", password)
+			} else if (!hasPassword && isElectron) {
+				// If password was cleared, delete stored credential
+				await window.palot.credential.delete("local")
+			}
+
+			// Update local server config in settings
+			const currentServers = settings.servers.servers
+			const updatedServers = currentServers.map((s) => {
+				if (s.id !== "local") return s
+				return {
+					id: "local" as const,
+					name: s.name,
+					type: "local" as const,
+					hostname: hostname.trim() || undefined,
+					port: port.trim() ? Number.parseInt(port.trim(), 10) : undefined,
+					hasPassword: password.length > 0 ? true : hasPassword,
+				} satisfies LocalServerConfig
+			})
+
+			await updateSettings({
+				servers: {
+					servers: updatedServers,
+					activeServerId: settings.servers.activeServerId,
+				},
+			})
+
+			// Restart the server to apply new settings
+			if (isElectron) {
+				await window.palot.restartOpenCode()
+			}
+
+			setPassword("")
+			setSaved(true)
+			setTimeout(() => setSaved(false), 3000)
+		} finally {
+			setSaving(false)
+		}
+	}, [hostname, port, password, hasPassword, settings, updateSettings])
+
+	const handleClearPassword = useCallback(async () => {
+		if (isElectron) {
+			await window.palot.credential.delete("local")
+		}
+		setHasPassword(false)
+		setPassword("")
+
+		// Update settings to reflect no password
+		const currentServers = settings.servers.servers
+		const updatedServers = currentServers.map((s) => {
+			if (s.id !== "local") return s
+			return { ...s, hasPassword: false }
+		})
+
+		await updateSettings({
+			servers: {
+				servers: updatedServers,
+				activeServerId: settings.servers.activeServerId,
+			},
+		})
+
+		// Restart the server without password
+		if (isElectron) {
+			await window.palot.restartOpenCode()
+		}
+	}, [settings, updateSettings])
+
+	return (
+		<>
+			<div>
+				<h3 className="flex items-center gap-2 text-base font-semibold">
+					<SettingsIcon aria-hidden="true" className="size-4" />
+					Local Server Configuration
+				</h3>
+				<p className="mt-1 text-sm text-muted-foreground">
+					Configure how the local OpenCode server is started. Changes require a server restart.
+				</p>
+			</div>
+
+			<SettingsSection>
+				<SettingsRow
+					label="Hostname"
+					description='Bind address (default: 127.0.0.1). Use "0.0.0.0" to expose on the network.'
+				>
+					<Input
+						className="w-[200px]"
+						placeholder="127.0.0.1"
+						value={hostname}
+						onChange={(e) => setHostname(e.target.value)}
+					/>
+				</SettingsRow>
+
+				<SettingsRow label="Port" description="Port number for the server (default: 4101).">
+					<Input
+						className="w-[200px]"
+						placeholder="4101"
+						type="number"
+						min={1}
+						max={65535}
+						value={port}
+						onChange={(e) => setPort(e.target.value)}
+					/>
+				</SettingsRow>
+
+				<SettingsRow
+					label="Password"
+					description="Protect the server with a password (passed as --password to opencode serve)."
+				>
+					<div className="flex items-center gap-2">
+						{hasPassword && !password && (
+							<>
+								<span className="text-xs text-muted-foreground">Password set</span>
+								<Button variant="ghost" size="sm" onClick={handleClearPassword}>
+									Clear
+								</Button>
+							</>
+						)}
+						<Input
+							className="w-[200px]"
+							type="password"
+							placeholder={hasPassword ? "Enter new password" : "Optional"}
+							value={password}
+							onChange={(e) => setPassword(e.target.value)}
+						/>
+					</div>
+				</SettingsRow>
+
+				<div className="flex items-center justify-between px-4 py-3">
+					<div className="flex items-center gap-2">
+						{saved && (
+							<span className="flex items-center gap-1 text-sm text-green-600">
+								<CheckCircle2Icon aria-hidden="true" className="size-3.5" />
+								Saved and restarted
+							</span>
+						)}
+					</div>
+					<Button size="sm" disabled={!isDirty || saving} onClick={handleSave}>
+						{saving && <Loader2Icon aria-hidden="true" className="size-3.5 animate-spin" />}
+						Save & Restart Server
+					</Button>
+				</div>
+			</SettingsSection>
+		</>
 	)
 }
 

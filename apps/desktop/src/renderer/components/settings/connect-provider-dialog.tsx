@@ -31,7 +31,10 @@ import {
 	ZapIcon,
 } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
-import type { CatalogProvider, ProviderAuthMethod } from "../../hooks/use-opencode-data"
+import type {
+	CatalogProvider,
+	SdkProviderAuthMethod as ProviderAuthMethod,
+} from "../../hooks/use-opencode-data"
 import { createLogger } from "../../lib/logger"
 import { PROVIDER_KEY_URLS, ZEN_PROVIDER_ID, ZEN_SIGNUP_URL } from "../../lib/providers"
 import { getBaseClient } from "../../services/connection-manager"

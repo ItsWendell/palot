@@ -39,18 +39,22 @@ export interface SessionMetrics {
 	cost: number
 	/** Aggregated token counts */
 	tokens: SessionTokens
-	/** Number of assistant turns (one turn = one assistant response to a user message) */
-	turnCount: number
-	/** Map of modelID -> number of turns using that model */
+	/** Number of exchanges (one exchange = one user message + all its assistant responses) */
+	exchangeCount: number
+	/** Number of user messages in the session */
+	userMessageCount: number
+	/** Number of assistant messages (LLM invocations) in the session */
+	assistantMessageCount: number
+	/** Map of modelID -> number of assistant messages using that model */
 	modelDistribution: ModelDistribution
 	/** Cache hit ratio: cacheRead / (input + cacheRead), as a percentage 0-100 */
 	cacheEfficiency: number
 	/** Number of assistant messages that had an error */
 	errorCount: number
-	/** Average cost per turn (USD) */
-	avgTurnCost: number
-	/** Average work time per turn (ms) */
-	avgTurnTimeMs: number
+	/** Average cost per exchange (USD) */
+	avgExchangeCost: number
+	/** Average work time per exchange (ms) */
+	avgExchangeTimeMs: number
 }
 
 /** Extended metrics that include parts-derived data (tool breakdown, retry count) */
@@ -98,21 +102,40 @@ export function computeAgentWorkTime(messages: Message[]): number {
 
 /**
  * Compute agent work time for a single turn.
- * Spans from the first assistant message's `created` to the last assistant
- * message's `completed` (or Date.now() if still in progress).
+ * Sums `(completed - created)` for each assistant message in the turn,
+ * which is the actual agent work time (excluding gaps between messages).
  */
 export function computeTurnWorkTime(turn: ChatTurn): number {
-	const assistants = turn.assistantMessages
-	if (assistants.length === 0) return 0
+	let total = 0
+	for (const entry of turn.assistantMessages) {
+		if (entry.info.role !== "assistant") continue
+		const end = entry.info.time.completed ?? Date.now()
+		total += Math.max(0, end - entry.info.time.created)
+	}
+	return total
+}
 
-	const first = assistants[0].info
-	const last = assistants[assistants.length - 1].info
-
-	if (first.role !== "assistant") return 0
-
-	const start = first.time.created
-	const end = last.role === "assistant" ? (last.time.completed ?? Date.now()) : Date.now()
-	return Math.max(0, end - start)
+/**
+ * Compute the completed vs in-progress work time split for a single turn.
+ * Used by the LiveTurnTimer to show accurate ticking work time.
+ * Returns `completedMs` (sum of finished assistant messages) and
+ * `activeStartMs` (created time of the in-progress message, or null if idle).
+ */
+export function computeTurnWorkTimeSplit(turn: ChatTurn): {
+	completedMs: number
+	activeStartMs: number | null
+} {
+	let completedMs = 0
+	let activeStartMs: number | null = null
+	for (const entry of turn.assistantMessages) {
+		if (entry.info.role !== "assistant") continue
+		if (entry.info.time.completed != null) {
+			completedMs += Math.max(0, entry.info.time.completed - entry.info.time.created)
+		} else {
+			activeStartMs = entry.info.time.created
+		}
+	}
+	return { completedMs, activeStartMs }
 }
 
 /**
@@ -188,7 +211,8 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 	let completedWorkTimeMs = 0
 	let activeStartMs: number | null = null
 	let cost = 0
-	let turnCount = 0
+	let userMessageCount = 0
+	let assistantMessageCount = 0
 	let errorCount = 0
 	const modelDistribution: ModelDistribution = {}
 	const tokens: SessionTokens = {
@@ -200,10 +224,23 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 		total: 0,
 	}
 
-	for (const msg of messages) {
-		if (msg.role !== "assistant") continue
+	// Track which user messages have at least one assistant response to count exchanges.
+	// An exchange = one user message that triggered at least one assistant response.
+	const userIdsWithResponses = new Set<string>()
 
-		turnCount++
+	for (const msg of messages) {
+		if (msg.role === "user") {
+			userMessageCount++
+			continue
+		}
+
+		// assistant message
+		assistantMessageCount++
+
+		// Track the parent user message for exchange counting
+		if (msg.parentID) {
+			userIdsWithResponses.add(msg.parentID)
+		}
 
 		// Work time
 		const end = msg.time.completed ?? Date.now()
@@ -247,9 +284,13 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 	const totalInput = tokens.input + tokens.cacheRead
 	const cacheEfficiency = totalInput > 0 ? (tokens.cacheRead / totalInput) * 100 : 0
 
-	// Turn averages
-	const avgTurnCost = turnCount > 0 ? cost / turnCount : 0
-	const avgTurnTimeMs = turnCount > 0 ? workTimeMs / turnCount : 0
+	// Exchange count: number of user messages that got at least one assistant response.
+	// Falls back to userMessageCount if parentID tracking is unavailable.
+	const exchangeCount = userIdsWithResponses.size > 0 ? userIdsWithResponses.size : userMessageCount
+
+	// Per-exchange averages
+	const avgExchangeCost = exchangeCount > 0 ? cost / exchangeCount : 0
+	const avgExchangeTimeMs = exchangeCount > 0 ? workTimeMs / exchangeCount : 0
 
 	return {
 		workTimeMs,
@@ -257,12 +298,14 @@ export function computeSessionMetrics(messages: Message[]): SessionMetrics {
 		activeStartMs,
 		cost,
 		tokens,
-		turnCount,
+		exchangeCount,
+		userMessageCount,
+		assistantMessageCount,
 		modelDistribution,
 		cacheEfficiency,
 		errorCount,
-		avgTurnCost,
-		avgTurnTimeMs,
+		avgExchangeCost,
+		avgExchangeTimeMs,
 	}
 }
 
@@ -309,6 +352,252 @@ export function computeSessionMetricsExtended(
 	const base = computeSessionMetrics(messages)
 	const partsMetrics = computePartsMetrics(allParts, getCategory)
 	return { ...base, ...partsMetrics }
+}
+
+// ============================================================
+// Context window usage (last message vs. model limit)
+// ============================================================
+
+export interface ContextUsage {
+	/** Total tokens from the last assistant message */
+	lastMessageTokens: number
+	/** Model context window limit (from provider data) */
+	contextLimit: number
+	/** Usage percentage 0-100 */
+	percentage: number
+	/** Provider ID of the last assistant message */
+	providerID: string
+	/** Model ID of the last assistant message */
+	modelID: string
+	/** Token count at which compaction will trigger (null if unknown) */
+	compactionThreshold: number | null
+	/** Usage percentage toward compaction threshold 0-100 (null if unknown) */
+	compactionPercentage: number | null
+}
+
+/** Default buffer reserved for output tokens before compaction. */
+const COMPACTION_BUFFER = 20_000
+
+/** Maximum output tokens OpenCode will request (capped at this value). */
+const OUTPUT_TOKEN_MAX = 32_000
+
+/**
+ * Compute the compaction threshold for a model, mirroring the logic from
+ * opencode's `SessionCompaction.isOverflow`. Returns the usable token count
+ * above which compaction will be triggered.
+ *
+ * @param limit - The model's token limits
+ * @param configReserved - Optional override from `config.compaction.reserved`
+ */
+export function computeCompactionThreshold(
+	limit: { context: number; input?: number; output: number },
+	configReserved?: number,
+): number {
+	const maxOutput = Math.min(limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
+	const reserved = configReserved ?? Math.min(COMPACTION_BUFFER, maxOutput)
+	return limit.input ? limit.input - reserved : limit.context - maxOutput
+}
+
+/** Model limit info returned by the lookup callback. */
+export interface ModelLimitInfo {
+	context: number
+	input?: number
+	output: number
+}
+
+/** Compaction config from the OpenCode server, used to compute accurate thresholds. */
+export interface CompactionOptions {
+	/** Whether auto-compaction is enabled (default: true) */
+	auto?: boolean
+	/** User-configured reserved token buffer (overrides the default 20k) */
+	reserved?: number
+}
+
+/**
+ * Compute context window usage from the **last** assistant message that has
+ * token data. This reflects the current state of the context window (how
+ * full it is right now), NOT the cumulative session total.
+ *
+ * Returns `null` if there are no assistant messages with tokens, or if
+ * the model's context limit is unavailable.
+ *
+ * @param messages - All messages in the session
+ * @param getModelLimit - Callback to look up a model's limit info
+ *   given `(providerID, modelID)`. Returns `undefined` if unknown.
+ * @param compaction - Optional compaction config from the server
+ */
+export function computeContextUsage(
+	messages: Message[],
+	getModelLimit: (providerID: string, modelID: string) => ModelLimitInfo | undefined,
+	compaction?: CompactionOptions,
+): ContextUsage | null {
+	// Find the last assistant message with token data (walking backwards)
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i]
+		if (msg.role !== "assistant") continue
+		const t = msg.tokens
+		if (!t) continue
+
+		const total =
+			(t.input ?? 0) +
+			(t.output ?? 0) +
+			(t.reasoning ?? 0) +
+			(t.cache?.read ?? 0) +
+			(t.cache?.write ?? 0)
+		if (total <= 0) continue
+
+		const limit = getModelLimit(msg.providerID, msg.modelID)
+		if (!limit || limit.context <= 0) return null
+
+		// Only compute compaction if auto-compaction is not explicitly disabled
+		const compactionEnabled = compaction?.auto !== false
+		const threshold = compactionEnabled
+			? computeCompactionThreshold(limit, compaction?.reserved)
+			: null
+
+		return {
+			lastMessageTokens: total,
+			contextLimit: limit.context,
+			percentage: Math.round((total / limit.context) * 100),
+			providerID: msg.providerID,
+			modelID: msg.modelID,
+			compactionThreshold: threshold != null && threshold > 0 ? threshold : null,
+			compactionPercentage:
+				threshold != null && threshold > 0 ? Math.round((total / threshold) * 100) : null,
+		}
+	}
+	return null
+}
+
+// ============================================================
+// Context breakdown estimation
+// ============================================================
+
+export type ContextBreakdownKey = "system" | "user" | "assistant" | "tool" | "other"
+
+export interface ContextBreakdownSegment {
+	key: ContextBreakdownKey
+	tokens: number
+	/** Width percentage 0-100 (for rendering a stacked bar) */
+	width: number
+	/** Display percentage rounded to 1 decimal */
+	percent: number
+}
+
+/** Rough estimate: ~4 chars per token (same heuristic as opencode). */
+const estimateTokens = (chars: number) => Math.ceil(chars / 4)
+
+/**
+ * Estimate a breakdown of input tokens by role: system, user, assistant,
+ * tool, and other (unaccounted overhead like formatting/framing tokens).
+ *
+ * This is a rough heuristic based on character count of message parts.
+ * It will never be exact, but gives users a useful visual sense of what
+ * is consuming their context window.
+ *
+ * @param messages - All messages in the session
+ * @param parts - Map of messageId -> Part[]
+ * @param inputTokens - Actual input token count from the last assistant message
+ * @param systemPromptChars - Character length of the system prompt (if known)
+ */
+export function estimateContextBreakdown(
+	messages: Message[],
+	parts: Record<string, Part[] | undefined>,
+	inputTokens: number,
+	systemPromptChars?: number,
+): ContextBreakdownSegment[] {
+	if (!inputTokens || inputTokens <= 0) return []
+
+	// Accumulate character counts per role
+	const counts = { system: systemPromptChars ?? 0, user: 0, assistant: 0, tool: 0 }
+
+	for (const msg of messages) {
+		const msgParts = parts[msg.id]
+		if (!msgParts) continue
+
+		if (msg.role === "user") {
+			for (const part of msgParts) {
+				if (part.type === "text") counts.user += part.text.length
+				else if (part.type === "file" && part.source && "text" in part.source) {
+					counts.user += part.source.text.value.length
+				} else if (part.type === "agent" && part.source) {
+					counts.user += part.source.value.length
+				}
+			}
+		} else if (msg.role === "assistant") {
+			for (const part of msgParts) {
+				if (part.type === "text") {
+					counts.assistant += part.text.length
+				} else if (part.type === "reasoning") {
+					counts.assistant += part.text.length
+				} else if (part.type === "tool") {
+					const inputLen = Object.keys(part.state.input).length * 16
+					if (part.state.status === "completed") {
+						counts.tool += inputLen + part.state.output.length
+					} else if (part.state.status === "error") {
+						counts.tool += inputLen + part.state.error.length
+					} else if (part.state.status === "pending") {
+						counts.tool += inputLen + part.state.raw.length
+					} else {
+						counts.tool += inputLen
+					}
+				}
+			}
+		}
+	}
+
+	// Convert char counts to estimated tokens
+	const tokens = {
+		system: estimateTokens(counts.system),
+		user: estimateTokens(counts.user),
+		assistant: estimateTokens(counts.assistant),
+		tool: estimateTokens(counts.tool),
+	}
+	const estimated = tokens.system + tokens.user + tokens.assistant + tokens.tool
+
+	// Scale to match the actual input token count, or distribute "other" for the gap
+	const build = (t: {
+		system: number
+		user: number
+		assistant: number
+		tool: number
+		other: number
+	}): ContextBreakdownSegment[] => {
+		const toPercent = (v: number) => (v / inputTokens) * 100
+		const toPercentLabel = (v: number) => Math.round(toPercent(v) * 10) / 10
+
+		return (
+			[
+				{ key: "system" as const, tokens: t.system },
+				{ key: "user" as const, tokens: t.user },
+				{ key: "assistant" as const, tokens: t.assistant },
+				{ key: "tool" as const, tokens: t.tool },
+				{ key: "other" as const, tokens: t.other },
+			] satisfies { key: ContextBreakdownKey; tokens: number }[]
+		)
+			.filter((x) => x.tokens > 0)
+			.map((x) => ({
+				key: x.key,
+				tokens: x.tokens,
+				width: toPercent(x.tokens),
+				percent: toPercentLabel(x.tokens),
+			}))
+	}
+
+	if (estimated <= inputTokens) {
+		return build({ ...tokens, other: inputTokens - estimated })
+	}
+
+	// Estimated exceeds actual: scale everything down proportionally
+	const scale = inputTokens / estimated
+	const scaled = {
+		system: Math.floor(tokens.system * scale),
+		user: Math.floor(tokens.user * scale),
+		assistant: Math.floor(tokens.assistant * scale),
+		tool: Math.floor(tokens.tool * scale),
+	}
+	const total = scaled.system + scaled.user + scaled.assistant + scaled.tool
+	return build({ ...scaled, other: Math.max(0, inputTokens - total) })
 }
 
 // ============================================================

@@ -2,8 +2,11 @@ import { type ChildProcess, spawn } from "node:child_process"
 import { homedir } from "node:os"
 import path from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
+import type { LocalServerConfig } from "../preload/api"
+import { getCredential } from "./credential-store"
 import { createLogger } from "./logger"
 import { startNotificationWatcher, stopNotificationWatcher } from "./notification-watcher"
+import { getSettings } from "./settings-store"
 
 const log = createLogger("opencode-manager")
 
@@ -26,12 +29,19 @@ let singleServer: {
 	process: ChildProcess | null
 } | null = null
 
-const OPENCODE_PORT = 4101
-const OPENCODE_HOSTNAME = "127.0.0.1"
+const DEFAULT_PORT = 4101
+const DEFAULT_HOSTNAME = "127.0.0.1"
 
 // ============================================================
 // Public API
 // ============================================================
+
+/** Reads the local server config from persisted settings. */
+function getLocalServerConfig(): LocalServerConfig {
+	const settings = getSettings()
+	const local = settings.servers.servers.find((s) => s.id === "local")
+	return (local as LocalServerConfig) ?? { id: "local", name: "This Mac", type: "local" }
+}
 
 /**
  * Ensures the single OpenCode server is running.
@@ -46,9 +56,13 @@ export async function ensureServer(): Promise<OpenCodeServer> {
 		return singleServer.server
 	}
 
+	const config = getLocalServerConfig()
+	const hostname = config.hostname || DEFAULT_HOSTNAME
+	const port = config.port || DEFAULT_PORT
+
 	// Check if there's already an opencode server running on our port
-	log.info("Checking for existing server on port", OPENCODE_PORT)
-	const existing = await detectExistingServer()
+	log.info("Checking for existing server on port", port)
+	const existing = await detectExistingServer(hostname, port)
 	if (existing) {
 		log.info("Detected existing server", { url: existing.url })
 		singleServer = { server: existing, process: null }
@@ -61,23 +75,31 @@ export async function ensureServer(): Promise<OpenCodeServer> {
 	const sep = process.platform === "win32" ? ";" : ":"
 	const augmentedPath = `${opencodeBinDir}${sep}${process.env.PATH ?? ""}`
 
+	// Build CLI args
+	const args = ["serve", `--hostname=${hostname}`, `--port=${port}`]
+
+	// Add password if configured
+	if (config.hasPassword) {
+		const password = getCredential("local")
+		if (password) {
+			args.push(`--password=${password}`)
+		}
+	}
+
 	log.info("Spawning opencode server", {
-		hostname: OPENCODE_HOSTNAME,
-		port: OPENCODE_PORT,
+		hostname,
+		port,
+		hasPassword: !!config.hasPassword,
 		binDir: opencodeBinDir,
 	})
 
-	const proc = spawn(
-		"opencode",
-		["serve", `--hostname=${OPENCODE_HOSTNAME}`, `--port=${OPENCODE_PORT}`],
-		{
-			cwd: homedir(),
-			stdio: "pipe",
-			env: { ...process.env, PATH: augmentedPath },
-		},
-	)
+	const proc = spawn("opencode", args, {
+		cwd: homedir(),
+		stdio: "pipe",
+		env: { ...process.env, PATH: augmentedPath },
+	})
 
-	const url = `http://${OPENCODE_HOSTNAME}:${OPENCODE_PORT}`
+	const url = `http://${hostname}:${port}`
 	const server: OpenCodeServer = {
 		url,
 		pid: proc.pid ?? null,
@@ -143,12 +165,25 @@ export function stopServer(): boolean {
 	return true
 }
 
+/**
+ * Restarts the managed server (stop + start). Used when local server
+ * settings (hostname, port, password) change.
+ */
+export async function restartServer(): Promise<OpenCodeServer> {
+	log.info("Restarting server due to settings change")
+	stopServer()
+	return ensureServer()
+}
+
 // ============================================================
 // Internal helpers
 // ============================================================
 
-async function detectExistingServer(): Promise<OpenCodeServer | null> {
-	const url = `http://${OPENCODE_HOSTNAME}:${OPENCODE_PORT}`
+async function detectExistingServer(
+	hostname: string,
+	port: number,
+): Promise<OpenCodeServer | null> {
+	const url = `http://${hostname}:${port}`
 	try {
 		const res = await fetch(`${url}/session`, {
 			signal: AbortSignal.timeout(2000),

@@ -1,14 +1,10 @@
 /**
  * Worktree action buttons for the session app bar.
  *
- * Shows "Apply to local" and "Commit & Push" actions for worktree sessions.
- * "Apply to local" patches the worktree's changes into the user's local checkout.
+ * Shows "Apply to project" and "Commit & Push" actions for worktree sessions.
+ * "Apply to project" patches the worktree's uncommitted changes into the main
+ * project checkout (the parent directory of the worktree).
  * "Commit & Push" commits all changes and pushes the branch to origin.
- *
- * These go beyond Codex's multi-dialog flow by providing:
- * - A live diff summary on hover
- * - One-click commit+push in a single action
- * - Apply-to-local as uncommitted changes (simpler than Codex's overwrite/apply split)
  */
 
 import { Button } from "@palot/ui/components/button"
@@ -42,6 +38,7 @@ import {
 	gitCommitAll,
 	gitCreateBranch,
 	gitPush,
+	isElectron,
 } from "../services/backend"
 
 // ============================================================
@@ -77,16 +74,22 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 	const [loading, setLoading] = useState(false)
 	const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
 
+	// Applying requires Electron (for the local `git apply` step).
+	const canApply = isElectron
+
+	// The target for apply is always the main project directory, not the worktree.
+	const targetDir = agent.projectDirectory
+
 	const handleApply = useCallback(async () => {
-		if (!agent.worktreePath) return
+		if (!agent.worktreePath || !canApply) return
 		setLoading(true)
 		setResult(null)
 		try {
-			const res = await gitApplyToLocal(agent.worktreePath, agent.directory)
+			const res = await gitApplyToLocal(agent.worktreePath, targetDir)
 			if (res.success) {
 				setResult({
 					success: true,
-					message: `Applied ${res.filesApplied.length} file${res.filesApplied.length !== 1 ? "s" : ""} to local`,
+					message: `Applied ${res.filesApplied.length} file${res.filesApplied.length !== 1 ? "s" : ""} to project`,
 				})
 			} else {
 				setResult({ success: false, message: res.error ?? "Apply failed" })
@@ -100,7 +103,7 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 			setLoading(false)
 			setTimeout(() => setResult(null), 4000)
 		}
-	}, [agent.worktreePath, agent.directory])
+	}, [agent.worktreePath, targetDir])
 
 	return (
 		<Tooltip>
@@ -111,7 +114,7 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 						variant="ghost"
 						className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
 						onClick={handleApply}
-						disabled={loading}
+						disabled={loading || !canApply}
 					/>
 				}
 			>
@@ -131,11 +134,13 @@ function ApplyToLocalButton({ agent }: { agent: Agent }) {
 						{result.message}
 					</span>
 				) : (
-					"Apply to local"
+					"Apply to project"
 				)}
 			</TooltipTrigger>
 			<TooltipContent side="bottom">
-				Apply worktree changes to your local checkout as uncommitted changes
+				{canApply
+					? "Apply worktree changes to your project as uncommitted changes"
+					: "Apply to project requires the Electron desktop app"}
 			</TooltipContent>
 		</Tooltip>
 	)
@@ -228,7 +233,9 @@ function CommitDialog({
 			}
 
 			// Step 2: Commit all changes
-			const msg = commitMessage.trim() || `Changes from Palot session`
+			const msg =
+				commitMessage.trim() ||
+				`Update ${diffStat?.filesChanged || 0} file${diffStat?.filesChanged !== 1 ? "s" : ""}`
 			const commitResult = await gitCommitAll(agent.worktreePath, msg)
 			if (!commitResult.success) {
 				setError(`Commit failed: ${commitResult.error}`)
@@ -286,6 +293,7 @@ function CommitDialog({
 		step,
 		hasBranch,
 		onOpenChange,
+		diffStat?.filesChanged,
 	])
 
 	const stepLabels: Record<CommitStep, { label: string; icon: typeof GitCommitHorizontalIcon }> = {
@@ -296,8 +304,8 @@ function CommitDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-md">
-				<DialogHeader>
+			<DialogContent className="flex max-h-[85vh] max-w-md flex-col">
+				<DialogHeader className="shrink-0">
 					<DialogTitle className="flex items-center gap-2">
 						<GitCommitHorizontalIcon className="size-5" />
 						Commit your changes
@@ -307,7 +315,7 @@ function CommitDialog({
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="space-y-4">
+				<div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
 					{/* Branch */}
 					<div className="space-y-1.5">
 						<div className="text-sm font-medium">Branch</div>
@@ -365,7 +373,7 @@ function CommitDialog({
 						<Textarea
 							value={commitMessage}
 							onChange={(e) => setCommitMessage(e.target.value)}
-							placeholder="Leave blank to auto-generate"
+							placeholder="Describe your changes (optional)"
 							className="min-h-[60px] resize-none text-sm"
 						/>
 					</div>
@@ -411,7 +419,7 @@ function CommitDialog({
 					)}
 				</div>
 
-				<DialogFooter>
+				<DialogFooter className="shrink-0">
 					<Button variant="outline" onClick={() => onOpenChange(false)} disabled={executing}>
 						Cancel
 					</Button>

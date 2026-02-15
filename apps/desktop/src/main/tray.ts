@@ -12,6 +12,7 @@
  */
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import type { Project, Session } from "@opencode-ai/sdk/v2/client"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { app, type BrowserWindow, Menu, nativeImage, Tray } from "electron"
@@ -25,6 +26,10 @@ import {
 import { getServerUrl } from "./opencode-manager"
 
 const log = createLogger("tray")
+
+// ESM equivalent for __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // ============================================================
 // Constants

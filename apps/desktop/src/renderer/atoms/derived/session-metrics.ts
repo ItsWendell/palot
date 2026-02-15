@@ -48,8 +48,12 @@ export interface SessionMetricsValue {
 	costRaw: number
 	/** Raw total token count (for comparisons) */
 	tokensRaw: number
-	/** Number of assistant turns */
-	turnCount: number
+	/** Number of exchanges (user message + all assistant responses) */
+	exchangeCount: number
+	/** Number of user messages */
+	userMessageCount: number
+	/** Number of assistant messages (LLM invocations) */
+	assistantMessageCount: number
 	/** Model distribution: short model name -> count */
 	modelDistribution: ModelDistribution
 	/** Model distribution with short names for display */
@@ -66,10 +70,10 @@ export interface SessionMetricsValue {
 	toolCallCount: number
 	/** Tool calls by category */
 	toolBreakdown: ToolBreakdown
-	/** Average cost per turn, formatted */
-	avgTurnCost: string
-	/** Average work time per turn, formatted */
-	avgTurnTime: string
+	/** Average cost per exchange, formatted */
+	avgExchangeCost: string
+	/** Average work time per exchange, formatted */
+	avgExchangeTime: string
 }
 
 // ============================================================
@@ -87,13 +91,15 @@ function metricsEqual(prev: SessionMetricsValue | null, next: SessionMetricsValu
 		prev.activeStartMs === next.activeStartMs &&
 		prev.costRaw === next.costRaw &&
 		prev.tokensRaw === next.tokensRaw &&
-		prev.turnCount === next.turnCount &&
+		prev.exchangeCount === next.exchangeCount &&
+		prev.userMessageCount === next.userMessageCount &&
+		prev.assistantMessageCount === next.assistantMessageCount &&
 		prev.cacheEfficiency === next.cacheEfficiency &&
 		prev.errorCount === next.errorCount &&
 		prev.retryCount === next.retryCount &&
 		prev.toolCallCount === next.toolCallCount &&
-		prev.avgTurnCost === next.avgTurnCost &&
-		prev.avgTurnTime === next.avgTurnTime &&
+		prev.avgExchangeCost === next.avgExchangeCost &&
+		prev.avgExchangeTime === next.avgExchangeTime &&
 		modelDistEqual(prev.modelDistribution, next.modelDistribution) &&
 		toolBreakdownEqual(prev.toolBreakdown, next.toolBreakdown)
 	)
@@ -177,7 +183,9 @@ export const sessionMetricsFamily = atomFamily((sessionId: string) => {
 			activeStartMs: raw.activeStartMs,
 			costRaw: raw.cost,
 			tokensRaw: raw.tokens.total,
-			turnCount: raw.turnCount,
+			exchangeCount: raw.exchangeCount,
+			userMessageCount: raw.userMessageCount,
+			assistantMessageCount: raw.assistantMessageCount,
 			modelDistribution: raw.modelDistribution,
 			modelDistributionDisplay,
 			cacheEfficiency: raw.cacheEfficiency,
@@ -186,8 +194,8 @@ export const sessionMetricsFamily = atomFamily((sessionId: string) => {
 			retryCount: raw.retryCount,
 			toolCallCount: raw.toolCallCount,
 			toolBreakdown: raw.toolBreakdown,
-			avgTurnCost: formatCost(raw.avgTurnCost),
-			avgTurnTime: formatWorkDuration(raw.avgTurnTimeMs),
+			avgExchangeCost: formatCost(raw.avgExchangeCost),
+			avgExchangeTime: formatWorkDuration(raw.avgExchangeTimeMs),
 		}
 
 		if (metricsEqual(prev, next)) return prev!

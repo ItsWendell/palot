@@ -22,12 +22,6 @@ export interface AppCommand {
 	source: "client" | "server"
 }
 
-export interface ServerCommand {
-	name: string
-	description?: string
-	agent?: string
-}
-
 // ============================================================
 // useSessionRevert — undo/redo logic
 // ============================================================

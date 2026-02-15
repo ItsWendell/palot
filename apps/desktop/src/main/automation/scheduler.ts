@@ -17,6 +17,8 @@ interface ScheduledTask {
 	paused: boolean
 	running: boolean
 	callback: () => Promise<void>
+	/** The computed next run time, updated after each scheduling cycle. */
+	nextRunAt: Date | null
 }
 
 const tasks = new Map<string, ScheduledTask>()
@@ -43,14 +45,19 @@ function scheduleNext(id: string, task: ScheduledTask) {
 		task.timer = null
 	}
 
-	if (task.paused) return
+	if (task.paused) {
+		task.nextRunAt = null
+		return
+	}
 
 	computeNextRun(task.rruleStr, task.timezone).then((next) => {
 		if (!next) {
 			log.warn("No next occurrence for automation", { id })
+			task.nextRunAt = null
 			return
 		}
 
+		task.nextRunAt = next
 		const delay = Math.max(0, next.getTime() - Date.now())
 		log.debug("Scheduling automation", { id, nextRun: next.toISOString(), delayMs: delay })
 
@@ -96,6 +103,7 @@ export function addTask(
 		paused: false,
 		running: false,
 		callback,
+		nextRunAt: null,
 	}
 	tasks.set(id, task)
 	scheduleNext(id, task)
@@ -130,6 +138,14 @@ export function resumeTask(id: string): void {
 
 export function isRunning(id: string): boolean {
 	return tasks.get(id)?.running ?? false
+}
+
+/**
+ * Returns the computed next run time for a scheduled task, or null if
+ * the task doesn't exist, is paused, or has no future occurrences.
+ */
+export function getNextRunTime(id: string): Date | null {
+	return tasks.get(id)?.nextRunAt ?? null
 }
 
 export function stopAll(): void {

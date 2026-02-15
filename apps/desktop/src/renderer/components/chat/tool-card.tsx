@@ -109,7 +109,7 @@ export const ToolCard = memo(function ToolCard({
 		return (
 			<div
 				className={cn(
-					"flex items-center gap-2.5 rounded-md border-l-2 px-3 py-2 text-sm",
+					"flex items-center gap-2.5 rounded-md border-l-2 bg-muted/30 px-3 py-2 text-sm",
 					borderColor,
 					isError && "bg-red-500/5",
 				)}
@@ -163,7 +163,7 @@ export const ToolCard = memo(function ToolCard({
 					render={
 						<button
 							type="button"
-							className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
+							className="flex w-full items-center gap-2.5 bg-muted/30 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60"
 						/>
 					}
 				>

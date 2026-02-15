@@ -1,10 +1,11 @@
+import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createClient } from "@libsql/client"
 import { drizzle } from "drizzle-orm/libsql"
 import { migrate } from "drizzle-orm/libsql/migrator"
-import { app } from "electron"
 import { createLogger } from "../logger"
+import { getDataDir } from "./paths"
 import * as schema from "./schema"
 
 const log = createLogger("automation-db")
@@ -25,7 +26,9 @@ let initPromise: Promise<void> | null = null
 export function getDb() {
 	if (db) return db
 
-	const dbPath = path.join(app.getPath("userData"), "palot.db")
+	const dataDir = getDataDir()
+	fs.mkdirSync(dataDir, { recursive: true })
+	const dbPath = path.join(dataDir, "palot.db")
 	log.info("Initializing automation database", { path: dbPath })
 
 	// LibSQL uses a URL-style path for local files

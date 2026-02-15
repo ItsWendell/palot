@@ -12,6 +12,9 @@ export type SessionError = {
 	data: Record<string, unknown>
 }
 
+/** Phases of worktree setup shown in the chat view's empty state */
+export type SessionSetupPhase = "creating-worktree" | "starting-session" | null
+
 export interface SessionEntry {
 	session: Session
 	status: SessionStatus
@@ -29,6 +32,8 @@ export interface SessionEntry {
 	worktreeBranch?: string
 	/** Last session-level error (from session.error events) */
 	error?: SessionError
+	/** Worktree setup phase (shown in chat empty state while worktree is being created) */
+	setupPhase?: SessionSetupPhase
 }
 
 // ============================================================
@@ -70,6 +75,7 @@ export const upsertSessionAtom = atom(
 			worktreePath: existing?.worktreePath,
 			worktreeBranch: existing?.worktreeBranch,
 			error: existing?.error,
+			setupPhase: existing?.setupPhase,
 		})
 
 		// Add to index
@@ -162,6 +168,22 @@ export const setSessionWorktreeAtom = atom(
 	},
 )
 
+export const setSessionSetupPhaseAtom = atom(
+	null,
+	(
+		get,
+		set,
+		args: {
+			sessionId: string
+			setupPhase: SessionSetupPhase
+		},
+	) => {
+		const entry = get(sessionFamily(args.sessionId))
+		if (!entry) return
+		set(sessionFamily(args.sessionId), { ...entry, setupPhase: args.setupPhase })
+	},
+)
+
 export const addPermissionAtom = atom(
 	null,
 	(
@@ -244,6 +266,14 @@ export const removeQuestionAtom = atom(
  * Bulk-set sessions (used during project load).
  * Merges new sessions into the store without overwriting
  * permissions/questions that arrived via SSE before the fetch completed.
+ *
+ * Uses each session's own `directory` field from the API (falling back to
+ * `args.directory`). This preserves sandbox (worktree) paths so the mapping
+ * system in `agents.ts` can group them under the parent project.
+ *
+ * When `sandboxDirs` is provided, sessions whose directory matches a sandbox
+ * get their `worktreePath` restored automatically, which makes the sidebar
+ * show the worktree icon even after a window reload.
  */
 export const setSessionsAtom = atom(
 	null,
@@ -254,6 +284,8 @@ export const setSessionsAtom = atom(
 			sessions: Session[]
 			statuses: Record<string, SessionStatus>
 			directory: string
+			/** Known sandbox directories for this project (from project.sandboxes) */
+			sandboxDirs?: Set<string>
 		},
 	) => {
 		const currentIds = get(sessionIdsAtom)
@@ -261,16 +293,20 @@ export const setSessionsAtom = atom(
 
 		for (const session of args.sessions) {
 			const existing = get(sessionFamily(session.id))
+			const sessionDir = session.directory || args.directory
+			const isSandbox = args.sandboxDirs?.has(sessionDir) ?? false
+
 			set(sessionFamily(session.id), {
 				session,
 				status: args.statuses[session.id] ?? existing?.status ?? { type: "idle" },
 				permissions: existing?.permissions ?? [],
 				questions: existing?.questions ?? [],
-				directory: args.directory,
+				directory: existing?.directory ?? sessionDir,
 				branch: existing?.branch,
-				worktreePath: existing?.worktreePath,
+				worktreePath: existing?.worktreePath ?? (isSandbox ? sessionDir : undefined),
 				worktreeBranch: existing?.worktreeBranch,
 				error: existing?.error,
+				setupPhase: existing?.setupPhase,
 			})
 			nextIds.add(session.id)
 		}

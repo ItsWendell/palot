@@ -5,6 +5,10 @@ import {
 	createRouter,
 	redirect,
 } from "@tanstack/react-router"
+import { AutomationDetail } from "./components/automations/automation-detail"
+import { AutomationRunDetail } from "./components/automations/automation-run-detail"
+import { AutomationsPage } from "./components/automations/automations-page"
+import { InboxEmptyState } from "./components/automations/inbox-empty-state"
 import { ErrorPage } from "./components/error-page"
 import { NewChat } from "./components/new-chat"
 import { NotFoundPage } from "./components/not-found-page"
@@ -114,10 +118,44 @@ const settingsAboutRoute = createRoute({
 	path: "about",
 	component: AboutSettings,
 })
+
+const automationsRoute = createRoute({
+	getParentRoute: () => sidebarLayout,
+	path: "automations",
+	component: AutomationsPage,
+})
+
+const automationsIndexRoute = createRoute({
+	getParentRoute: () => automationsRoute,
+	path: "/",
+	component: InboxEmptyState,
+})
+
+const automationDetailRoute = createRoute({
+	getParentRoute: () => automationsRoute,
+	path: "$automationId",
+})
+
+const automationDetailIndexRoute = createRoute({
+	getParentRoute: () => automationDetailRoute,
+	path: "/",
+	component: AutomationDetail,
+})
+
+const automationRunRoute = createRoute({
+	getParentRoute: () => automationDetailRoute,
+	path: "runs/$runId",
+	component: AutomationRunDetail,
+})
+
 const routeTree = rootRoute.addChildren([
 	sidebarLayout.addChildren([
 		indexRoute,
 		projectRoute.addChildren([projectIndexRoute, sessionRoute]),
+		automationsRoute.addChildren([
+			automationsIndexRoute,
+			automationDetailRoute.addChildren([automationDetailIndexRoute, automationRunRoute]),
+		]),
 		settingsRoute.addChildren([
 			settingsIndexRoute,
 			settingsGeneralRoute,
