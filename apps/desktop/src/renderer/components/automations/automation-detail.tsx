@@ -23,8 +23,10 @@ import {
 	ZapIcon,
 } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
+import { toast } from "sonner"
 import type { Automation, AutomationRun } from "../../../preload/api"
 import { useAutomationRuns, useAutomations } from "../../hooks/use-automations"
+import { formatScheduleSummary, rruleToScheduleConfig } from "../../lib/rrule-ui"
 import { formatCountdown, formatTimeAgo } from "../../lib/time-format"
 import { runAutomationNow, updateAutomation } from "../../services/backend"
 import { CreateAutomationDialog } from "./create-automation-dialog"
@@ -130,12 +132,23 @@ export function AutomationDetail() {
 		[allRuns, automationId],
 	)
 
+	const scheduleSummary = useMemo(
+		() =>
+			automation ? formatScheduleSummary(rruleToScheduleConfig(automation.schedule.rrule)) : "",
+		[automation],
+	)
+
 	const handleRunNow = useCallback(async () => {
 		if (!automation) return
 		try {
 			await runAutomationNow(automation.id)
-		} catch {
-			// TODO: error toast
+			toast.success("Automation run started", {
+				description: "Check the inbox for results.",
+			})
+		} catch (err) {
+			toast.error("Failed to run automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		}
 	}, [automation])
 
@@ -146,8 +159,10 @@ export function AutomationDetail() {
 				id: automation.id,
 				status: automation.status === "paused" ? "active" : "paused",
 			})
-		} catch {
-			// TODO: error toast
+		} catch (err) {
+			toast.error("Failed to update automation", {
+				description: err instanceof Error ? err.message : undefined,
+			})
 		}
 	}, [automation])
 
@@ -165,45 +180,63 @@ export function AutomationDetail() {
 	return (
 		<div className="flex h-full flex-col">
 			{/* Header */}
-			<div className="flex items-center gap-3 border-b px-4 py-3">
-				<div className="flex size-8 items-center justify-center rounded-md bg-muted">
-					<ZapIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-				</div>
-				<div className="min-w-0 flex-1">
-					<h2 className="truncate text-sm font-semibold">{automation.name}</h2>
-					<div className="flex items-center gap-2 text-xs text-muted-foreground">
-						{isPaused ? (
-							<span className="flex items-center gap-1">
-								<PauseIcon className="size-3" aria-hidden="true" />
-								Paused
-							</span>
-						) : automation.nextRunAt ? (
+			<div className="flex flex-col gap-2 border-b px-4 py-3">
+				<div className="flex items-center gap-3">
+					<div className="flex size-8 items-center justify-center rounded-md bg-muted">
+						<ZapIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+					</div>
+					<div className="min-w-0 flex-1">
+						<h2 className="truncate text-sm font-semibold">{automation.name}</h2>
+						<div className="flex items-center gap-2 text-xs text-muted-foreground">
 							<span className="flex items-center gap-1">
 								<CalendarIcon className="size-3" aria-hidden="true" />
-								Next run in {formatCountdown(automation.nextRunAt)}
+								{scheduleSummary}
 							</span>
-						) : (
-							<span>No schedule</span>
-						)}
-						{automation.runCount > 0 && (
-							<>
-								<CircleIcon className="size-1 fill-current" aria-hidden="true" />
-								<span>
-									{automation.runCount} run{automation.runCount !== 1 ? "s" : ""}
-								</span>
-							</>
-						)}
+							{isPaused ? (
+								<>
+									<CircleIcon className="size-1 fill-current" aria-hidden="true" />
+									<span className="text-yellow-600 dark:text-yellow-400">Paused</span>
+								</>
+							) : automation.nextRunAt ? (
+								<>
+									<CircleIcon className="size-1 fill-current" aria-hidden="true" />
+									<span>Next in {formatCountdown(automation.nextRunAt)}</span>
+								</>
+							) : null}
+							{automation.runCount > 0 && (
+								<>
+									<CircleIcon className="size-1 fill-current" aria-hidden="true" />
+									<span>
+										{automation.runCount} run{automation.runCount !== 1 ? "s" : ""}
+									</span>
+								</>
+							)}
+						</div>
 					</div>
-				</div>
-				<div className="flex shrink-0 items-center gap-1">
-					<Button variant="ghost" size="sm" onClick={handleTogglePause}>
-						{isPaused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />}
-					</Button>
-					<Button variant="ghost" size="sm" onClick={handleRunNow}>
-						<ZapIcon className="size-4" />
-					</Button>
 					<Button variant="ghost" size="sm" onClick={() => setEditDialogOpen(true)}>
 						<PencilIcon className="size-4" />
+					</Button>
+				</div>
+
+				{/* Action buttons */}
+				<div className="flex items-center gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						className="h-7 gap-1.5 text-xs"
+						onClick={handleTogglePause}
+					>
+						{isPaused ? <PlayIcon className="size-3.5" /> : <PauseIcon className="size-3.5" />}
+						{isPaused ? "Resume" : "Pause"}
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						className="h-7 gap-1.5 text-xs"
+						onClick={handleRunNow}
+					>
+						<ZapIcon className="size-3.5" />
+						Run now
 					</Button>
 				</div>
 			</div>
