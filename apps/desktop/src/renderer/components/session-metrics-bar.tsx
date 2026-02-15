@@ -59,7 +59,7 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 	const { raw } = metrics
 
 	return (
-		<div className="flex items-center gap-1.5">
+		<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
 			{/* Work time */}
 			<Tooltip>
 				<TooltipTrigger

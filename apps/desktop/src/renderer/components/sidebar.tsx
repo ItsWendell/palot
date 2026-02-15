@@ -310,7 +310,7 @@ export function AppSidebarContent({
 					<SidebarGroup>
 						<SidebarGroupLabel>Projects</SidebarGroupLabel>
 						{/* Action buttons row -- positioned like SidebarGroupAction but holds multiple icons */}
-						<div className="absolute top-3.5 right-3 flex items-center gap-0.5">
+						<div className="absolute top-3.5 right-3 flex max-w-[calc(100%-4rem)] items-center gap-0.5 overflow-hidden">
 							{subAgentCount > 0 && (
 								<Tooltip>
 									<TooltipTrigger
@@ -318,7 +318,7 @@ export function AppSidebarContent({
 											<button
 												type="button"
 												onClick={onToggleSubAgents}
-												className={`inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10px] transition-colors ${
+												className={`inline-flex shrink-0 items-center gap-0.5 rounded-md px-1 py-0.5 text-[10px] transition-colors ${
 													showSubAgents
 														? "bg-sidebar-accent text-sidebar-accent-foreground"
 														: "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -340,7 +340,7 @@ export function AppSidebarContent({
 										<button
 											type="button"
 											onClick={onOpenCommandPalette}
-											className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
+											className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 shrink-0 items-center justify-center rounded-md p-0 transition-colors"
 										/>
 									}
 								>
@@ -356,7 +356,7 @@ export function AppSidebarContent({
 											<button
 												type="button"
 												onClick={onAddProject}
-												className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-colors"
+												className="text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex aspect-square w-5 shrink-0 items-center justify-center rounded-md p-0 transition-colors"
 											/>
 										}
 									>

@@ -217,7 +217,7 @@ export function SidebarLayout() {
 					    resolve to 100% of SidebarInset, ignoring AppBar height.
 					    This container takes remaining space after AppBar and
 					    constrains page content correctly. */}
-					<div data-slot="content-area" className="relative min-h-0 flex-1">
+					<div data-slot="content-area" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
 						<Outlet />
 					</div>
 				</SidebarInset>

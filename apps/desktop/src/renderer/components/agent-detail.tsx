@@ -293,32 +293,36 @@ function SessionAppBarContent({
 	const navigate = useNavigate()
 
 	return (
-		<div className="flex h-full w-full items-center gap-2.5">
+		<div className="flex h-full w-full min-w-0 items-center gap-2.5">
 			{/* App name */}
-			<PalotWordmark className="h-[11px] w-auto shrink-0 text-muted-foreground/70" />
+			<PalotWordmark className="hidden h-[11px] w-auto shrink-0 text-muted-foreground/70 md:block" />
 
 			{/* Separator */}
-			<div className="h-3 w-px shrink-0 bg-border/60" />
+			<div className="hidden h-3 w-px shrink-0 bg-border/60 md:block" />
 
 			{/* Breadcrumb: project / [branch badge] / session name */}
 			<div
-				className="flex min-w-0 items-center gap-1.5"
+				className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
 				style={{
 					// @ts-expect-error -- vendor-prefixed CSS property
 					WebkitAppRegion: "no-drag",
 				}}
 			>
 				{/* Project name */}
-				<span className="shrink-0 text-xs leading-none text-muted-foreground">{agent.project}</span>
+				<span className="hidden shrink-0 text-xs leading-none text-muted-foreground sm:inline">
+					{agent.project}
+				</span>
 
 				{/* Worktree branch badge */}
 				{agent.worktreeBranch && <WorktreeBranchBadge branch={agent.worktreeBranch} />}
 
-				<span className="shrink-0 text-xs leading-none text-muted-foreground/40">/</span>
+				<span className="hidden shrink-0 text-xs leading-none text-muted-foreground/40 sm:inline">
+					/
+				</span>
 
 				{/* Session name — click to edit */}
 				{isEditingTitle ? (
-					<div className="inline-grid min-w-0 max-w-full items-center">
+					<div className="inline-grid min-w-0 max-w-full flex-1 items-center">
 						{/* Ghost span — sizes the grid column to match the text width */}
 						<span className="invisible col-start-1 row-start-1 truncate text-xs font-semibold leading-none">
 							{titleValue}
@@ -340,9 +344,11 @@ function SessionAppBarContent({
 					<button
 						type="button"
 						onClick={onRename ? onStartEditing : undefined}
-						className={`group flex min-w-0 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
+						className={`group flex min-w-0 flex-1 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
 					>
-						<h2 className="min-w-0 truncate text-xs font-semibold leading-none">{agent.name}</h2>
+						<h2 className="min-w-0 flex-1 truncate text-xs font-semibold leading-none">
+							{agent.name}
+						</h2>
 						{onRename && (
 							<PencilIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
 						)}
@@ -352,7 +358,7 @@ function SessionAppBarContent({
 
 			{/* Right-aligned items */}
 			<div
-				className="ml-auto flex items-center gap-2.5"
+				className="flex min-w-0 shrink-0 items-center gap-2.5 overflow-hidden"
 				style={{
 					// @ts-expect-error -- vendor-prefixed CSS property
 					WebkitAppRegion: "no-drag",
@@ -361,10 +367,10 @@ function SessionAppBarContent({
 				{/* Worktree actions (Apply to local, Commit & push) */}
 				{agent.worktreePath && <WorktreeActions agent={agent} />}
 
-				{agent.worktreePath && <div className="h-3 w-px shrink-0 bg-border/60" />}
+				{agent.worktreePath && <div className="hidden h-3 w-px shrink-0 bg-border/60 md:block" />}
 
 				{/* Status dot + label */}
-				<div className="flex items-center gap-1.5 text-xs leading-none text-muted-foreground">
+				<div className="hidden items-center gap-1.5 text-xs leading-none text-muted-foreground sm:flex">
 					<span
 						className={`inline-block size-1.5 rounded-full ${STATUS_DOT_COLOR[agent.status]}`}
 					/>
@@ -372,16 +378,22 @@ function SessionAppBarContent({
 				</div>
 
 				{/* Session metrics bar */}
-				<SessionMetricsBar sessionId={agent.sessionId} />
+				<div className="hidden min-w-0 shrink lg:block">
+					<SessionMetricsBar sessionId={agent.sessionId} />
+				</div>
 
 				{/* Open in external editor */}
-				<OpenInButton directory={agent.worktreePath ?? agent.directory} />
+				<div className="hidden md:block">
+					<OpenInButton directory={agent.worktreePath ?? agent.directory} />
+				</div>
 
 				{/* Open in terminal */}
-				<AttachCommand
-					sessionId={agent.sessionId}
-					directory={agent.worktreePath ?? agent.directory}
-				/>
+				<div className="hidden md:block">
+					<AttachCommand
+						sessionId={agent.sessionId}
+						directory={agent.worktreePath ?? agent.directory}
+					/>
+				</div>
 
 				{/* Stop button (when running) */}
 				{agent.status === "running" && (
@@ -393,7 +405,7 @@ function SessionAppBarContent({
 						disabled={!isConnected}
 					>
 						<SquareIcon className="size-3" />
-						Stop
+						<span className="hidden sm:inline">Stop</span>
 					</Button>
 				)}
 
@@ -406,7 +418,7 @@ function SessionAppBarContent({
 							params: projectSlug ? { projectSlug } : undefined,
 						})
 					}
-					className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 				>
 					<XIcon className="size-3.5" />
 				</button>

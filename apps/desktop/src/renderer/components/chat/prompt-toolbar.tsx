@@ -499,7 +499,7 @@ export function PromptToolbar({
 	const hasVariants = variants.length > 0
 
 	return (
-		<div className="flex items-center gap-0.5">
+		<div className="flex min-w-0 flex-wrap items-center gap-0.5">
 			{hasAgents && (
 				<AgentSelector
 					agents={agents}
@@ -596,9 +596,9 @@ export function StatusBar({
 	const DisplayModeIcon = DISPLAY_MODE_ICONS[displayMode]
 
 	return (
-		<div className="flex items-center gap-3 px-2 pt-2 text-[11px] text-muted-foreground/60">
+		<div className="flex min-w-0 items-center gap-3 overflow-hidden px-2 pt-2 text-[11px] text-muted-foreground/60">
 			{/* Left side — environment + connection + interrupt hint */}
-			<div className="flex items-center gap-3">
+			<div className="flex shrink-0 items-center gap-3">
 				{extraSlot ?? (
 					<div className="flex items-center gap-1">
 						<MonitorIcon className="size-3" />
@@ -629,7 +629,7 @@ export function StatusBar({
 			</div>
 
 			{/* Right side — display mode toggle + context usage + git branch */}
-			<div className="ml-auto flex items-center gap-3">
+			<div className="ml-auto flex min-w-0 items-center gap-3 overflow-hidden">
 				{/* Display mode toggle */}
 				<button
 					type="button"

@@ -1076,14 +1076,14 @@ export function ChatView({
 	)
 
 	return (
-		<div className="flex h-full flex-col">
+		<div className="flex h-full min-w-0 flex-col overflow-hidden">
 			{/* Chat messages — constrained width for readability */}
-			<div className="relative min-h-0 flex-1">
+			<div className="relative min-h-0 min-w-0 flex-1">
 				<Conversation key={agent.sessionId} className="h-full">
 					<ScrollOnLoad loading={loading} sessionId={agent.sessionId} />
 					<ScrollBridge scrollRef={scrollRef} />
 					<ConversationContent className="gap-10 px-4 py-6">
-						<div className="mx-auto w-full max-w-4xl space-y-10">
+						<div className="mx-auto w-full min-w-0 max-w-4xl space-y-10">
 							{/* Load earlier messages button */}
 							{hasEarlierMessages && (
 								<div className="flex justify-center pb-4">
@@ -1158,8 +1158,8 @@ export function ChatView({
 			{/* Bottom input section — hidden during worktree setup since the stub session
 			   cannot accept prompts yet */}
 			{!setupPhase && (
-				<div className="px-4 pb-4 pt-2">
-					<div className="mx-auto w-full max-w-4xl">
+				<div className="min-w-0 px-4 pb-4 pt-2">
+					<div className="mx-auto w-full min-w-0 max-w-4xl">
 						{/* Session task list — collapsible todo progress */}
 						<SessionTaskList sessionId={agent.sessionId} />
 
