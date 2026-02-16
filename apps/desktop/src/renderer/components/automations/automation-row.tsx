@@ -16,7 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/to
 import { CircleIcon, PauseIcon, PencilIcon } from "lucide-react"
 import { memo, useState } from "react"
 import type { Automation } from "../../../preload/api"
-import { formatCountdown } from "../../lib/time-format"
+import { useCountdown } from "../../hooks/use-countdown"
 
 interface AutomationRowProps {
 	automation: Automation
@@ -47,11 +47,8 @@ export const AutomationRow = memo(function AutomationRow({
 				: CircleIcon
 
 	const isPaused = automation.status === "paused"
-	const countdownText = automation.nextRunAt
-		? `Starts in ${formatCountdown(automation.nextRunAt)}`
-		: isPaused
-			? "Paused"
-			: null
+	const countdownLabel = useCountdown(automation.nextRunAt)
+	const countdownText = countdownLabel ? `Starts in ${countdownLabel}` : isPaused ? "Paused" : null
 
 	const projectLabel =
 		automation.workspaces.length > 0

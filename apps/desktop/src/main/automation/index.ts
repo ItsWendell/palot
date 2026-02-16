@@ -90,6 +90,7 @@ async function scheduleAndPersistNextRun(
 	rruleStr: string,
 	timezone: string,
 ): Promise<void> {
+	log.info("Scheduling and persisting next run", { id, rruleStr, timezone })
 	const nextRunAt = await addTask(id, rruleStr, timezone, async () => {
 		await executeAutomation(id)
 	})
@@ -104,6 +105,11 @@ async function scheduleAndPersistNextRun(
 		})
 		.where(eq(automations.id, id))
 		.run()
+
+	log.info("Next run persisted to DB", {
+		id,
+		nextRunAt: nextRunAt?.toISOString() ?? "none",
+	})
 }
 
 // ============================================================
@@ -116,7 +122,7 @@ export async function listAutomations(): Promise<Automation[]> {
 	const results: Automation[] = []
 	for (const config of configs) {
 		const timing = await db.select().from(automations).where(eq(automations.id, config.id)).get()
-		results.push(mergeAutomation(config, timing))
+		results.push(await mergeAutomation(config, timing))
 	}
 	return results
 }
@@ -126,7 +132,7 @@ export async function getAutomation(id: string): Promise<Automation | null> {
 	if (!config) return null
 	const db = getDb()
 	const timing = await db.select().from(automations).where(eq(automations.id, id)).get()
-	return mergeAutomation(config, timing)
+	return await mergeAutomation(config, timing)
 }
 
 export async function createAutomation(input: CreateAutomationInput): Promise<Automation> {
@@ -290,17 +296,44 @@ interface ExecuteOptions {
 
 async function executeAutomation(id: string, opts: ExecuteOptions = {}): Promise<void> {
 	const config = readConfig(id)
-	if (!config) return
+	if (!config) {
+		log.warn("Automation config not found, skipping execution", { id })
+		return
+	}
 
 	// Scheduled runs require active status; manual triggers skip the check
-	if (!opts.isManualTrigger && config.status !== "active") return
+	if (!opts.isManualTrigger && config.status !== "active") {
+		log.info("Automation not active, skipping execution", { id, status: config.status })
+		return
+	}
 
 	const db = getDb()
+
+	log.info("Waiting for semaphore", {
+		automationId: id,
+		isManual: !!opts.isManualTrigger,
+		semaphoreActive: semaphore.active,
+		semaphorePending: semaphore.pending,
+	})
+	const semaphoreWaitStart = Date.now()
 	const release = await semaphore.acquire()
+	const semaphoreWaitMs = Date.now() - semaphoreWaitStart
+	log.info("Semaphore acquired", {
+		automationId: id,
+		waitMs: semaphoreWaitMs,
+		semaphoreActive: semaphore.active,
+	})
 
 	try {
 		// Run once per workspace, or once with empty workspace if none configured
 		const targets = config.workspaces.length > 0 ? config.workspaces : [""]
+		log.info("Starting automation execution", {
+			automationId: id,
+			name: config.name,
+			workspaceCount: targets.length,
+			retries: config.execution.retries,
+			timeoutSec: config.execution.timeout,
+		})
 		for (const workspace of targets) {
 			const runId = crypto.randomUUID()
 			const now = Date.now()
@@ -513,9 +546,23 @@ async function executeAutomation(id: string, opts: ExecuteOptions = {}): Promise
 				})
 				.where(eq(automations.id, id))
 				.run()
+			log.info("Execution complete, next run persisted", {
+				automationId: id,
+				nextRunAt: nextDate?.toISOString() ?? "none",
+			})
+		} else {
+			log.info("Execution complete, automation no longer active", {
+				automationId: id,
+				status: afterConfig?.status ?? "deleted",
+			})
 		}
 	} finally {
 		release()
+		log.debug("Semaphore released", {
+			automationId: id,
+			semaphoreActive: semaphore.active,
+			semaphorePending: semaphore.pending,
+		})
 	}
 }
 
@@ -523,13 +570,23 @@ async function executeAutomation(id: string, opts: ExecuteOptions = {}): Promise
 // Helpers
 // ============================================================
 
-function mergeAutomation(
+async function mergeAutomation(
 	config: NonNullable<ReturnType<typeof readConfig>>,
 	timing?: typeof automations.$inferSelect | undefined,
-): Automation {
+): Promise<Automation> {
 	// Prefer in-memory scheduler value (always up-to-date) over DB value (may be stale)
 	const schedulerNext = getNextRunTime(config.id)
-	const nextRunAt = schedulerNext ? schedulerNext.getTime() : (timing?.nextRunAt ?? null)
+	let nextRunAt = schedulerNext ? schedulerNext.getTime() : (timing?.nextRunAt ?? null)
+
+	// If the automation is active but neither the scheduler nor the DB has a future
+	// nextRunAt, compute it directly from the rrule. This covers the startup race
+	// where initAutomations hasn't finished yet and the DB value is stale/null.
+	if (config.status === "active" && (nextRunAt === null || nextRunAt <= Date.now())) {
+		const preview = await previewSchedule(config.schedule.rrule, config.schedule.timezone, 1)
+		if (preview.length > 0) {
+			nextRunAt = preview[0].getTime()
+		}
+	}
 
 	return {
 		id: config.id,

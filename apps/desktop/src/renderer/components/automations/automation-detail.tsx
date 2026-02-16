@@ -26,8 +26,9 @@ import { useCallback, useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { Automation, AutomationRun } from "../../../preload/api"
 import { useAutomationRuns, useAutomations } from "../../hooks/use-automations"
+import { useCountdown } from "../../hooks/use-countdown"
 import { formatScheduleSummary, rruleToScheduleConfig } from "../../lib/rrule-ui"
-import { formatCountdown, formatTimeAgo } from "../../lib/time-format"
+import { formatTimeAgo } from "../../lib/time-format"
 import { runAutomationNow, updateAutomation } from "../../services/backend"
 import { CreateAutomationDialog } from "./create-automation-dialog"
 
@@ -124,6 +125,8 @@ export function AutomationDetail() {
 		[automations, automationId],
 	)
 
+	const countdownLabel = useCountdown(automation?.nextRunAt ?? null)
+
 	const runs = useMemo(
 		() =>
 			allRuns
@@ -197,10 +200,10 @@ export function AutomationDetail() {
 									<CircleIcon className="size-1 fill-current" aria-hidden="true" />
 									<span className="text-yellow-600 dark:text-yellow-400">Paused</span>
 								</>
-							) : automation.nextRunAt ? (
+							) : countdownLabel ? (
 								<>
 									<CircleIcon className="size-1 fill-current" aria-hidden="true" />
-									<span>Next in {formatCountdown(automation.nextRunAt)}</span>
+									<span>Next in {countdownLabel}</span>
 								</>
 							) : null}
 							{automation.runCount > 0 && (

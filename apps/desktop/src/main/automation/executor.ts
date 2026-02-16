@@ -22,6 +22,29 @@ import type { AutomationConfig, PermissionPreset } from "./types"
 
 const log = createLogger("automation-executor")
 
+/** Default timeout (in ms) for individual SDK calls (session.create, promptAsync, etc.). */
+const SDK_CALL_TIMEOUT_MS = 60_000
+
+/**
+ * Wraps a promise with a timeout. Rejects with a descriptive error if the
+ * promise doesn't settle within `ms` milliseconds.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+		promise.then(
+			(v) => {
+				clearTimeout(timer)
+				resolve(v)
+			},
+			(err) => {
+				clearTimeout(timer)
+				reject(err)
+			},
+		)
+	})
+}
+
 // ============================================================
 // Permission presets
 // ============================================================
@@ -150,7 +173,9 @@ async function monitorSession(
 
 	const eventPromise = (async (): Promise<"done"> => {
 		try {
+			log.debug("Subscribing to SSE events", { sessionId })
 			const result = await client.event.subscribe()
+			log.debug("SSE stream connected", { sessionId })
 			for await (const event of result.stream) {
 				if (signal.aborted) break
 
@@ -239,11 +264,12 @@ async function monitorSession(
 	const outcome = await Promise.race([eventPromise, timeoutPromise])
 
 	if (outcome === "timeout") {
-		log.warn("Automation session timed out", { sessionId, timeoutMs })
+		log.warn("Session monitoring timed out", { sessionId, timeoutMs })
 		try {
 			await client.session.abort({ sessionID: sessionId })
+			log.info("Session aborted after timeout", { sessionId })
 		} catch {
-			// Best effort abort
+			log.warn("Failed to abort session after timeout", { sessionId })
 		}
 		error = error
 			? `${error}\nSession timed out after ${Math.round(timeoutMs / 1000)}s`
@@ -312,6 +338,10 @@ export async function executeRun(
 ): Promise<ExecutionResult> {
 	const client = createAutomationClient(workspace)
 	if (!client) {
+		log.error("Cannot execute run: no OpenCode server running", {
+			automationId: config.id,
+			workspace,
+		})
 		return {
 			sessionId: "",
 			worktreePath: null,
@@ -326,19 +356,34 @@ export async function executeRun(
 	const abortController = new AbortController()
 	let worktreePath: string | null = null
 	let sessionId = ""
+	const runStartTime = Date.now()
+	log.info("Starting execution", {
+		automationId: config.id,
+		automationName: config.name,
+		workspace,
+		useWorktree: config.execution.useWorktree,
+		timeoutSec: config.execution.timeout,
+		model: config.execution.model || "default",
+	})
 
 	try {
 		// --- Step 1: Create worktree (if enabled) ---
 		if (config.execution.useWorktree) {
-			log.info("Creating worktree for automation", {
-				automationId: config.id,
-				workspace,
-			})
+			log.info("Creating worktree", { automationId: config.id, workspace })
+			const wtStart = Date.now()
 			try {
-				const result = await client.worktree.create({
-					worktreeCreateInput: {
-						name: `automation-${config.id}-${Date.now()}`,
-					},
+				const result = await withTimeout(
+					client.worktree.create({
+						worktreeCreateInput: {
+							name: `automation-${config.id}-${Date.now()}`,
+						},
+					}),
+					SDK_CALL_TIMEOUT_MS,
+					"worktree.create",
+				)
+				log.info("Worktree created", {
+					automationId: config.id,
+					durationMs: Date.now() - wtStart,
 				})
 				// biome-ignore lint/suspicious/noExplicitAny: worktree API response shape not fully typed
 				const data = result.data as any
@@ -350,7 +395,11 @@ export async function executeRun(
 					})
 				}
 			} catch (err) {
-				log.warn("Worktree creation failed, running in main workspace", err)
+				log.warn("Worktree creation failed, falling back to main workspace", {
+					automationId: config.id,
+					durationMs: Date.now() - wtStart,
+					error: err instanceof Error ? err.message : String(err),
+				})
 				// Continue without worktree -- run in the main workspace
 			}
 		}
@@ -361,9 +410,23 @@ export async function executeRun(
 		// If running in a worktree, create a client scoped to that directory
 		const sessionClient = worktreePath ? (createAutomationClient(worktreePath) ?? client) : client
 
-		const sessionResult = await sessionClient.session.create({
-			title: `[Auto] ${config.name}`,
-			permission: permissionRuleset,
+		log.info("Creating session", {
+			automationId: config.id,
+			permissionPreset: config.execution.permissionPreset ?? "default",
+			worktreePath,
+		})
+		const sessionStart = Date.now()
+		const sessionResult = await withTimeout(
+			sessionClient.session.create({
+				title: `[Auto] ${config.name}`,
+				permission: permissionRuleset,
+			}),
+			SDK_CALL_TIMEOUT_MS,
+			"session.create",
+		)
+		log.info("Session created", {
+			automationId: config.id,
+			durationMs: Date.now() - sessionStart,
 		})
 
 		// biome-ignore lint/suspicious/noExplicitAny: session create response varies across SDK versions
@@ -403,22 +466,45 @@ export async function executeRun(
 		// Parse model string (format: "providerID/modelID") if configured
 		const model = config.execution.model ? parseModelRef(config.execution.model) : undefined
 
-		await sessionClient.session.promptAsync({
-			sessionID: sessionId,
-			system: systemPrompt,
-			parts: [{ type: "text", text: config.prompt }],
-			model,
+		log.info("Sending prompt", {
+			automationId: config.id,
+			sessionId,
+			model: config.execution.model || "default",
+			promptLength: config.prompt.length,
+		})
+		const promptStart = Date.now()
+		await withTimeout(
+			sessionClient.session.promptAsync({
+				sessionID: sessionId,
+				system: systemPrompt,
+				parts: [{ type: "text", text: config.prompt }],
+				model,
+			}),
+			SDK_CALL_TIMEOUT_MS,
+			"session.promptAsync",
+		)
+		log.info("Prompt sent, starting monitor", {
+			automationId: config.id,
+			sessionId,
+			sendDurationMs: Date.now() - promptStart,
+			monitorTimeoutSec: config.execution.timeout,
 		})
 
-		log.info("Prompt sent, monitoring session", { sessionId })
-
 		// --- Step 4: Monitor until idle or timeout ---
+		const monitorStart = Date.now()
 		const { text, error } = await monitorSession(
 			sessionClient,
 			sessionId,
 			config.execution.timeout * 1000,
 			abortController.signal,
 		)
+		log.info("Monitor completed", {
+			automationId: config.id,
+			sessionId,
+			monitorDurationMs: Date.now() - monitorStart,
+			outputLength: text.length,
+			hadError: !!error,
+		})
 
 		// --- Step 5: Capture results ---
 		const hasActionable = error ? true : parseActionable(text)
@@ -446,6 +532,17 @@ export async function executeRun(
 				? `Error: ${error}`
 				: "Automation completed with no output"
 
+		const totalMs = Date.now() - runStartTime
+		log.info("Execution finished", {
+			automationId: config.id,
+			sessionId,
+			totalDurationMs: totalMs,
+			hasActionable,
+			hasError: !!error,
+			branch,
+			summaryLength: summary.length,
+		})
+
 		return {
 			sessionId,
 			worktreePath,
@@ -456,7 +553,14 @@ export async function executeRun(
 			error,
 		}
 	} catch (err) {
-		log.error("Automation execution failed", { automationId: config.id, workspace }, err)
+		const totalMs = Date.now() - runStartTime
+		log.error("Automation execution failed", {
+			automationId: config.id,
+			workspace,
+			sessionId: sessionId || "none",
+			totalDurationMs: totalMs,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		return {
 			sessionId,
 			worktreePath,

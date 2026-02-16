@@ -27,14 +27,42 @@ const tasks = new Map<string, ScheduledTask>()
 // Internal helpers
 // ============================================================
 
-async function computeNextRun(rruleStr: string, _timezone: string): Promise<Date | null> {
+/** Human-readable delay string for log messages. */
+function formatDelay(ms: number): string {
+	if (ms < 1000) return `${ms}ms`
+	const seconds = Math.round(ms / 1000)
+	if (seconds < 120) return `${seconds}s`
+	const minutes = Math.round(seconds / 60)
+	if (minutes < 120) return `${minutes}m`
+	const hours = Math.round(minutes / 60)
+	return `${hours}h`
+}
+
+async function computeNextRun(
+	id: string,
+	rruleStr: string,
+	_timezone: string,
+): Promise<Date | null> {
 	const { RRule } = await import("rrule")
 	try {
 		const rule = RRule.fromString(rruleStr)
-		const next = rule.after(new Date(), false)
+		const now = new Date()
+		const next = rule.after(now, false)
+		if (next) {
+			const delayMs = next.getTime() - now.getTime()
+			log.debug("Computed next run", {
+				id,
+				rruleStr,
+				now: now.toISOString(),
+				next: next.toISOString(),
+				delayMs,
+			})
+		} else {
+			log.warn("RRULE produced no future occurrence", { id, rruleStr, now: now.toISOString() })
+		}
 		return next
 	} catch (err) {
-		log.error("Failed to parse RRULE", { rruleStr }, err)
+		log.error("Failed to parse RRULE", { id, rruleStr }, err)
 		return null
 	}
 }
@@ -43,37 +71,77 @@ async function scheduleNext(id: string, task: ScheduledTask): Promise<Date | nul
 	if (task.timer) {
 		clearTimeout(task.timer)
 		task.timer = null
+		log.debug("Cleared previous timer", { id })
 	}
 
 	if (task.paused) {
+		log.debug("Task is paused, skipping schedule", { id })
 		task.nextRunAt = null
 		return null
 	}
 
-	const next = await computeNextRun(task.rruleStr, task.timezone)
+	const next = await computeNextRun(id, task.rruleStr, task.timezone)
 	if (!next) {
-		log.warn("No next occurrence for automation", { id })
+		log.warn("No next occurrence for automation, timer chain stopped", {
+			id,
+			rruleStr: task.rruleStr,
+		})
 		task.nextRunAt = null
 		return null
 	}
 
 	task.nextRunAt = next
 	const delay = Math.max(0, next.getTime() - Date.now())
-	log.debug("Scheduling automation", { id, nextRun: next.toISOString(), delayMs: delay })
+	log.info("Timer set", {
+		id,
+		nextRun: next.toISOString(),
+		delayMs: delay,
+		delayHuman: formatDelay(delay),
+	})
 
 	task.timer = setTimeout(async () => {
-		if (task.paused || task.running) return
+		// Verify this task is still the active one (guards against stale closures
+		// after addTask replaces the task while a callback is in-flight)
+		if (tasks.get(id) !== task) {
+			log.warn("Timer fired for stale task, ignoring", { id })
+			return
+		}
+		if (task.paused) {
+			log.warn("Timer fired but task is paused, ignoring", { id })
+			return
+		}
+		if (task.running) {
+			log.warn("Timer fired but task is already running, ignoring", { id })
+			return
+		}
 
+		log.info("Timer fired, starting automation callback", { id, scheduledFor: next.toISOString() })
 		task.running = true
+		const startTime = Date.now()
 		try {
 			await task.callback()
+			log.info("Automation callback completed", {
+				id,
+				durationMs: Date.now() - startTime,
+			})
 		} catch (err) {
-			log.error("Automation run failed", { id }, err)
+			log.error("Automation callback threw", { id, durationMs: Date.now() - startTime }, err)
 		} finally {
 			task.running = false
-			// Schedule the next run (fire-and-forget for timer callback)
-			if (tasks.has(id) && !task.paused) {
-				scheduleNext(id, task)
+			// Schedule the next run. Await and catch so a rejection doesn't
+			// silently kill the recurring timer chain.
+			if (tasks.get(id) === task && !task.paused) {
+				log.debug("Rescheduling after run", { id })
+				try {
+					await scheduleNext(id, task)
+				} catch (err) {
+					log.error("Failed to reschedule automation after run -- timer chain broken", { id }, err)
+				}
+			} else {
+				log.warn("Skipping reschedule", {
+					id,
+					reason: tasks.get(id) !== task ? "task replaced" : "task paused",
+				})
 			}
 		}
 	}, delay)
@@ -96,6 +164,7 @@ export async function addTask(
 	timezone: string,
 	callback: () => Promise<void>,
 ): Promise<Date | null> {
+	log.info("Adding task", { id, rruleStr, timezone, hadExisting: tasks.has(id) })
 	removeTask(id)
 	const task: ScheduledTask = {
 		timer: null,
@@ -107,7 +176,13 @@ export async function addTask(
 		nextRunAt: null,
 	}
 	tasks.set(id, task)
-	return scheduleNext(id, task)
+	const next = await scheduleNext(id, task)
+	log.info("Task added", {
+		id,
+		nextRun: next?.toISOString() ?? "none",
+		totalTasks: tasks.size,
+	})
+	return next
 }
 
 export function removeTask(id: string): void {
@@ -115,6 +190,7 @@ export function removeTask(id: string): void {
 	if (task) {
 		if (task.timer) clearTimeout(task.timer)
 		tasks.delete(id)
+		log.info("Task removed", { id, wasRunning: task.running, totalTasks: tasks.size })
 	}
 }
 
@@ -126,6 +202,7 @@ export function pauseTask(id: string): void {
 			clearTimeout(task.timer)
 			task.timer = null
 		}
+		log.info("Task paused", { id })
 	}
 }
 
@@ -133,6 +210,7 @@ export function resumeTask(id: string): void {
 	const task = tasks.get(id)
 	if (task?.paused) {
 		task.paused = false
+		log.info("Task resumed, rescheduling", { id })
 		scheduleNext(id, task)
 	}
 }
@@ -150,11 +228,13 @@ export function getNextRunTime(id: string): Date | null {
 }
 
 export function stopAll(): void {
-	for (const [_id, task] of tasks) {
+	log.info("Stopping all scheduled automations", { count: tasks.size })
+	for (const [id, task] of tasks) {
 		if (task.timer) clearTimeout(task.timer)
+		log.debug("Stopped task", { id, wasRunning: task.running })
 	}
 	tasks.clear()
-	log.info("Stopped all scheduled automations")
+	log.info("All scheduled automations stopped")
 }
 
 /**
