@@ -107,6 +107,11 @@ export interface Activity {
 /**
  * Agent is our UI-facing representation of an OpenCode session.
  * It merges Session data + SessionStatus + derived activity info.
+ *
+ * Note: Metrics (cost, tokens, work time, exchange count) are NOT included here.
+ * They are expensive to compute (require iterating all messages + parts) and are
+ * only needed by the SessionMetricsBar and command palette. Those components
+ * subscribe to `sessionMetricsFamily` directly.
  */
 export interface Agent {
 	id: string
@@ -125,20 +130,6 @@ export interface Agent {
 	branch: string
 	/** Relative "last active" time, e.g. "5m" */
 	duration: string
-	/** Formatted total agent work time, e.g. "1m 34s" */
-	workTime: string
-	/** Raw agent work time in ms (for live-ticking) */
-	workTimeMs: number
-	/** Total tokens used (raw count) */
-	tokens: number
-	/** Total cost in USD (raw) */
-	cost: number
-	/** Formatted cost string, e.g. "$0.45" */
-	costFormatted: string
-	/** Formatted token string, e.g. "12.3k" */
-	tokensFormatted: string
-	/** Number of exchanges (user message + assistant responses) in this session */
-	exchangeCount: number
 	currentActivity?: string
 	activities: Activity[]
 	/** The underlying OpenCode session ID */

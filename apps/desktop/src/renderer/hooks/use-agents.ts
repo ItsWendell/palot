@@ -8,7 +8,7 @@ import {
 	sessionNameFamily,
 } from "../atoms/derived/agents"
 import { type DisplayMode, displayModeAtom } from "../atoms/preferences"
-import { commandPaletteOpenAtom, showSubAgentsAtom, toggleShowSubAgentsAtom } from "../atoms/ui"
+import { commandPaletteOpenAtom } from "../atoms/ui"
 import type { Agent, SidebarProject } from "../lib/types"
 
 // Re-export helpers from derived atom module
@@ -49,7 +49,5 @@ export function useProjectList(): SidebarProject[] {
  */
 export const useCommandPaletteOpen = () => useAtomValue(commandPaletteOpenAtom)
 export const useSetCommandPaletteOpen = () => useSetAtom(commandPaletteOpenAtom)
-export const useShowSubAgents = () => useAtomValue(showSubAgentsAtom)
-export const useToggleShowSubAgents = () => useSetAtom(toggleShowSubAgentsAtom)
 export const useDisplayMode = (): DisplayMode => useAtomValue(displayModeAtom)
 export const useSetDisplayMode = () => useSetAtom(displayModeAtom)

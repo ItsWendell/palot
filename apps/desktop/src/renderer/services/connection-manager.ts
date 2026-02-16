@@ -2,13 +2,19 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { processEvent } from "../atoms/actions/event-processor"
 import { authHeaderAtom, serverConnectedAtom, serverUrlAtom } from "../atoms/connection"
 import { batchUpsertPartsAtom } from "../atoms/parts"
-import { setSessionsAtom } from "../atoms/sessions"
+import {
+	SESSIONS_PAGE_SIZE,
+	setProjectPaginationLoadingAtom,
+	setSessionsAtom,
+	updateProjectPaginationAtom,
+} from "../atoms/sessions"
 import { appStore } from "../atoms/store"
 import {
 	applyStreamingDelta,
 	flushStreamingParts,
 	isStreamingField,
 	isStreamingPartType,
+	streamingVersionFamily,
 	updateStreamingPart,
 } from "../atoms/streaming"
 import { createLogger } from "../lib/logger"
@@ -178,23 +184,100 @@ export async function loadAllProjects() {
  * @param directory    The project's main worktree directory
  * @param sandboxDirs  Known sandbox (worktree) directories for this project,
  *                     used to restore worktree metadata on sessions after reload
+ * @param options      Optional filtering/pagination for session list
  */
 export async function loadProjectSessions(
 	directory: string,
 	sandboxDirs?: Set<string>,
+	options?: { limit?: number; roots?: boolean; search?: string },
 ): Promise<void> {
 	const client = getProjectClient(directory)
 	if (!client) return
 
+	// Set loading state so the sidebar shows a spinner
+	if (options?.limit) {
+		appStore.set(setProjectPaginationLoadingAtom, directory)
+	}
+
 	try {
 		const [sessions, statuses] = await Promise.all([
-			listSessions(client),
+			listSessions(client, options),
 			getSessionStatuses(client),
 		])
-		log.debug("Loaded sessions for project", { directory, count: sessions.length })
+		log.info("Loaded sessions for project", {
+			directory,
+			count: sessions.length,
+			limit: options?.limit,
+			roots: options?.roots,
+		})
 		appStore.set(setSessionsAtom, { sessions, statuses, directory, sandboxDirs })
+
+		// Update pagination state if a limit was specified
+		if (options?.limit) {
+			appStore.set(updateProjectPaginationAtom, {
+				directory,
+				fetchedCount: sessions.length,
+				limit: options.limit,
+			})
+		}
 	} catch (err) {
 		log.error("Failed to load sessions", { directory }, err)
+		// Reset loading state on error
+		if (options?.limit) {
+			appStore.set(updateProjectPaginationAtom, {
+				directory,
+				fetchedCount: 0,
+				limit: options.limit,
+			})
+		}
+	}
+}
+
+/**
+ * Load more sessions for a project by increasing the fetch limit.
+ * Called when the user clicks "Load more" in the sidebar.
+ *
+ * @param directory    The project's main worktree directory
+ * @param currentLimit The current limit (will be increased by SESSIONS_PAGE_SIZE)
+ */
+export async function loadMoreProjectSessions(
+	directory: string,
+	currentLimit: number,
+): Promise<void> {
+	const nextLimit = currentLimit + SESSIONS_PAGE_SIZE
+	log.info("Loading more sessions", { directory, currentLimit, nextLimit })
+	appStore.set(setProjectPaginationLoadingAtom, directory)
+
+	const client = getProjectClient(directory)
+	if (!client) {
+		log.warn("Cannot load more sessions: no client for directory", { directory })
+		return
+	}
+
+	try {
+		const [sessions, statuses] = await Promise.all([
+			listSessions(client, { limit: nextLimit, roots: true }),
+			getSessionStatuses(client),
+		])
+		log.info("Loaded more sessions for project", {
+			directory,
+			count: sessions.length,
+			limit: nextLimit,
+		})
+		appStore.set(setSessionsAtom, { sessions, statuses, directory })
+		appStore.set(updateProjectPaginationAtom, {
+			directory,
+			fetchedCount: sessions.length,
+			limit: nextLimit,
+		})
+	} catch (err) {
+		log.error("Failed to load more sessions", { directory }, err)
+		// Reset loading state on error
+		appStore.set(updateProjectPaginationAtom, {
+			directory,
+			fetchedCount: currentLimit,
+			limit: currentLimit,
+		})
 	}
 }
 
@@ -346,8 +429,29 @@ function createEventBatcher() {
 
 		if (events.length === 0) return
 
+		// Collect non-streaming parts across all events in the batch so we can
+		// write them in a single batchUpsertPartsAtom call instead of N individual
+		// upsertPartAtom calls. This significantly reduces Jotai atom writes and
+		// React reconciliation passes during heavy tool-call activity.
+		const batchedParts: import("../lib/types").Part[] = []
+		const batchedPartSessionIds = new Set<string>()
+
 		for (const event of events) {
-			processEvent(event)
+			if (event.type === "message.part.updated" && !isStreamingPartType(event.properties.part)) {
+				batchedParts.push(event.properties.part)
+				batchedPartSessionIds.add(event.properties.part.sessionID)
+			} else {
+				processEvent(event)
+			}
+		}
+
+		// Flush collected non-streaming parts in a single batch write
+		if (batchedParts.length > 0) {
+			appStore.set(batchUpsertPartsAtom, batchedParts)
+			// Bump per-session streaming version so the UI picks up the new parts
+			for (const sid of batchedPartSessionIds) {
+				appStore.set(streamingVersionFamily(sid), (v: number) => v + 1)
+			}
 		}
 	}
 

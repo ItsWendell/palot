@@ -9,8 +9,6 @@ import type {
 } from "../../lib/types"
 import { discoveryAtom } from "../discovery"
 import { sessionFamily, sessionIdsAtom } from "../sessions"
-import { showSubAgentsAtom } from "../ui"
-import { sessionMetricsFamily } from "./session-metrics"
 
 // ============================================================
 // Structural equality for Agent objects
@@ -21,14 +19,6 @@ import { sessionMetricsFamily } from "./session-metrics"
  * Arrays like `permissions` and `questions` are compared by length + first-element
  * identity, which is sufficient since they come from the same atom and are replaced
  * wholesale on updates.
- *
- * **Optimization**: Volatile metrics fields (workTime, workTimeMs, tokens, cost,
- * costFormatted, tokensFormatted, exchangeCount) are intentionally excluded from this
- * comparison. These change on every streaming part update but are NOT displayed
- * in the sidebar or most agent consumers. Components that need live metrics
- * (e.g., SessionMetricsBar) subscribe to `sessionMetricsFamily` directly.
- * Excluding them prevents the agentFamily -> agentsAtom -> sidebar cascade
- * that previously caused all sidebar items to re-render on every streamed token.
  */
 function agentEqual(prev: Agent | null, next: Agent | null): boolean {
 	if (prev === next) return true
@@ -298,7 +288,6 @@ export const agentFamily = atomFamily((sessionId: string) => {
 
 		const slugMap = get(projectSlugMapAtom)
 		const { sandboxToParent } = get(sandboxMappingsAtom)
-		const metrics = get(sessionMetricsFamily(sessionId))
 		const { session, status, permissions, questions, directory } = entry
 		const agentStatus = deriveAgentStatus(status, permissions.length > 0, questions.length > 0)
 		const created = session.time.created
@@ -322,13 +311,6 @@ export const agentFamily = atomFamily((sessionId: string) => {
 			projectDirectory: displayDir,
 			branch: entry.branch ?? "",
 			duration: formatRelativeTime(lastActiveAt),
-			workTime: metrics.workTime,
-			workTimeMs: metrics.workTimeMs,
-			tokens: metrics.tokensRaw,
-			cost: metrics.costRaw,
-			costFormatted: metrics.cost,
-			tokensFormatted: metrics.tokens,
-			exchangeCount: metrics.exchangeCount,
 			currentActivity:
 				questions.length > 0
 					? `Asking: ${questions[0].questions[0]?.header ?? "Question"}`
@@ -421,7 +403,6 @@ export const projectSessionIdsFamily = atomFamily((directory: string) => {
 	let prev: string[] = []
 	return atom((get) => {
 		const sessionIds = get(sessionIdsAtom)
-		const showSubAgents = get(showSubAgentsAtom)
 		const { parentToSandboxes } = get(sandboxMappingsAtom)
 
 		// Directories that belong to this project: the project dir itself + its sandboxes
@@ -431,7 +412,9 @@ export const projectSessionIdsFamily = atomFamily((directory: string) => {
 		for (const id of sessionIds) {
 			const entry = get(sessionFamily(id))
 			if (!entry) continue
-			if (!showSubAgents && entry.session.parentID) continue
+			// Hide sub-agent sessions in the sidebar (they still exist in the store
+			// for message/part lookups and direct navigation)
+			if (entry.session.parentID) continue
 			// Match the project directory itself, or any of its sandbox directories
 			if (entry.directory !== directory && !sandboxes?.has(entry.directory)) continue
 			ids.push(id)
@@ -474,18 +457,31 @@ export const projectListAtom = (() => {
 	return atom((get) => {
 		const sessionIds = get(sessionIdsAtom)
 		const discovery = get(discoveryAtom)
-		const showSubAgents = get(showSubAgentsAtom)
 		const slugMap = get(projectSlugMapAtom)
 		const { sandboxToParent } = get(sandboxMappingsAtom)
+
+		// Build a lookup of project directory → project.time.updated from the API.
+		// This is the authoritative sort key — it reflects the last time any API call
+		// touched the project (effectively "last accessed"). Session-derived timestamps
+		// are unreliable because sessions are loaded lazily on project expand.
+		const projectTimeMap = new Map<string, number>()
+		if (discovery.loaded) {
+			for (const project of discovery.projects) {
+				if (!project.worktree) continue
+				projectTimeMap.set(project.worktree, project.time.updated ?? project.time.created ?? 0)
+			}
+		}
 
 		const projects = new Map<string, SidebarProject>()
 
 		// Live sessions grouped by directory.
 		// Sessions in sandbox directories are counted under their parent project.
+		// Sub-agent sessions are excluded from sidebar counts (they arrive via SSE
+		// but are only relevant for message/part lookups and direct navigation).
 		for (const id of sessionIds) {
 			const entry = get(sessionFamily(id))
 			if (!entry) continue
-			if (!showSubAgents && entry.session.parentID) continue
+			if (entry.session.parentID) continue
 			if (!entry.directory) continue
 
 			// Remap sandbox directories to their parent project
@@ -493,12 +489,18 @@ export const projectListAtom = (() => {
 			const dir = parentDir ?? entry.directory
 			const projectInfo = slugMap.get(dir)
 			const name = projectNameFromDir(dir)
-			const t = entry.session.time.updated ?? entry.session.time.created ?? 0
+			const sessionTime = entry.session.time.updated ?? entry.session.time.created ?? 0
+
+			// Use the greater of project.time.updated and the latest session timestamp.
+			// project.time.updated reflects "last accessed by server" which can be stale;
+			// session timestamps reflect actual user activity within Palot.
+			const projectTime = projectTimeMap.get(dir) ?? 0
+			const bestTime = Math.max(projectTime, sessionTime)
 
 			const existing = projects.get(dir)
 			if (existing) {
 				existing.agentCount += 1
-				if (t > existing.lastActiveAt) existing.lastActiveAt = t
+				if (bestTime > existing.lastActiveAt) existing.lastActiveAt = bestTime
 			} else {
 				projects.set(dir, {
 					id: projectInfo?.id ?? dir,
@@ -506,7 +508,7 @@ export const projectListAtom = (() => {
 					name,
 					directory: dir,
 					agentCount: 1,
-					lastActiveAt: t,
+					lastActiveAt: bestTime,
 				})
 			}
 		}

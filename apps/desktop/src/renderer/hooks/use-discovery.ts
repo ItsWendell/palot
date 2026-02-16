@@ -38,7 +38,11 @@ function setPhase(phase: import("../atoms/discovery").DiscoveryPhase): void {
  * 2. Resolves auth credentials if the server requires them
  * 3. Connects to the OpenCode server (SSE events for all projects)
  * 4. Lists all projects from the API via `client.project.list()`
- * 5. Loads live sessions for each discovered project directory
+ * 5. Loads sessions for the top few most-recently-active projects
+ *    (enough to populate "Recent" and "Active Now" sections)
+ *
+ * Remaining project sessions are loaded lazily when expanded in the sidebar.
+ * Active sessions also arrive in real-time via SSE events.
  */
 export function useDiscovery() {
 	const discovery = useAtomValue(discoveryAtom)
@@ -106,71 +110,54 @@ export function useDiscovery() {
 				const projects = await loadAllProjects()
 				log.info("Discovered projects via API", { count: projects.length })
 
-				// Store projects in discovery atom
+				// Store projects and mark discovery as complete.
+				// Remaining sessions are loaded lazily when the user expands a project.
 				appStore.set(discoveryAtom, {
 					loaded: true,
 					loading: false,
 					error: null,
-					phase: "loading-sessions",
+					phase: "ready",
 					projects,
 				})
 
-				// --- Step 5: Load live sessions for each project directory ---
-				// Collect sandbox directories per project so we can:
-				// 1. Pass them to setSessionsAtom to restore worktreePath on reload
-				// 2. Also load sessions FROM sandbox dirs (worktree instances may
-				//    resolve to a different project ID, so their sessions won't
-				//    appear when querying from the parent directory alone)
-				const allSandboxDirs = new Set<string>()
-				const projectSandboxMap = new Map<string, Set<string>>()
-				for (const project of projects) {
-					if (!project.worktree || !project.sandboxes?.length) continue
-					const sandboxSet = projectSandboxMap.get(project.worktree) ?? new Set<string>()
-					for (const s of project.sandboxes) {
-						sandboxSet.add(s)
-						allSandboxDirs.add(s)
+				// --- Step 5: Pre-fetch sessions for the most recent projects ---
+				// Load sessions from the top N most-recently-active projects so the
+				// "Recent" and "Active Now" sidebar sections are populated at boot.
+				// This replaces the previous approach of loading ALL projects (80+ calls)
+				// with just a few calls for the projects the user likely cares about.
+				const PREFETCH_COUNT = 3
+				const sortedByActivity = [...projects]
+					.filter((p) => p.worktree)
+					.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
+					.slice(0, PREFETCH_COUNT)
+
+				if (sortedByActivity.length > 0) {
+					// Build sandbox lookup for worktree metadata restoration
+					const projectSandboxMap = new Map<string, Set<string>>()
+					for (const project of projects) {
+						if (!project.worktree || !project.sandboxes?.length) continue
+						const sandboxSet = new Set<string>()
+						for (const s of project.sandboxes) sandboxSet.add(s)
+						projectSandboxMap.set(project.worktree, sandboxSet)
 					}
-					projectSandboxMap.set(project.worktree, sandboxSet)
+
+					await Promise.allSettled(
+						sortedByActivity.map((project) => {
+							const sandboxDirs = projectSandboxMap.get(project.worktree!)
+							return loadProjectSessions(
+								project.worktree!,
+								sandboxDirs?.size ? sandboxDirs : undefined,
+								{ limit: 5, roots: true },
+							)
+						}),
+					)
 				}
-
-				// Load sessions from main project directories
-				const mainDirs = new Set<string>()
-				for (const project of projects) {
-					if (project.worktree) mainDirs.add(project.worktree)
-				}
-
-				const mainResults = await Promise.allSettled(
-					[...mainDirs].map((dir) => {
-						const sandboxDirs = projectSandboxMap.get(dir)
-						return loadProjectSessions(dir, sandboxDirs?.size ? sandboxDirs : undefined)
-					}),
-				)
-
-				// Also load sessions from sandbox directories (they may belong to a
-				// different server instance with a separate project ID).
-				// Pass a single-element sandboxDirs set so sessions get worktreePath.
-				const sandboxResults = await Promise.allSettled(
-					[...allSandboxDirs].map((dir) => loadProjectSessions(dir, new Set([dir]))),
-				)
-
-				const allResults = [...mainResults, ...sandboxResults]
-				const failed = allResults.filter((r) => r.status === "rejected")
-				if (failed.length > 0) {
-					log.warn("Some project session loads failed", {
-						total: mainDirs.size + allSandboxDirs.size,
-						failed: failed.length,
-					})
-				}
-
-				// Mark discovery as fully complete
-				setPhase("ready")
 
 				log.info("Discovery complete", {
 					server: activeServer.name,
 					url,
 					projects: projects.length,
-					directories: mainDirs.size,
-					sandboxes: allSandboxDirs.size,
+					prefetched: sortedByActivity.length,
 				})
 			} catch (err) {
 				log.error("Discovery failed", err)

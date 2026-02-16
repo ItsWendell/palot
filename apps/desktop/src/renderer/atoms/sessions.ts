@@ -1,6 +1,15 @@
 import { atom } from "jotai"
 import { atomFamily } from "jotai-family"
 import type { PermissionRequest, QuestionRequest, Session, SessionStatus } from "../lib/types"
+import { messagesFamily } from "./messages"
+import { partsFamily } from "./parts"
+
+// ============================================================
+// Constants
+// ============================================================
+
+/** Number of sessions to load per page when paginating */
+export const SESSIONS_PAGE_SIZE = 5
 
 // ============================================================
 // Types
@@ -14,6 +23,18 @@ export type SessionError = {
 
 /** Phases of worktree setup shown in the chat view's empty state */
 export type SessionSetupPhase = "creating-worktree" | "starting-session" | null
+
+/** Per-project pagination state for session loading */
+export interface ProjectPaginationState {
+	/** Whether the initial session fetch has been performed for this project */
+	loaded: boolean
+	/** Current limit used for session fetching */
+	currentLimit: number
+	/** Whether the last fetch returned fewer sessions than the limit (no more to load) */
+	hasMore: boolean
+	/** Whether a load-more request is in progress */
+	loading: boolean
+}
 
 export interface SessionEntry {
 	session: Session
@@ -89,6 +110,17 @@ export const upsertSessionAtom = atom(
 )
 
 export const removeSessionAtom = atom(null, (get, set, sessionId: string) => {
+	// Clean up message and part atoms to prevent memory leaks.
+	// messagesFamily/partsFamily create atoms on demand and never remove them,
+	// so we must explicitly clear and remove entries for deleted sessions.
+	const messages = get(messagesFamily(sessionId))
+	if (messages && messages.length > 0) {
+		for (const msg of messages) {
+			partsFamily.remove(msg.id)
+		}
+	}
+	messagesFamily.remove(sessionId)
+
 	sessionFamily.remove(sessionId)
 
 	const ids = get(sessionIdsAtom)
@@ -316,3 +348,53 @@ export const setSessionsAtom = atom(
 		}
 	},
 )
+
+// ============================================================
+// Per-project session pagination
+// ============================================================
+
+/**
+ * Tracks pagination state per project directory.
+ * Used by the sidebar "Load more" button to know when to show/hide
+ * and what limit to use for the next fetch.
+ */
+export const projectPaginationFamily = atomFamily((_directory: string) =>
+	atom<ProjectPaginationState>({
+		loaded: false,
+		currentLimit: SESSIONS_PAGE_SIZE,
+		hasMore: true,
+		loading: false,
+	}),
+)
+
+/**
+ * Write-only atom to update pagination state after a session load.
+ * Called by loadMoreProjectSessions() after fetching the next page.
+ */
+export const updateProjectPaginationAtom = atom(
+	null,
+	(
+		_get,
+		set,
+		args: {
+			directory: string
+			fetchedCount: number
+			limit: number
+		},
+	) => {
+		set(projectPaginationFamily(args.directory), {
+			loaded: true,
+			currentLimit: args.limit,
+			hasMore: args.fetchedCount >= args.limit,
+			loading: false,
+		})
+	},
+)
+
+/**
+ * Write-only atom to mark a project's session load as in progress.
+ */
+export const setProjectPaginationLoadingAtom = atom(null, (get, set, directory: string) => {
+	const current = get(projectPaginationFamily(directory))
+	set(projectPaginationFamily(directory), { ...current, loading: true })
+})

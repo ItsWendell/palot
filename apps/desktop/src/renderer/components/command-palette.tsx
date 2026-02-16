@@ -32,6 +32,7 @@ import {
 	Undo2Icon,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { sessionMetricsFamily } from "../atoms/derived/session-metrics"
 import { automationsEnabledAtom, toggleAutomationsAtom } from "../atoms/feature-flags"
 import { isMockModeAtom, toggleMockModeAtom } from "../atoms/mock-mode"
 import { opaqueWindowsAtom } from "../atoms/preferences"
@@ -347,10 +348,7 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 								>
 									<GitBranchIcon />
 									<span>{agent.name}</span>
-									<span className="text-xs text-muted-foreground">
-										{agent.project} &middot; {agent.workTime}
-										{agent.cost > 0 && ` · ${agent.costFormatted}`}
-									</span>
+									<SessionMetricsLabel sessionId={agent.id} project={agent.project} />
 								</CommandItem>
 							))}
 						</CommandGroup>
@@ -358,5 +356,20 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 				)}
 			</CommandList>
 		</CommandDialog>
+	)
+}
+
+/**
+ * Small leaf component that reads session metrics for display in the command palette.
+ * Only subscribes to the individual session's metrics atom, so metrics are only
+ * computed for sessions visible in the command palette (and only when it's open).
+ */
+function SessionMetricsLabel({ sessionId, project }: { sessionId: string; project: string }) {
+	const metrics = useAtomValue(sessionMetricsFamily(sessionId))
+	return (
+		<span className="text-xs text-muted-foreground">
+			{project} &middot; {metrics.workTime}
+			{metrics.costRaw > 0 && ` · ${metrics.cost}`}
+		</span>
 	)
 }

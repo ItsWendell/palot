@@ -6,16 +6,11 @@
 import { TooltipProvider } from "@palot/ui/components/tooltip"
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue, useSetAtom } from "jotai"
-import { useCallback, useEffect, useMemo } from "react"
+import { useCallback, useEffect } from "react"
 import { Toaster } from "sonner"
 import { discoveryPhaseAtom } from "../atoms/discovery"
 import { onboardingStateAtom } from "../atoms/onboarding"
-import {
-	useAgents,
-	useCommandPaletteOpen,
-	useSetCommandPaletteOpen,
-	useShowSubAgents,
-} from "../hooks/use-agents"
+import { useAgents, useCommandPaletteOpen, useSetCommandPaletteOpen } from "../hooks/use-agents"
 import { useChromeTier } from "../hooks/use-chrome-tier"
 import { useDiscovery } from "../hooks/use-discovery"
 import { useMockMode } from "../hooks/use-mock-mode"
@@ -52,7 +47,6 @@ export function RootLayout() {
 	useSystemAccentColor()
 
 	const agents = useAgents()
-	const showSubAgents = useShowSubAgents()
 	const commandPaletteOpen = useCommandPaletteOpen()
 	const setCommandPaletteOpen = useSetCommandPaletteOpen()
 	const navigate = useNavigate()
@@ -62,10 +56,8 @@ export function RootLayout() {
 	// Native OS notifications: badge sync, click-to-navigate, auto-dismiss
 	useNotifications(navigate, sessionId)
 
-	const visibleAgents = useMemo(() => {
-		if (showSubAgents) return agents
-		return agents.filter((agent) => !agent.parentId)
-	}, [agents, showSubAgents])
+	// Sub-agents are filtered at the API level (roots: true), so all agents here are root agents
+	const visibleAgents = agents
 
 	// ========== Keyboard navigation ==========
 

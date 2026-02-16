@@ -14,15 +14,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/to
 import { Outlet, useNavigate } from "@tanstack/react-router"
 import { useAtomValue } from "jotai"
 import { PanelLeftIcon, PlusIcon } from "lucide-react"
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useState } from "react"
 import { activeServerConfigAtom, serverConnectedAtom } from "../atoms/connection"
-import {
-	useAgents,
-	useProjectList,
-	useSetCommandPaletteOpen,
-	useShowSubAgents,
-	useToggleShowSubAgents,
-} from "../hooks/use-agents"
+import { useAgents, useProjectList, useSetCommandPaletteOpen } from "../hooks/use-agents"
 import { useAgentActions } from "../hooks/use-server"
 import type { Agent } from "../lib/types"
 import { pickDirectory } from "../services/backend"
@@ -114,18 +108,12 @@ export function SidebarLayout() {
 	// ---- Sidebar-specific data ----
 	const agents = useAgents()
 	const projects = useProjectList()
-	const showSubAgents = useShowSubAgents()
-	const toggleShowSubAgents = useToggleShowSubAgents()
 	const setCommandPaletteOpen = useSetCommandPaletteOpen()
 	const { renameSession, deleteSession } = useAgentActions()
 	const serverConnected = useAtomValue(serverConnectedAtom)
 
-	const visibleAgents = useMemo(() => {
-		if (showSubAgents) return agents
-		return agents.filter((agent) => !agent.parentId)
-	}, [agents, showSubAgents])
-
-	const subAgentCount = useMemo(() => agents.filter((a) => a.parentId).length, [agents])
+	// Sub-agents are filtered at the API level (roots: true)
+	const visibleAgents = agents
 
 	const handleRenameSession = useCallback(
 		async (agent: Agent, title: string) => {
@@ -198,9 +186,6 @@ export function SidebarLayout() {
 							projects={projects}
 							onOpenCommandPalette={handleOpenCommandPalette}
 							onAddProject={handleAddProject}
-							showSubAgents={showSubAgents}
-							subAgentCount={subAgentCount}
-							onToggleSubAgents={toggleShowSubAgents}
 							onRenameSession={handleRenameSession}
 							onDeleteSession={handleDeleteSession}
 							serverConnected={serverConnected}
