@@ -1,5 +1,11 @@
 # @palot/ui
 
+## 0.6.0
+
+### Patch Changes
+
+- [`f7c84b5`](https://github.com/ItsWendell/palot/commit/f7c84b5b4162824de5b4d31e860a6658f875e65e) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Apply thin scrollbar styles globally to prevent ugly native scrollbars across all scrollable areas
+
 ## 0.5.3
 
 ### Patch Changes

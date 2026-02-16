@@ -1,5 +1,20 @@
 # @palot/desktop
 
+## 0.6.0
+
+### Minor Changes
+
+- [`f7c84b5`](https://github.com/ItsWendell/palot/commit/f7c84b5b4162824de5b4d31e860a6658f875e65e) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add dedicated Linux tray icon, lazy session loading with pagination and project search for improved sidebar performance, and client-side first-seen timestamps for accurate tool call durations
+
+### Patch Changes
+
+- [`f7c84b5`](https://github.com/ItsWendell/palot/commit/f7c84b5b4162824de5b4d31e860a6658f875e65e) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix automation scheduler to use async next-run-time computation and prefer in-memory values over stale DB entries, cap task list height with auto-scroll on updates, and update sidebar search button to command palette icon
+
+- [`f7c84b5`](https://github.com/ItsWendell/palot/commit/f7c84b5b4162824de5b4d31e860a6658f875e65e) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Extract ChatInputSection into its own component, optimize sub-agent card rendering, move detailed session metrics (tokens, exchanges, tools) into a popover for a cleaner toolbar, and add IPC fetch request/response logging
+
+- Updated dependencies [[`f7c84b5`](https://github.com/ItsWendell/palot/commit/f7c84b5b4162824de5b4d31e860a6658f875e65e)]:
+  - @palot/ui@0.6.0
+
 ## 0.5.3
 
 ### Patch Changes
