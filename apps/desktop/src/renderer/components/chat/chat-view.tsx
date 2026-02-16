@@ -413,6 +413,10 @@ interface ChatViewProps {
  * Main chat view component.
  * Renders the full conversation as turns with auto-scroll,
  * plus a card-style input with agent/model/variant toolbar and status bar.
+ *
+ * The input section (toolbar, popovers, mentions, model/agent/variant state)
+ * is extracted into `ChatInputSection` so that state changes in the input area
+ * don't cause re-renders of the conversation turn list.
  */
 export function ChatView({
 	turns,
@@ -440,26 +444,6 @@ export function ChatView({
 	onRevertToMessage,
 }: ChatViewProps) {
 	const isWorking = agent.status === "running"
-	const [sending, setSending] = useState(false)
-
-	// Work time split for the current (last) turn — used for the live timer on the submit button.
-	// Splits into completed work time (finished assistant messages) and the active start time
-	// (in-progress message), so the timer shows actual agent work time, not wall-clock elapsed.
-	const currentTurnWorkSplit = useMemo(() => {
-		if (!isWorking || turns.length === 0) return null
-		const lastTurn = turns[turns.length - 1]
-		if (lastTurn.assistantMessages.length === 0) return null
-		return computeTurnWorkTimeSplit(lastTurn)
-	}, [isWorking, turns])
-
-	// Mention tracking — files and agents referenced via @
-	const [mentions, setMentions] = useState<PromptMention[]>([])
-
-	// Reset mentions when session changes
-	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional — clear on session switch
-	useEffect(() => {
-		setMentions([])
-	}, [agent.sessionId])
 
 	// Ref to imperatively scroll the conversation to bottom from outside the
 	// <Conversation> tree (e.g. after sending a message or answering a question).
@@ -469,33 +453,10 @@ export function ChatView({
 	const sessionEntry = useAtomValue(sessionFamily(agent.sessionId))
 	const sessionError = sessionEntry?.error
 	const setupPhase = sessionEntry?.setupPhase
-	const sessionMetrics = useAtomValue(sessionMetricsFamily(agent.sessionId))
 
 	// Stable callbacks for question/permission handlers — agent is stable
 	// per render, but wrapping in useCallback avoids creating new inline
 	// closures inside the JSX .map() that would defeat memo() on children.
-	const handleReplyQuestion = useCallback(
-		async (requestId: string, answers: QuestionAnswer[]) => {
-			await onReplyQuestion?.(agent, requestId, answers)
-			// After answering, the question card disappears and the scroll viewport
-			// grows — force scroll so the latest content stays visible.
-			requestAnimationFrame(() => {
-				scrollRef.current?.scrollToBottom("smooth")
-			})
-		},
-		[onReplyQuestion, agent],
-	)
-
-	const handleRejectQuestion = useCallback(
-		async (requestId: string) => {
-			await onRejectQuestion?.(agent, requestId)
-			requestAnimationFrame(() => {
-				scrollRef.current?.scrollToBottom("smooth")
-			})
-		},
-		[onRejectQuestion, agent],
-	)
-
 	const handleApprovePermission = useCallback(
 		async (a: Agent, permissionId: string, response?: "once" | "always") => {
 			await onApprove?.(a, permissionId, response)
@@ -516,345 +477,6 @@ export function ChatView({
 		},
 		[onDeny],
 	)
-
-	// Draft persistence — survives session switches and reloads.
-	// Non-reactive snapshot: the draft is only used for PromptInputProvider's
-	// initialInput (consumed once on mount). Reactive useDraft would cause the
-	// entire ChatView to re-render every time the debounced draft write fires.
-	const draft = useDraftSnapshot(agent.sessionId)
-	const { setDraft, clearDraft } = useDraftActions(agent.sessionId)
-
-	// Escape-to-abort: double-press within 3s
-	const [interruptCount, setInterruptCount] = useState(0)
-	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-	// Toolbar state
-	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null)
-	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
-	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
-
-	// Initialize model, variant, and agent from the session's last user message.
-	// This ensures returning to an existing session continues with the same
-	// settings, isolated from changes made in other sessions.
-	// Falls back to per-project preferences when the session has no relevant info.
-	const sessionMessages = useAtomValue(messagesFamily(agent.sessionId))
-	const projectModels = useAtomValue(projectModelsAtom)
-	const initializedForSessionRef = useRef<string | null>(null)
-	const resetForSessionRef = useRef<string | null>(null)
-	useEffect(() => {
-		// Reset state once when switching sessions (component stays mounted across
-		// session navigation, so we track which session we've reset/initialized for).
-		// Seed immediately from per-project preferences to avoid a flash of empty
-		// selectors while session messages load asynchronously.
-		if (resetForSessionRef.current !== agent.sessionId) {
-			resetForSessionRef.current = agent.sessionId
-			initializedForSessionRef.current = null
-			const stored = agent.directory ? projectModels[agent.directory] : undefined
-			if (stored?.providerID && stored?.modelID) {
-				setSelectedModel(stored)
-				setSelectedVariant(stored.variant)
-			} else {
-				setSelectedModel(null)
-				setSelectedVariant(undefined)
-			}
-			setSelectedAgent(stored?.agent || null)
-		}
-
-		// Wait until messages are available before initializing
-		if (initializedForSessionRef.current === agent.sessionId) return
-		if (!sessionMessages || sessionMessages.length === 0) return
-		initializedForSessionRef.current = agent.sessionId
-
-		// Find the last user message (iterate backwards) for model + variant + agent.
-		// These override the project-level preferences seeded above.
-		let foundModel = false
-		let foundAgent = false
-		for (let i = sessionMessages.length - 1; i >= 0; i--) {
-			const msg = sessionMessages[i]
-			if (msg.role !== "user") continue
-			const dynamic = msg as Record<string, unknown>
-
-			// Extract model
-			if (!foundModel && "model" in msg && msg.model) {
-				const model = msg.model as { providerID: string; modelID: string }
-				if (model.providerID && model.modelID) {
-					setSelectedModel(model)
-					foundModel = true
-					// variant is stored on user messages (v2 SDK type) but not
-					// in the v1 TypeScript type we import -- access it dynamically.
-					const variant = dynamic.variant as string | undefined
-					if (variant) {
-						setSelectedVariant(variant)
-					} else {
-						// Session message has a model but no variant -- clear the
-						// project-level variant that was seeded above, since it may
-						// belong to a different model.
-						setSelectedVariant(undefined)
-					}
-				}
-			}
-
-			// Extract agent name from message metadata
-			if (
-				!foundAgent &&
-				dynamic.agent &&
-				typeof dynamic.agent === "string" &&
-				dynamic.agent.length > 0
-			) {
-				setSelectedAgent(dynamic.agent)
-				foundAgent = true
-			}
-
-			if (foundModel && foundAgent) break
-		}
-	}, [sessionMessages, agent.sessionId, agent.directory, projectModels])
-
-	// Recent models from model.json (for matching TUI's default model resolution)
-	const { recentModels, addRecent: addRecentModel } = useModelState()
-
-	// Resolve which OpenCode agent is active (for model resolution)
-	const activeOpenCodeAgent = useMemo(() => {
-		const agentName = selectedAgent ?? config?.defaultAgent
-		return openCodeAgents?.find((a) => a.name === agentName) ?? null
-	}, [selectedAgent, config?.defaultAgent, openCodeAgents])
-
-	// Resolve effective model (user override > agent model > config > provider default).
-	// NOTE: We intentionally do NOT pass recentModels here. For existing sessions, the
-	// model should come from the session's last user message (initialized above into
-	// selectedModel). The global recent list would leak model choices from other sessions.
-	// recentModels are only used for the "Last used" section in the model picker UI.
-	const effectiveModel = useMemo(
-		() =>
-			resolveEffectiveModel(
-				selectedModel,
-				activeOpenCodeAgent,
-				config?.model,
-				providers?.defaults ?? {},
-				providers?.providers ?? [],
-			),
-		[selectedModel, activeOpenCodeAgent, config?.model, providers],
-	)
-
-	// Validate variant against the effective model's available variants.
-	// Clears the variant if the current model doesn't support it (e.g. restored
-	// from per-project preference but the model was changed, or provider updated).
-	useEffect(() => {
-		if (!selectedVariant || !effectiveModel || !providers) return
-		const available = getModelVariants(
-			effectiveModel.providerID,
-			effectiveModel.modelID,
-			providers.providers,
-		)
-		if (!available.includes(selectedVariant)) {
-			setSelectedVariant(undefined)
-		}
-	}, [selectedVariant, effectiveModel, providers])
-
-	// Model input capabilities (for attachment warnings)
-	const modelCapabilities = useMemo(
-		() => getModelInputCapabilities(effectiveModel, providers?.providers ?? []),
-		[effectiveModel, providers],
-	)
-
-	// Handle model selection — set local state + persist to model.json.
-	// Reset variant when the model changes: the new model may have different
-	// (or no) variants, so carrying over a stale variant would be incorrect.
-	const handleModelSelect = useCallback(
-		(model: ModelRef | null) => {
-			setSelectedModel(model)
-			setSelectedVariant(undefined)
-			if (model) addRecentModel(model)
-		},
-		[addRecentModel],
-	)
-
-	// Ref to the slash command handler — set from inside PromptInputProvider via SlashCommandBridge
-	const slashCommandRef = useRef<{
-		setText: (text: string) => void
-		getText: () => string
-	} | null>(null)
-
-	/**
-	 * Handle slash commands typed in the input.
-	 * Returns true if the text was a slash command that was handled.
-	 */
-	const handleSlashCommand = useCallback(
-		async (text: string): Promise<boolean> => {
-			const trimmed = text.trim()
-			if (!trimmed.startsWith("/")) return false
-
-			const spaceIndex = trimmed.indexOf(" ")
-			const cmdName = spaceIndex === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIndex)
-			const cmdArgs = spaceIndex === -1 ? "" : trimmed.slice(spaceIndex + 1).trim()
-
-			// Client-side commands
-			switch (cmdName.toLowerCase()) {
-				case "undo":
-					if (onUndo) await onUndo()
-					return true
-				case "redo":
-					if (onRedo) await onRedo()
-					return true
-				case "compact":
-				case "summarize":
-					if (agent.directory) {
-						const client = getProjectClient(agent.directory)
-						if (client) {
-							await client.session.summarize({ sessionID: agent.sessionId })
-						}
-					}
-					return true
-				default:
-					break
-			}
-
-			// Try as a server-side command
-			if (agent.directory) {
-				const client = getProjectClient(agent.directory)
-				if (client) {
-					try {
-						await client.session.command({
-							sessionID: agent.sessionId,
-							command: cmdName,
-							arguments: cmdArgs,
-						})
-						return true
-					} catch {
-						// Not a recognized server command — fall through to send as regular text
-					}
-				}
-			}
-
-			return false
-		},
-		[agent, onUndo, onRedo],
-	)
-
-	const handleSend = useCallback(
-		async (text: string, files?: FileAttachment[]) => {
-			log.debug("handleSend called", {
-				textLength: text.trim().length,
-				hasOnSendMessage: !!onSendMessage,
-				sending,
-				sessionId: agent.sessionId,
-			})
-			if (!text.trim() || !onSendMessage || sending) {
-				log.warn("handleSend bailed", {
-					emptyText: !text.trim(),
-					noOnSendMessage: !onSendMessage,
-					sending,
-				})
-				return
-			}
-
-			// Check for slash commands
-			if (text.trim().startsWith("/")) {
-				const handled = await handleSlashCommand(text)
-				if (handled) {
-					clearDraft()
-					setMentions([])
-					return
-				}
-			}
-
-			setSending(true)
-			try {
-				// Persist the model + variant + agent for this project so new sessions remember it
-				if (effectiveModel && agent.directory) {
-					appStore.set(setProjectModelAtom, {
-						directory: agent.directory,
-						model: {
-							...effectiveModel,
-							variant: selectedVariant,
-							agent: selectedAgent || undefined,
-						},
-					})
-				}
-
-				log.debug("handleSend calling onSendMessage", {
-					sessionId: agent.sessionId,
-					directory: agent.directory,
-					model: effectiveModel,
-					agentName: selectedAgent,
-					variant: selectedVariant,
-					hasFiles: !!(files && files.length > 0),
-				})
-				// Strip mention markers from the text for a clean prompt,
-				// and build file parts from tracked mentions.
-				// TODO: When the SDK supports FilePart in prompt, pass them here.
-				// For now, mentions are sent as inline text references.
-				await onSendMessage(agent, text.trim(), {
-					model: effectiveModel ?? undefined,
-					agentName: selectedAgent || undefined,
-					variant: selectedVariant,
-					files,
-				})
-				log.debug("handleSend onSendMessage completed", { sessionId: agent.sessionId })
-				clearDraft()
-				setMentions([])
-				// Force scroll to bottom after sending — the user just sent a message,
-				// so they always want to see it even if they had scrolled up.
-				requestAnimationFrame(() => {
-					scrollRef.current?.scrollToBottom("smooth")
-				})
-			} catch (err) {
-				log.error("handleSend failed", { sessionId: agent.sessionId }, err)
-			} finally {
-				setSending(false)
-			}
-		},
-		[
-			onSendMessage,
-			sending,
-			agent,
-			effectiveModel,
-			selectedAgent,
-			selectedVariant,
-			clearDraft,
-			handleSlashCommand,
-		],
-	)
-
-	// Keyboard shortcuts for undo/redo
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			// Don't intercept Cmd/Ctrl+Z in any text input — let the browser
-			// handle native undo/redo. Session undo/redo is still available via
-			// /undo, /redo slash commands and the command palette.
-			const target = e.target as HTMLElement
-			if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return
-
-			// Cmd+Z / Ctrl+Z — Undo
-			if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
-				if (canUndo && onUndo) {
-					e.preventDefault()
-					onUndo()
-				}
-				return
-			}
-
-			// Cmd+Shift+Z / Ctrl+Shift+Z — Redo
-			if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.shiftKey) {
-				if (canRedo && onRedo) {
-					e.preventDefault()
-					onRedo()
-				}
-				return
-			}
-		}
-
-		document.addEventListener("keydown", handleKeyDown)
-		return () => document.removeEventListener("keydown", handleKeyDown)
-	}, [canUndo, canRedo, onUndo, onRedo])
-
-	// Allow sending while the AI is working — the server queues follow-up messages
-	const canSend = isConnected && !sending
-
-	const handleStop = useCallback(() => {
-		if (onStop && isWorking) {
-			onStop(agent)
-		}
-	}, [onStop, isWorking, agent])
 
 	const handleSendNow = useCallback(
 		async (turn: ChatTurn) => {
@@ -902,178 +524,37 @@ export function ChatView({
 		[onStop, onSendMessage, isWorking, agent],
 	)
 
-	const handleEscapeAbort = useCallback(() => {
-		if (!isWorking) return
+	// Keyboard shortcuts for undo/redo
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			// Don't intercept Cmd/Ctrl+Z in any text input — let the browser
+			// handle native undo/redo. Session undo/redo is still available via
+			// /undo, /redo slash commands and the command palette.
+			const target = e.target as HTMLElement
+			if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return
 
-		setInterruptCount((prev) => {
-			const next = prev + 1
-			if (next >= 2) {
-				// Double-press: abort
-				handleStop()
-				if (interruptTimerRef.current) clearTimeout(interruptTimerRef.current)
-				return 0
-			}
-			// First press: start countdown
-			if (interruptTimerRef.current) clearTimeout(interruptTimerRef.current)
-			interruptTimerRef.current = setTimeout(() => setInterruptCount(0), 3000)
-			return next
-		})
-	}, [isWorking, handleStop])
-
-	// --- Popover state (slash commands + mentions) ---
-	const [slashOpen, setSlashOpen] = useState(false)
-	const [slashQuery, setSlashQuery] = useState("")
-	const [mentionOpen, setMentionOpen] = useState(false)
-	const [mentionQuery, setMentionQuery] = useState("")
-
-	// --- Skills picker dialog ---
-	const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
-
-	const handleSkillsOpen = useCallback(() => {
-		// Clear the slash text before opening dialog
-		const ctrl = slashCommandRef.current
-		if (ctrl) ctrl.setText("")
-		setSkillsDialogOpen(true)
-	}, [])
-
-	const handleSkillSelect = useCallback((skillName: string) => {
-		// Insert `/skillname ` into the input, like the TUI does
-		const ctrl = slashCommandRef.current
-		if (ctrl) {
-			ctrl.setText(`/${skillName} `)
-		}
-		// Focus the textarea
-		requestAnimationFrame(() => {
-			const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
-			if (ta) {
-				ta.focus()
-				const len = `/${skillName} `.length
-				ta.setSelectionRange(len, len)
-			}
-		})
-	}, [])
-
-	const slashPopoverRef = useRef<SlashCommandPopoverHandle>(null)
-	const mentionPopoverRef = useRef<MentionPopoverHandle>(null)
-
-	// Stable callbacks for TriggerDetector
-	const handleSlashTriggerChange = useCallback((open: boolean, query: string) => {
-		setSlashOpen(open)
-		setSlashQuery(query)
-	}, [])
-
-	const handleMentionTriggerChange = useCallback((open: boolean, query: string) => {
-		setMentionOpen(open)
-		setMentionQuery(query)
-	}, [])
-
-	// Close popovers
-	const handleSlashClose = useCallback(() => {
-		setSlashOpen(false)
-		setSlashQuery("")
-	}, [])
-
-	const handleMentionClose = useCallback(() => {
-		setMentionOpen(false)
-		setMentionQuery("")
-	}, [])
-
-	// Slash command selection — execute and clear input
-	const handleSlashSelect = useCallback(
-		(command: string) => {
-			handleSlashClose()
-			const ctrl = slashCommandRef.current
-			if (ctrl) {
-				ctrl.setText(command)
-				// Trigger execution via setTimeout to let React flush the state update
-				setTimeout(() => {
-					const trimmed = ctrl.getText().trim()
-					if (trimmed.startsWith("/")) {
-						handleSlashCommand(trimmed).then((handled) => {
-							if (handled) {
-								ctrl.setText("")
-								clearDraft()
-							}
-						})
-					}
-				}, 0)
-			}
-		},
-		[handleSlashClose, handleSlashCommand, clearDraft],
-	)
-
-	// Mention selection — insert @displayName into text + add to mentions[]
-	const handleMentionSelect = useCallback(
-		(option: MentionOption) => {
-			handleMentionClose()
-			const ctrl = slashCommandRef.current
-			if (!ctrl) return
-
-			const currentText = ctrl.getText()
-			const textarea = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
-			const cursorPos = textarea?.selectionStart ?? currentText.length
-
-			const mention =
-				option.type === "file" ? createFileMention(option.path) : createAgentMention(option.name)
-
-			const { text: newText, cursorPosition: newCursor } = insertMentionIntoText(
-				currentText,
-				cursorPos,
-				mention,
-			)
-
-			ctrl.setText(newText)
-
-			// Add to mentions if not already present
-			setMentions((prev) => {
-				const key = mention.type === "file" ? `file:${mention.path}` : `agent:${mention.name}`
-				if (prev.some((m) => (m.type === "file" ? `file:${m.path}` : `agent:${m.name}`) === key))
-					return prev
-				return [...prev, mention]
-			})
-
-			// Restore cursor position
-			requestAnimationFrame(() => {
-				const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
-				if (ta) {
-					ta.focus()
-					ta.setSelectionRange(newCursor, newCursor)
+			// Cmd+Z / Ctrl+Z — Undo
+			if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+				if (canUndo && onUndo) {
+					e.preventDefault()
+					onUndo()
 				}
-			})
-		},
-		[handleMentionClose],
-	)
-
-	// Remove a mention — strip marker from text + remove from list
-	const handleMentionRemove = useCallback((mention: PromptMention) => {
-		const ctrl = slashCommandRef.current
-		if (ctrl) {
-			const marker = getMentionMarker(mention)
-			const currentText = ctrl.getText()
-			// Remove the marker (and trailing space if present)
-			ctrl.setText(currentText.replace(`${marker} `, "").replace(marker, ""))
-		}
-		setMentions((prev) => {
-			const key = mention.type === "file" ? `file:${mention.path}` : `agent:${mention.name}`
-			return prev.filter((m) => (m.type === "file" ? `file:${m.path}` : `agent:${m.name}`) !== key)
-		})
-	}, [])
-
-	// Keyboard delegation — forward to whichever popover is open
-	const handleTextareaKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			// Delegate to slash popover
-			if (slashOpen && slashPopoverRef.current?.handleKeyDown(e)) return
-			// Delegate to mention popover
-			if (mentionOpen && mentionPopoverRef.current?.handleKeyDown(e)) return
-
-			// Escape-to-abort (only when no popover is open)
-			if (e.key === "Escape") {
-				handleEscapeAbort()
+				return
 			}
-		},
-		[slashOpen, mentionOpen, handleEscapeAbort],
-	)
+
+			// Cmd+Shift+Z / Ctrl+Shift+Z — Redo
+			if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.shiftKey) {
+				if (canRedo && onRedo) {
+					e.preventDefault()
+					onRedo()
+				}
+				return
+			}
+		}
+
+		document.addEventListener("keydown", handleKeyDown)
+		return () => document.removeEventListener("keydown", handleKeyDown)
+	}, [canUndo, canRedo, onUndo, onRedo])
 
 	return (
 		<div className="flex h-full min-w-0 flex-col overflow-hidden">
@@ -1156,184 +637,712 @@ export function ChatView({
 			</div>
 
 			{/* Bottom input section — hidden during worktree setup since the stub session
-			   cannot accept prompts yet */}
+			   cannot accept prompts yet. Extracted into its own component so toolbar,
+			   popover, mention, and model-selection state changes don't re-render the
+			   conversation turn list above. */}
 			{!setupPhase && (
-				<div className="min-w-0 px-4 pb-4 pt-2">
-					<div className="mx-auto w-full min-w-0 max-w-4xl">
-						{/* Session task list — collapsible todo progress */}
-						<SessionTaskList sessionId={agent.sessionId} />
-
-						{/* Revert banner — shown when session is in undo state */}
-						{isReverted && (
-							<div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
-								<Undo2Icon className="size-3.5 shrink-0" />
-								<span className="flex-1">
-									Session reverted — type to continue from here, or redo to restore
-								</span>
-								{canRedo && onRedo && (
-									<button
-										type="button"
-										onClick={() => onRedo()}
-										className="flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
-									>
-										<Redo2Icon className="size-3" />
-										Redo
-									</button>
-								)}
-							</div>
-						)}
-
-						{/* Pending permissions — always shown above input/questions */}
-						{agent.permissions.length > 0 && (
-							<div className="pb-2">
-								{agent.permissions.map((permission) => (
-									<PermissionItem
-										key={permission.id}
-										agent={agent}
-										permission={permission}
-										onApprove={handleApprovePermission}
-										onDeny={handleDenyPermission}
-										isConnected={isConnected}
-									/>
-								))}
-							</div>
-						)}
-
-						{/* When questions are pending, replace the input with a focused question flow */}
-						{agent.questions.length > 0 ? (
-							<ChatQuestionFlow
-								questions={agent.questions}
-								onReply={handleReplyQuestion}
-								onReject={handleRejectQuestion}
-								disabled={!isConnected}
-							/>
-						) : (
-							/* Input card — PromptInputProvider wraps everything,
-						   popovers positioned relative to the card wrapper,
-						   textarea as a direct child of InputGroup inside PromptInput */
-							<PromptInputProvider key={agent.sessionId} initialInput={draft}>
-								<DraftSync setDraft={setDraft} />
-								<SlashCommandBridge controllerRef={slashCommandRef} />
-								<TriggerDetector
-									onSlashChange={handleSlashTriggerChange}
-									onMentionChange={handleMentionTriggerChange}
-								/>
-								<MentionReconciler mentions={mentions} onReconcile={setMentions} />
-								{/* Relative wrapper for absolutely-positioned popovers */}
-								<div className="relative">
-									{/* Popovers render above the card via bottom-full */}
-									<SlashCommandPopover
-										ref={slashPopoverRef}
-										query={slashQuery}
-										open={slashOpen}
-										enabled={isConnected}
-										directory={agent.directory}
-										onSelect={handleSlashSelect}
-										onSkillsOpen={handleSkillsOpen}
-										onClose={handleSlashClose}
-									/>
-									<MentionPopover
-										ref={mentionPopoverRef}
-										query={mentionQuery}
-										open={mentionOpen}
-										directory={agent.directory}
-										agents={openCodeAgents ?? []}
-										onSelect={handleMentionSelect}
-										onClose={handleMentionClose}
-									/>
-									<PromptInput
-										className="rounded-xl"
-										accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
-										multiple
-										maxFileSize={10 * 1024 * 1024}
-										onSubmit={(message) => {
-											if (message.text.trim() && canSend)
-												handleSend(
-													message.text,
-													message.files.length > 0 ? message.files : undefined,
-												)
-										}}
-									>
-										{/* Mention chips above the textarea */}
-										<ContextItems mentions={mentions} onRemove={handleMentionRemove} />
-										<PromptAttachmentPreview
-											supportsImages={modelCapabilities?.image}
-											supportsPdf={modelCapabilities?.pdf}
-										/>
-										<PromptInputTextarea
-											data-prompt-input
-											onKeyDown={handleTextareaKeyDown}
-											disabled={!isConnected}
-											placeholder={
-												isWorking ? "Send a follow-up message..." : "What would you like to do?"
-											}
-										/>
-
-										{/* Toolbar inside the card — agent + model + variant selectors + submit */}
-										<PromptInputFooter>
-											<PromptInputTools>
-												<AttachButton disabled={!isConnected} />
-												<PromptToolbar
-													agents={openCodeAgents ?? []}
-													selectedAgent={selectedAgent}
-													defaultAgent={config?.defaultAgent}
-													onSelectAgent={setSelectedAgent}
-													providers={providers ?? null}
-													effectiveModel={effectiveModel}
-													hasModelOverride={!!selectedModel}
-													onSelectModel={handleModelSelect}
-													recentModels={recentModels}
-													selectedVariant={selectedVariant}
-													onSelectVariant={setSelectedVariant}
-													disabled={!isConnected}
-												/>
-											</PromptInputTools>
-											<PromptInputSubmit
-												disabled={!canSend}
-												status={isWorking ? "streaming" : undefined}
-												onStop={handleStop}
-												size={isWorking && currentTurnWorkSplit ? "xs" : "icon-sm"}
-											>
-												{isWorking && currentTurnWorkSplit ? (
-													<LiveTurnTimer
-														completedMs={currentTurnWorkSplit.completedMs}
-														activeStartMs={currentTurnWorkSplit.activeStartMs}
-													/>
-												) : undefined}
-											</PromptInputSubmit>
-										</PromptInputFooter>
-									</PromptInput>
-								</div>
-							</PromptInputProvider>
-						)}
-
-						{/* Status bar — outside the card */}
-						<StatusBar
-							vcs={vcs ?? null}
-							isConnected={isConnected}
-							isWorking={isWorking}
-							interruptCount={interruptCount}
-							sessionId={agent.sessionId}
-							providers={providers}
-							sessionCost={sessionMetrics.costRaw}
-							compaction={config?.compaction}
-							extraSlot={
-								agent.worktreePath ? (
-									<div className="flex items-center gap-1">
-										<GitForkIcon className="size-3" />
-										<span>Worktree</span>
-									</div>
-								) : (
-									<div className="flex items-center gap-1">
-										<MonitorIcon className="size-3" />
-										<span>Local</span>
-									</div>
-								)
-							}
-						/>
-					</div>
-				</div>
+				<ChatInputSection
+					agent={agent}
+					turns={turns}
+					isConnected={isConnected}
+					isWorking={isWorking}
+					onSendMessage={onSendMessage}
+					onStop={onStop}
+					providers={providers}
+					config={config}
+					vcs={vcs}
+					openCodeAgents={openCodeAgents}
+					onApprove={handleApprovePermission}
+					onDeny={handleDenyPermission}
+					onReplyQuestion={onReplyQuestion}
+					onRejectQuestion={onRejectQuestion}
+					canRedo={canRedo}
+					onUndo={onUndo}
+					onRedo={onRedo}
+					isReverted={isReverted}
+					scrollRef={scrollRef}
+				/>
 			)}
+		</div>
+	)
+}
+
+// ============================================================
+// ChatInputSection — owns all input/toolbar/popover/mention state
+// ============================================================
+
+interface ChatInputSectionProps {
+	agent: Agent
+	turns: ChatTurn[]
+	isConnected: boolean
+	isWorking: boolean
+	onSendMessage?: ChatViewProps["onSendMessage"]
+	onStop?: ChatViewProps["onStop"]
+	providers?: ProvidersData | null
+	config?: ConfigData | null
+	vcs?: VcsData | null
+	openCodeAgents?: SdkAgent[]
+	onApprove?: (agent: Agent, permissionId: string, response?: "once" | "always") => Promise<void>
+	onDeny?: (agent: Agent, permissionId: string) => Promise<void>
+	onReplyQuestion?: ChatViewProps["onReplyQuestion"]
+	onRejectQuestion?: ChatViewProps["onRejectQuestion"]
+	canRedo?: boolean
+	onUndo?: () => Promise<string | undefined>
+	onRedo?: () => Promise<void>
+	isReverted?: boolean
+	scrollRef: React.RefObject<ScrollHandle | null>
+}
+
+function ChatInputSection({
+	agent,
+	turns,
+	isConnected,
+	isWorking,
+	onSendMessage,
+	onStop,
+	providers,
+	config,
+	vcs,
+	openCodeAgents,
+	onApprove,
+	onDeny,
+	onReplyQuestion,
+	onRejectQuestion,
+	canRedo,
+	onUndo,
+	onRedo,
+	isReverted,
+	scrollRef,
+}: ChatInputSectionProps) {
+	const [sending, setSending] = useState(false)
+
+	// Work time split for the current (last) turn — used for the live timer on the submit button.
+	const currentTurnWorkSplit = useMemo(() => {
+		if (!isWorking || turns.length === 0) return null
+		const lastTurn = turns[turns.length - 1]
+		if (lastTurn.assistantMessages.length === 0) return null
+		return computeTurnWorkTimeSplit(lastTurn)
+	}, [isWorking, turns])
+
+	// Mention tracking — files and agents referenced via @
+	const [mentions, setMentions] = useState<PromptMention[]>([])
+
+	// Reset mentions when session changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional — clear on session switch
+	useEffect(() => {
+		setMentions([])
+	}, [agent.sessionId])
+
+	const sessionMetrics = useAtomValue(sessionMetricsFamily(agent.sessionId))
+
+	// Stable callbacks for question/permission handlers
+	const handleReplyQuestion = useCallback(
+		async (requestId: string, answers: QuestionAnswer[]) => {
+			await onReplyQuestion?.(agent, requestId, answers)
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollToBottom("smooth")
+			})
+		},
+		[onReplyQuestion, agent, scrollRef],
+	)
+
+	const handleRejectQuestion = useCallback(
+		async (requestId: string) => {
+			await onRejectQuestion?.(agent, requestId)
+			requestAnimationFrame(() => {
+				scrollRef.current?.scrollToBottom("smooth")
+			})
+		},
+		[onRejectQuestion, agent, scrollRef],
+	)
+
+	// Draft persistence
+	const draft = useDraftSnapshot(agent.sessionId)
+	const { setDraft, clearDraft } = useDraftActions(agent.sessionId)
+
+	// Escape-to-abort: double-press within 3s
+	const [interruptCount, setInterruptCount] = useState(0)
+	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+	// Toolbar state
+	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null)
+	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
+
+	// Initialize model, variant, and agent from the session's last user message.
+	const sessionMessages = useAtomValue(messagesFamily(agent.sessionId))
+	const projectModels = useAtomValue(projectModelsAtom)
+	const initializedForSessionRef = useRef<string | null>(null)
+	const resetForSessionRef = useRef<string | null>(null)
+	useEffect(() => {
+		if (resetForSessionRef.current !== agent.sessionId) {
+			resetForSessionRef.current = agent.sessionId
+			initializedForSessionRef.current = null
+			const stored = agent.directory ? projectModels[agent.directory] : undefined
+			if (stored?.providerID && stored?.modelID) {
+				setSelectedModel(stored)
+				setSelectedVariant(stored.variant)
+			} else {
+				setSelectedModel(null)
+				setSelectedVariant(undefined)
+			}
+			setSelectedAgent(stored?.agent || null)
+		}
+
+		if (initializedForSessionRef.current === agent.sessionId) return
+		if (!sessionMessages || sessionMessages.length === 0) return
+		initializedForSessionRef.current = agent.sessionId
+
+		let foundModel = false
+		let foundAgent = false
+		for (let i = sessionMessages.length - 1; i >= 0; i--) {
+			const msg = sessionMessages[i]
+			if (msg.role !== "user") continue
+			const dynamic = msg as Record<string, unknown>
+
+			if (!foundModel && "model" in msg && msg.model) {
+				const model = msg.model as { providerID: string; modelID: string }
+				if (model.providerID && model.modelID) {
+					setSelectedModel(model)
+					foundModel = true
+					const variant = dynamic.variant as string | undefined
+					if (variant) {
+						setSelectedVariant(variant)
+					} else {
+						setSelectedVariant(undefined)
+					}
+				}
+			}
+
+			if (
+				!foundAgent &&
+				dynamic.agent &&
+				typeof dynamic.agent === "string" &&
+				dynamic.agent.length > 0
+			) {
+				setSelectedAgent(dynamic.agent)
+				foundAgent = true
+			}
+
+			if (foundModel && foundAgent) break
+		}
+	}, [sessionMessages, agent.sessionId, agent.directory, projectModels])
+
+	const { recentModels, addRecent: addRecentModel } = useModelState()
+
+	const activeOpenCodeAgent = useMemo(() => {
+		const agentName = selectedAgent ?? config?.defaultAgent
+		return openCodeAgents?.find((a) => a.name === agentName) ?? null
+	}, [selectedAgent, config?.defaultAgent, openCodeAgents])
+
+	const effectiveModel = useMemo(
+		() =>
+			resolveEffectiveModel(
+				selectedModel,
+				activeOpenCodeAgent,
+				config?.model,
+				providers?.defaults ?? {},
+				providers?.providers ?? [],
+			),
+		[selectedModel, activeOpenCodeAgent, config?.model, providers],
+	)
+
+	useEffect(() => {
+		if (!selectedVariant || !effectiveModel || !providers) return
+		const available = getModelVariants(
+			effectiveModel.providerID,
+			effectiveModel.modelID,
+			providers.providers,
+		)
+		if (!available.includes(selectedVariant)) {
+			setSelectedVariant(undefined)
+		}
+	}, [selectedVariant, effectiveModel, providers])
+
+	const modelCapabilities = useMemo(
+		() => getModelInputCapabilities(effectiveModel, providers?.providers ?? []),
+		[effectiveModel, providers],
+	)
+
+	const handleModelSelect = useCallback(
+		(model: ModelRef | null) => {
+			setSelectedModel(model)
+			setSelectedVariant(undefined)
+			if (model) addRecentModel(model)
+		},
+		[addRecentModel],
+	)
+
+	const slashCommandRef = useRef<{
+		setText: (text: string) => void
+		getText: () => string
+	} | null>(null)
+
+	const handleSlashCommand = useCallback(
+		async (text: string): Promise<boolean> => {
+			const trimmed = text.trim()
+			if (!trimmed.startsWith("/")) return false
+
+			const spaceIndex = trimmed.indexOf(" ")
+			const cmdName = spaceIndex === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIndex)
+			const cmdArgs = spaceIndex === -1 ? "" : trimmed.slice(spaceIndex + 1).trim()
+
+			switch (cmdName.toLowerCase()) {
+				case "undo":
+					if (onUndo) await onUndo()
+					return true
+				case "redo":
+					if (onRedo) await onRedo()
+					return true
+				case "compact":
+				case "summarize":
+					if (agent.directory) {
+						const client = getProjectClient(agent.directory)
+						if (client) {
+							await client.session.summarize({ sessionID: agent.sessionId })
+						}
+					}
+					return true
+				default:
+					break
+			}
+
+			if (agent.directory) {
+				const client = getProjectClient(agent.directory)
+				if (client) {
+					try {
+						await client.session.command({
+							sessionID: agent.sessionId,
+							command: cmdName,
+							arguments: cmdArgs,
+						})
+						return true
+					} catch {
+						// Not a recognized server command
+					}
+				}
+			}
+
+			return false
+		},
+		[agent, onUndo, onRedo],
+	)
+
+	const handleSend = useCallback(
+		async (text: string, files?: FileAttachment[]) => {
+			log.debug("handleSend called", {
+				textLength: text.trim().length,
+				hasOnSendMessage: !!onSendMessage,
+				sending,
+				sessionId: agent.sessionId,
+			})
+			if (!text.trim() || !onSendMessage || sending) {
+				log.warn("handleSend bailed", {
+					emptyText: !text.trim(),
+					noOnSendMessage: !onSendMessage,
+					sending,
+				})
+				return
+			}
+
+			if (text.trim().startsWith("/")) {
+				const handled = await handleSlashCommand(text)
+				if (handled) {
+					clearDraft()
+					setMentions([])
+					return
+				}
+			}
+
+			setSending(true)
+			try {
+				if (effectiveModel && agent.directory) {
+					appStore.set(setProjectModelAtom, {
+						directory: agent.directory,
+						model: {
+							...effectiveModel,
+							variant: selectedVariant,
+							agent: selectedAgent || undefined,
+						},
+					})
+				}
+
+				log.debug("handleSend calling onSendMessage", {
+					sessionId: agent.sessionId,
+					directory: agent.directory,
+					model: effectiveModel,
+					agentName: selectedAgent,
+					variant: selectedVariant,
+					hasFiles: !!(files && files.length > 0),
+				})
+				await onSendMessage(agent, text.trim(), {
+					model: effectiveModel ?? undefined,
+					agentName: selectedAgent || undefined,
+					variant: selectedVariant,
+					files,
+				})
+				log.debug("handleSend onSendMessage completed", { sessionId: agent.sessionId })
+				clearDraft()
+				setMentions([])
+				requestAnimationFrame(() => {
+					scrollRef.current?.scrollToBottom("smooth")
+				})
+			} catch (err) {
+				log.error("handleSend failed", { sessionId: agent.sessionId }, err)
+			} finally {
+				setSending(false)
+			}
+		},
+		[
+			onSendMessage,
+			sending,
+			agent,
+			effectiveModel,
+			selectedAgent,
+			selectedVariant,
+			clearDraft,
+			handleSlashCommand,
+			scrollRef,
+		],
+	)
+
+	const canSend = isConnected && !sending
+
+	const handleStop = useCallback(() => {
+		if (onStop && isWorking) {
+			onStop(agent)
+		}
+	}, [onStop, isWorking, agent])
+
+	const handleEscapeAbort = useCallback(() => {
+		if (!isWorking) return
+
+		setInterruptCount((prev) => {
+			const next = prev + 1
+			if (next >= 2) {
+				handleStop()
+				if (interruptTimerRef.current) clearTimeout(interruptTimerRef.current)
+				return 0
+			}
+			if (interruptTimerRef.current) clearTimeout(interruptTimerRef.current)
+			interruptTimerRef.current = setTimeout(() => setInterruptCount(0), 3000)
+			return next
+		})
+	}, [isWorking, handleStop])
+
+	// --- Popover state (slash commands + mentions) ---
+	const [slashOpen, setSlashOpen] = useState(false)
+	const [slashQuery, setSlashQuery] = useState("")
+	const [mentionOpen, setMentionOpen] = useState(false)
+	const [mentionQuery, setMentionQuery] = useState("")
+
+	// --- Skills picker dialog ---
+	const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
+
+	const handleSkillsOpen = useCallback(() => {
+		const ctrl = slashCommandRef.current
+		if (ctrl) ctrl.setText("")
+		setSkillsDialogOpen(true)
+	}, [])
+
+	const handleSkillSelect = useCallback((skillName: string) => {
+		const ctrl = slashCommandRef.current
+		if (ctrl) {
+			ctrl.setText(`/${skillName} `)
+		}
+		requestAnimationFrame(() => {
+			const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+			if (ta) {
+				ta.focus()
+				const len = `/${skillName} `.length
+				ta.setSelectionRange(len, len)
+			}
+		})
+	}, [])
+
+	const slashPopoverRef = useRef<SlashCommandPopoverHandle>(null)
+	const mentionPopoverRef = useRef<MentionPopoverHandle>(null)
+
+	const handleSlashTriggerChange = useCallback((open: boolean, query: string) => {
+		setSlashOpen(open)
+		setSlashQuery(query)
+	}, [])
+
+	const handleMentionTriggerChange = useCallback((open: boolean, query: string) => {
+		setMentionOpen(open)
+		setMentionQuery(query)
+	}, [])
+
+	const handleSlashClose = useCallback(() => {
+		setSlashOpen(false)
+		setSlashQuery("")
+	}, [])
+
+	const handleMentionClose = useCallback(() => {
+		setMentionOpen(false)
+		setMentionQuery("")
+	}, [])
+
+	const handleSlashSelect = useCallback(
+		(command: string) => {
+			handleSlashClose()
+			const ctrl = slashCommandRef.current
+			if (ctrl) {
+				ctrl.setText(command)
+				setTimeout(() => {
+					const trimmed = ctrl.getText().trim()
+					if (trimmed.startsWith("/")) {
+						handleSlashCommand(trimmed).then((handled) => {
+							if (handled) {
+								ctrl.setText("")
+								clearDraft()
+							}
+						})
+					}
+				}, 0)
+			}
+		},
+		[handleSlashClose, handleSlashCommand, clearDraft],
+	)
+
+	const handleMentionSelect = useCallback(
+		(option: MentionOption) => {
+			handleMentionClose()
+			const ctrl = slashCommandRef.current
+			if (!ctrl) return
+
+			const currentText = ctrl.getText()
+			const textarea = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+			const cursorPos = textarea?.selectionStart ?? currentText.length
+
+			const mention =
+				option.type === "file" ? createFileMention(option.path) : createAgentMention(option.name)
+
+			const { text: newText, cursorPosition: newCursor } = insertMentionIntoText(
+				currentText,
+				cursorPos,
+				mention,
+			)
+
+			ctrl.setText(newText)
+
+			setMentions((prev) => {
+				const key = mention.type === "file" ? `file:${mention.path}` : `agent:${mention.name}`
+				if (prev.some((m) => (m.type === "file" ? `file:${m.path}` : `agent:${m.name}`) === key))
+					return prev
+				return [...prev, mention]
+			})
+
+			requestAnimationFrame(() => {
+				const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+				if (ta) {
+					ta.focus()
+					ta.setSelectionRange(newCursor, newCursor)
+				}
+			})
+		},
+		[handleMentionClose],
+	)
+
+	const handleMentionRemove = useCallback((mention: PromptMention) => {
+		const ctrl = slashCommandRef.current
+		if (ctrl) {
+			const marker = getMentionMarker(mention)
+			const currentText = ctrl.getText()
+			ctrl.setText(currentText.replace(`${marker} `, "").replace(marker, ""))
+		}
+		setMentions((prev) => {
+			const key = mention.type === "file" ? `file:${mention.path}` : `agent:${mention.name}`
+			return prev.filter((m) => (m.type === "file" ? `file:${m.path}` : `agent:${m.name}`) !== key)
+		})
+	}, [])
+
+	const handleTextareaKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			if (slashOpen && slashPopoverRef.current?.handleKeyDown(e)) return
+			if (mentionOpen && mentionPopoverRef.current?.handleKeyDown(e)) return
+
+			if (e.key === "Escape") {
+				handleEscapeAbort()
+			}
+		},
+		[slashOpen, mentionOpen, handleEscapeAbort],
+	)
+
+	return (
+		<>
+			<div className="min-w-0 px-4 pb-4 pt-2">
+				<div className="mx-auto w-full min-w-0 max-w-4xl">
+					{/* Session task list — collapsible todo progress */}
+					<SessionTaskList sessionId={agent.sessionId} />
+
+					{/* Revert banner — shown when session is in undo state */}
+					{isReverted && (
+						<div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+							<Undo2Icon className="size-3.5 shrink-0" />
+							<span className="flex-1">
+								Session reverted — type to continue from here, or redo to restore
+							</span>
+							{canRedo && onRedo && (
+								<button
+									type="button"
+									onClick={() => onRedo()}
+									className="flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+								>
+									<Redo2Icon className="size-3" />
+									Redo
+								</button>
+							)}
+						</div>
+					)}
+
+					{/* Pending permissions — always shown above input/questions */}
+					{agent.permissions.length > 0 && (
+						<div className="pb-2">
+							{agent.permissions.map((permission) => (
+								<PermissionItem
+									key={permission.id}
+									agent={agent}
+									permission={permission}
+									onApprove={onApprove}
+									onDeny={onDeny}
+									isConnected={isConnected}
+								/>
+							))}
+						</div>
+					)}
+
+					{/* When questions are pending, replace the input with a focused question flow */}
+					{agent.questions.length > 0 ? (
+						<ChatQuestionFlow
+							questions={agent.questions}
+							onReply={handleReplyQuestion}
+							onReject={handleRejectQuestion}
+							disabled={!isConnected}
+						/>
+					) : (
+						/* Input card — PromptInputProvider wraps everything,
+					   popovers positioned relative to the card wrapper,
+					   textarea as a direct child of InputGroup inside PromptInput */
+						<PromptInputProvider key={agent.sessionId} initialInput={draft}>
+							<DraftSync setDraft={setDraft} />
+							<SlashCommandBridge controllerRef={slashCommandRef} />
+							<TriggerDetector
+								onSlashChange={handleSlashTriggerChange}
+								onMentionChange={handleMentionTriggerChange}
+							/>
+							<MentionReconciler mentions={mentions} onReconcile={setMentions} />
+							{/* Relative wrapper for absolutely-positioned popovers */}
+							<div className="relative">
+								{/* Popovers render above the card via bottom-full */}
+								<SlashCommandPopover
+									ref={slashPopoverRef}
+									query={slashQuery}
+									open={slashOpen}
+									enabled={isConnected}
+									directory={agent.directory}
+									onSelect={handleSlashSelect}
+									onSkillsOpen={handleSkillsOpen}
+									onClose={handleSlashClose}
+								/>
+								<MentionPopover
+									ref={mentionPopoverRef}
+									query={mentionQuery}
+									open={mentionOpen}
+									directory={agent.directory}
+									agents={openCodeAgents ?? []}
+									onSelect={handleMentionSelect}
+									onClose={handleMentionClose}
+								/>
+								<PromptInput
+									className="rounded-xl"
+									accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+									multiple
+									maxFileSize={10 * 1024 * 1024}
+									onSubmit={(message) => {
+										if (message.text.trim() && canSend)
+											handleSend(message.text, message.files.length > 0 ? message.files : undefined)
+									}}
+								>
+									{/* Mention chips above the textarea */}
+									<ContextItems mentions={mentions} onRemove={handleMentionRemove} />
+									<PromptAttachmentPreview
+										supportsImages={modelCapabilities?.image}
+										supportsPdf={modelCapabilities?.pdf}
+									/>
+									<PromptInputTextarea
+										data-prompt-input
+										onKeyDown={handleTextareaKeyDown}
+										disabled={!isConnected}
+										placeholder={
+											isWorking ? "Send a follow-up message..." : "What would you like to do?"
+										}
+									/>
+
+									{/* Toolbar inside the card — agent + model + variant selectors + submit */}
+									<PromptInputFooter>
+										<PromptInputTools>
+											<AttachButton disabled={!isConnected} />
+											<PromptToolbar
+												agents={openCodeAgents ?? []}
+												selectedAgent={selectedAgent}
+												defaultAgent={config?.defaultAgent}
+												onSelectAgent={setSelectedAgent}
+												providers={providers ?? null}
+												effectiveModel={effectiveModel}
+												hasModelOverride={!!selectedModel}
+												onSelectModel={handleModelSelect}
+												recentModels={recentModels}
+												selectedVariant={selectedVariant}
+												onSelectVariant={setSelectedVariant}
+												disabled={!isConnected}
+											/>
+										</PromptInputTools>
+										<PromptInputSubmit
+											disabled={!canSend}
+											status={isWorking ? "streaming" : undefined}
+											onStop={handleStop}
+											size={isWorking && currentTurnWorkSplit ? "xs" : "icon-sm"}
+										>
+											{isWorking && currentTurnWorkSplit ? (
+												<LiveTurnTimer
+													completedMs={currentTurnWorkSplit.completedMs}
+													activeStartMs={currentTurnWorkSplit.activeStartMs}
+												/>
+											) : undefined}
+										</PromptInputSubmit>
+									</PromptInputFooter>
+								</PromptInput>
+							</div>
+						</PromptInputProvider>
+					)}
+
+					{/* Status bar — outside the card */}
+					<StatusBar
+						vcs={vcs ?? null}
+						isConnected={isConnected}
+						isWorking={isWorking}
+						interruptCount={interruptCount}
+						sessionId={agent.sessionId}
+						providers={providers}
+						sessionCost={sessionMetrics.costRaw}
+						compaction={config?.compaction}
+						extraSlot={
+							agent.worktreePath ? (
+								<div className="flex items-center gap-1">
+									<GitForkIcon className="size-3" />
+									<span>Worktree</span>
+								</div>
+							) : (
+								<div className="flex items-center gap-1">
+									<MonitorIcon className="size-3" />
+									<span>Local</span>
+								</div>
+							)
+						}
+					/>
+				</div>
+			</div>
 
 			{/* Skills picker dialog — triggered by /skills command */}
 			<SkillPickerDialog
@@ -1342,7 +1351,7 @@ export function ChatView({
 				directory={agent.directory}
 				onSelect={handleSkillSelect}
 			/>
-		</div>
+		</>
 	)
 }
 

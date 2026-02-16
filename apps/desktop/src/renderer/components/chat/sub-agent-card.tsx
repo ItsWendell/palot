@@ -15,7 +15,7 @@ import { messagesFamily } from "../../atoms/messages"
 import { partsFamily } from "../../atoms/parts"
 import { appStore } from "../../atoms/store"
 import { getStreamingPartsForSession, streamingVersionFamily } from "../../atoms/streaming"
-import type { Part, ToolPart, ToolState } from "../../lib/types"
+import type { ToolPart, ToolState } from "../../lib/types"
 import { getToolDuration, getToolInfo, getToolSubtitle } from "./chat-tool-call"
 import { getToolCategory, TOOL_CATEGORY_COLORS } from "./tool-card"
 
@@ -45,44 +45,6 @@ function extractFirstLine(md: string): string | undefined {
 		if (line.length > 0) return line
 	}
 	return undefined
-}
-
-// ============================================================
-// Sub-agent status computation (follows into child session)
-// ============================================================
-
-function computeSubAgentStatus(parts: Part[]): string {
-	for (let i = parts.length - 1; i >= 0; i--) {
-		const part = parts[i]
-		if (part.type === "tool") {
-			switch (part.tool) {
-				case "task":
-					return "Delegating..."
-				case "todowrite":
-				case "todoread":
-					return "Planning..."
-				case "read":
-					return "Reading files..."
-				case "list":
-				case "grep":
-				case "glob":
-					return "Searching codebase..."
-				case "webfetch":
-					return "Fetching web content..."
-				case "edit":
-				case "write":
-				case "apply_patch":
-					return "Making edits..."
-				case "bash":
-					return "Running command..."
-				default:
-					return `Running ${part.tool}...`
-			}
-		}
-		if (part.type === "reasoning") return "Thinking..."
-		if (part.type === "text") return "Composing response..."
-	}
-	return "Working..."
 }
 
 // ============================================================
@@ -215,51 +177,85 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 	// when this child session streams, not when any other session streams.
 	const streamingVersion = useAtomValue(streamingVersionFamily(sessionId ?? ""))
 
-	// Derive child session's activity
+	// Derive child session's activity.
+	// Optimized: iterates messages backwards and collects only what's needed
+	// (last 3 tool parts, last text, status) without building a full allParts array.
 	const { latestToolParts, latestText, childStatus } = useMemo(() => {
 		if (!childMessages || childMessages.length === 0) {
 			return { latestToolParts: [], latestText: undefined, childStatus: undefined }
 		}
 
-		// Read streaming overrides scoped to this child session.
 		// Reference streamingVersion so the linter sees it as used and it triggers recomputation.
 		void streamingVersion
 		const streaming = getStreamingPartsForSession(sessionId ?? "")
 
-		const allParts: Part[] = []
+		// Single-pass collection: walk all messages forward, but only keep
+		// the last 3 tool parts and overwrite latestText + status as we go.
+		// This avoids building a temporary allParts array.
+		const toolParts: ToolPart[] = []
+		let latestText: string | undefined
+		let lastStatus: string | undefined
+
 		for (const msg of childMessages) {
 			const baseParts = appStore.get(partsFamily(msg.id))
-			if (baseParts) {
-				const overrides = streaming[msg.id]
-				for (const p of baseParts) {
-					allParts.push(overrides?.[p.id] ?? p)
+			if (!baseParts) continue
+			const overrides = streaming[msg.id]
+
+			for (const bp of baseParts) {
+				const p = overrides?.[bp.id] ?? bp
+				if (p.type === "tool" && p.tool !== "todoread") {
+					toolParts.push(p)
+				}
+				// Track last text part (overwrites as we move forward)
+				if (p.type === "text" && !p.synthetic && p.text.trim()) {
+					latestText = p.text.trim()
+				}
+				// Track status from the last meaningful part
+				if (p.type === "tool") {
+					switch (p.tool) {
+						case "task":
+							lastStatus = "Delegating..."
+							break
+						case "todowrite":
+						case "todoread":
+							lastStatus = "Planning..."
+							break
+						case "read":
+							lastStatus = "Reading files..."
+							break
+						case "list":
+						case "grep":
+						case "glob":
+							lastStatus = "Searching codebase..."
+							break
+						case "webfetch":
+							lastStatus = "Fetching web content..."
+							break
+						case "edit":
+						case "write":
+						case "apply_patch":
+							lastStatus = "Making edits..."
+							break
+						case "bash":
+							lastStatus = "Running command..."
+							break
+						default:
+							lastStatus = `Running ${p.tool}...`
+							break
+					}
+				} else if (p.type === "reasoning") {
+					lastStatus = "Thinking..."
+				} else if (p.type === "text") {
+					lastStatus = "Composing response..."
 				}
 			}
 		}
 
-		// Get the latest tool parts (last 3 for compact display)
-		const toolParts: ToolPart[] = []
-		for (const p of allParts) {
-			if (p.type === "tool" && p.tool !== "todoread") {
-				toolParts.push(p)
-			}
+		return {
+			latestToolParts: toolParts.slice(-3),
+			latestText,
+			childStatus: lastStatus ?? "Working...",
 		}
-		const latestToolParts = toolParts.slice(-3)
-
-		// Get the latest text snippet (last text part, truncated)
-		let latestText: string | undefined
-		for (let i = allParts.length - 1; i >= 0; i--) {
-			const p = allParts[i]
-			if (p.type === "text" && !p.synthetic && p.text.trim()) {
-				latestText = p.text.trim()
-				break
-			}
-		}
-
-		// Compute status by following into child
-		const childStatus = computeSubAgentStatus(allParts)
-
-		return { latestToolParts, latestText, childStatus }
 	}, [childMessages, streamingVersion, sessionId])
 
 	// Extract first meaningful line for the summary teaser.
