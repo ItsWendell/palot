@@ -1,5 +1,15 @@
 # @palot/desktop
 
+## 0.7.0
+
+### Minor Changes
+
+- [`fd5e3c1`](https://github.com/ItsWendell/palot/commit/fd5e3c176e654a34691f995c3a8d6785873aaee9) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add review panel for viewing session file diffs with syntax highlighting offloaded to web workers, virtualized diff list, pinned file headers, collapsed unchanged context lines, slide-in animation, inline code review comments that get prepended to chat messages, and a "View diff" button on edit tool cards to jump directly to a file in the panel
+
+### Patch Changes
+
+- [`fd5e3c1`](https://github.com/ItsWendell/palot/commit/fd5e3c176e654a34691f995c3a8d6785873aaee9) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Improve automation executor reliability with SDK call timeouts, structured logging throughout the execution pipeline, stale timer guard in the scheduler, and fallback rrule computation when the DB next-run value is missing on startup
+
 ## 0.6.0
 
 ### Minor Changes
