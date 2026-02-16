@@ -28,6 +28,7 @@ import {
 	ChevronDownIcon,
 	ChevronRightIcon,
 	CircleDotIcon,
+	CommandIcon,
 	GitForkIcon,
 	Loader2Icon,
 	PencilIcon,
@@ -300,10 +301,10 @@ export function AppSidebarContent({
 										/>
 									}
 								>
-									<SearchIcon className="size-4 shrink-0" />
-									<span className="sr-only">Search sessions</span>
+									<CommandIcon className="size-4 shrink-0" />
+									<span className="sr-only">Command palette</span>
 								</TooltipTrigger>
-								<TooltipContent side="bottom">Search sessions (&#8984;K)</TooltipContent>
+								<TooltipContent side="bottom">Command palette (&#8984;K)</TooltipContent>
 							</Tooltip>
 							{onAddProject && (
 								<Tooltip>
