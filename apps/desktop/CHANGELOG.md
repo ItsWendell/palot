@@ -1,5 +1,15 @@
 # @palot/desktop
 
+## 0.7.1
+
+### Patch Changes
+
+- [`7b1f502`](https://github.com/ItsWendell/palot/commit/7b1f5024766f2de4844cadae8b1b556b1bacfa13) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add duration timing to IPC fetch proxy and handler logging, with slow handler warnings above 500ms
+
+- [`7b1f502`](https://github.com/ItsWendell/palot/commit/7b1f5024766f2de4844cadae8b1b556b1bacfa13) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Extend mock mode with diff data support for review panel testing
+
+- [`7b1f502`](https://github.com/ItsWendell/palot/commit/7b1f5024766f2de4844cadae8b1b556b1bacfa13) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix review panel: reset to closed on app start instead of persisting, auto-close when navigating to sessions with no diffs, and fix diff loading state tracking
+
 ## 0.7.0
 
 ### Minor Changes
