@@ -1,5 +1,13 @@
 import { Button } from "@palot/ui/components/button"
 import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@palot/ui/components/dialog"
+import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
@@ -8,25 +16,28 @@ import {
 } from "@palot/ui/components/dropdown-menu"
 import { Input } from "@palot/ui/components/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
+import { Textarea } from "@palot/ui/components/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
 import { cn } from "@palot/ui/lib/utils"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useAtom, useAtomValue } from "jotai"
 import {
 	ArrowLeftIcon,
+	ArrowUpFromLineIcon,
 	CheckIcon,
 	ChevronDownIcon,
 	CopyIcon,
 	ExternalLinkIcon,
 	FileDiffIcon,
 	GitForkIcon,
+	Loader2Icon,
 	PencilIcon,
 	SquareIcon,
 	TerminalIcon,
 	XIcon,
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { OpenInTarget } from "../../preload/api"
+import type { GitDiffStat, OpenInTarget } from "../../preload/api"
 import { reviewPanelOpenAtom, reviewPanelSettingsAtom, sessionDiffStatsFamily } from "../atoms/ui"
 import type {
 	ConfigData,
@@ -38,7 +49,14 @@ import type {
 import { useServerConnection } from "../hooks/use-server"
 import type { ChatTurn } from "../hooks/use-session-chat"
 import type { Agent, AgentStatus, FileAttachment, QuestionAnswer } from "../lib/types"
-import { fetchOpenInTargets, isElectron, openInTarget } from "../services/backend"
+import {
+	fetchDiffStat,
+	fetchOpenInTargets,
+	gitCommitAll,
+	gitPush,
+	isElectron,
+	openInTarget,
+} from "../services/backend"
 import { useSetAppBarContent } from "./app-bar-context"
 import { ChatView } from "./chat"
 import { PalotWordmark } from "./palot-wordmark"
@@ -482,6 +500,11 @@ function SessionAppBarContent({
 					<OpenInButton directory={agent.worktreePath ?? agent.directory} />
 				</div>
 
+				{/* Commit, Push */}
+				<div className="hidden md:block">
+					<CommitPushHeaderButton directory={agent.worktreePath ?? agent.directory} />
+				</div>
+
 				{/* Open in terminal */}
 				<div className="hidden md:block">
 					<AttachCommand
@@ -664,6 +687,163 @@ function OpenInButton({ directory }: { directory: string }) {
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</div>
+	)
+}
+
+/**
+ * Header button that opens a dialog to commit all changes and push to the current branch.
+ * Uses the Git CLI via main process (Electron only). Hidden when not in Electron or when
+ * directory is missing.
+ */
+function CommitPushHeaderButton({ directory }: { directory: string }) {
+	const [open, setOpen] = useState(false)
+	const [diffStat, setDiffStat] = useState<GitDiffStat | null>(null)
+	const [loadingDiff, setLoadingDiff] = useState(false)
+	const [commitMessage, setCommitMessage] = useState("")
+	const [executing, setExecuting] = useState(false)
+	const [error, setError] = useState<string | null>(null)
+	const [success, setSuccess] = useState<string | null>(null)
+
+	const loadDiffStat = useCallback(async () => {
+		setLoadingDiff(true)
+		setError(null)
+		try {
+			const stat = await fetchDiffStat(directory)
+			setDiffStat(stat)
+		} catch {
+			setDiffStat(null)
+		} finally {
+			setLoadingDiff(false)
+		}
+	}, [directory])
+
+	useEffect(() => {
+		if (open && directory) loadDiffStat()
+	}, [open, directory, loadDiffStat])
+
+	const handleOpenChange = useCallback((next: boolean) => {
+		setOpen(next)
+		if (!next) {
+			setCommitMessage("")
+			setError(null)
+			setSuccess(null)
+		}
+	}, [])
+
+	const handleCommitPush = useCallback(async () => {
+		if (!directory) return
+		setExecuting(true)
+		setError(null)
+		try {
+			const msg =
+				commitMessage.trim() ||
+				`Update ${diffStat?.filesChanged ?? 0} file${(diffStat?.filesChanged ?? 0) !== 1 ? "s" : ""}`
+			const commitResult = await gitCommitAll(directory, msg)
+			if (!commitResult.success) {
+				setError(commitResult.error ?? "Commit failed")
+				return
+			}
+			const pushResult = await gitPush(directory)
+			if (!pushResult.success) {
+				setError(pushResult.error ?? "Push failed")
+				return
+			}
+			setSuccess("Committed and pushed")
+			setTimeout(() => handleOpenChange(false), 1200)
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Operation failed")
+		} finally {
+			setExecuting(false)
+		}
+	}, [directory, commitMessage, diffStat?.filesChanged, handleOpenChange])
+
+	const hasChanges = (diffStat?.filesChanged ?? 0) > 0
+
+	if (!isElectron || !directory) return null
+
+	return (
+		<>
+			<Tooltip>
+				<TooltipTrigger
+					render={
+						<button
+							type="button"
+							onClick={() => setOpen(true)}
+							className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+						/>
+					}
+				>
+					<ArrowUpFromLineIcon className="size-3.5" />
+				</TooltipTrigger>
+				<TooltipContent>Commit, Push</TooltipContent>
+			</Tooltip>
+			<Dialog open={open} onOpenChange={handleOpenChange}>
+				<DialogContent className="flex max-h-[85vh] max-w-md flex-col">
+					<DialogHeader className="shrink-0">
+						<DialogTitle className="flex items-center gap-2">
+							<ArrowUpFromLineIcon className="size-5" />
+							Commit &amp; push
+						</DialogTitle>
+						<DialogDescription>
+							Commit all changes and push to the current branch. Requires Git to be installed.
+						</DialogDescription>
+					</DialogHeader>
+					<div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+						<div className="space-y-1.5">
+							<div className="text-sm font-medium">Changes</div>
+							{loadingDiff ? (
+								<div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+									<Loader2Icon className="size-3.5 animate-spin" />
+									Checking...
+								</div>
+							) : diffStat ? (
+								<div className="rounded-md bg-muted px-3 py-2 text-sm">
+									{diffStat.filesChanged} file{diffStat.filesChanged !== 1 ? "s" : ""} changed
+								</div>
+							) : (
+								<div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+									No changes or not a git repo
+								</div>
+							)}
+						</div>
+						<div className="space-y-1.5">
+							<div className="text-sm font-medium">Commit message</div>
+							<Textarea
+								value={commitMessage}
+								onChange={(e) => setCommitMessage(e.target.value)}
+								placeholder="Describe your changes (optional)"
+								className="min-h-[60px] resize-none text-sm"
+							/>
+						</div>
+						{error && (
+							<div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+								{error}
+							</div>
+						)}
+						{success && (
+							<div className="rounded-md bg-green-500/10 px-3 py-2 text-sm text-green-600">
+								{success}
+							</div>
+						)}
+					</div>
+					<DialogFooter className="shrink-0">
+						<Button variant="outline" onClick={() => handleOpenChange(false)} disabled={executing}>
+							Cancel
+						</Button>
+						<Button onClick={handleCommitPush} disabled={executing || loadingDiff || !hasChanges}>
+							{executing ? (
+								<>
+									<Loader2Icon className="size-3.5 animate-spin" />
+									Committing...
+								</>
+							) : (
+								"Commit & push"
+							)}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		</>
 	)
 }
 

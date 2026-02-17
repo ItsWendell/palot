@@ -488,7 +488,7 @@ const VirtualizedDiffList = memo(function VirtualizedDiffList({
 			el.removeEventListener("scroll", onScroll)
 			if (rafId !== null) cancelAnimationFrame(rafId)
 		}
-	}, [diffs, getIsCollapsed]) // virtualizer accessed via closure, always current
+	}, [diffs, getIsCollapsed, virtualizer.getVirtualItems])
 
 	const handlePinnedToggle = useCallback(() => {
 		if (pinnedDiff) onToggle(pinnedDiff.file)
