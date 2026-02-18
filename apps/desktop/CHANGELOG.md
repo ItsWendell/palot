@@ -1,5 +1,23 @@
 # @palot/desktop
 
+## 0.8.0
+
+### Minor Changes
+
+- [`23a9317`](https://github.com/ItsWendell/palot/commit/23a931701e0b9a27d29a5962f4c9a28880a3a0a5) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add session forking to branch conversations from any point. Fork from per-turn hover actions, sidebar context menu, `/fork` slash command, or the command palette. Per-turn fork cuts at the turn boundary; other entry points copy the entire conversation.
+
+### Patch Changes
+
+- [#40](https://github.com/ItsWendell/palot/pull/40) [`1393d87`](https://github.com/ItsWendell/palot/commit/1393d8758b0f7656cb6fd98728d883f9f6fdc389) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix duplicate error messages in chat view when the server emits both a session-level error and an assistant message error for the same failure. Thanks [@YoruAkio](https://github.com/YoruAkio) for the contribution!
+
+- [#38](https://github.com/ItsWendell/palot/pull/38) [`566455e`](https://github.com/ItsWendell/palot/commit/566455ecbd5b3f882e5c66a4c8add250006c39e1) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix native module packaging by switching Bun to hoisted installs, resolving the `Could not find module '@libsql/darwin-x64'` crash on macOS x64 builds
+
+- [`5f353b3`](https://github.com/ItsWendell/palot/commit/5f353b3ca4c8a8a987e9489932a4d5ebe5483aa3) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix unstable sidebar project sort order caused by volatile server-side `project.time.updated` timestamps. Projects now use a tiered sort: active agents first (by recency), idle sessions next (by recency), then sessionless projects alphabetically. Ties are broken by name for fully deterministic ordering.
+
+- [`a631b4f`](https://github.com/ItsWendell/palot/commit/a631b4faa2a662fc102c22a911969fb22b8e151f) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix session title stretching to full width in the app bar. The title element now stays inline with the breadcrumb instead of expanding to fill all available space.
+
+- [`26f8c07`](https://github.com/ItsWendell/palot/commit/26f8c0719468a80cf38365086d33ccefdbbd4d4b) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix excessive API requests on the worktree settings page. The worktree list was re-fetched for every connected project on each session update because the effect depended on volatile fields (`agentCount`, `lastActiveAt`). Now the fetch is gated on a stable directory key that only changes when projects are added or removed.
+
 ## 0.7.1
 
 ### Patch Changes
