@@ -815,35 +815,52 @@ function OAuthView({
 	const [authInstructions, setAuthInstructions] = useState<string | null>(null)
 	const [code, setCode] = useState("")
 	const [copiedDeviceCode, setCopiedDeviceCode] = useState(false)
-	const autoCopiedDeviceCodeRef = useRef<string | null>(null)
+	const autoCopiedAuthValueRef = useRef<string | null>(null)
+	const copiedStateTimeoutRef = useRef<number | null>(null)
 
 	const deviceCode = extractDeviceCode(authInstructions)
 
-	const handleCopyDeviceCode = useCallback(async () => {
-		if (!deviceCode) return
-		await navigator.clipboard.writeText(deviceCode)
+	const showCopiedState = useCallback(() => {
 		setCopiedDeviceCode(true)
-		setTimeout(() => setCopiedDeviceCode(false), 2000)
-	}, [deviceCode])
+		if (copiedStateTimeoutRef.current !== null) {
+			window.clearTimeout(copiedStateTimeoutRef.current)
+		}
+		copiedStateTimeoutRef.current = window.setTimeout(() => {
+			setCopiedDeviceCode(false)
+			copiedStateTimeoutRef.current = null
+		}, 2000)
+	}, [])
 
 	useEffect(() => {
-		if (!authUrl) return
+		return () => {
+			if (copiedStateTimeoutRef.current !== null) {
+				window.clearTimeout(copiedStateTimeoutRef.current)
+			}
+		}
+	}, [])
 
+	const handleCopyDeviceCode = useCallback(async () => {
 		const valueToCopy = deviceCode ?? authUrl
 		if (!valueToCopy) return
-		if (autoCopiedDeviceCodeRef.current === valueToCopy) return
-		autoCopiedDeviceCodeRef.current = valueToCopy
+		await navigator.clipboard.writeText(valueToCopy)
+		showCopiedState()
+	}, [deviceCode, authUrl, showCopiedState])
+
+	useEffect(() => {
+		const valueToCopy = deviceCode ?? authUrl
+		if (!valueToCopy) return
+		if (autoCopiedAuthValueRef.current === valueToCopy) return
+		autoCopiedAuthValueRef.current = valueToCopy
 
 		void navigator.clipboard
 			.writeText(valueToCopy)
 			.then(() => {
-				setCopiedDeviceCode(true)
-				setTimeout(() => setCopiedDeviceCode(false), 2000)
+				showCopiedState()
 			})
 			.catch(() => {
-				autoCopiedDeviceCodeRef.current = null
+				autoCopiedAuthValueRef.current = null
 			})
-	}, [authUrl, deviceCode])
+	}, [authUrl, deviceCode, showCopiedState])
 
 	// Start OAuth flow on mount
 	useEffect(() => {
@@ -1021,26 +1038,22 @@ function OAuthView({
 					<div className="flex flex-col items-center gap-3 py-6">
 						<Spinner className="size-5" />
 						{deviceCode && (
-							<div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3">
-								<p className="text-xs text-muted-foreground">Enter this code in the browser</p>
-								<div className="flex items-center gap-2">
-									<code className="rounded-md bg-background px-2.5 py-1.5 font-mono text-sm font-semibold tracking-[0.2em]">
-										{deviceCode}
-									</code>
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										className="h-8 w-8 p-0"
-										onClick={handleCopyDeviceCode}
-									>
-										{copiedDeviceCode ? (
-											<CheckIcon className="size-3.5 text-emerald-500" aria-hidden="true" />
-										) : (
-											<ClipboardIcon className="size-3.5" aria-hidden="true" />
-										)}
-									</Button>
-								</div>
+							<div className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+								<p className="text-xs text-muted-foreground">Enter code: {deviceCode}</p>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									className="h-7 w-7 p-0"
+									onClick={handleCopyDeviceCode}
+									aria-label="Copy authorization code"
+								>
+									{copiedDeviceCode ? (
+										<CheckIcon className="size-3.5 text-emerald-500" aria-hidden="true" />
+									) : (
+										<ClipboardIcon className="size-3.5" aria-hidden="true" />
+									)}
+								</Button>
 							</div>
 						)}
 						{authInstructions && !deviceCode && (
@@ -1228,7 +1241,14 @@ async function pollForCompletion(
 
 function extractDeviceCode(instructions: string | null): string | null {
 	if (!instructions) return null
-	const match = instructions.match(/\b[A-Z0-9]{4}(?:[- ][A-Z0-9]{4})+\b/i)
-	if (!match) return null
-	return match[0].toUpperCase().replace(/\s+/g, "-")
+	const contextualMatch = instructions.match(
+		/(?:enter|code|verification)[^A-Z0-9]*([A-Z0-9]{3,8}(?:[- ][A-Z0-9]{3,8})+)/i,
+	)
+	if (contextualMatch?.[1]) {
+		return contextualMatch[1].toUpperCase().replace(/\s+/g, "-")
+	}
+
+	const fallbackMatch = instructions.match(/\b[A-Z0-9]{3,8}(?:[- ][A-Z0-9]{3,8})+\b/i)
+	if (!fallbackMatch) return null
+	return fallbackMatch[0].toUpperCase().replace(/\s+/g, "-")
 }
