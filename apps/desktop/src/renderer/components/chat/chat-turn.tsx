@@ -22,6 +22,7 @@ import {
 	EditIcon,
 	EyeIcon,
 	FileIcon,
+	GitForkIcon,
 	GlobeIcon,
 	ListOrderedIcon,
 	SendIcon,
@@ -420,6 +421,8 @@ interface ChatTurnProps {
 	onRevertToMessage?: (messageId: string) => Promise<void>
 	/** Interrupt the current work and send this queued message immediately */
 	onSendNow?: (turn: ChatTurnType) => Promise<void>
+	/** Fork the conversation from this turn boundary */
+	onForkFromTurn?: () => Promise<void>
 }
 
 /**
@@ -443,6 +446,7 @@ export const ChatTurnComponent = memo(
 		isWorking,
 		onRevertToMessage,
 		onSendNow,
+		onForkFromTurn,
 	}: ChatTurnProps) {
 		const [stepsExpanded, setStepsExpanded] = useState(false)
 		const [copied, setCopied] = useState(false)
@@ -544,6 +548,17 @@ export const ChatTurnComponent = memo(
 		const handleScrollToTop = useCallback(() => {
 			turnRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
 		}, [])
+
+		const [forking, setForking] = useState(false)
+		const handleFork = useCallback(async () => {
+			if (!onForkFromTurn || forking) return
+			setForking(true)
+			try {
+				await onForkFromTurn()
+			} finally {
+				setForking(false)
+			}
+		}, [onForkFromTurn, forking])
 
 		const [sendingNow, setSendingNow] = useState(false)
 		const handleSendNow = useCallback(async () => {
@@ -789,11 +804,20 @@ export const ChatTurnComponent = memo(
 						>
 							{copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
 						</MessageAction>
-						{onRevertToMessage && !working && (
-							<MessageAction tooltip="Undo from here" onClick={handleRevertHere}>
-								<Undo2Icon className="size-3" />
-							</MessageAction>
-						)}
+					{onForkFromTurn && !working && (
+						<MessageAction
+							tooltip={forking ? "Forking..." : "Fork from here"}
+							onClick={handleFork}
+							disabled={forking}
+						>
+							<GitForkIcon className="size-3" />
+						</MessageAction>
+					)}
+					{onRevertToMessage && !working && (
+						<MessageAction tooltip="Undo from here" onClick={handleRevertHere}>
+							<Undo2Icon className="size-3" />
+						</MessageAction>
+					)}
 					</MessageActions>
 				)}
 			</div>

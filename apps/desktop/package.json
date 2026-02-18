@@ -52,7 +52,7 @@
 		"hono": "4.11.9",
 		"jotai": "^2.17.1",
 		"jotai-family": "^1.0.1",
-		"lucide-react": "^0.563.0",
+		"lucide-react": "^0.564.0",
 		"motion": "^12.34.0",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0",
@@ -73,12 +73,12 @@
 		"@electron/rebuild": "^4.0.3",
 		"@palot/server": "workspace:*",
 		"@tailwindcss/vite": "^4.0.0",
-		"@types/node": "^22.0.0",
+		"@types/node": "^24.0.0",
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
 		"@types/react-syntax-highlighter": "^15.5.13",
 		"@types/semver": "^7.7.1",
-		"@vitejs/plugin-react": "^4.3.0",
+		"@vitejs/plugin-react": "^5.1.4",
 		"drizzle-kit": "^1.0.0-beta.15-859cf75",
 		"electron": "^40.2.1",
 		"electron-builder": "^26.0.0",
@@ -86,7 +86,7 @@
 		"shiki": "^3.22.0",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.0",
-		"vite": "^6.1.0",
+		"vite": "^7.3.1",
 		"vite-plugin-static-copy": "^3.2.0"
 	}
 }

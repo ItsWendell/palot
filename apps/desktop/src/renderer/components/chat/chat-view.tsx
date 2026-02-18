@@ -413,6 +413,8 @@ interface ChatViewProps {
 	isReverted?: boolean
 	/** Revert to a specific message (for per-turn undo) */
 	onRevertToMessage?: (messageId: string) => Promise<void>
+	/** Fork from a turn boundary (messageId of the next turn's user message, or undefined for full fork) */
+	onForkFromTurn?: (messageId?: string) => Promise<void>
 	/** Whether the review panel is open (removes max-w constraint) */
 	reviewPanelOpen?: boolean
 }
@@ -450,6 +452,7 @@ export function ChatView({
 	onRedo,
 	isReverted,
 	onRevertToMessage,
+	onForkFromTurn,
 	reviewPanelOpen,
 }: ChatViewProps) {
 	const isWorking = agent.status === "running"
@@ -462,6 +465,27 @@ export function ChatView({
 	const sessionEntry = useAtomValue(sessionFamily(agent.sessionId))
 	const sessionError = sessionEntry?.error
 	const setupPhase = sessionEntry?.setupPhase
+	// Format the session-level error for display. Only shown when the last
+	// turn doesn't already carry an assistant-level error (the server emits
+	// both session.error and message.updated for the same failure, so showing
+	// both would duplicate the message).
+	const sessionErrorText = useMemo(() => {
+		if (!sessionError) return undefined
+		if ("message" in sessionError.data && sessionError.data.message) {
+			return String(sessionError.data.message)
+		}
+		return `${sessionError.name}: ${JSON.stringify(sessionError.data)}`
+	}, [sessionError])
+
+	const lastTurnHasError = useMemo(() => {
+		const lastTurn = turns.at(-1)
+		if (!lastTurn) return false
+		return lastTurn.assistantMessages.some(
+			(m) => m.info.role === "assistant" && m.info.error != null,
+		)
+	}, [turns])
+
+	const showSessionError = !!sessionErrorText && !lastTurnHasError
 
 	// Stable callbacks for question/permission handlers — agent is stable
 	// per render, but wrapping in useCallback avoids creating new inline
@@ -604,16 +628,24 @@ export function ChatView({
 									<span className="ml-2 text-sm text-muted-foreground">Loading chat...</span>
 								</div>
 							) : turns.length > 0 ? (
-								turns.map((turn, index) => (
-									<ChatTurnComponent
-										key={turn.id}
-										turn={turn}
-										isLast={index === turns.length - 1}
-										isWorking={isWorking}
-										onRevertToMessage={onRevertToMessage}
-										onSendNow={isWorking ? handleSendNow : undefined}
-									/>
-								))
+							turns.map((turn, index) => (
+								<ChatTurnComponent
+									key={turn.id}
+									turn={turn}
+									isLast={index === turns.length - 1}
+									isWorking={isWorking}
+									onRevertToMessage={onRevertToMessage}
+									onSendNow={isWorking ? handleSendNow : undefined}
+									onForkFromTurn={
+										onForkFromTurn
+											? () => {
+													const nextTurn = turns[index + 1]
+													return onForkFromTurn(nextTurn?.userMessage.info.id)
+												}
+											: undefined
+									}
+								/>
+							))
 							) : setupPhase ? (
 								<WorktreeSetupProgress phase={setupPhase} />
 							) : (
@@ -623,11 +655,9 @@ export function ChatView({
 							)}
 
 							{/* Session-level error from session.error events */}
-							{sessionError && (
+							{showSessionError && sessionErrorText && (
 								<div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
-									{"message" in sessionError.data && sessionError.data.message
-										? String(sessionError.data.message)
-										: `${sessionError.name}: ${JSON.stringify(sessionError.data)}`}
+									{sessionErrorText}
 								</div>
 							)}
 						</div>
@@ -676,6 +706,7 @@ export function ChatView({
 					isReverted={isReverted}
 					scrollRef={scrollRef}
 					reviewPanelOpen={reviewPanelOpen}
+					onForkFromTurn={onForkFromTurn}
 				/>
 			)}
 		</div>
@@ -707,6 +738,8 @@ interface ChatInputSectionProps {
 	isReverted?: boolean
 	scrollRef: React.RefObject<ScrollHandle | null>
 	reviewPanelOpen?: boolean
+	/** Fork the current session (full fork, no cutoff) */
+	onForkFromTurn?: (messageId?: string) => Promise<void>
 }
 
 function ChatInputSection({
@@ -730,6 +763,7 @@ function ChatInputSection({
 	isReverted,
 	scrollRef,
 	reviewPanelOpen,
+	onForkFromTurn,
 }: ChatInputSectionProps) {
 	const [sending, setSending] = useState(false)
 
@@ -1069,6 +1103,12 @@ function ChatInputSection({
 	// --- Skills picker dialog ---
 	const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
 
+	const handleForkViaSlash = useCallback(async () => {
+		const ctrl = slashCommandRef.current
+		if (ctrl) ctrl.setText("")
+		await onForkFromTurn?.()
+	}, [onForkFromTurn])
+
 	const handleSkillsOpen = useCallback(() => {
 		const ctrl = slashCommandRef.current
 		if (ctrl) ctrl.setText("")
@@ -1270,16 +1310,17 @@ function ChatInputSection({
 							{/* Relative wrapper for absolutely-positioned popovers */}
 							<div className="relative">
 								{/* Popovers render above the card via bottom-full */}
-								<SlashCommandPopover
-									ref={slashPopoverRef}
-									query={slashQuery}
-									open={slashOpen}
-									enabled={isConnected}
-									directory={agent.directory}
-									onSelect={handleSlashSelect}
-									onSkillsOpen={handleSkillsOpen}
-									onClose={handleSlashClose}
-								/>
+							<SlashCommandPopover
+								ref={slashPopoverRef}
+								query={slashQuery}
+								open={slashOpen}
+								enabled={isConnected}
+								directory={agent.directory}
+								onSelect={handleSlashSelect}
+								onSkillsOpen={handleSkillsOpen}
+								onFork={handleForkViaSlash}
+								onClose={handleSlashClose}
+							/>
 								<MentionPopover
 									ref={mentionPopoverRef}
 									query={mentionQuery}

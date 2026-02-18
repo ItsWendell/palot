@@ -11,6 +11,7 @@ import type {
 	FilePart,
 	FilePartInput,
 	QuestionAnswer,
+	Session,
 	TextPart,
 	UserMessage,
 } from "../lib/types"
@@ -318,6 +319,30 @@ export function useAgentActions() {
 		}
 	}, [])
 
+	const forkSession = useCallback(
+		async (directory: string, sessionId: string, messageId?: string): Promise<Session> => {
+			const client = getProjectClient(directory)
+			if (!client) throw new Error("Not connected to OpenCode server")
+			log.debug("forkSession", { sessionId, messageId })
+			try {
+				const result = await client.session.fork({
+					sessionID: sessionId,
+					messageID: messageId,
+				})
+				const session = result.data as Session
+				if (session) {
+					appStore.set(upsertSessionAtom, { session, directory })
+				}
+				log.debug("forkSession succeeded", { forkedSessionId: session?.id })
+				return session
+			} catch (err) {
+				log.error("forkSession failed", { sessionId, messageId }, err)
+				throw err
+			}
+		},
+		[],
+	)
+
 	return {
 		abort,
 		sendPrompt,
@@ -331,5 +356,6 @@ export function useAgentActions() {
 		unrevert,
 		executeCommand,
 		summarize,
+		forkSession,
 	}
 }

@@ -85,6 +85,7 @@ interface AppSidebarContentProps {
 	onAddProject?: () => void
 	onRenameSession?: (agent: Agent, title: string) => Promise<void>
 	onDeleteSession?: (agent: Agent) => Promise<void>
+	onForkSession?: (agent: Agent) => Promise<void>
 	serverConnected: boolean
 }
 
@@ -103,6 +104,7 @@ export function AppSidebarContent({
 	onAddProject,
 	onRenameSession,
 	onDeleteSession,
+	onForkSession,
 	serverConnected,
 }: AppSidebarContentProps) {
 	const navigate = useNavigate()
@@ -221,16 +223,17 @@ export function AppSidebarContent({
 						<SidebarGroupLabel>Active Now</SidebarGroupLabel>
 						<SidebarGroupContent>
 							<SidebarMenu>
-								{activeSessions.map((agent) => (
-									<SessionItem
-										key={agent.id}
-										agent={agent}
-										isSelected={agent.id === selectedSessionId}
-										onRename={onRenameSession}
-										onDelete={onDeleteSession}
-										showProject
-									/>
-								))}
+							{activeSessions.map((agent) => (
+								<SessionItem
+									key={agent.id}
+									agent={agent}
+									isSelected={agent.id === selectedSessionId}
+									onRename={onRenameSession}
+									onDelete={onDeleteSession}
+									onFork={onForkSession}
+									showProject
+								/>
+							))}
 							</SidebarMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
@@ -242,16 +245,17 @@ export function AppSidebarContent({
 						<SidebarGroupLabel>Recent</SidebarGroupLabel>
 						<SidebarGroupContent>
 							<SidebarMenu>
-								{recentSessions.map((agent) => (
-									<SessionItem
-										key={agent.id}
-										agent={agent}
-										isSelected={agent.id === selectedSessionId}
-										onRename={onRenameSession}
-										onDelete={onDeleteSession}
-										showProject
-									/>
-								))}
+							{recentSessions.map((agent) => (
+								<SessionItem
+									key={agent.id}
+									agent={agent}
+									isSelected={agent.id === selectedSessionId}
+									onRename={onRenameSession}
+									onDelete={onDeleteSession}
+									onFork={onForkSession}
+									showProject
+								/>
+							))}
 							</SidebarMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
@@ -345,15 +349,16 @@ export function AppSidebarContent({
 
 						<SidebarGroupContent>
 							<SidebarMenu>
-								{filteredProjects.map((project) => (
-									<ProjectFolder
-										key={project.id}
-										project={project}
-										selectedSessionId={selectedSessionId}
-										onRename={onRenameSession}
-										onDelete={onDeleteSession}
-									/>
-								))}
+							{filteredProjects.map((project) => (
+								<ProjectFolder
+									key={project.id}
+									project={project}
+									selectedSessionId={selectedSessionId}
+									onRename={onRenameSession}
+									onDelete={onDeleteSession}
+									onFork={onForkSession}
+								/>
+							))}
 								{projectSearch && filteredProjects.length === 0 && (
 									<p className="px-2 py-1.5 text-xs text-muted-foreground/60">
 										No projects match &ldquo;{projectSearch}&rdquo;
@@ -397,11 +402,13 @@ const ProjectSessionItem = memo(function ProjectSessionItem({
 	selectedSessionId,
 	onRename,
 	onDelete,
+	onFork,
 }: {
 	sessionId: string
 	selectedSessionId: string | null
 	onRename?: (agent: Agent, title: string) => Promise<void>
 	onDelete?: (agent: Agent) => Promise<void>
+	onFork?: (agent: Agent) => Promise<void>
 }) {
 	const agent = useAtomValue(agentFamily(sessionId))
 	if (!agent) return null
@@ -411,6 +418,7 @@ const ProjectSessionItem = memo(function ProjectSessionItem({
 			isSelected={agent.id === selectedSessionId}
 			onRename={onRename}
 			onDelete={onDelete}
+			onFork={onFork}
 			compact
 		/>
 	)
@@ -426,11 +434,13 @@ const ProjectFolder = memo(function ProjectFolder({
 	selectedSessionId,
 	onRename,
 	onDelete,
+	onFork,
 }: {
 	project: SidebarProject
 	selectedSessionId: string | null
 	onRename?: (agent: Agent, title: string) => Promise<void>
 	onDelete?: (agent: Agent) => Promise<void>
+	onFork?: (agent: Agent) => Promise<void>
 }) {
 	const navigate = useNavigate()
 	const [expanded, setExpanded] = useState(false)
@@ -515,15 +525,16 @@ const ProjectFolder = memo(function ProjectFolder({
 							<p className="px-2 py-1.5 text-xs text-muted-foreground/60">No sessions yet</p>
 						) : (
 							<SidebarMenu>
-								{projectSessions.map((agent) => (
-									<ProjectSessionItem
-										key={agent.id}
-										sessionId={agent.id}
-										selectedSessionId={selectedSessionId}
-										onRename={onRename}
-										onDelete={onDelete}
-									/>
-								))}
+							{projectSessions.map((agent) => (
+								<ProjectSessionItem
+									key={agent.id}
+									sessionId={agent.id}
+									selectedSessionId={selectedSessionId}
+									onRename={onRename}
+									onDelete={onDelete}
+									onFork={onFork}
+								/>
+							))}
 								{pagination.loaded && pagination.hasMore && (
 									<button
 										type="button"
@@ -587,6 +598,7 @@ const SessionItem = memo(function SessionItem({
 	isSelected,
 	onRename,
 	onDelete,
+	onFork,
 	showProject = false,
 	compact = false,
 }: {
@@ -594,6 +606,7 @@ const SessionItem = memo(function SessionItem({
 	isSelected: boolean
 	onRename?: (agent: Agent, title: string) => Promise<void>
 	onDelete?: (agent: Agent) => Promise<void>
+	onFork?: (agent: Agent) => Promise<void>
 	showProject?: boolean
 	compact?: boolean
 }) {
@@ -707,7 +720,13 @@ const SessionItem = memo(function SessionItem({
 						Rename
 					</ContextMenuItem>
 				)}
-				{onRename && onDelete && <ContextMenuSeparator />}
+				{onFork && (
+					<ContextMenuItem onSelect={() => onFork(agent)}>
+						<GitForkIcon className="size-4" />
+						Fork
+					</ContextMenuItem>
+				)}
+				{(onRename || onFork) && onDelete && <ContextMenuSeparator />}
 				{onDelete && (
 					<ContextMenuItem variant="destructive" onSelect={() => onDelete(agent)}>
 						<TrashIcon className="size-4" />

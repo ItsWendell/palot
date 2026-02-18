@@ -93,6 +93,8 @@ export interface SidebarProject {
 	directory: string
 	agentCount: number
 	lastActiveAt: number
+	/** Whether at least one agent in this project is running or waiting for input */
+	hasActiveAgent: boolean
 }
 
 /** Activity entry for the detail panel — derived from message parts */

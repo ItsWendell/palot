@@ -118,6 +118,8 @@ interface AgentDetailProps {
 	isReverted?: boolean
 	/** Revert to a specific message (for per-turn undo) */
 	onRevertToMessage?: (messageId: string) => Promise<void>
+	/** Fork from a turn boundary (messageId of the next turn's user message, or undefined for full fork) */
+	onForkFromTurn?: (messageId?: string) => Promise<void>
 }
 
 export function AgentDetail({
@@ -146,6 +148,7 @@ export function AgentDetail({
 	onRedo,
 	isReverted,
 	onRevertToMessage,
+	onForkFromTurn,
 }: AgentDetailProps) {
 	const navigate = useNavigate()
 	const { projectSlug } = useParams({ strict: false }) as { projectSlug?: string }
@@ -303,8 +306,9 @@ export function AgentDetail({
 					onUndo={onUndo}
 					onRedo={onRedo}
 					isReverted={isReverted}
-					onRevertToMessage={onRevertToMessage}
-					reviewPanelOpen={reviewPanelOpen}
+				onRevertToMessage={onRevertToMessage}
+				onForkFromTurn={onForkFromTurn}
+				reviewPanelOpen={reviewPanelOpen}
 				/>
 			</div>
 		</>
@@ -412,16 +416,16 @@ function SessionAppBarContent({
 								if (e.key === "Escape") onCancelEditing()
 							}}
 							onBlur={onConfirmTitle}
-							className="col-start-1 row-start-1 h-7 min-w-0 border-none bg-transparent p-0 text-xs font-semibold leading-none shadow-none focus-visible:ring-0"
+							className="col-start-1 row-start-1 h-7 min-w-0 border-none bg-transparent p-0 text-xs md:text-xs font-semibold leading-none shadow-none focus-visible:ring-0"
 						/>
 					</div>
 				) : (
 					<button
 						type="button"
 						onClick={onRename ? onStartEditing : undefined}
-						className={`group flex min-w-0 flex-1 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
+						className={`group flex min-w-0 items-center gap-1.5 ${onRename ? "cursor-pointer" : "cursor-default"}`}
 					>
-						<h2 className="min-w-0 flex-1 truncate text-xs font-semibold leading-none">
+						<h2 className="min-w-0 truncate text-xs font-semibold leading-none">
 							{agent.name}
 						</h2>
 						{onRename && (
@@ -643,17 +647,26 @@ function OpenInButton({ directory }: { directory: string }) {
 	const [opening, setOpening] = useState<string | null>(null)
 
 	const loadTargets = useCallback(async () => {
-		if (loaded) return
+		if (loaded) {
+			return { targets, preferredTarget: preferred }
+		}
 		try {
 			const result = await fetchOpenInTargets()
-			setTargets(result.targets.filter((t) => t.available))
+			const availableTargets = result.targets.filter((t) => t.available)
+			setTargets(availableTargets)
 			setPreferred(result.preferredTarget)
 			setLoaded(true)
+			return { targets: availableTargets, preferredTarget: result.preferredTarget }
 		} catch {
 			// Silently fail — button will show no targets
 			setLoaded(true)
+			return { targets: [], preferredTarget: null }
 		}
-	}, [loaded])
+	}, [loaded, preferred, targets])
+
+	useEffect(() => {
+		void loadTargets()
+	}, [loadTargets])
 
 	const handleOpen = useCallback(
 		async (targetId: string) => {
@@ -671,19 +684,16 @@ function OpenInButton({ directory }: { directory: string }) {
 	)
 
 	const handlePrimaryClick = useCallback(async () => {
-		if (!loaded) {
-			await loadTargets()
-		}
-		// After loading, use preferred or first available
-		const result = await fetchOpenInTargets()
-		const available = result.targets.filter((t) => t.available)
-		const target = result.preferredTarget
-			? available.find((t) => t.id === result.preferredTarget)
-			: available[0]
+		const { targets: availableTargets, preferredTarget } = loaded
+			? { targets, preferredTarget: preferred }
+			: await loadTargets()
+		const target = preferredTarget
+			? availableTargets.find((t) => t.id === preferredTarget)
+			: availableTargets[0]
 		if (target) {
-			handleOpen(target.id)
+			await handleOpen(target.id)
 		}
-	}, [loaded, loadTargets, handleOpen])
+	}, [loaded, loadTargets, preferred, targets, handleOpen])
 
 	// Don't show on non-Electron
 	if (!isElectron) return null

@@ -446,7 +446,8 @@ export const projectListAtom = (() => {
 				pa.name !== pb.name ||
 				pa.directory !== pb.directory ||
 				pa.agentCount !== pb.agentCount ||
-				pa.lastActiveAt !== pb.lastActiveAt
+				pa.lastActiveAt !== pb.lastActiveAt ||
+				pa.hasActiveAgent !== pb.hasActiveAgent
 			) {
 				return false
 			}
@@ -460,24 +461,16 @@ export const projectListAtom = (() => {
 		const slugMap = get(projectSlugMapAtom)
 		const { sandboxToParent } = get(sandboxMappingsAtom)
 
-		// Build a lookup of project directory → project.time.updated from the API.
-		// This is the authoritative sort key — it reflects the last time any API call
-		// touched the project (effectively "last accessed"). Session-derived timestamps
-		// are unreliable because sessions are loaded lazily on project expand.
-		const projectTimeMap = new Map<string, number>()
-		if (discovery.loaded) {
-			for (const project of discovery.projects) {
-				if (!project.worktree) continue
-				projectTimeMap.set(project.worktree, project.time.updated ?? project.time.created ?? 0)
-			}
-		}
-
 		const projects = new Map<string, SidebarProject>()
 
 		// Live sessions grouped by directory.
 		// Sessions in sandbox directories are counted under their parent project.
 		// Sub-agent sessions are excluded from sidebar counts (they arrive via SSE
 		// but are only relevant for message/part lookups and direct navigation).
+		//
+		// Sort key uses session timestamps only (not project.time.updated from the
+		// API, which is volatile and changes from server metadata operations, causing
+		// random reordering even when no user activity occurs).
 		for (const id of sessionIds) {
 			const entry = get(sessionFamily(id))
 			if (!entry) continue
@@ -491,16 +484,17 @@ export const projectListAtom = (() => {
 			const name = projectNameFromDir(dir)
 			const sessionTime = entry.session.time.updated ?? entry.session.time.created ?? 0
 
-			// Use the greater of project.time.updated and the latest session timestamp.
-			// project.time.updated reflects "last accessed by server" which can be stale;
-			// session timestamps reflect actual user activity within Palot.
-			const projectTime = projectTimeMap.get(dir) ?? 0
-			const bestTime = Math.max(projectTime, sessionTime)
+			// A session is "active" if it is busy or has pending permissions/questions
+			const isActive =
+				entry.status.type === "busy" ||
+				entry.permissions.length > 0 ||
+				entry.questions.length > 0
 
 			const existing = projects.get(dir)
 			if (existing) {
 				existing.agentCount += 1
-				if (bestTime > existing.lastActiveAt) existing.lastActiveAt = bestTime
+				if (sessionTime > existing.lastActiveAt) existing.lastActiveAt = sessionTime
+				if (isActive) existing.hasActiveAgent = true
 			} else {
 				projects.set(dir, {
 					id: projectInfo?.id ?? dir,
@@ -508,7 +502,8 @@ export const projectListAtom = (() => {
 					name,
 					directory: dir,
 					agentCount: 1,
-					lastActiveAt: bestTime,
+					lastActiveAt: sessionTime,
+					hasActiveAgent: isActive,
 				})
 			}
 		}
@@ -521,6 +516,8 @@ export const projectListAtom = (() => {
 		// Discovered projects from API that have no live sessions yet
 		// (show them in sidebar so users can start new agents).
 		// Skip sandbox projects -- they belong under their parent.
+		// These get lastActiveAt = 0 so they sort alphabetically at the bottom
+		// (tier 3), avoiding instability from volatile project.time.updated.
 		if (discovery.loaded) {
 			for (const project of discovery.projects) {
 				if (!project.worktree) continue
@@ -529,7 +526,6 @@ export const projectListAtom = (() => {
 
 				const projectInfo = slugMap.get(project.worktree)
 				const name = project.name ?? projectNameFromDir(project.worktree)
-				const lastActiveAt = project.time.updated ?? project.time.created ?? 0
 
 				projects.set(project.worktree, {
 					id: projectInfo?.id ?? project.id,
@@ -537,12 +533,32 @@ export const projectListAtom = (() => {
 					name,
 					directory: project.worktree,
 					agentCount: 0,
-					lastActiveAt,
+					lastActiveAt: 0,
+					hasActiveAgent: false,
 				})
 			}
 		}
 
-		const next = Array.from(projects.values()).sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+		// Tiered sort for stable, predictable ordering:
+		//   Tier 1: Projects with active agents (running/waiting) — by recency
+		//   Tier 2: Projects with idle sessions — by recency
+		//   Tier 3: Projects with no sessions — alphabetical by name
+		// Within each tier, ties are broken by name for deterministic ordering.
+		const next = Array.from(projects.values()).sort((a, b) => {
+			const tierA = a.hasActiveAgent ? 0 : a.agentCount > 0 ? 1 : 2
+			const tierB = b.hasActiveAgent ? 0 : b.agentCount > 0 ? 1 : 2
+			if (tierA !== tierB) return tierA - tierB
+
+			// Within tiers 0 and 1: sort by most recent activity, then name
+			if (tierA < 2) {
+				const timeDiff = b.lastActiveAt - a.lastActiveAt
+				if (timeDiff !== 0) return timeDiff
+			}
+
+			// Tier 2 (no sessions) or tie-breaker: alphabetical by name
+			return a.name.localeCompare(b.name)
+		})
+
 		if (projectListEqual(prevProjects, next)) return prevProjects
 		prevProjects = next
 		return next

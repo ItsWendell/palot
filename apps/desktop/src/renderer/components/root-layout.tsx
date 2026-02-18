@@ -6,7 +6,7 @@
 import { TooltipProvider } from "@palot/ui/components/tooltip"
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue, useSetAtom } from "jotai"
-import { useCallback, useEffect } from "react"
+import { useCallback, useEffect, useMemo } from "react"
 import { Toaster } from "sonner"
 import { discoveryPhaseAtom } from "../atoms/discovery"
 import { onboardingStateAtom } from "../atoms/onboarding"
@@ -15,7 +15,7 @@ import { useChromeTier } from "../hooks/use-chrome-tier"
 import { useDiscovery } from "../hooks/use-discovery"
 import { useMockMode } from "../hooks/use-mock-mode"
 import { useNotifications } from "../hooks/use-notifications"
-import { useServerConnection } from "../hooks/use-server"
+import { useAgentActions, useServerConnection } from "../hooks/use-server"
 import { useServerSettingsSync } from "../hooks/use-servers"
 import { useSystemAccentColor } from "../hooks/use-system-accent-color"
 import { useThemeEffect } from "../hooks/use-theme"
@@ -47,6 +47,7 @@ export function RootLayout() {
 	useSystemAccentColor()
 
 	const agents = useAgents()
+	const { forkSession } = useAgentActions()
 	const commandPaletteOpen = useCommandPaletteOpen()
 	const setCommandPaletteOpen = useSetCommandPaletteOpen()
 	const navigate = useNavigate()
@@ -55,6 +56,22 @@ export function RootLayout() {
 
 	// Native OS notifications: badge sync, click-to-navigate, auto-dismiss
 	useNotifications(navigate, sessionId)
+
+	// ========== Command palette: fork session ==========
+
+	const activeAgent = useMemo(
+		() => (sessionId ? (agents.find((a) => a.id === sessionId) ?? null) : null),
+		[agents, sessionId],
+	)
+
+	const handleForkSession = useCallback(async () => {
+		if (!activeAgent) return
+		const forked = await forkSession(activeAgent.directory, activeAgent.id)
+		navigate({
+			to: "/project/$projectSlug/session/$sessionId",
+			params: { projectSlug: activeAgent.projectSlug, sessionId: forked.id },
+		})
+	}, [activeAgent, forkSession, navigate])
 
 	// Sub-agents are filtered at the API level (roots: true), so all agents here are root agents
 	const visibleAgents = agents
@@ -176,6 +193,7 @@ export function RootLayout() {
 							open={commandPaletteOpen}
 							onOpenChange={setCommandPaletteOpen}
 							agents={agents}
+							onForkSession={activeAgent ? handleForkSession : undefined}
 						/>
 						<Toaster position="bottom-right" />
 					</div>

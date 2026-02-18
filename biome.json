@@ -1,24 +1,29 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.3.15/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.4.2/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
 	"files": {
 		"includes": [
-			"**/*.ts",
-			"**/*.tsx",
-			"**/*.js",
-			"**/*.json",
-			"!node_modules",
-			"!dist",
-			"!**/dist",
-			"!out",
-			"!**/out",
-			"!release",
-			"!**/release",
-			"!.turbo",
-			"!src-tauri/target",
-			"!*.min.js",
-			"!.worktrees",
-			"!.local"
-		]
+			"apps/*/src/**/*.ts",
+			"apps/*/src/**/*.tsx",
+			"apps/*/src/**/*.js",
+			"packages/*/src/**/*.ts",
+			"packages/*/src/**/*.tsx",
+			"packages/*/src/**/*.js",
+			"scripts/**/*.ts",
+			"scripts/**/*.js",
+			"*.json",
+			"**/package.json",
+			"**/tsconfig.json",
+			"apps/*/drizzle.config.ts",
+			"apps/*/electron.vite.config.ts",
+			"apps/*/biome.json",
+			"packages/*/biome.json"
+		],
+		"ignoreUnknown": true
 	},
 	"formatter": {
 		"enabled": true,

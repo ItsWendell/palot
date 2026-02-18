@@ -1,0 +1,7 @@
+# Force hoisted installs so native modules (e.g. @libsql, electron-liquid-glass)
+# land in a flat node_modules layout that electron-builder can discover and bundle.
+# Bun's isolated linker (default for workspaces since v1.3.2) stores packages
+# in node_modules/.bun/ with symlinks, which electron-builder cannot follow
+# into the asar archive.
+[install]
+linker = "hoisted"

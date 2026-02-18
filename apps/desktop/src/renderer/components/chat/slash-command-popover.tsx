@@ -14,6 +14,7 @@ import fuzzysort from "fuzzysort"
 import {
 	BookOpenIcon,
 	CodeIcon,
+	GitForkIcon,
 	type LucideIcon,
 	MessageSquareIcon,
 	Redo2Icon,
@@ -50,7 +51,7 @@ interface SlashCommand {
 	/** Keyboard shortcut */
 	shortcut?: string
 	/** Special action instead of regular command execution */
-	action?: "skills"
+	action?: "skills" | "fork"
 }
 
 export interface SlashCommandPopoverHandle {
@@ -71,6 +72,8 @@ interface SlashCommandPopoverProps {
 	onSelect: (command: string) => void
 	/** Called when the /skills entry is selected — opens the skills picker */
 	onSkillsOpen?: () => void
+	/** Called when the /fork entry is selected — forks the session */
+	onFork?: () => Promise<void>
 	/** Called when Escape is pressed */
 	onClose: () => void
 }
@@ -99,6 +102,13 @@ const CLIENT_COMMANDS: SlashCommand[] = [
 		description: "Summarize conversation to save context",
 		icon: SparklesIcon,
 		source: "client",
+	},
+	{
+		name: "fork",
+		description: "Fork conversation from this point",
+		icon: GitForkIcon,
+		source: "client",
+		action: "fork",
 	},
 	{
 		name: "skills",
@@ -130,7 +140,7 @@ function getCommandIcon(name: string): LucideIcon {
 
 export const SlashCommandPopover = memo(
 	forwardRef<SlashCommandPopoverHandle, SlashCommandPopoverProps>(function SlashCommandPopover(
-		{ query, open, directory, onSelect, onSkillsOpen, onClose },
+		{ query, open, directory, onSelect, onSkillsOpen, onFork, onClose },
 		ref,
 	) {
 		const [activeIndex, setActiveIndex] = useState(0)
@@ -188,11 +198,14 @@ export const SlashCommandPopover = memo(
 				if (cmd.action === "skills") {
 					onClose()
 					onSkillsOpen?.()
+				} else if (cmd.action === "fork") {
+					onClose()
+					onFork?.()
 				} else {
 					onSelect(`/${cmd.name}`)
 				}
 			},
-			[onSelect, onClose, onSkillsOpen],
+			[onSelect, onClose, onSkillsOpen, onFork],
 		)
 
 		// --- Keyboard handler ---

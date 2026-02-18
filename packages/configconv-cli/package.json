@@ -14,7 +14,7 @@
 	},
 	"dependencies": {
 		"@palot/configconv": "workspace:*",
-		"citty": "^0.1.6",
+		"citty": "^0.2.1",
 		"consola": "^3.4.2"
 	},
 	"devDependencies": {

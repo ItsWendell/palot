@@ -3,11 +3,17 @@
  *
  * Lists all worktrees across connected projects using the OpenCode worktree API.
  * Provides remove and reset actions for each worktree.
+ *
+ * To avoid excessive API requests, the fetch is gated on a stable "directory key"
+ * derived from the project list. The full `projectListAtom` includes volatile
+ * fields (`agentCount`, `lastActiveAt`) that change on every session update;
+ * without the key the effect would refire on each update, sending N requests
+ * per project per re-render.
  */
 
 import { Button } from "@palot/ui/components/button"
 import { GitForkIcon, Loader2Icon, RotateCcwIcon, TrashIcon } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useProjectList } from "../../hooks/use-agents"
 import { listWorktrees, removeWorktree, resetWorktree } from "../../services/worktree-service"
 import { SettingsSection } from "./settings-section"
@@ -45,11 +51,24 @@ export function WorktreeSettings() {
 	const [removing, setRemoving] = useState<string | null>(null)
 	const [resetting, setResetting] = useState<string | null>(null)
 
+	// Keep a ref so the stable callback always reads the latest project list
+	// without needing it as a dependency.
+	const projectsRef = useRef(projects)
+	projectsRef.current = projects
+
+	// Stable key: only changes when the set of project directories changes,
+	// NOT when volatile fields like agentCount or lastActiveAt update.
+	const projectDirKey = useMemo(
+		() => projects.map((p) => p.directory).sort().join("\0"),
+		[projects],
+	)
+
 	const loadWorktrees = useCallback(async () => {
+		const currentProjects = projectsRef.current
 		setLoading(true)
 		try {
 			const results = await Promise.allSettled(
-				projects.map(async (project) => {
+				currentProjects.map(async (project) => {
 					const dirs = await listWorktrees(project.directory)
 					return dirs.map(
 						(dir): WorktreeEntry => ({
@@ -73,11 +92,12 @@ export function WorktreeSettings() {
 		} finally {
 			setLoading(false)
 		}
-	}, [projects])
+	}, [])
 
+	// Only refetch when the set of project directories actually changes (or on mount).
 	useEffect(() => {
 		loadWorktrees()
-	}, [loadWorktrees])
+	}, [projectDirKey, loadWorktrees])
 
 	const handleRemove = useCallback(
 		async (wt: WorktreeEntry) => {
@@ -109,6 +129,10 @@ export function WorktreeSettings() {
 		[loadWorktrees],
 	)
 
+	// Use the project count from the stable ref for the summary display,
+	// so we don't need the volatile `projects` array in the render path.
+	const projectCount = projects.length
+
 	return (
 		<div className="space-y-8">
 			<div>
@@ -124,10 +148,10 @@ export function WorktreeSettings() {
 					<GitForkIcon className="size-4 text-muted-foreground" aria-hidden="true" />
 					<span className="text-sm">
 						{worktrees.length} worktree{worktrees.length !== 1 ? "s" : ""}
-						{projects.length > 0 && (
+						{projectCount > 0 && (
 							<span className="text-muted-foreground">
 								{" "}
-								across {projects.length} project{projects.length !== 1 ? "s" : ""}
+								across {projectCount} project{projectCount !== 1 ? "s" : ""}
 							</span>
 						)}
 					</span>

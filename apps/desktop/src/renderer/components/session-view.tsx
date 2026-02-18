@@ -9,6 +9,7 @@
  * AutomationRunDetail (for automation sessions) use this component.
  */
 
+import { useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue, useSetAtom } from "jotai"
 import { useCallback, useEffect } from "react"
 import { agentFamily, sessionNameFamily } from "../atoms/derived/agents"
@@ -30,8 +31,17 @@ interface SessionViewProps {
 }
 
 export function SessionView({ sessionId }: SessionViewProps) {
-	const { abort, sendPrompt, renameSession, respondToPermission, replyToQuestion, rejectQuestion } =
-		useAgentActions()
+	const navigate = useNavigate()
+	const { projectSlug } = useParams({ strict: false }) as { projectSlug?: string }
+	const {
+		abort,
+		sendPrompt,
+		renameSession,
+		respondToPermission,
+		replyToQuestion,
+		rejectQuestion,
+		forkSession,
+	} = useAgentActions()
 
 	// Track which session is currently viewed so background sessions can
 	// skip expensive metric recomputation.
@@ -116,6 +126,24 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[renameSession],
 	)
 
+	const handleForkFromTurn = useCallback(
+		async (messageId?: string) => {
+			if (!selectedAgent) return
+			try {
+				const forked = await forkSession(selectedAgent.directory, selectedAgent.sessionId, messageId)
+				if (forked && projectSlug) {
+					navigate({
+						to: "/project/$projectSlug/session/$sessionId",
+						params: { projectSlug, sessionId: forked.id },
+					})
+				}
+			} catch (err) {
+				log.error("Fork failed", { sessionId: selectedAgent.sessionId, messageId }, err)
+			}
+		},
+		[selectedAgent, forkSession, projectSlug, navigate],
+	)
+
 	const handleSendMessage = useCallback(
 		async (
 			agent: Agent,
@@ -192,6 +220,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			onRedo={redo}
 			isReverted={isReverted}
 			onRevertToMessage={revertToMessage}
+			onForkFromTurn={handleForkFromTurn}
 		/>
 	)
 }
