@@ -57,7 +57,7 @@ import {
 	resolveEffectiveModel,
 	useModelState,
 } from "../../hooks/use-opencode-data"
-import type { ChatTurn } from "../../hooks/use-session-chat"
+import type { ChatMessageEntry, ChatTurn } from "../../hooks/use-session-chat"
 import { createLogger } from "../../lib/logger"
 import { computeTurnWorkTimeSplit, formatWorkDuration } from "../../lib/session-metrics"
 import type { Agent, FileAttachment, FilePart, QuestionAnswer, TextPart } from "../../lib/types"
@@ -417,6 +417,26 @@ interface ChatViewProps {
 	reviewPanelOpen?: boolean
 }
 
+function formatSessionError(error: { name: string; data: Record<string, unknown> }): string {
+	if ("message" in error.data && error.data.message) {
+		return String(error.data.message)
+	}
+	return `${error.name}: ${JSON.stringify(error.data)}`
+}
+
+function getAssistantErrorText(message: ChatMessageEntry): string | undefined {
+	if (message.info.role !== "assistant" || !message.info.error) return undefined
+
+	const error = message.info.error
+	const errorData = error.data
+	if ("message" in errorData && errorData.message) {
+		return typeof errorData.message === "string" ? errorData.message : String(errorData.message)
+	}
+
+	const dataStr = Object.keys(errorData).length > 0 ? JSON.stringify(errorData) : undefined
+	return dataStr ? `${error.name}: ${dataStr}` : error.name
+}
+
 /**
  * Main chat view component.
  * Renders the full conversation as turns with auto-scroll,
@@ -462,6 +482,24 @@ export function ChatView({
 	const sessionEntry = useAtomValue(sessionFamily(agent.sessionId))
 	const sessionError = sessionEntry?.error
 	const setupPhase = sessionEntry?.setupPhase
+	const sessionErrorText = useMemo(
+		() => (sessionError ? formatSessionError(sessionError) : undefined),
+		[sessionError],
+	)
+
+	const hasDuplicateTurnError = useMemo(() => {
+		if (!sessionErrorText) return false
+		for (const turn of turns) {
+			for (const message of turn.assistantMessages) {
+				if (getAssistantErrorText(message) === sessionErrorText) {
+					return true
+				}
+			}
+		}
+		return false
+	}, [turns, sessionErrorText])
+
+	const showSessionError = !!sessionErrorText && !hasDuplicateTurnError
 
 	// Stable callbacks for question/permission handlers — agent is stable
 	// per render, but wrapping in useCallback avoids creating new inline
@@ -623,11 +661,9 @@ export function ChatView({
 							)}
 
 							{/* Session-level error from session.error events */}
-							{sessionError && (
+							{showSessionError && sessionErrorText && (
 								<div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
-									{"message" in sessionError.data && sessionError.data.message
-										? String(sessionError.data.message)
-										: `${sessionError.name}: ${JSON.stringify(sessionError.data)}`}
+									{sessionErrorText}
 								</div>
 							)}
 						</div>
