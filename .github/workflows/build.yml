@@ -107,7 +107,7 @@ jobs:
           path: apps/desktop/out
 
       - name: Package Electron app
-        run: bunx electron-builder ${{ matrix.eb-flags }} --config electron-builder.yml --publish never
+        run: bun run electron-builder ${{ matrix.eb-flags }} --config electron-builder.yml --publish never
         working-directory: apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
