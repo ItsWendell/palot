@@ -5,6 +5,12 @@ import type { Event, OpenCodeProject, QuestionAnswer, Session, SessionStatus } f
 
 export type { OpencodeClient }
 
+/**
+ * Callable fetch signature. We avoid `typeof fetch` because Node 24 adds
+ * static properties (e.g. `preconnect`) that wrapper functions don't carry.
+ */
+type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
 const log = createLogger("opencode")
 
 const isElectron = typeof window !== "undefined" && "palot" in window
@@ -31,11 +37,7 @@ function isTransientNetworkError(err: unknown): boolean {
  * Only retries on TypeError (network-level failures). HTTP error responses
  * (4xx, 5xx) are NOT retried — they indicate server-side issues.
  */
-function createRetryFetch(
-	baseFetch: typeof fetch = fetch,
-	maxRetries = 2,
-	baseDelayMs = 150,
-): typeof fetch {
+function createRetryFetch(baseFetch: FetchFn = fetch, maxRetries = 2, baseDelayMs = 150): FetchFn {
 	return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		let lastError: unknown
 		for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -92,7 +94,7 @@ function isSseRequest(request: Request): boolean {
  * When `authHeader` is provided, it is injected into every request (including
  * SSE) to support HTTP Basic Auth for remote OpenCode servers.
  */
-function createIpcFetch(authHeader?: string): typeof fetch {
+function createIpcFetch(authHeader?: string): FetchFn {
 	return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		// Normalize input to a Request object (the SDK always passes a Request,
 		// but handle URL/string too for robustness)
@@ -205,7 +207,7 @@ export function connectToServer(url: string, options?: ConnectOptions): Opencode
 		directory,
 		// Wrap with retry logic to handle transient Chromium network errors
 		// (e.g. ERR_ALPN_NEGOTIATION_FAILED on localhost connections)
-		fetch: createRetryFetch(baseFetch),
+		fetch: createRetryFetch(baseFetch) as typeof fetch,
 	})
 }
 
@@ -213,7 +215,7 @@ export function connectToServer(url: string, options?: ConnectOptions): Opencode
  * Creates a browser fetch wrapper that optionally injects an auth header.
  * Used in non-Electron (browser dev) mode.
  */
-function createBrowserFetch(authHeader?: string): typeof fetch {
+function createBrowserFetch(authHeader?: string): FetchFn {
 	if (!authHeader) return fetch
 	return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		const request = input instanceof Request ? input : new Request(input, init)
