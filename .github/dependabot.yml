@@ -38,6 +38,11 @@ updates:
           - "typescript"
           - "vite"
           - "@vitejs/*"
+    ignore:
+      # @types/node must match the Node.js version bundled in Electron.
+      # Electron 40 ships Node 24, so block major bumps beyond v24.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
 
