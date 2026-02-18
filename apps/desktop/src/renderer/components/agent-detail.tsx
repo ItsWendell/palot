@@ -559,17 +559,26 @@ function OpenInButton({ directory }: { directory: string }) {
 	const [opening, setOpening] = useState<string | null>(null)
 
 	const loadTargets = useCallback(async () => {
-		if (loaded) return
+		if (loaded) {
+			return { targets, preferredTarget: preferred }
+		}
 		try {
 			const result = await fetchOpenInTargets()
-			setTargets(result.targets.filter((t) => t.available))
+			const availableTargets = result.targets.filter((t) => t.available)
+			setTargets(availableTargets)
 			setPreferred(result.preferredTarget)
 			setLoaded(true)
+			return { targets: availableTargets, preferredTarget: result.preferredTarget }
 		} catch {
 			// Silently fail — button will show no targets
 			setLoaded(true)
+			return { targets: [], preferredTarget: null }
 		}
-	}, [loaded])
+	}, [loaded, preferred, targets])
+
+	useEffect(() => {
+		void loadTargets()
+	}, [loadTargets])
 
 	const handleOpen = useCallback(
 		async (targetId: string) => {
@@ -587,19 +596,16 @@ function OpenInButton({ directory }: { directory: string }) {
 	)
 
 	const handlePrimaryClick = useCallback(async () => {
-		if (!loaded) {
-			await loadTargets()
-		}
-		// After loading, use preferred or first available
-		const result = await fetchOpenInTargets()
-		const available = result.targets.filter((t) => t.available)
-		const target = result.preferredTarget
-			? available.find((t) => t.id === result.preferredTarget)
-			: available[0]
+		const { targets: availableTargets, preferredTarget } = loaded
+			? { targets, preferredTarget: preferred }
+			: await loadTargets()
+		const target = preferredTarget
+			? availableTargets.find((t) => t.id === preferredTarget)
+			: availableTargets[0]
 		if (target) {
-			handleOpen(target.id)
+			await handleOpen(target.id)
 		}
-	}, [loaded, loadTargets, handleOpen])
+	}, [loaded, loadTargets, preferred, targets, handleOpen])
 
 	// Don't show on non-Electron
 	if (!isElectron) return null
