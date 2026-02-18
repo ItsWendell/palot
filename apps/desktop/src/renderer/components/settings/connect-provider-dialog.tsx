@@ -298,6 +298,9 @@ export function ConnectProviderDialog({
 		[onClose],
 	)
 
+	// Stable callback: avoids re-creating on each render, which would retrigger
+	// the OAuthView startOAuth useEffect (onSuccess is in its dep array).
+	// setState is intentionally omitted -- it comes from useState and is always stable.
 	const handleOAuthSuccess = useCallback(() => {
 		setState({ status: "success" })
 	}, [])
@@ -816,15 +819,28 @@ function OAuthView({
 	const [code, setCode] = useState("")
 	const [copiedDeviceCode, setCopiedDeviceCode] = useState(false)
 	const autoCopiedDeviceCodeRef = useRef<string | null>(null)
+	const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
 	const deviceCode = extractDeviceCode(authInstructions)
+
+	// Clear any pending copy-feedback timer on unmount
+	useEffect(() => {
+		return () => {
+			if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current)
+		}
+	}, [])
+
+	const scheduleCopyFeedbackReset = useCallback(() => {
+		if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current)
+		setCopiedDeviceCode(true)
+		copyFeedbackTimerRef.current = setTimeout(() => setCopiedDeviceCode(false), 2000)
+	}, [])
 
 	const handleCopyDeviceCode = useCallback(async () => {
 		if (!deviceCode) return
 		await navigator.clipboard.writeText(deviceCode)
-		setCopiedDeviceCode(true)
-		setTimeout(() => setCopiedDeviceCode(false), 2000)
-	}, [deviceCode])
+		scheduleCopyFeedbackReset()
+	}, [deviceCode, scheduleCopyFeedbackReset])
 
 	useEffect(() => {
 		if (!authUrl) return
@@ -837,13 +853,12 @@ function OAuthView({
 		void navigator.clipboard
 			.writeText(valueToCopy)
 			.then(() => {
-				setCopiedDeviceCode(true)
-				setTimeout(() => setCopiedDeviceCode(false), 2000)
+				scheduleCopyFeedbackReset()
 			})
 			.catch(() => {
 				autoCopiedDeviceCodeRef.current = null
 			})
-	}, [authUrl, deviceCode])
+	}, [authUrl, deviceCode, scheduleCopyFeedbackReset])
 
 	// Start OAuth flow on mount
 	useEffect(() => {

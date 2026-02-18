@@ -558,23 +558,30 @@ function OpenInButton({ directory }: { directory: string }) {
 	const [loaded, setLoaded] = useState(false)
 	const [opening, setOpening] = useState<string | null>(null)
 
+	// Ref caches the latest loaded result so handlePrimaryClick can read it
+	// without adding targets/preferred to callback deps (avoids re-render cycles).
+	const cachedRef = useRef<{ targets: OpenInTarget[]; preferredTarget: string | null }>({
+		targets: [],
+		preferredTarget: null,
+	})
+
 	const loadTargets = useCallback(async () => {
-		if (loaded) {
-			return { targets, preferredTarget: preferred }
-		}
+		if (loaded) return cachedRef.current
 		try {
 			const result = await fetchOpenInTargets()
 			const availableTargets = result.targets.filter((t) => t.available)
 			setTargets(availableTargets)
 			setPreferred(result.preferredTarget)
 			setLoaded(true)
-			return { targets: availableTargets, preferredTarget: result.preferredTarget }
+			cachedRef.current = { targets: availableTargets, preferredTarget: result.preferredTarget }
+			return cachedRef.current
 		} catch {
-			// Silently fail — button will show no targets
+			// Silently fail -- button will show no targets
 			setLoaded(true)
-			return { targets: [], preferredTarget: null }
+			cachedRef.current = { targets: [], preferredTarget: null }
+			return cachedRef.current
 		}
-	}, [loaded, preferred, targets])
+	}, [loaded])
 
 	useEffect(() => {
 		void loadTargets()
@@ -586,6 +593,7 @@ function OpenInButton({ directory }: { directory: string }) {
 			try {
 				await openInTarget(directory, targetId, true)
 				setPreferred(targetId)
+				cachedRef.current = { ...cachedRef.current, preferredTarget: targetId }
 			} catch {
 				// Silently fail
 			} finally {
@@ -596,16 +604,14 @@ function OpenInButton({ directory }: { directory: string }) {
 	)
 
 	const handlePrimaryClick = useCallback(async () => {
-		const { targets: availableTargets, preferredTarget } = loaded
-			? { targets, preferredTarget: preferred }
-			: await loadTargets()
+		const { targets: availableTargets, preferredTarget } = await loadTargets()
 		const target = preferredTarget
 			? availableTargets.find((t) => t.id === preferredTarget)
 			: availableTargets[0]
 		if (target) {
 			await handleOpen(target.id)
 		}
-	}, [loaded, loadTargets, preferred, targets, handleOpen])
+	}, [loadTargets, handleOpen])
 
 	// Don't show on non-Electron
 	if (!isElectron) return null
