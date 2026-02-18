@@ -109,6 +109,8 @@ interface AgentDetailProps {
 	isReverted?: boolean
 	/** Revert to a specific message (for per-turn undo) */
 	onRevertToMessage?: (messageId: string) => Promise<void>
+	/** Fork from a turn boundary (messageId of the next turn's user message, or undefined for full fork) */
+	onForkFromTurn?: (messageId?: string) => Promise<void>
 }
 
 export function AgentDetail({
@@ -137,6 +139,7 @@ export function AgentDetail({
 	onRedo,
 	isReverted,
 	onRevertToMessage,
+	onForkFromTurn,
 }: AgentDetailProps) {
 	const navigate = useNavigate()
 	const { projectSlug } = useParams({ strict: false }) as { projectSlug?: string }
@@ -294,8 +297,9 @@ export function AgentDetail({
 					onUndo={onUndo}
 					onRedo={onRedo}
 					isReverted={isReverted}
-					onRevertToMessage={onRevertToMessage}
-					reviewPanelOpen={reviewPanelOpen}
+				onRevertToMessage={onRevertToMessage}
+				onForkFromTurn={onForkFromTurn}
+				reviewPanelOpen={reviewPanelOpen}
 				/>
 			</div>
 		</>

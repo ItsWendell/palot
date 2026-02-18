@@ -109,7 +109,7 @@ export function SidebarLayout() {
 	const agents = useAgents()
 	const projects = useProjectList()
 	const setCommandPaletteOpen = useSetCommandPaletteOpen()
-	const { renameSession, deleteSession } = useAgentActions()
+	const { renameSession, deleteSession, forkSession } = useAgentActions()
 	const serverConnected = useAtomValue(serverConnectedAtom)
 
 	// Sub-agents are filtered at the API level (roots: true)
@@ -127,6 +127,19 @@ export function SidebarLayout() {
 			await deleteSession(agent.directory, agent.sessionId)
 		},
 		[deleteSession],
+	)
+
+	const handleForkSession = useCallback(
+		async (agent: Agent) => {
+			const forked = await forkSession(agent.directory, agent.sessionId)
+			if (forked) {
+				navigate({
+					to: "/project/$projectSlug/session/$sessionId",
+					params: { projectSlug: agent.projectSlug, sessionId: forked.id },
+				})
+			}
+		},
+		[forkSession, navigate],
 	)
 
 	const handleOpenCommandPalette = useCallback(() => {
@@ -181,15 +194,16 @@ export function SidebarLayout() {
 						}}
 					/>
 					{slotContent ?? (
-						<AppSidebarContent
-							agents={visibleAgents}
-							projects={projects}
-							onOpenCommandPalette={handleOpenCommandPalette}
-							onAddProject={handleAddProject}
-							onRenameSession={handleRenameSession}
-							onDeleteSession={handleDeleteSession}
-							serverConnected={serverConnected}
-						/>
+					<AppSidebarContent
+						agents={visibleAgents}
+						projects={projects}
+						onOpenCommandPalette={handleOpenCommandPalette}
+						onAddProject={handleAddProject}
+						onRenameSession={handleRenameSession}
+						onDeleteSession={handleDeleteSession}
+						onForkSession={handleForkSession}
+						serverConnected={serverConnected}
+					/>
 					)}
 					{/* Footer: false = hide, ReactNode = render it, null = let default handle it.
 					 * When default sidebar is active, AppSidebarContent renders its own footer. */}

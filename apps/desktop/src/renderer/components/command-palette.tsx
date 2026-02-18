@@ -19,6 +19,7 @@ import {
 	EyeOffIcon,
 	FilmIcon,
 	GitBranchIcon,
+	GitForkIcon,
 	MonitorIcon,
 	MoonIcon,
 	PaletteIcon,
@@ -54,11 +55,13 @@ interface CommandPaletteProps {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	agents: Agent[]
+	/** Fork the currently active session (full fork) */
+	onForkSession?: () => Promise<void>
 }
 
 const log = createLogger("command-palette")
 
-export function CommandPalette({ open, onOpenChange, agents }: CommandPaletteProps) {
+export function CommandPalette({ open, onOpenChange, agents, onForkSession }: CommandPaletteProps) {
 	const navigate = useNavigate()
 	const params = useParams({ strict: false })
 	const sessionId = (params as Record<string, string | undefined>).sessionId ?? null
@@ -182,18 +185,29 @@ export function CommandPalette({ open, onOpenChange, agents }: CommandPalettePro
 							<CommandShortcut>&#8679;&#8984;Z</CommandShortcut>
 						</CommandItem>
 					)}
-					{hasSession && (
-						<CommandItem
-							onSelect={() => {
-								// Compact is handled via slash command — just close and navigate
-								onOpenChange(false)
-							}}
-							disabled
-						>
-							<SparklesIcon />
-							<span>Compact Conversation</span>
-						</CommandItem>
-					)}
+				{hasSession && (
+					<CommandItem
+						onSelect={() => {
+							// Compact is handled via slash command — just close and navigate
+							onOpenChange(false)
+						}}
+						disabled
+					>
+						<SparklesIcon />
+						<span>Compact Conversation</span>
+					</CommandItem>
+				)}
+				{hasSession && onForkSession && (
+					<CommandItem
+						onSelect={async () => {
+							onOpenChange(false)
+							await onForkSession()
+						}}
+					>
+						<GitForkIcon />
+						<span>Fork Session</span>
+					</CommandItem>
+				)}
 					<CommandItem onSelect={handleReloadConfig} disabled={reloading}>
 						<RefreshCwIcon />
 						<span>{reloading ? "Reloading..." : "Reload Config"}</span>

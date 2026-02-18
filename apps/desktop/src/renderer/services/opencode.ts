@@ -473,6 +473,23 @@ export async function findFiles(client: OpencodeClient, query: string): Promise<
 }
 
 /**
+ * Fork a session, optionally at a specific message boundary.
+ * Copies all messages up to (but not including) the given messageId.
+ * If no messageId is provided, copies the entire conversation.
+ */
+export async function forkSession(
+	client: OpencodeClient,
+	sessionId: string,
+	messageId?: string,
+): Promise<Session> {
+	const result = await client.session.fork({
+		sessionID: sessionId,
+		messageID: messageId,
+	})
+	return result.data as Session
+}
+
+/**
  * Summarize/compact a session conversation.
  */
 export async function summarizeSession(client: OpencodeClient, sessionId: string): Promise<void> {
