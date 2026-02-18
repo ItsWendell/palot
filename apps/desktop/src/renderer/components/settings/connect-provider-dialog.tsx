@@ -30,7 +30,7 @@ import {
 	TerminalIcon,
 	ZapIcon,
 } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type {
 	CatalogProvider,
 	SdkProviderAuthMethod as ProviderAuthMethod,
@@ -298,6 +298,10 @@ export function ConnectProviderDialog({
 		[onClose],
 	)
 
+	const handleOAuthSuccess = useCallback(() => {
+		setState({ status: "success" })
+	}, [])
+
 	if (!provider) return null
 
 	return (
@@ -398,7 +402,7 @@ export function ConnectProviderDialog({
 						methodIndex={step.method}
 						state={state}
 						setState={setState}
-						onSuccess={() => setState({ status: "success" })}
+						onSuccess={handleOAuthSuccess}
 						onBack={
 							authMethods && authMethods.length > 1
 								? () => {
@@ -808,7 +812,38 @@ function OAuthView({
 }) {
 	const [authUrl, setAuthUrl] = useState<string | null>(null)
 	const [oauthMethod, setOauthMethod] = useState<"auto" | "code" | null>(null)
+	const [authInstructions, setAuthInstructions] = useState<string | null>(null)
 	const [code, setCode] = useState("")
+	const [copiedDeviceCode, setCopiedDeviceCode] = useState(false)
+	const autoCopiedDeviceCodeRef = useRef<string | null>(null)
+
+	const deviceCode = extractDeviceCode(authInstructions)
+
+	const handleCopyDeviceCode = useCallback(async () => {
+		if (!deviceCode) return
+		await navigator.clipboard.writeText(deviceCode)
+		setCopiedDeviceCode(true)
+		setTimeout(() => setCopiedDeviceCode(false), 2000)
+	}, [deviceCode])
+
+	useEffect(() => {
+		if (!authUrl) return
+
+		const valueToCopy = deviceCode ?? authUrl
+		if (!valueToCopy) return
+		if (autoCopiedDeviceCodeRef.current === valueToCopy) return
+		autoCopiedDeviceCodeRef.current = valueToCopy
+
+		void navigator.clipboard
+			.writeText(valueToCopy)
+			.then(() => {
+				setCopiedDeviceCode(true)
+				setTimeout(() => setCopiedDeviceCode(false), 2000)
+			})
+			.catch(() => {
+				autoCopiedDeviceCodeRef.current = null
+			})
+	}, [authUrl, deviceCode])
 
 	// Start OAuth flow on mount
 	useEffect(() => {
@@ -839,6 +874,7 @@ function OAuthView({
 
 				setAuthUrl(data.url)
 				setOauthMethod(data.method)
+				setAuthInstructions(data.instructions)
 
 				// Open the URL in the browser (Electron intercepts via setWindowOpenHandler)
 				window.open(data.url, "_blank")
@@ -897,6 +933,11 @@ function OAuthView({
 					<p className="text-sm text-muted-foreground">
 						A browser window has been opened. Sign in and paste the authorization code below.
 					</p>
+					{authInstructions && (
+						<p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+							{authInstructions}
+						</p>
+					)}
 					<div className="space-y-2">
 						<Label htmlFor="oauth-code">Authorization Code</Label>
 						<Input
@@ -979,6 +1020,34 @@ function OAuthView({
 				<>
 					<div className="flex flex-col items-center gap-3 py-6">
 						<Spinner className="size-5" />
+						{deviceCode && (
+							<div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3">
+								<p className="text-xs text-muted-foreground">Enter this code in the browser</p>
+								<div className="flex items-center gap-2">
+									<code className="rounded-md bg-background px-2.5 py-1.5 font-mono text-sm font-semibold tracking-[0.2em]">
+										{deviceCode}
+									</code>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="h-8 w-8 p-0"
+										onClick={handleCopyDeviceCode}
+									>
+										{copiedDeviceCode ? (
+											<CheckIcon className="size-3.5 text-emerald-500" aria-hidden="true" />
+										) : (
+											<ClipboardIcon className="size-3.5" aria-hidden="true" />
+										)}
+									</Button>
+								</div>
+							</div>
+						)}
+						{authInstructions && !deviceCode && (
+							<p className="max-w-full rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+								{authInstructions}
+							</p>
+						)}
 						<p className="text-sm text-muted-foreground text-center">
 							Waiting for authentication to complete in your browser...
 						</p>
@@ -1155,4 +1224,11 @@ async function pollForCompletion(
 	if (!isCancelled()) {
 		setState({ status: "error", message: "Authentication timed out. Please try again." })
 	}
+}
+
+function extractDeviceCode(instructions: string | null): string | null {
+	if (!instructions) return null
+	const match = instructions.match(/\b[A-Z0-9]{4}(?:[- ][A-Z0-9]{4})+\b/i)
+	if (!match) return null
+	return match[0].toUpperCase().replace(/\s+/g, "-")
 }
