@@ -1039,7 +1039,12 @@ function OAuthView({
 						<Spinner className="size-5" />
 						{deviceCode && (
 							<div className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
-								<p className="text-xs text-muted-foreground">Enter code: {deviceCode}</p>
+								<p className="text-xs text-muted-foreground">
+									Enter code:{" "}
+									<code className="rounded-sm bg-background px-1.5 py-0.5 font-mono font-semibold text-foreground">
+										{deviceCode}
+									</code>
+								</p>
 								<Button
 									type="button"
 									variant="ghost"
@@ -1242,7 +1247,7 @@ async function pollForCompletion(
 function extractDeviceCode(instructions: string | null): string | null {
 	if (!instructions) return null
 	const contextualMatch = instructions.match(
-		/(?:enter|code|verification)[^A-Z0-9]*([A-Z0-9]{3,8}(?:[- ][A-Z0-9]{3,8})+)/i,
+		/(?:enter|code|verification)[^A-Z0-9]{0,20}([A-Z0-9]{3,8}(?:[- ][A-Z0-9]{3,8})+)/i,
 	)
 	if (contextualMatch?.[1]) {
 		return contextualMatch[1].toUpperCase().replace(/\s+/g, "-")
