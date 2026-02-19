@@ -1,5 +1,25 @@
 # @palot/desktop
 
+## 0.9.0
+
+### Minor Changes
+
+- [`4eb3d38`](https://github.com/ItsWendell/palot/commit/4eb3d387c8581ed230fb47f6432505afbfa66f41) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Redesign default chat display mode with grouped tool summaries
+
+  The default view now renders an interleaved stream of text, reasoning blocks, and grouped tool summaries instead of a pill-bar summary. Consecutive tool calls of the same category (explore, edit, run, etc.) are collapsed into a single inline chip (e.g. "Read 3 files", "Edited foo.tsx, bar.tsx") with a left-border color accent. Each group chip is clickable and expands inline to show the full tool cards for that group. Groups with only a single tool skip the summary row and render the full tool card directly. A "Show N steps" toggle reveals all tool cards at once in verbose style.
+
+### Patch Changes
+
+- [`6cfc6ce`](https://github.com/ItsWendell/palot/commit/6cfc6ceba6401d51580935baf2d15605550839fc) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Fix automation permission ruleset and rrule ESM interop
+
+  Automations were sometimes blocked because the default permission preset didn't include an explicit allow-all rule before the interactive-prompt denies. The ruleset now starts with `{ permission: "*", pattern: "*", action: "allow" }` so all tool calls pass through unless explicitly denied.
+
+  Also fixes a CJS/ESM interop issue with the `rrule` package in the main process and renderer: `RRule` is now resolved via `rruleModule.RRule ?? rruleModule.default?.RRule` so it works in both build contexts.
+
+- [`998f8cb`](https://github.com/ItsWendell/palot/commit/998f8cbf857568dc93c284c8a72a5c56ba3457f4) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Remove compact display mode
+
+  The "Compact" display mode has been removed. The display mode type is now `"default" | "verbose"` only. Existing users with `compact` persisted in localStorage are automatically migrated to `default` on next launch.
+
 ## 0.8.0
 
 ### Minor Changes
