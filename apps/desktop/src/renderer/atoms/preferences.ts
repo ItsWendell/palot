@@ -7,7 +7,7 @@ import type { ColorScheme } from "../lib/themes"
 // Types
 // ============================================================
 
-export type DisplayMode = "default" | "compact" | "verbose"
+export type DisplayMode = "default" | "verbose"
 
 export interface PersistedModelRef {
 	providerID: string
@@ -45,6 +45,15 @@ function migrateFromZustandPersist(): void {
 
 // Run migration at module load time (before any atoms are read)
 migrateFromZustandPersist()
+
+// Migrate removed "compact" display mode to "default"
+function migrateDisplayMode(): void {
+	const raw = localStorage.getItem("palot:displayMode")
+	if (raw === '"compact"') {
+		localStorage.setItem("palot:displayMode", '"default"')
+	}
+}
+migrateDisplayMode()
 
 // ============================================================
 // Persisted atoms — each is independent with its own localStorage key

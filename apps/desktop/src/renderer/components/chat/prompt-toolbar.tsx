@@ -26,7 +26,6 @@ import {
 	GitBranchIcon,
 	ListIcon,
 	MaximizeIcon,
-	MinimizeIcon,
 	MonitorIcon,
 	SparklesIcon,
 } from "lucide-react"
@@ -557,15 +556,13 @@ interface StatusBarProps {
 	compaction?: CompactionConfig
 }
 
-const DISPLAY_MODE_CYCLE: DisplayMode[] = ["default", "compact", "verbose"]
+const DISPLAY_MODE_CYCLE: DisplayMode[] = ["default", "verbose"]
 const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
 	default: "Default",
-	compact: "Compact",
 	verbose: "Verbose",
 }
 const DISPLAY_MODE_ICONS: Record<DisplayMode, typeof ListIcon> = {
 	default: ListIcon,
-	compact: MinimizeIcon,
 	verbose: MaximizeIcon,
 }
 

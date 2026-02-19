@@ -158,14 +158,13 @@ function DisplayModeRow() {
 			<Select
 				value={displayMode}
 				onValueChange={(v) => setDisplayMode(v as DisplayMode)}
-				items={{ default: "Default", compact: "Compact", verbose: "Verbose" }}
+				items={{ default: "Default", verbose: "Verbose" }}
 			>
 				<SelectTrigger className="min-w-[140px]">
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
 					<SelectItem value="default">Default</SelectItem>
-					<SelectItem value="compact">Compact</SelectItem>
 					<SelectItem value="verbose">Verbose</SelectItem>
 				</SelectContent>
 			</Select>
