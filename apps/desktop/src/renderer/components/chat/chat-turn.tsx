@@ -459,14 +459,17 @@ function isGroupError(tools: ToolPart[]): boolean {
 	return tools.some((t) => t.state.status === "error")
 }
 
-/** Renders a single tool group summary as an inline element */
+/** Renders a single tool group summary as a collapsible disclosure row */
 const ToolGroupSummary = memo(function ToolGroupSummary({
 	category,
 	tools,
+	isActiveTurn,
 }: {
 	category: ToolCategory
 	tools: ToolPart[]
+	isActiveTurn: boolean
 }) {
+	const [expanded, setExpanded] = useState(false)
 	const description = describeToolGroup(category, tools)
 	const running = isGroupRunning(tools)
 	const hasError = isGroupError(tools)
@@ -474,23 +477,37 @@ const ToolGroupSummary = memo(function ToolGroupSummary({
 	const borderColor = TOOL_CATEGORY_COLORS[category]
 
 	return (
-		<div
-			className={`flex items-center gap-2 rounded-md border-l-2 bg-muted/20 px-3 py-1.5 text-[12px] ${borderColor}`}
-		>
-			<GroupIcon
-				className={`size-3.5 shrink-0 ${
-					hasError
-						? "text-red-400"
-						: running
-							? "animate-pulse text-muted-foreground"
-							: "text-muted-foreground/50"
-				}`}
-			/>
-			<span className={hasError ? "text-red-400" : "text-muted-foreground/70"}>
-				{description}
-			</span>
-			{running && (
-				<Loader2Icon className="ml-auto size-3 animate-spin text-muted-foreground/30" />
+		<div className="space-y-2">
+			<button
+				type="button"
+				onClick={() => setExpanded((v) => !v)}
+				className={`flex w-full items-center gap-2 rounded-md border-l-2 bg-muted/20 px-3 py-1.5 text-[12px] transition-colors hover:bg-muted/40 ${borderColor}`}
+			>
+				<GroupIcon
+					className={`size-3.5 shrink-0 ${
+						hasError
+							? "text-red-400"
+							: running
+								? "animate-pulse text-muted-foreground"
+								: "text-muted-foreground/50"
+					}`}
+				/>
+				<span className={`flex-1 text-left ${hasError ? "text-red-400" : "text-muted-foreground/70"}`}>
+					{description}
+				</span>
+				{running && !expanded && (
+					<Loader2Icon className="size-3 animate-spin text-muted-foreground/30" />
+				)}
+				<ChevronDownIcon
+					className={`size-3 shrink-0 text-muted-foreground/30 transition-transform ${expanded ? "" : "-rotate-90"}`}
+				/>
+			</button>
+			{expanded && (
+				<div className="space-y-2 pl-3">
+					{tools.map((tool) => (
+						<ChatToolCall key={tool.id} part={tool} isActiveTurn={isActiveTurn} />
+					))}
+				</div>
 			)}
 		</div>
 	)
@@ -738,13 +755,14 @@ export const ChatTurnComponent = memo(
 											</Reasoning>
 										)
 									}
-									// tool-group
-									return (
-										<ToolGroupSummary
-											key={`group-${idx}-${item.tools[0].id}`}
-											category={item.category}
-											tools={item.tools}
-										/>
+								// tool-group
+								return (
+									<ToolGroupSummary
+										key={`group-${idx}-${item.tools[0].id}`}
+										category={item.category}
+										tools={item.tools}
+										isActiveTurn={isActiveTurn}
+									/>
 									)
 								})}
 								{/* Live status while the agent is still working */}
