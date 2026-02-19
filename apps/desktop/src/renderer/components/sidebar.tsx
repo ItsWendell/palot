@@ -742,13 +742,19 @@ const SessionItem = memo(function SessionItem({
 			<ContextMenuTrigger render={btn} />
 			<ContextMenuContent>
 				{onRename && (
-					<ContextMenuItem onClick={handleRenameMenuClick}>
+					<ContextMenuItem
+						onClick={handleRenameMenuClick}
+						className="hover:bg-secondary hover:text-secondary-foreground data-[highlighted]:bg-secondary data-[highlighted]:text-secondary-foreground"
+					>
 						<PencilIcon className="size-4" />
 						Rename
 					</ContextMenuItem>
 				)}
 				{onFork && (
-					<ContextMenuItem onClick={handleForkMenuClick}>
+					<ContextMenuItem
+						onClick={handleForkMenuClick}
+						className="hover:bg-secondary hover:text-secondary-foreground data-[highlighted]:bg-secondary data-[highlighted]:text-secondary-foreground"
+					>
 						<GitForkIcon className="size-4" />
 						Fork
 					</ContextMenuItem>
