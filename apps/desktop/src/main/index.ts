@@ -300,13 +300,21 @@ if (!gotLock) {
 		})
 	})
 
+	// On macOS, closing all windows keeps the app alive (dock/tray). The server
+	// and background services (automations, mDNS) continue running so agents
+	// can finish their work. On other platforms, closing all windows quits.
 	app.on("window-all-closed", () => {
-		// Clean up the managed opencode server, automations, tray, mDNS, and auto-updater
+		if (process.platform !== "darwin") app.quit()
+	})
+
+	// All cleanup happens here, triggered by Cmd+Q, Dock > Quit, app.quit(),
+	// or system-initiated quit (macOS logout SIGTERM). This is the single
+	// source of truth for teardown -- stopServer() etc. are idempotent.
+	app.on("before-quit", () => {
 		destroyTray()
 		shutdownAutomations()
 		stopMdnsScanner()
 		stopServer()
 		stopAutoUpdater()
-		if (process.platform !== "darwin") app.quit()
 	})
 }
