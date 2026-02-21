@@ -8,6 +8,7 @@ import {
 import {
 	Reasoning,
 	ReasoningContent,
+	ReasoningText,
 	ReasoningTrigger,
 } from "@palot/ui/components/ai-elements/reasoning"
 import { Shimmer } from "@palot/ui/components/ai-elements/shimmer"
@@ -382,12 +383,15 @@ function areTurnsEqual(a: ChatTurnType, b: ChatTurnType): boolean {
  */
 type StreamItem =
 	| { kind: "text"; id: string; text: string }
-	| { kind: "reasoning"; part: ReasoningPart }
+	| { kind: "reasoning-process"; items: (RenderablePart & { kind: "reasoning" | "tool" })[] }
 	| { kind: "tool-group"; category: ToolCategory; tools: ToolPart[] }
 
 function groupPartsForStream(ordered: RenderablePart[]): StreamItem[] {
 	const items: StreamItem[] = []
 	let currentGroup: { category: ToolCategory; tools: ToolPart[] } | null = null
+	let currentProcessGroup: (RenderablePart & { kind: "reasoning" | "tool" })[] = []
+
+	const hasReasoning = ordered.some((p) => p.kind === "reasoning")
 
 	const flushGroup = () => {
 		if (currentGroup) {
@@ -396,8 +400,17 @@ function groupPartsForStream(ordered: RenderablePart[]): StreamItem[] {
 		}
 	}
 
+	const flushProcessGroup = () => {
+		if (currentProcessGroup.length > 0) {
+			items.push({ kind: "reasoning-process", items: currentProcessGroup })
+			currentProcessGroup = []
+		}
+	}
+
 	for (const part of ordered) {
-		if (part.kind === "tool") {
+		if (hasReasoning && (part.kind === "reasoning" || part.kind === "tool")) {
+			currentProcessGroup.push(part)
+		} else if (!hasReasoning && part.kind === "tool") {
 			const category = getToolCategory(part.part.tool)
 			if (currentGroup && currentGroup.category === category) {
 				currentGroup.tools.push(part.part)
@@ -407,14 +420,14 @@ function groupPartsForStream(ordered: RenderablePart[]): StreamItem[] {
 			}
 		} else {
 			flushGroup()
+			flushProcessGroup()
 			if (part.kind === "text") {
 				items.push({ kind: "text", id: part.id, text: part.text })
-			} else {
-				items.push({ kind: "reasoning", part: part.part })
 			}
 		}
 	}
 	flushGroup()
+	flushProcessGroup()
 	return items
 }
 
@@ -790,49 +803,71 @@ export const ChatTurnComponent = memo(
 											</div>
 										)
 									}
-									if (item.kind === "reasoning") {
-										const reasoningText = item.part.text
-											.replace("[REDACTED]", "")
-											.trim()
-										if (!reasoningText) return null
-										const durationSec = item.part.time.end
-											? Math.ceil(
-													(item.part.time.end - item.part.time.start) / 1000,
-												)
+									if (item.kind === "reasoning-process") {
+										const firstReasoning = item.items.find((p) => p.kind === "reasoning") as { kind: "reasoning", part: ReasoningPart } | undefined
+										const lastItem = item.items[item.items.length - 1]
+										
+										const durationSec = firstReasoning?.part.time.end
+											? Math.ceil((firstReasoning.part.time.end - firstReasoning.part.time.start) / 1000)
 											: undefined
-										const isReasoningStreaming = !item.part.time.end && working
+										const isStreaming = working && (!lastItem || (lastItem.kind === "reasoning" && !lastItem.part.time.end))
+
 										return (
 											<Reasoning
-												key={item.part.id}
-												isStreaming={isReasoningStreaming}
+												key={`process-${idx}`}
+												isStreaming={isStreaming}
 												duration={durationSec}
-												defaultOpen={isReasoningStreaming ? undefined : false}
+												defaultOpen={isStreaming ? undefined : false}
 											>
 												<ReasoningTrigger />
-												<ReasoningContent animated={isReasoningStreaming}>
-													{reasoningText}
+												<ReasoningContent animated={isStreaming}>
+													<div className="flex flex-col gap-4">
+														{item.items.map((processItem, i) => {
+															if (processItem.kind === "reasoning") {
+																const text = processItem.part.text.replace("[REDACTED]", "").trim()
+																if (!text) return null
+																return (
+																	<div key={processItem.part.id} className="whitespace-pre-wrap">
+																		<ReasoningText animated={isStreaming && i === item.items.length - 1}>
+																			{text}
+																		</ReasoningText>
+																	</div>
+																)
+															}
+															if (processItem.kind === "tool") {
+																return (
+																	<div key={processItem.part.id} className="border-l-2 border-muted/30 pl-3">
+																		<ChatToolCall part={processItem.part} isActiveTurn={isActiveTurn} />
+																	</div>
+																)
+															}
+															return null
+														})}
+													</div>
 												</ReasoningContent>
 											</Reasoning>
 										)
 									}
-								// tool-group: single tool renders directly, multiple get a collapsible summary
-								if (item.tools.length === 1) {
-									return (
-										<ChatToolCall
-											key={item.tools[0].id}
-											part={item.tools[0]}
-											isActiveTurn={isActiveTurn}
-										/>
-									)
-								}
-								return (
-									<ToolGroupSummary
-										key={`group-${idx}-${item.tools[0].id}`}
-										category={item.category}
-										tools={item.tools}
-										isActiveTurn={isActiveTurn}
-									/>
-								)
+									if (item.kind === "tool-group") {
+										if (item.tools.length === 1) {
+											return (
+												<ChatToolCall
+													key={item.tools[0].id}
+													part={item.tools[0]}
+													isActiveTurn={isActiveTurn}
+												/>
+											)
+										}
+										return (
+											<ToolGroupSummary
+												key={`group-${idx}-${item.tools[0].id}`}
+												category={item.category}
+												tools={item.tools}
+												isActiveTurn={isActiveTurn}
+											/>
+										)
+									}
+									return null
 								})}
 								{/* Live status while the agent is still working */}
 								{working && hasSteps && (
@@ -914,7 +949,9 @@ export const ChatTurnComponent = memo(
 											>
 												<ReasoningTrigger />
 												<ReasoningContent animated={isReasoningStreaming}>
-													{reasoningText}
+													<ReasoningText animated={isReasoningStreaming}>
+														{reasoningText}
+													</ReasoningText>
 												</ReasoningContent>
 											</Reasoning>
 										)
