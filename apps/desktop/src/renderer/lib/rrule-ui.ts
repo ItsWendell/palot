@@ -14,6 +14,12 @@
 
 export type ScheduleMode = "daily" | "interval"
 
+/**
+ * Unit for interval-mode schedules.
+ * "minutes" = FREQ=MINUTELY, "hours" = FREQ=HOURLY.
+ */
+export type IntervalUnit = "minutes" | "hours"
+
 export type Weekday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU"
 
 export const ALL_WEEKDAYS: Weekday[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
@@ -32,8 +38,10 @@ export interface ScheduleConfig {
 	mode: ScheduleMode
 	/** Time in HH:MM format (24h), used for daily mode */
 	time: string
-	/** Hours between runs, used for interval mode */
-	intervalHours: number
+	/** Number of interval units between runs, used for interval mode */
+	intervalValue: number
+	/** Unit for the interval (minutes or hours), used for interval mode */
+	intervalUnit: IntervalUnit
 	/** Active weekdays */
 	weekdays: Weekday[]
 }
@@ -55,6 +63,7 @@ export const SCHEDULE_PRESETS: SchedulePreset[] = [
 		label: "Weekdays at 9:00 AM",
 		rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYDAY=MO,TU,WE,TH,FR",
 	},
+	{ key: "every-30m", label: "Every 30 minutes", rrule: "FREQ=MINUTELY;INTERVAL=30" },
 	{ key: "every-1h", label: "Every hour", rrule: "FREQ=HOURLY;INTERVAL=1" },
 	{ key: "every-6h", label: "Every 6 hours", rrule: "FREQ=HOURLY;INTERVAL=6" },
 	{ key: "every-12h", label: "Every 12 hours", rrule: "FREQ=HOURLY;INTERVAL=12" },
@@ -115,7 +124,8 @@ export function getPresetLabel(rrule: string): string {
 export const DEFAULT_SCHEDULE_CONFIG: ScheduleConfig = {
 	mode: "daily",
 	time: "09:00",
-	intervalHours: 24,
+	intervalValue: 24,
+	intervalUnit: "hours",
 	weekdays: [...ALL_WEEKDAYS],
 }
 
@@ -132,9 +142,13 @@ export function scheduleConfigToRrule(config: ScheduleConfig): string {
 		parts.push(`BYHOUR=${hours}`)
 		parts.push(`BYMINUTE=${minutes}`)
 	} else {
-		// Interval mode: FREQ=HOURLY with INTERVAL
-		parts.push("FREQ=HOURLY")
-		parts.push(`INTERVAL=${config.intervalHours}`)
+		// Interval mode: FREQ=MINUTELY or FREQ=HOURLY
+		if (config.intervalUnit === "minutes") {
+			parts.push("FREQ=MINUTELY")
+		} else {
+			parts.push("FREQ=HOURLY")
+		}
+		parts.push(`INTERVAL=${config.intervalValue}`)
 	}
 
 	// Add weekday filter if not all days are selected
@@ -157,11 +171,22 @@ export function rruleToScheduleConfig(rrule: string): ScheduleConfig {
 		? (params.BYDAY.split(",").map((d) => d.trim().toUpperCase()) as Weekday[])
 		: [...ALL_WEEKDAYS]
 
+	if (freq === "MINUTELY") {
+		return {
+			mode: "interval",
+			time: "09:00",
+			intervalValue: params.INTERVAL ? Number.parseInt(params.INTERVAL, 10) : 30,
+			intervalUnit: "minutes",
+			weekdays: byDay,
+		}
+	}
+
 	if (freq === "HOURLY") {
 		return {
 			mode: "interval",
 			time: "09:00",
-			intervalHours: params.INTERVAL ? Number.parseInt(params.INTERVAL, 10) : 1,
+			intervalValue: params.INTERVAL ? Number.parseInt(params.INTERVAL, 10) : 1,
+			intervalUnit: "hours",
 			weekdays: byDay,
 		}
 	}
@@ -174,7 +199,8 @@ export function rruleToScheduleConfig(rrule: string): ScheduleConfig {
 	return {
 		mode: "daily",
 		time,
-		intervalHours: 24,
+		intervalValue: 24,
+		intervalUnit: "hours",
 		weekdays: byDay,
 	}
 }
@@ -185,9 +211,16 @@ export function rruleToScheduleConfig(rrule: string): ScheduleConfig {
 
 export function formatScheduleSummary(config: ScheduleConfig): string {
 	if (config.mode === "interval") {
-		const h = config.intervalHours
+		const v = config.intervalValue
 		const weekdayDesc = formatWeekdayDesc(config.weekdays)
-		const base = h === 1 ? "Every hour" : `Every ${h} hours`
+
+		let base: string
+		if (config.intervalUnit === "minutes") {
+			base = v === 1 ? "Every minute" : `Every ${v} minutes`
+		} else {
+			base = v === 1 ? "Every hour" : `Every ${v} hours`
+		}
+
 		return weekdayDesc ? `${base}, ${weekdayDesc}` : base
 	}
 

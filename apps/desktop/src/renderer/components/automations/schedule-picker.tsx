@@ -31,6 +31,7 @@ import {
 	computeNextRuns,
 	formatNextRun,
 	formatScheduleSummary,
+	type IntervalUnit,
 	matchPreset,
 	rruleToScheduleConfig,
 	SCHEDULE_PRESETS,
@@ -107,8 +108,12 @@ export function SchedulePicker({ value, onChange }: SchedulePickerProps) {
 		[updateConfig],
 	)
 	const setTime = useCallback((time: string) => updateConfig({ time }), [updateConfig])
-	const setIntervalHours = useCallback(
-		(hours: number) => updateConfig({ intervalHours: Math.max(1, hours) }),
+	const setIntervalValue = useCallback(
+		(value: number) => updateConfig({ intervalValue: Math.max(1, value) }),
+		[updateConfig],
+	)
+	const setIntervalUnit = useCallback(
+		(unit: IntervalUnit) => updateConfig({ intervalUnit: unit }),
 		[updateConfig],
 	)
 	const toggleWeekday = useCallback(
@@ -160,7 +165,8 @@ export function SchedulePicker({ value, onChange }: SchedulePickerProps) {
 					config={config}
 					setMode={setMode}
 					setTime={setTime}
-					setIntervalHours={setIntervalHours}
+					setIntervalValue={setIntervalValue}
+					setIntervalUnit={setIntervalUnit}
 					toggleWeekday={toggleWeekday}
 				/>
 			)}
@@ -179,13 +185,15 @@ function CustomScheduleBuilder({
 	config,
 	setMode,
 	setTime,
-	setIntervalHours,
+	setIntervalValue,
+	setIntervalUnit,
 	toggleWeekday,
 }: {
 	config: ScheduleConfig
 	setMode: (mode: ScheduleConfig["mode"]) => void
 	setTime: (time: string) => void
-	setIntervalHours: (hours: number) => void
+	setIntervalValue: (value: number) => void
+	setIntervalUnit: (unit: IntervalUnit) => void
 	toggleWeekday: (day: Weekday) => void
 }) {
 	return (
@@ -225,7 +233,8 @@ function CustomScheduleBuilder({
 			) : (
 				<IntervalSentence
 					config={config}
-					setIntervalHours={setIntervalHours}
+					setIntervalValue={setIntervalValue}
+					setIntervalUnit={setIntervalUnit}
 					toggleWeekday={toggleWeekday}
 				/>
 			)}
@@ -259,15 +268,22 @@ function DailySentence({
 	)
 }
 
-// --- Interval: "Every [N] hours on [weekday pills]"
+// --- Interval: "Every [N] [minutes|hours] on [weekday pills]"
+
+const INTERVAL_UNIT_ITEMS: Record<string, string> = {
+	minutes: "minutes",
+	hours: "hours",
+}
 
 function IntervalSentence({
 	config,
-	setIntervalHours,
+	setIntervalValue,
+	setIntervalUnit,
 	toggleWeekday,
 }: {
 	config: ScheduleConfig
-	setIntervalHours: (hours: number) => void
+	setIntervalValue: (value: number) => void
+	setIntervalUnit: (unit: IntervalUnit) => void
 	toggleWeekday: (day: Weekday) => void
 }) {
 	return (
@@ -278,13 +294,23 @@ function IntervalSentence({
 					type="number"
 					min={1}
 					step={1}
-					value={config.intervalHours}
-					onChange={(e) => setIntervalHours(Number.parseInt(e.target.value, 10) || 1)}
+					value={config.intervalValue}
+					onChange={(e) => setIntervalValue(Number.parseInt(e.target.value, 10) || 1)}
 					className="h-7 w-16 text-xs"
 				/>
-				<span className="text-muted-foreground">
-					{config.intervalHours === 1 ? "hour" : "hours"}
-				</span>
+				<Select
+					value={config.intervalUnit}
+					onValueChange={(v) => v && setIntervalUnit(v as IntervalUnit)}
+					items={INTERVAL_UNIT_ITEMS}
+				>
+					<SelectTrigger className="h-7 w-28 text-xs">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent side="bottom" align="start" alignItemWithTrigger={false}>
+						<SelectItem value="minutes">minutes</SelectItem>
+						<SelectItem value="hours">hours</SelectItem>
+					</SelectContent>
+				</Select>
 			</div>
 			<div className="flex items-center gap-2 text-sm">
 				<span className="text-muted-foreground">on</span>
