@@ -197,25 +197,43 @@ export function AppSidebarContent({
 					</div>
 				)}
 
-				{/* Automations */}
-				{automationsEnabled && isLocalServer && (
-					<SidebarGroup>
-						<SidebarGroupContent>
-							<SidebarMenu>
-								<SidebarMenuItem>
-									<SidebarMenuButton
-										tooltip="Automations"
-										onClick={() => navigate({ to: "/automations" })}
-										className="text-muted-foreground"
-									>
-										<BotIcon className="size-4" />
-										<span>Automations</span>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
-							</SidebarMenu>
-						</SidebarGroupContent>
-					</SidebarGroup>
-				)}
+			{/* New Session */}
+			<SidebarGroup>
+				<SidebarGroupContent>
+					<SidebarMenu>
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								tooltip="New Session"
+								onClick={() => navigate({ to: "/" })}
+								className="text-muted-foreground"
+							>
+								<PlusIcon className="size-4" />
+								<span>New Session</span>
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+					</SidebarMenu>
+				</SidebarGroupContent>
+			</SidebarGroup>
+
+			{/* Automations */}
+			{automationsEnabled && isLocalServer && (
+				<SidebarGroup>
+					<SidebarGroupContent>
+						<SidebarMenu>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip="Automations"
+									onClick={() => navigate({ to: "/automations" })}
+									className="text-muted-foreground"
+								>
+									<BotIcon className="size-4" />
+									<span>Automations</span>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+						</SidebarMenu>
+					</SidebarGroupContent>
+				</SidebarGroup>
+			)}
 
 				{/* Active Now */}
 				{activeSessions.length > 0 && (
