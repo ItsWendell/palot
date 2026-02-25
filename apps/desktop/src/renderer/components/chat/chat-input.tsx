@@ -211,6 +211,7 @@ export function ChatInput({
 			if (text.trim().startsWith("/")) {
 				const handled = await handleSlashCommand(text)
 				if (handled) {
+					slashCommandRef.current?.setText("")
 					clearDraft()
 					setMentions([])
 					return
@@ -287,10 +288,12 @@ export function ChatInput({
 
 	const handleTextareaKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (slashOpen && slashPopoverRef.current?.handleKeyDown(e)) return
-			if (mentionOpen && mentionPopoverRef.current?.handleKeyDown(e)) return
+			// Always delegate to popovers first — they guard on their own `open` prop
+			// internally, avoiding stale-closure issues with slashOpen/mentionOpen.
+			if (slashPopoverRef.current?.handleKeyDown(e)) return
+			if (mentionPopoverRef.current?.handleKeyDown(e)) return
 		},
-		[slashOpen, mentionOpen],
+		[],
 	)
 
 	return (
@@ -317,8 +320,22 @@ export function ChatInput({
 					directory={agent.directory}
 					onSelect={(cmd) => {
 						setSlashOpen(false)
-						slashCommandRef.current?.setText(cmd)
-						setTimeout(() => handleSend(cmd), 0)
+						// Use the command string directly instead of setText + setTimeout
+						// round-trip, which races with React's async state batching.
+						if (cmd.startsWith("/")) {
+							handleSlashCommand(cmd).then((handled) => {
+								if (handled) {
+									slashCommandRef.current?.setText("")
+									clearDraft()
+									setMentions([])
+								} else {
+									// Not recognized — leave it in input for normal send
+									slashCommandRef.current?.setText(cmd)
+								}
+							})
+						} else {
+							slashCommandRef.current?.setText(cmd)
+						}
 					}}
 					onSkillsOpen={onSkillsOpen}
 					onClose={() => setSlashOpen(false)}
