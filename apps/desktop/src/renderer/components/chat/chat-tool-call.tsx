@@ -388,10 +388,22 @@ export function getToolDuration(part: ToolPart): string | undefined {
 
 /**
  * Bash tool: shows command with syntax highlighting + ANSI-colored terminal output.
+ *
+ * During `running` state the server streams incremental output via
+ * `state.metadata.output` (accumulated string, updated on every stdout/stderr
+ * chunk). We read that field so the terminal updates in real-time, matching the
+ * behaviour of the OpenCode TUI and web UI.
  */
 function BashContent({ part }: { part: ToolPart }) {
 	const command = part.state.input?.command as string | undefined
-	const output = part.state.status === "completed" ? part.state.output : undefined
+
+	// During "running", live output arrives in state.metadata.output.
+	// After completion it moves to state.output.
+	const streamingOutput =
+		part.state.status === "running"
+			? (part.state.metadata?.output as string | undefined)
+			: undefined
+	const output = part.state.status === "completed" ? part.state.output : streamingOutput
 	const error = part.state.status === "error" ? (part.state as { error: string }).error : undefined
 	const isStreaming = part.state.status === "running"
 
@@ -927,6 +939,19 @@ function areToolPartsEqual(a: ToolPart, b: ToolPart): boolean {
 	if (a === b) return true
 	if (a.id !== b.id) return false
 	if (a.state.status !== b.state.status) return false
+	// During "pending", the server streams partial tool-call arguments into
+	// state.raw. Compare raw length so the subtitle updates as arguments arrive.
+	if (a.state.status === "pending" && b.state.status === "pending") {
+		if (a.state.raw.length !== b.state.raw.length) return false
+	}
+	// During "running", the server streams incremental output via
+	// state.metadata.output. Compare the accumulated output length so
+	// React re-renders the terminal on every new chunk.
+	if (a.state.status === "running" && b.state.status === "running") {
+		const aMeta = a.state.metadata?.output as string | undefined
+		const bMeta = b.state.metadata?.output as string | undefined
+		if ((aMeta?.length ?? 0) !== (bMeta?.length ?? 0)) return false
+	}
 	// Compare output/error lengths for completed/error states
 	if (a.state.status === "completed" && b.state.status === "completed") {
 		if (a.state.output.length !== b.state.output.length) return false
