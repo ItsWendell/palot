@@ -6,6 +6,12 @@ import {
 	PromptInputTools,
 	usePromptInputController,
 } from "@palot/ui/components/ai-elements/prompt-input"
+import { type MentionOption, MentionPopover, type MentionPopoverHandle } from "./chat/mention-popover"
+import {
+	createAgentMention,
+	createFileMention,
+	insertMentionIntoText,
+} from "./chat/prompt-mentions"
 import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
 import { useNavigate, useParams } from "@tanstack/react-router"
@@ -107,6 +113,61 @@ function WorktreeToggle({
 	)
 }
 
+// ============================================================
+// Mention support helpers (mirrors the pattern in ChatInput)
+// ============================================================
+
+/**
+ * Exposes the PromptInputProvider's text controller to outside components
+ * via a ref — needed to insert mention text without going through React state.
+ */
+function MentionBridge({
+	controllerRef,
+}: {
+	controllerRef: React.RefObject<{ setText: (text: string) => void; getText: () => string } | null>
+}) {
+	const controller = usePromptInputController()
+	useEffect(() => {
+		if (controllerRef && "current" in controllerRef) {
+			;(controllerRef as React.MutableRefObject<typeof controllerRef.current>).current = {
+				setText: (text: string) => controller.textInput.setInput(text),
+				getText: () => controller.textInput.value,
+			}
+		}
+		return () => {
+			if (controllerRef && "current" in controllerRef) {
+				;(controllerRef as React.MutableRefObject<typeof controllerRef.current>).current = null
+			}
+		}
+	}, [controller, controllerRef])
+	return null
+}
+
+/**
+ * Detects `@` trigger patterns in the prompt textarea and notifies the parent
+ * so the MentionPopover can open/close and filter results.
+ */
+function MentionTrigger({
+	onMentionChange,
+}: {
+	onMentionChange: (open: boolean, query: string) => void
+}) {
+	const controller = usePromptInputController()
+	const inputText = controller.textInput.value
+	useEffect(() => {
+		const textarea = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+		const cursorPos = textarea?.selectionStart ?? inputText.length
+		const textBeforeCursor = inputText.slice(0, cursorPos)
+		const atMatch = textBeforeCursor.match(/@(\S*)$/)
+		if (atMatch) {
+			onMentionChange(true, atMatch[1])
+			return
+		}
+		onMentionChange(false, "")
+	}, [inputText, onMentionChange])
+	return null
+}
+
 const SUGGESTIONS = [
 	{
 		icon: CodeIcon,
@@ -174,6 +235,14 @@ export function NewChat() {
 	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
 	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
 
+	// Mention popover state
+	const [mentionOpen, setMentionOpen] = useState(false)
+	const [mentionQuery, setMentionQuery] = useState("")
+	const controllerRef = useRef<{ setText: (text: string) => void; getText: () => string } | null>(
+		null,
+	)
+	const mentionPopoverRef = useRef<MentionPopoverHandle>(null)
+
 	// Seed selectedModel, selectedVariant, and selectedAgent from the persisted
 	// per-project preferences on first mount / project switch.
 	// This puts the model at step 1 (user override) in resolveEffectiveModel, so it
@@ -237,6 +306,39 @@ export function NewChat() {
 			reloadVcs()
 		},
 		[reloadVcs],
+	)
+
+	// Insert a selected mention into the prompt textarea
+	const handleMentionSelect = useCallback((option: MentionOption) => {
+		setMentionOpen(false)
+		const ctrl = controllerRef.current
+		if (!ctrl) return
+		const currentText = ctrl.getText()
+		const textarea = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+		const cursorPos = textarea?.selectionStart ?? currentText.length
+		const mention =
+			option.type === "file" ? createFileMention(option.path) : createAgentMention(option.name)
+		const { text: newText, cursorPosition: newCursor } = insertMentionIntoText(
+			currentText,
+			cursorPos,
+			mention,
+		)
+		ctrl.setText(newText)
+		requestAnimationFrame(() => {
+			const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
+			if (ta) {
+				ta.focus()
+				ta.setSelectionRange(newCursor, newCursor)
+			}
+		})
+	}, [])
+
+	// Delegate keyboard events to the mention popover when it's open
+	const handleTextareaKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			if (mentionPopoverRef.current?.handleKeyDown(e)) return
+		},
+		[],
 	)
 
 	// Resolve active agent for model resolution
@@ -577,6 +679,23 @@ export function NewChat() {
 					{/* Input card */}
 					<PromptInputProvider key={NEW_CHAT_DRAFT_KEY} initialInput={draft}>
 						<DraftSync setDraft={setDraft} />
+						<MentionBridge controllerRef={controllerRef} />
+						<MentionTrigger
+							onMentionChange={(open, query) => {
+								setMentionOpen(open)
+								setMentionQuery(query)
+							}}
+						/>
+						<div className="relative">
+							<MentionPopover
+								ref={mentionPopoverRef}
+								query={mentionQuery}
+								open={mentionOpen}
+								directory={selectedDirectory || null}
+								agents={openCodeAgents ?? []}
+								onSelect={handleMentionSelect}
+								onClose={() => setMentionOpen(false)}
+							/>
 						<PromptInput
 							className="rounded-xl"
 							accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
@@ -599,6 +718,7 @@ export function NewChat() {
 								autoFocus
 								disabled={launching || !selectedDirectory || projects.length === 0}
 								className="min-h-[80px]"
+								onKeyDown={handleTextareaKeyDown}
 							/>
 
 							{/* Toolbar inside the card — agent + model + variant selectors */}
@@ -622,6 +742,7 @@ export function NewChat() {
 								</PromptInputFooter>
 							)}
 						</PromptInput>
+						</div>
 					</PromptInputProvider>
 
 					{/* Status bar — outside the card */}
