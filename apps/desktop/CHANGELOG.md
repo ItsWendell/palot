@@ -1,5 +1,62 @@
 # @palot/desktop
 
+## 0.10.0
+
+### Minor Changes
+
+- [`4af265c`](https://github.com/ItsWendell/palot/commit/4af265cad1b6538927a823d0f3d52c9537b17445) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Enable automations by default and add permissions info banner
+
+  Automations are now enabled by default for all users instead of requiring opt-in via the command palette. A dismissible info banner appears at the top of the Automations tab explaining that automations run unattended with broad permissions (all tools allowed, interactive prompts auto-denied) and pointing users to the read-only preset to restrict access. The Beta badge has also been removed from the Automations toolbar.
+
+- [`c3aa783`](https://github.com/ItsWendell/palot/commit/c3aa7832c2bff0352c167218c7f4d20da7129d6f) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Add review panel with diff viewer and inline diff comments
+
+  A new slide-in review panel lets you inspect all file changes produced by the current session without leaving the chat. The panel shows a full diff viewer powered by a background worker pool for fast rendering, alongside a running list of changes grouped by file.
+
+  Diff comments can be written directly from the review panel and are injected into the chat input — so you can ask the agent to revisit specific changes without manually copying file paths or line numbers. The panel slides in from the right and adapts the chat layout automatically so nothing is obscured.
+
+- [`c3aa783`](https://github.com/ItsWendell/palot/commit/c3aa7832c2bff0352c167218c7f4d20da7129d6f) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Lazy session loading, pagination, and project search
+
+  The sidebar now loads sessions lazily per project rather than fetching everything on startup. A "Load more" button in each project section pages through sessions in batches, dramatically reducing initial load time on large workspaces.
+
+  Project search lets you filter the sidebar by name in real time. Session metrics (token counts, cost, duration) have moved into a compact popover on the session header to reduce visual clutter. Tool call durations now use a client-side first-seen timestamp for accuracy instead of relying solely on server-reported times.
+
+### Patch Changes
+
+- [`c3aa783`](https://github.com/ItsWendell/palot/commit/c3aa7832c2bff0352c167218c7f4d20da7129d6f) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Automation improvements: agent/model selection, minute-level schedules, and reliability
+
+  Automation configurations now support selecting a specific agent, model, and model variant — giving you the same control over automated runs as you have over manual sessions.
+
+  The schedule interval picker now accepts minutes in addition to hours and days, enabling sub-hourly automation schedules. The scheduler itself has been made async and now tracks next-run times in memory to avoid stale database reads. The automation executor has also been hardened with improved error logging and retry behaviour.
+
+- [`c3aa783`](https://github.com/ItsWendell/palot/commit/c3aa7832c2bff0352c167218c7f4d20da7129d6f) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Chat UX improvements: elapsed time, @ mentions on new sessions, bash streaming, and more
+
+  - Running tool calls and sub-agent cards now show a live elapsed time counter (e.g. "12s", "1m 4s") that ticks every second, so you always know how long a tool has been active without waiting for it to finish
+  - @ file and agent mentions now work on the new session input screen — you no longer need to create a session first before tagging files
+  - A **New Session** button has been added to the sidebar navigation for quick access from anywhere in the app
+  - Bash tool cards stream live stdout/stderr output as it arrives during execution, matching the behaviour of the OpenCode TUI
+  - Tool calls nested inside reasoning blocks are now grouped inside the collapsible reasoning section rather than appearing loose in the chat
+
+- [`c3aa783`](https://github.com/ItsWendell/palot/commit/c3aa7832c2bff0352c167218c7f4d20da7129d6f) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Platform and infrastructure improvements
+
+  - **Linux/Wayland**: resolved rendering issues that caused visual glitches on Wayland compositors
+  - **Linux tray icon**: added a dedicated tray icon for Linux so the app integrates properly with system trays on GNOME, KDE, and compatible desktops
+  - **mDNS discovery**: a new settings page lets you configure mDNS-based server discovery for finding OpenCode instances on your local network automatically
+  - **Provider icons**: provider icons are now fetched at runtime from models.dev rather than being bundled, keeping them up to date as new providers are added
+  - **Server lockfile**: the app now writes a lockfile when it owns the OpenCode server process, preventing multiple instances from fighting over the same server on startup
+
+- [`c3aa783`](https://github.com/ItsWendell/palot/commit/c3aa7832c2bff0352c167218c7f4d20da7129d6f) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Bug fixes
+
+  - **Subagent sessions not found on VPS**: navigating to a subagent session that isn't in the local store (e.g. after a reconnect or when the initial batch load excluded it) now falls back to a direct server fetch instead of showing a dead "not found" screen
+  - **@ mention on new sessions**: fixed a silent failure where typing `@` on the new session screen showed nothing because the file search had no directory to query against
+  - **Slash command race condition**: fixed an issue where selecting a slash command from the popover sometimes sent stale text (e.g. `/un` instead of `/undo`) due to a `setText + setTimeout` race with React's async batching. Popover keyboard delegation also no longer drops the first keypress due to a stale closure on `slashOpen`/`mentionOpen`
+  - **OAuth provider loop**: fixed an infinite authorize loop and missing device code display for OAuth-based providers — thanks to [@YoruAkio](https://github.com/YoruAkio) for the fix!
+  - **Native module packaging**: switched to the hoisted linker to fix packaging failures for native Node modules on all platforms
+  - **Session and turn error deduplication**: error messages that appeared multiple times in the chat due to duplicate SSE events are now deduplicated
+  - **Worktree settings API calls**: fixed excessive API requests being fired on the worktree settings page when no worktree was active
+  - **Sidebar project sort order**: project order in the sidebar no longer jumps around between renders
+  - **Session title width**: prevented the session title in the app bar from stretching to full width on wide windows
+  - **Horizontal overflow**: resolved a layout issue causing content to overflow horizontally at narrow window widths
+
 ## 0.9.0
 
 ### Minor Changes
