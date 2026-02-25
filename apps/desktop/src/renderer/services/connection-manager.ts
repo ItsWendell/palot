@@ -22,6 +22,7 @@ import type { Event } from "../lib/types"
 import {
 	connectToServer,
 	disposeAllInstances,
+	getSession,
 	getSessionStatuses,
 	listProjects,
 	listSessions,
@@ -323,6 +324,23 @@ export function getProjectClient(directory: string): OpencodeClient | null {
 		projectClients.set(directory, client)
 	}
 	return client
+}
+
+/**
+ * Fetch a single session by ID using the global (non-directory-scoped) client.
+ *
+ * Used as a fallback when navigating directly to a session that is not yet in
+ * the Jotai store — for example, subagent sessions that arrived while the SSE
+ * stream was reconnecting, or sessions on a VPS where the initial batch load
+ * only fetches root sessions.
+ *
+ * Returns `null` if the session is not found, the server is unreachable, or
+ * no connection has been established.
+ */
+export async function fetchSessionById(sessionId: string): Promise<import("../lib/types").Session | null> {
+	const client = getBaseClient()
+	if (!client) return null
+	return getSession(client, sessionId)
 }
 
 /**

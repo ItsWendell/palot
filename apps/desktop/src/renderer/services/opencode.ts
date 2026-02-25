@@ -326,6 +326,19 @@ export async function deleteSession(client: OpencodeClient, sessionId: string): 
 }
 
 /**
+ * Fetch a single session by ID.
+ * Returns null if the session is not found or the request fails.
+ */
+export async function getSession(client: OpencodeClient, sessionId: string): Promise<Session | null> {
+	try {
+		const result = await client.session.get({ sessionID: sessionId })
+		return (result.data as Session) ?? null
+	} catch {
+		return null
+	}
+}
+
+/**
  * Get file diffs for a session.
  */
 export async function getSessionDiff(client: OpencodeClient, sessionId: string) {

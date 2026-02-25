@@ -11,8 +11,10 @@
 
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue, useSetAtom } from "jotai"
-import { useCallback, useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { agentFamily, sessionNameFamily } from "../atoms/derived/agents"
+import { upsertSessionAtom } from "../atoms/sessions"
+import { appStore } from "../atoms/store"
 import { viewedSessionIdAtom } from "../atoms/ui"
 import { useSessionRevert } from "../hooks/use-commands"
 import type { ModelRef } from "../hooks/use-opencode-data"
@@ -21,6 +23,7 @@ import { useAgentActions } from "../hooks/use-server"
 import { useSessionChat } from "../hooks/use-session-chat"
 import { createLogger } from "../lib/logger"
 import type { Agent, FileAttachment, QuestionAnswer } from "../lib/types"
+import { fetchSessionById } from "../services/connection-manager"
 import { AgentDetail } from "./agent-detail"
 
 const log = createLogger("session-view")
@@ -53,6 +56,55 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [sessionId, setViewedSessionId])
 
 	const selectedAgent = useAtomValue(agentFamily(sessionId))
+
+	// ── Fallback session fetch ──────────────────────────────────────────────
+	// Subagent sessions are excluded from the initial batch load (roots:true)
+	// and may also be missed if the SSE stream was reconnecting when the server
+	// emitted session.created. If the session isn't in the Jotai store yet,
+	// attempt a direct GET via the server's session.get endpoint so the user
+	// isn't shown a dead "not found" screen.
+	//
+	// `resolving` stays true until either: (a) the agent is already in the
+	// store (fast-path), (b) the fallback fetch succeeds and seeds the store,
+	// or (c) the fetch fails / returns null (genuine not-found).
+	const [resolving, setResolving] = useState(!selectedAgent)
+
+	useEffect(() => {
+		// Fast-path: session is already in the Jotai store.
+		if (selectedAgent) {
+			setResolving(false)
+			return
+		}
+
+		// The session isn't in the store — attempt a server-side fetch.
+		let cancelled = false
+		setResolving(true)
+
+		fetchSessionById(sessionId)
+			.then((session) => {
+				if (cancelled) return
+				if (session) {
+					// Seed into the Jotai store. agentFamily will derive an Agent from
+					// this entry, causing selectedAgent to become non-null on the next
+					// render, which in turn hits the fast-path above.
+					appStore.set(upsertSessionAtom, {
+						session,
+						directory: session.directory ?? "",
+					})
+				} else {
+					// Confirmed not found — stop resolving so "not found" renders.
+					setResolving(false)
+				}
+			})
+			.catch(() => {
+				if (cancelled) return
+				setResolving(false)
+			})
+
+		return () => {
+			cancelled = true
+		}
+	}, [sessionId]) // Only re-run when the session ID changes (not on every agent update)
 
 	// Resolve parent session name for breadcrumb navigation
 	const parentSessionName = useAtomValue(sessionNameFamily(selectedAgent?.parentId ?? ""))
@@ -188,7 +240,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[sendPrompt],
 	)
 
-	// Not found state
+	// Session not yet resolved — show spinner while the fallback fetch runs
+	if (!selectedAgent && resolving) {
+		return (
+			<div className="flex h-full items-center justify-center">
+				<div className="size-4 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/60" />
+			</div>
+		)
+	}
+
+	// Fallback fetch complete but session genuinely not found
 	if (!selectedAgent) {
 		return (
 			<div className="flex h-full items-center justify-center">
