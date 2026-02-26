@@ -49,7 +49,13 @@ import {
 import { getOpenInTargets, openInTarget, setPreferredTarget } from "./open-in-targets"
 import { ensureServer, getServerUrl, restartServer, stopServer } from "./opencode-manager"
 import { getOpaqueWindows, getSettings, onSettingsChanged, updateSettings } from "./settings-store"
-import { checkForUpdates, downloadUpdate, getUpdateState, installUpdate } from "./updater"
+import {
+	checkForUpdates,
+	downloadUpdate,
+	getUpdateState,
+	installUpdate,
+	openReleasePage,
+} from "./updater"
 
 const log = createLogger("ipc")
 
@@ -203,6 +209,8 @@ export function registerIpcHandlers(): void {
 	ipcMain.handle("updater:download", async () => await downloadUpdate())
 
 	ipcMain.handle("updater:install", async () => await installUpdate())
+
+	ipcMain.handle("updater:open-release-page", async () => await openReleasePage())
 
 	// --- Git operations ---
 

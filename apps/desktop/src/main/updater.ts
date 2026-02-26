@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron"
+import { app, BrowserWindow, shell } from "electron"
 import type { AppUpdater, UpdateInfo } from "electron-updater"
 
 /**
@@ -10,6 +10,11 @@ import type { AppUpdater, UpdateInfo } from "electron-updater"
  *
  * The electron-updater module is lazily imported to avoid loading ~500KB+
  * of code during startup (especially in dev where the updater is a no-op).
+ *
+ * On macOS, Squirrel.Mac requires the app to be code-signed for in-place
+ * updates. When the app is unsigned (CI builds with CSC_IDENTITY_AUTO_DISCOVERY=false),
+ * we detect this and fall back to opening the GitHub release page so the user
+ * can download the new version manually. Windows and Linux are unaffected.
  */
 
 let _autoUpdater: AppUpdater | null = null
@@ -24,6 +29,40 @@ async function getAutoUpdater(): Promise<AppUpdater> {
 	return _autoUpdater
 }
 
+// ============================================================
+// Signing detection
+// ============================================================
+
+/**
+ * Detect whether the running macOS .app bundle is properly code-signed
+ * (i.e. signed with a real Apple Developer ID, not ad-hoc or unsigned).
+ * Returns true on non-macOS platforms since signing isn't required there.
+ */
+function detectCanAutoInstall(): boolean {
+	if (process.platform !== "darwin") return true
+	if (!app.isPackaged) return true
+
+	try {
+		const { execSync } = require("node:child_process")
+		// codesign --verify exits 0 if valid signature, non-zero otherwise
+		execSync(`codesign --verify --deep --strict "${app.getPath("exe")}"`, {
+			encoding: "utf8",
+			stdio: "pipe",
+		})
+		return true
+	} catch {
+		// Unsigned or ad-hoc signed — Squirrel.Mac will reject the install
+		return false
+	}
+}
+
+/** Whether the current build supports automatic in-place updates. */
+let canAutoInstall = true
+
+// ============================================================
+// State
+// ============================================================
+
 /** Current update state, queryable by the renderer. */
 export interface UpdateState {
 	status: "idle" | "checking" | "available" | "downloading" | "ready" | "error"
@@ -36,9 +75,11 @@ export interface UpdateState {
 		total: number
 	}
 	error?: string
+	/** Whether the app can auto-install updates (false on unsigned macOS builds). */
+	canAutoInstall: boolean
 }
 
-let state: UpdateState = { status: "idle" }
+let state: UpdateState = { status: "idle", canAutoInstall: true }
 let checkInterval: ReturnType<typeof setInterval> | null = null
 
 function getMainWindow(): BrowserWindow | null {
@@ -50,12 +91,37 @@ function setState(next: Partial<UpdateState>): void {
 	getMainWindow()?.webContents.send("updater:state-changed", state)
 }
 
+// ============================================================
+// GitHub release URL
+// ============================================================
+
+const GITHUB_REPO_URL = "https://github.com/ItsWendell/palot"
+
+/** Build the GitHub release URL for a specific version tag. */
+function getReleaseUrl(version?: string): string {
+	if (version) {
+		return `${GITHUB_REPO_URL}/releases/tag/v${version}`
+	}
+	return `${GITHUB_REPO_URL}/releases/latest`
+}
+
+// ============================================================
+// Public API
+// ============================================================
+
 /**
  * Initialises the auto-updater. Call once after the main window is created.
  * In development (unpackaged), this is a no-op.
  */
 export async function initAutoUpdater(): Promise<void> {
 	if (!app.isPackaged) return
+
+	canAutoInstall = detectCanAutoInstall()
+	state = { ...state, canAutoInstall }
+
+	console.log(
+		`[auto-updater] platform=${process.platform}, canAutoInstall=${canAutoInstall}`,
+	)
 
 	const autoUpdater = await getAutoUpdater()
 
@@ -66,8 +132,8 @@ export async function initAutoUpdater(): Promise<void> {
 	// after they've been notified.
 	autoUpdater.autoDownload = false
 
-	// Install on quit by default
-	autoUpdater.autoInstallOnAppQuit = true
+	// Install on quit by default (only effective when canAutoInstall is true)
+	autoUpdater.autoInstallOnAppQuit = canAutoInstall
 
 	// Skip code-signature verification on macOS. The CI builds are currently
 	// unsigned (CSC_IDENTITY_AUTO_DISCOVERY=false) so the Squirrel/ShipIt
@@ -151,10 +217,28 @@ export async function downloadUpdate(): Promise<void> {
 	await autoUpdater.downloadUpdate()
 }
 
-/** Quits and installs the downloaded update. */
+/**
+ * Quits and installs the downloaded update.
+ * Only works when canAutoInstall is true (signed macOS builds, Windows, Linux).
+ */
 export async function installUpdate(): Promise<void> {
+	if (!canAutoInstall) {
+		// Fallback: open release page instead of attempting Squirrel install
+		await openReleasePage()
+		return
+	}
 	const autoUpdater = await getAutoUpdater()
 	autoUpdater.quitAndInstall(false, true)
+}
+
+/**
+ * Opens the GitHub release page for the current update version in the
+ * user's default browser. Used as a fallback on unsigned macOS builds
+ * where Squirrel.Mac cannot perform in-place updates.
+ */
+export async function openReleasePage(): Promise<void> {
+	const url = getReleaseUrl(state.version)
+	await shell.openExternal(url)
 }
 
 /** Cleanup — call on app quit. */

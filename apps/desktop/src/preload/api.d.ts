@@ -33,6 +33,8 @@ export interface UpdateState {
 		total: number
 	}
 	error?: string
+	/** Whether the app can auto-install updates (false on unsigned macOS builds). */
+	canAutoInstall: boolean
 }
 
 // ============================================================
@@ -450,6 +452,8 @@ export interface PalotAPI {
 	checkForUpdates: () => Promise<void>
 	downloadUpdate: () => Promise<void>
 	installUpdate: () => Promise<void>
+	/** Opens the GitHub release page for the current update version (fallback for unsigned macOS). */
+	openReleasePage: () => Promise<void>
 	onUpdateStateChanged: (callback: (state: UpdateState) => void) => () => void
 
 	// Git operations

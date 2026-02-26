@@ -1,4 +1,10 @@
-import { ArrowDownToLineIcon, RefreshCwIcon, SparklesIcon, XIcon } from "lucide-react"
+import {
+	ArrowDownToLineIcon,
+	ExternalLinkIcon,
+	RefreshCwIcon,
+	SparklesIcon,
+	XIcon,
+} from "lucide-react"
 import { useState } from "react"
 import { useUpdater } from "../hooks/use-updater"
 
@@ -8,9 +14,14 @@ import { useUpdater } from "../hooks/use-updater"
  *
  * Overlays content instead of pushing it down. Hidden when idle, checking,
  * or dismissed by the user.
+ *
+ * On unsigned macOS builds (canAutoInstall=false), the "ready" state shows
+ * a "Download from GitHub" button that opens the release page instead of
+ * attempting an in-place install via Squirrel.Mac.
  */
 export function UpdateBanner() {
-	const { status, version, progress, downloadUpdate, installUpdate } = useUpdater()
+	const { status, version, progress, canAutoInstall, downloadUpdate, installUpdate, openReleasePage } =
+		useUpdater()
 	const [dismissed, setDismissed] = useState(false)
 
 	// Don't show for idle/checking/error states, or if dismissed
@@ -44,14 +55,25 @@ export function UpdateBanner() {
 								<XIcon className="size-3.5" aria-hidden="true" />
 							</button>
 						</div>
-						<button
-							type="button"
-							onClick={() => downloadUpdate()}
-							className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-						>
-							<ArrowDownToLineIcon className="size-3.5" aria-hidden="true" />
-							Download update
-						</button>
+						{canAutoInstall ? (
+							<button
+								type="button"
+								onClick={() => downloadUpdate()}
+								className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+							>
+								<ArrowDownToLineIcon className="size-3.5" aria-hidden="true" />
+								Download update
+							</button>
+						) : (
+							<button
+								type="button"
+								onClick={() => openReleasePage()}
+								className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+							>
+								<ExternalLinkIcon className="size-3.5" aria-hidden="true" />
+								Download from GitHub
+							</button>
+						)}
 					</>
 				)}
 
@@ -92,7 +114,9 @@ export function UpdateBanner() {
 								<div className="min-w-0">
 									<p className="text-sm font-medium leading-tight">Ready to install</p>
 									<p className="mt-0.5 text-xs text-muted-foreground">
-										{version ? `Version ${version}` : "Update"} downloaded. Restart to apply.
+										{canAutoInstall
+											? `${version ? `Version ${version}` : "Update"} downloaded. Restart to apply.`
+											: `${version ? `Version ${version}` : "Update"} is available. Download from GitHub to update.`}
 									</p>
 								</div>
 							</div>
@@ -105,14 +129,25 @@ export function UpdateBanner() {
 								<XIcon className="size-3.5" aria-hidden="true" />
 							</button>
 						</div>
-						<button
-							type="button"
-							onClick={() => installUpdate()}
-							className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-						>
-							<RefreshCwIcon className="size-3.5" aria-hidden="true" />
-							Restart now
-						</button>
+						{canAutoInstall ? (
+							<button
+								type="button"
+								onClick={() => installUpdate()}
+								className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+							>
+								<RefreshCwIcon className="size-3.5" aria-hidden="true" />
+								Restart now
+							</button>
+						) : (
+							<button
+								type="button"
+								onClick={() => openReleasePage()}
+								className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+							>
+								<ExternalLinkIcon className="size-3.5" aria-hidden="true" />
+								Download from GitHub
+							</button>
+						)}
 					</>
 				)}
 			</div>

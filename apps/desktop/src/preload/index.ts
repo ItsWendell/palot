@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld("palot", {
 	/** Quits the app and installs the downloaded update. */
 	installUpdate: () => ipcRenderer.invoke("updater:install"),
 
+	/** Opens the GitHub release page for the current update version. */
+	openReleasePage: () => ipcRenderer.invoke("updater:open-release-page"),
+
 	/** Subscribes to update state changes pushed from the main process. */
 	onUpdateStateChanged: (callback: (state: unknown) => void) => {
 		const listener = (_event: unknown, state: unknown) => callback(state)
