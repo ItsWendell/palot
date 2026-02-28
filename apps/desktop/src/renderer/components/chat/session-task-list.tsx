@@ -1,14 +1,6 @@
 import { cn } from "@palot/ui/lib/utils"
 import { useAtomValue } from "jotai"
-import {
-	CheckCircle2Icon,
-	ChevronDownIcon,
-	ChevronUpIcon,
-	CircleDotIcon,
-	ListTodoIcon,
-	Loader2Icon,
-	XCircleIcon,
-} from "lucide-react"
+import { CheckCircle2Icon, CircleDotIcon, Loader2Icon, XCircleIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { messagesFamily } from "../../atoms/messages"
 import { partsFamily } from "../../atoms/parts"
@@ -53,17 +45,17 @@ function useSessionTodos(sessionId: string | null): Todo[] {
 	}, [storeTodos, storeMessages, streamingVersion])
 }
 
-/** Status icon for a todo item */
+/** Compact status icon for a todo item */
 function TodoStatusIcon({ status }: { status: string }) {
 	switch (status) {
 		case "completed":
-			return <CheckCircle2Icon className="size-3.5 text-green-500" />
+			return <CheckCircle2Icon className="size-3 text-emerald-500/80" />
 		case "in_progress":
-			return <Loader2Icon className="size-3.5 animate-spin text-blue-400" />
+			return <Loader2Icon className="size-3 animate-spin text-blue-400/80" />
 		case "cancelled":
-			return <XCircleIcon className="size-3.5 text-muted-foreground/50" />
+			return <XCircleIcon className="size-3 text-muted-foreground/30" />
 		default:
-			return <CircleDotIcon className="size-3.5 text-muted-foreground/40" />
+			return <CircleDotIcon className="size-3 text-muted-foreground/30" />
 	}
 }
 
@@ -74,6 +66,7 @@ interface SessionTaskListProps {
 /**
  * Collapsible task list that appears above the input field.
  * Shows the session's current todo list with completion progress.
+ * Subtly styled; task items animate in with stagger and re-animate on status change.
  */
 export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 	const todos = useSessionTodos(sessionId)
@@ -90,7 +83,9 @@ export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 		[todos],
 	)
 
-	// Auto-scroll to the bottom when todos change (new tasks added / status updates)
+	const allCompleted = completedCount === todos.length && todos.length > 0
+
+	// Auto-scroll to bottom when todos change
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on todo changes intentionally
 	useEffect(() => {
 		if (isExpanded && scrollRef.current) {
@@ -98,25 +93,22 @@ export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 		}
 	}, [todos, isExpanded])
 
-	// Don't render anything if there are no todos
 	if (todos.length === 0) return null
 
-	const allCompleted = completedCount === todos.length
-
 	return (
-		<div className="mb-2 rounded-xl border border-border bg-card">
+		<div className="mb-2 animate-in fade-in duration-400 rounded-lg border border-border/40 bg-muted/10">
 			{/* Header — always visible, toggles expansion */}
 			<button
 				type="button"
 				onClick={() => setIsExpanded((prev) => !prev)}
 				className={cn(
-					"flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50",
-					isExpanded ? "rounded-t-xl" : "rounded-xl",
+					"flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-muted/20",
+					isExpanded ? "rounded-t-lg" : "rounded-lg",
 				)}
 			>
-				<ListTodoIcon className="size-4 shrink-0 text-muted-foreground" />
-				<span className="flex-1 min-w-0 truncate text-muted-foreground">
-					<span className={allCompleted ? "text-green-500" : "text-foreground"}>
+				{/* Progress text */}
+				<span className="flex-1 min-w-0 truncate text-xs text-muted-foreground">
+					<span className={allCompleted ? "text-emerald-500/80" : "text-foreground"}>
 						{completedCount}
 					</span>{" "}
 					out of {todos.length} tasks completed
@@ -127,47 +119,72 @@ export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 						</>
 					)}
 				</span>
-				{isExpanded ? (
-					<ChevronUpIcon className="size-3.5 shrink-0 text-muted-foreground" />
-				) : (
-					<ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-				)}
+
+				{/* Chevron indicator */}
+				<svg
+					className={cn(
+						"size-3 shrink-0 text-muted-foreground/30 transition-transform duration-200",
+						isExpanded ? "rotate-180" : "rotate-0",
+					)}
+					aria-hidden="true"
+					viewBox="0 0 16 16"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<path d="M4 6l4 4 4-4" />
+				</svg>
 			</button>
 
-			{/* Expanded content — task list (capped height with scroll) */}
-			{isExpanded && (
-				<div
-					ref={scrollRef}
-					className="max-h-48 overflow-y-auto border-t border-border px-3 pb-2.5 pt-2"
-				>
-					<ol className="space-y-1">
-						{todos.map((todo, index) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: Todo items have no stable ID in the v2 SDK
-							<li key={index} className="flex items-start gap-2 text-sm">
-								<span className="mt-0.5 shrink-0">
-									<TodoStatusIcon status={todo.status} />
-								</span>
-								<span className="flex items-start gap-1.5">
-									<span className="shrink-0 text-muted-foreground/60">{index + 1}.</span>
-									<span
-										className={
-											todo.status === "completed"
-												? "text-muted-foreground line-through"
-												: todo.status === "cancelled"
-													? "text-muted-foreground/50 line-through"
-													: todo.status === "in_progress"
-														? "text-foreground"
-														: "text-foreground/80"
-										}
-									>
-										{todo.content}
+			{/* Expandable task list — smooth height transition via grid trick */}
+			<div
+				className={cn(
+					"grid transition-[grid-template-rows] duration-200 ease-out",
+					isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+				)}
+			>
+				<div className="overflow-hidden">
+					<div
+						ref={scrollRef}
+						className="max-h-44 overflow-y-auto border-t border-border/30 px-3 pb-2 pt-1.5"
+					>
+						<ol className="space-y-1">
+							{todos.map((todo, index) => (
+								// Key includes status so item re-mounts (fades in fresh) on status change
+								// biome-ignore lint/suspicious/noArrayIndexKey: no stable ID in SDK todos
+								<li
+									key={`${index}-${todo.status}`}
+									className="flex items-start gap-2 animate-in fade-in-0 slide-in-from-bottom-1 duration-300"
+									style={{ animationDelay: `${index * 35}ms`, animationFillMode: "backwards" }}
+								>
+									<span className="mt-px shrink-0">
+										<TodoStatusIcon status={todo.status} />
 									</span>
-								</span>
-							</li>
-						))}
-					</ol>
+									<span className="flex items-baseline gap-1 text-[11px] leading-relaxed">
+										<span className="shrink-0 tabular-nums text-muted-foreground/30">{index + 1}.</span>
+										<span
+											className={cn(
+												"transition-colors duration-300",
+												todo.status === "completed"
+													? "text-muted-foreground/40 line-through"
+													: todo.status === "cancelled"
+														? "text-muted-foreground/25 line-through"
+														: todo.status === "in_progress"
+															? "text-foreground/90"
+															: "text-muted-foreground/60",
+											)}
+										>
+											{todo.content}
+										</span>
+									</span>
+								</li>
+							))}
+						</ol>
+					</div>
 				</div>
-			)}
+			</div>
 		</div>
 	)
 }
