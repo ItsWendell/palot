@@ -398,3 +398,19 @@ export const setProjectPaginationLoadingAtom = atom(null, (get, set, directory: 
 	const current = get(projectPaginationFamily(directory))
 	set(projectPaginationFamily(directory), { ...current, loading: true })
 })
+
+/**
+ * Write-only atom to reset pagination state for a list of directories.
+ * Called on server switch so expanded projects re-fetch sessions from the new server.
+ */
+export const resetProjectPaginationAtom = atom(null, (_get, set, directories: string[]) => {
+	const initial: ProjectPaginationState = {
+		loaded: false,
+		currentLimit: SESSIONS_PAGE_SIZE,
+		hasMore: true,
+		loading: false,
+	}
+	for (const dir of directories) {
+		set(projectPaginationFamily(dir), initial)
+	}
+})

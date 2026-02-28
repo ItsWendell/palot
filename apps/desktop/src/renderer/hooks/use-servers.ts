@@ -16,7 +16,7 @@ import {
 	serversAtom,
 } from "../atoms/connection"
 import { discoveryAtom } from "../atoms/discovery"
-import { sessionIdsAtom } from "../atoms/sessions"
+import { resetProjectPaginationAtom, sessionIdsAtom } from "../atoms/sessions"
 import { appStore } from "../atoms/store"
 import { createLogger } from "../lib/logger"
 import { isElectron } from "../services/backend"
@@ -247,6 +247,15 @@ export function useServerActions() {
 function triggerServerSwitch(newActiveServerId: string) {
 	disconnect()
 	resetDiscoveryGuard()
+
+	// Reset per-project pagination so expanded projects re-fetch sessions
+	// from the new server instead of showing stale "loaded" state.
+	const currentProjects = appStore.get(discoveryAtom).projects
+	const knownDirs = currentProjects.flatMap((p) => [
+		p.worktree,
+		...(p.sandboxes ?? []),
+	]).filter(Boolean) as string[]
+	appStore.set(resetProjectPaginationAtom, knownDirs)
 
 	// Clear all session data from the previous server
 	appStore.set(sessionIdsAtom, new Set<string>())

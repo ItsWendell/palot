@@ -1298,7 +1298,7 @@ function ChatInputSection({
 
 					{/* Revert banner — shown when session is in undo state */}
 					{isReverted && (
-						<div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+						<div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-400/30 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/5 dark:text-amber-400">
 							<Undo2Icon className="size-3.5 shrink-0" />
 							<span className="flex-1">
 								Session reverted — type to continue from here, or redo to restore
@@ -1307,7 +1307,7 @@ function ChatInputSection({
 								<button
 									type="button"
 									onClick={() => onRedo()}
-									className="flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+									className="flex items-center gap-1 rounded-md bg-amber-200/60 px-2 py-1 text-[11px] font-medium text-amber-900 transition-colors hover:bg-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
 								>
 									<Redo2Icon className="size-3" />
 									Redo

@@ -538,12 +538,21 @@ function createEventBatcher() {
 		}
 	}
 
-	function dispose() {
+	function dispose(discard = false) {
 		if (scheduled !== undefined) {
 			cancelAnimationFrame(scheduled)
 			scheduled = undefined
 		}
-		flush()
+		if (discard) {
+			// Stale connection — drop buffered events instead of flushing them.
+			// Flushing would re-add sessions to the store after sessionIdsAtom has
+			// already been cleared by triggerServerSwitch(), causing stale sessions
+			// from the previous server to reappear in the sidebar.
+			queue = []
+			coalesced.clear()
+		} else {
+			flush()
+		}
 	}
 
 	return { enqueue, dispose }
@@ -614,7 +623,9 @@ async function startEventLoop(
 			log.error("SSE stream disconnected", { generation, retryDelay }, err)
 			setConnected(false)
 		} finally {
-			batcher.dispose()
+			// Discard pending events when the loop is stale (server switched / disconnected).
+			// Flushing stale events would re-populate session atoms that were just cleared.
+			batcher.dispose(isStale())
 		}
 
 		if (isStale()) break

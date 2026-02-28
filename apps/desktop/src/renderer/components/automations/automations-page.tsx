@@ -92,9 +92,9 @@ export function AutomationsPage() {
 		<div className="flex h-full flex-col">
 			{!bannerDismissed && (
 				<div className="border-b border-border/50 px-4 py-3">
-					<Alert className="border-amber-500/30 bg-amber-500/5 text-amber-200/90 [&>svg]:text-amber-400">
-						<AlertDescription className="text-[12px] text-amber-200/70">
-							<span className="font-medium text-amber-200/90">Automations run unattended</span>
+					<Alert className="border-amber-400/40 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/5 dark:text-amber-200/90 [&>svg]:text-amber-600 dark:[&>svg]:text-amber-400">
+						<AlertDescription className="text-[12px] text-amber-800 dark:text-amber-200/70">
+							<span className="font-medium text-amber-900 dark:text-amber-200/90">Automations run unattended</span>
 							{" "}with broad permissions: all tools are allowed (file reads, edits, bash
 							commands) and interactive prompts are auto-denied since no one is watching.
 						</AlertDescription>
@@ -102,7 +102,7 @@ export function AutomationsPage() {
 							<button
 								type="button"
 								onClick={() => setBannerDismissed(true)}
-								className="rounded p-1 text-amber-200/40 transition-colors hover:text-amber-200/80"
+								className="rounded p-1 text-amber-600/50 transition-colors hover:text-amber-800 dark:text-amber-200/40 dark:hover:text-amber-200/80"
 								aria-label="Dismiss"
 							>
 							<XIcon className="size-3.5" aria-hidden="true" />
