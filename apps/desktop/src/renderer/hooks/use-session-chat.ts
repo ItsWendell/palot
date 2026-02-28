@@ -72,7 +72,13 @@ export function useSessionChat(
 	// One-time fetch to hydrate the store when session changes
 	const fetchAndHydrate = useCallback(
 		async (sid: string) => {
-			setLoading(true)
+			// Only show the loading spinner if the session has no cached data yet.
+			// When switching back to a previously-visited session the existing messages
+			// remain visible while the background refresh runs, avoiding a jarring flash.
+			const hasCachedData = (appStore.get(messagesFamily(sid)) ?? []).length > 0
+			if (!hasCachedData) {
+				setLoading(true)
+			}
 			setError(null)
 			try {
 				// Use a directory-scoped client when available, otherwise fall back to the base client
@@ -142,12 +148,27 @@ export function useSessionChat(
 		fetchAndHydrate(sessionId)
 	}, [sessionId, fetchAndHydrate, isMockMode])
 
-	// Reset when session changes
+	// Reset per-session refs whenever the active session changes.
+	//
+	// - turnsRef: structural-sharing cache — must be cleared so stale turn objects
+	//   from the previous session aren't mixed into the new session's render.
+	// - hasEarlierRef: tracks whether the server has older messages to load.
+	//   MUST be cleared so the "Load earlier messages" button from a previous
+	//   session (that had 30+ messages) doesn't appear on a freshly-switched
+	//   session whose atom is still empty.
+	// - loading: if the new session has no cached data yet, pre-set the loading
+	//   flag so the UI shows a spinner instead of "No messages yet" during the
+	//   one render that happens before the fetch effect fires.
 	useEffect(() => {
-		if (!sessionId) {
-			turnsRef.current = []
+		turnsRef.current = []
+		hasEarlierRef.current = false
+		if (!isMockMode && sessionId) {
+			const hasCachedData = (appStore.get(messagesFamily(sessionId)) ?? []).length > 0
+			if (!hasCachedData) {
+				setLoading(true)
+			}
 		}
-	}, [sessionId])
+	}, [sessionId, isMockMode])
 
 	return {
 		turns,
