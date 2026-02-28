@@ -85,6 +85,11 @@ export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 		[todos],
 	)
 
+	const activeTask = useMemo(
+		() => todos.find((t) => t.status === "in_progress"),
+		[todos],
+	)
+
 	// Auto-scroll to the bottom when todos change (new tasks added / status updates)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on todo changes intentionally
 	useEffect(() => {
@@ -110,11 +115,17 @@ export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 				)}
 			>
 				<ListTodoIcon className="size-4 shrink-0 text-muted-foreground" />
-				<span className="flex-1 text-muted-foreground">
+				<span className="flex-1 min-w-0 truncate text-muted-foreground">
 					<span className={allCompleted ? "text-green-500" : "text-foreground"}>
 						{completedCount}
 					</span>{" "}
 					out of {todos.length} tasks completed
+					{!isExpanded && activeTask && (
+						<>
+							{" · "}
+							<span className="text-foreground/80 italic">{activeTask.content}</span>
+						</>
+					)}
 				</span>
 				{isExpanded ? (
 					<ChevronUpIcon className="size-3.5 shrink-0 text-muted-foreground" />
