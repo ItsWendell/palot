@@ -176,8 +176,6 @@ async function createWindow(): Promise<BrowserWindow> {
 		title,
 		width: 1200,
 		height: 800,
-		minWidth: 900,
-		minHeight: 600,
 		// Transparent background for macOS glass/vibrancy tiers.
 		// On Linux/Windows (always opaque tier) use a solid background to prevent
 		// the window from being see-through while the renderer loads.
