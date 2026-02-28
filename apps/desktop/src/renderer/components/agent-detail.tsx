@@ -21,7 +21,6 @@ import {
 	FileDiffIcon,
 	GitForkIcon,
 	PencilIcon,
-	SquareIcon,
 	TerminalIcon,
 	XIcon,
 } from "lucide-react"
@@ -37,7 +36,7 @@ import type {
 } from "../hooks/use-opencode-data"
 import { useServerConnection } from "../hooks/use-server"
 import type { ChatTurn } from "../hooks/use-session-chat"
-import type { Agent, AgentStatus, FileAttachment, QuestionAnswer } from "../lib/types"
+import type { Agent, FileAttachment, QuestionAnswer } from "../lib/types"
 import { fetchOpenInTargets, isElectron, openInTarget } from "../services/backend"
 import { useSetAppBarContent } from "./app-bar-context"
 import { ChatView } from "./chat"
@@ -46,23 +45,6 @@ import { ReviewPanel } from "./review/review-panel"
 import { SessionMetricsBar } from "./session-metrics-bar"
 import { WorktreeActions } from "./worktree-actions"
 
-const STATUS_LABEL: Record<AgentStatus, string> = {
-	running: "Running",
-	waiting: "Waiting",
-	paused: "Paused",
-	completed: "Completed",
-	failed: "Failed",
-	idle: "Idle",
-}
-
-const STATUS_DOT_COLOR: Record<AgentStatus, string> = {
-	running: "bg-green-500 animate-pulse",
-	waiting: "bg-yellow-500 animate-pulse",
-	paused: "bg-muted-foreground",
-	completed: "bg-blue-500",
-	failed: "bg-red-500",
-	idle: "bg-muted-foreground/50",
-}
 
 interface AgentDetailProps {
 	agent: Agent
@@ -229,9 +211,7 @@ export function AgentDetail({
 				onStartEditing={startEditingTitle}
 				onConfirmTitle={confirmTitle}
 				onCancelEditing={cancelEditingTitle}
-				onStop={onStop}
 				onRename={onRename}
-				isConnected={isConnected}
 				projectSlug={projectSlug}
 				reviewPanelOpen={reviewPanelOpen}
 				onToggleReviewPanel={() => setReviewPanelOpen((prev) => !prev)}
@@ -247,9 +227,7 @@ export function AgentDetail({
 		startEditingTitle,
 		confirmTitle,
 		cancelEditingTitle,
-		onStop,
 		onRename,
-		isConnected,
 		projectSlug,
 		setAppBarContent,
 		reviewPanelOpen,
@@ -346,9 +324,7 @@ function SessionAppBarContent({
 	onStartEditing,
 	onConfirmTitle,
 	onCancelEditing,
-	onStop,
 	onRename,
-	isConnected,
 	projectSlug,
 	reviewPanelOpen,
 	onToggleReviewPanel,
@@ -361,9 +337,7 @@ function SessionAppBarContent({
 	onStartEditing: () => void
 	onConfirmTitle: () => void
 	onCancelEditing: () => void
-	onStop?: (agent: Agent) => Promise<void>
 	onRename?: (agent: Agent, title: string) => Promise<void>
-	isConnected?: boolean
 	projectSlug?: string
 	reviewPanelOpen: boolean
 	onToggleReviewPanel: () => void
@@ -477,14 +451,6 @@ function SessionAppBarContent({
 					</TooltipContent>
 				</Tooltip>
 
-				{/* Status dot + label */}
-				<div className="hidden items-center gap-1.5 text-xs leading-none text-muted-foreground sm:flex">
-					<span
-						className={`inline-block size-1.5 rounded-full ${STATUS_DOT_COLOR[agent.status]}`}
-					/>
-					{STATUS_LABEL[agent.status]}
-				</div>
-
 				{/* Session metrics bar */}
 				<div className="hidden min-w-0 shrink lg:block">
 					<SessionMetricsBar sessionId={agent.sessionId} />
@@ -503,21 +469,7 @@ function SessionAppBarContent({
 					/>
 				</div>
 
-				{/* Stop button (when running) */}
-				{agent.status === "running" && (
-					<Button
-						size="sm"
-						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs leading-none text-muted-foreground hover:text-red-400"
-						onClick={() => onStop?.(agent)}
-						disabled={!isConnected}
-					>
-						<SquareIcon className="size-3" />
-						<span className="hidden sm:inline">Stop</span>
-					</Button>
-				)}
-
-				{/* Close button */}
+					{/* Close button */}
 				<button
 					type="button"
 					onClick={() =>

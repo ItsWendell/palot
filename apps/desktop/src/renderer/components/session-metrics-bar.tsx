@@ -11,7 +11,7 @@
 import { Popover, PopoverContent, PopoverTrigger } from "@palot/ui/components/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@palot/ui/components/tooltip"
 import { useAtomValue } from "jotai"
-import { AlertTriangleIcon, BarChart3Icon, CoinsIcon, RefreshCwIcon, TimerIcon } from "lucide-react"
+import { BarChart3Icon, CoinsIcon, TimerIcon } from "lucide-react"
 import { Fragment, memo, useEffect, useState } from "react"
 import { type SessionMetricsValue, sessionMetricsFamily } from "../atoms/derived/session-metrics"
 import { formatTokens, formatWorkDuration } from "../lib/session-metrics"
@@ -102,54 +102,7 @@ export const SessionMetricsBar = memo(function SessionMetricsBar({
 				</>
 			)}
 
-			{/* Error/retry indicators (always inline -- alerting) */}
-			{metrics.errorCount > 0 && (
-				<>
-					<Separator />
-					<Tooltip>
-						<TooltipTrigger
-							render={
-								<span className="inline-flex items-center gap-1 text-xs tabular-nums text-red-400/70" />
-							}
-						>
-							<AlertTriangleIcon className="size-3" aria-hidden="true" />
-							{metrics.errorCount}
-						</TooltipTrigger>
-						<TooltipContent side="bottom" align="end">
-							<p className="text-xs">
-								{metrics.errorCount} {metrics.errorCount === 1 ? "error" : "errors"}
-								{metrics.retryCount > 0 &&
-									`, ${metrics.retryCount} ${metrics.retryCount === 1 ? "retry" : "retries"}`}
-							</p>
-						</TooltipContent>
-					</Tooltip>
-				</>
-			)}
-
-			{/* Retry indicator (when retries but no errors) */}
-			{metrics.retryCount > 0 && metrics.errorCount === 0 && (
-				<>
-					<Separator />
-					<Tooltip>
-						<TooltipTrigger
-							render={
-								<span className="inline-flex items-center gap-1 text-xs tabular-nums text-yellow-500/70" />
-							}
-						>
-							<RefreshCwIcon className="size-3" aria-hidden="true" />
-							{metrics.retryCount}
-						</TooltipTrigger>
-						<TooltipContent side="bottom" align="end">
-							<p className="text-xs">
-								{metrics.retryCount} {metrics.retryCount === 1 ? "retry" : "retries"}{" "}
-								(auto-recovered)
-							</p>
-						</TooltipContent>
-					</Tooltip>
-				</>
-			)}
-
-			{/* Details popover -- full stats breakdown */}
+		{/* Details popover -- full stats breakdown */}
 			{(metrics.tokensRaw > 0 || metrics.toolCallCount > 0) && (
 				<>
 					<Separator />
