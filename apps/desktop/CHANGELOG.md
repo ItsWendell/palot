@@ -1,5 +1,55 @@
 # @palot/desktop
 
+## 0.11.0
+
+### Minor Changes
+
+- [`5dd20fd`](https://github.com/ItsWendell/palot/commit/5dd20fd310c05b2e8e16c25e472334a84714410c) - Sub-agent permissions and questions now bubble up to the parent session
+
+  When Claude spawns a sub-agent via the Task tool, any interactive request that the sub-agent raises — a tool-use permission or a follow-up question — is now surfaced directly in the parent session's input area. This means you no longer need to navigate to the child session to unblock a running task.
+
+  **What changed:**
+
+  - **Parent chat input**: Shows the sub-agent's permission card or question flow with a "Sub-agent" indicator. Responding from the parent correctly targets the child session.
+  - **Sidebar**: The parent session's status turns to "waiting" (amber dot) when any descendant sub-agent is blocked, making it visible at a glance.
+  - **Sub-agent card**: While a sub-agent is running and waiting for input, its card header shows a "Needs approval" or "Asking a question" badge in amber.
+  - **Notifications**: System notifications and the dock badge count are now raised for sub-agent permissions/questions too, attributed to the root parent session so clicking them takes you to the right place.
+  - **Bug fix**: Permission and question responses were previously always routed to the parent session ID. They now correctly target the session that owns the request, even when that session is a sub-agent.
+
+- [`11f14e1`](https://github.com/ItsWendell/palot/commit/11f14e1e6c55c535e7f12747958d45170140e117) Thanks [@ItsWendell](https://github.com/ItsWendell)! - Cleaner top bar, responsive layout, and session UX improvements
+
+  **Top bar cleanup:** Removed the stop button (redundant — chat input is always visible), the status dot/label (redundant — visible from the chat itself), and the error/retry alert triangles from the metrics bar (alarming without context; errors are visible inline in the chat).
+
+  **Responsive layout:** The chat view and new-chat screen now adapt to narrow viewports — padding collapses on small screens and the suggestion grid switches to a single column. The sidebar auto-collapses when the window drops below 600px and restores when it grows back (manual closes are respected).
+
+  **Session task list:** Smoother expand/collapse via CSS grid-row height transition. Task items animate in with a staggered fade+slide and re-animate on status change. Visual weight reduced with softer colors and lighter borders.
+
+  **Session switching:** No more loading spinner flash when switching back to a previously-visited session that has cached messages. The "Load earlier messages" button no longer bleeds through from one session to another on switch.
+
+  **Window:** Removed the 900×600 minimum window size constraint.
+
+### Patch Changes
+
+- [`735fc2f`](https://github.com/ItsWendell/palot/commit/735fc2f9a3ee8ff0e8a1cd206bd4c6cd6a9fc0d4) - Fix stale sessions on server switch and amber banners invisible on light theme
+
+  **Stale sessions (#57):** When switching between local and VPS servers, the old server's
+  sessions could reappear in the sidebar after being cleared. Two root causes fixed:
+
+  1. The SSE event batcher's `dispose()` was flushing buffered events into the store even
+     after `disconnect()` was called, re-adding stale session IDs that had just been cleared
+     by `triggerServerSwitch()`. The batcher now discards pending events when the connection
+     is stale instead of flushing them.
+
+  2. Per-project pagination state (`projectPaginationFamily`) was never reset on server
+     switch. This caused expanded project directories to show as "loaded" on the new server,
+     preventing a fresh session fetch. Pagination is now reset for all known directories
+     during `triggerServerSwitch()`.
+
+  **Banner visibility (#61):** The automations permissions banner and the chat session revert
+  banner used hardcoded `text-amber-200` / `text-amber-300` shades which are near-white and
+  invisible on light theme backgrounds. Both banners now use `dark:` variants so they render
+  correctly on both light and dark themes.
+
 ## 0.10.0
 
 ### Minor Changes
