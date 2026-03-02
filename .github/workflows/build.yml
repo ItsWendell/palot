@@ -101,7 +101,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Download build output
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-output
           path: apps/desktop/out
