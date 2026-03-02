@@ -83,7 +83,7 @@
 		"electron": "40.2.1",
 		"electron-builder": "^26.0.0",
 		"electron-vite": "^5.0.0",
-		"shiki": "^3.22.0",
+		"shiki": "^4.0.1",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.0",
 		"vite": "^7.3.1",
