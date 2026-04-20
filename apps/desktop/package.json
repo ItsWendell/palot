@@ -87,6 +87,6 @@
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.0",
 		"vite": "^7.3.1",
-		"vite-plugin-static-copy": "^3.2.0"
+		"vite-plugin-static-copy": "^4.1.0"
 	}
 }
