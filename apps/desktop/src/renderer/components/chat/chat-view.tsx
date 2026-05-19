@@ -2,45 +2,12 @@ import {
 	Conversation,
 	ConversationContent,
 	ConversationScrollButton,
-	useStickToBottomContext,
 } from "@palot/ui/components/ai-elements/conversation"
-import {
-	PromptInput,
-	PromptInputButton,
-	PromptInputFooter,
-	PromptInputProvider,
-	PromptInputSubmit,
-	PromptInputTextarea,
-	PromptInputTools,
-	usePromptInputAttachments,
-	usePromptInputController,
-} from "@palot/ui/components/ai-elements/prompt-input"
 import { cn } from "@palot/ui/lib/utils"
 import { useAtomValue, useSetAtom } from "jotai"
-import {
-	ArrowUpToLineIcon,
-	ChevronUpIcon,
-	GitForkIcon,
-	Loader2Icon,
-	MonitorIcon,
-	PlusIcon,
-	Redo2Icon,
-	SquareIcon,
-	Undo2Icon,
-	XIcon,
-} from "lucide-react"
-import {
-	useCallback,
-	useEffect,
-	useImperativeHandle,
-	useLayoutEffect,
-	useMemo,
-	useRef,
-	useState,
-} from "react"
-import { messagesFamily, removeMessageAtom } from "../../atoms/messages"
-import { projectModelsAtom, setProjectModelAtom } from "../../atoms/preferences"
-import type { SessionSetupPhase } from "../../atoms/sessions"
+import { ChevronUpIcon, Loader2Icon, Redo2Icon, Undo2Icon } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { removeMessageAtom } from "../../atoms/messages"
 import { sessionFamily } from "../../atoms/sessions"
 import {
 	effectivePermissionFamily,
@@ -55,327 +22,34 @@ import type {
 	SdkAgent,
 	VcsData,
 } from "../../hooks/use-opencode-data"
-import {
-	getModelInputCapabilities,
-	getModelVariants,
-	resolveEffectiveModel,
-	useModelState,
-} from "../../hooks/use-opencode-data"
 import type { ChatTurn } from "../../hooks/use-session-chat"
-import { createLogger } from "../../lib/logger"
-import { computeTurnWorkTimeSplit, formatWorkDuration } from "../../lib/session-metrics"
+import { computeTurnWorkTimeSplit } from "../../lib/session-metrics"
 import type { Agent, FileAttachment, FilePart, QuestionAnswer, TextPart } from "../../lib/types"
-import { getProjectClient } from "../../services/connection-manager"
 
-const log = createLogger("chat-view")
-
-import {
-	type DiffComment,
-	diffCommentsFamily,
-	serializeCommentsForChat,
-} from "../review/review-comments"
+import { diffCommentsFamily } from "../review/review-comments"
 import { PermissionItem } from "./chat-permission"
 import { ChatQuestionFlow } from "./chat-question"
-import { ChatTurnComponent } from "./chat-turn"
-import { ContextItems } from "./context-items"
-import type { MentionOption } from "./mention-popover"
-import { MentionPopover, type MentionPopoverHandle } from "./mention-popover"
-import { PromptAttachmentPreview } from "./prompt-attachments"
+import { WorktreeSetupProgress } from "./chat-input-extras"
+import { ChatInputCard, ChatInputStatus } from "./chat-input-composer"
 import {
-	createAgentMention,
-	createFileMention,
-	getMentionMarker,
-	insertMentionIntoText,
-	type PromptMention,
-	reconcileMentions,
-} from "./prompt-mentions"
-import { PromptToolbar, StatusBar } from "./prompt-toolbar"
+	type ScrollHandle,
+	ScrollBridge,
+	ScrollOnLoad,
+	ScrollToResponseStart,
+} from "./chat-scroll"
+import { ChatTurnComponent } from "./chat-turn"
+import type { PromptTextController } from "./prompt-input-bridges"
 import { SessionTaskList } from "./session-task-list"
 import { SkillPickerDialog } from "./skill-picker-dialog"
-import { SlashCommandPopover, type SlashCommandPopoverHandle } from "./slash-command-popover"
-
-/**
- * Small "+" button that opens the file picker for attachments.
- * Must be rendered inside a <PromptInput> so the attachments context is available.
- */
-function AttachButton({ disabled }: { disabled?: boolean }) {
-	const attachments = usePromptInputAttachments()
-	return (
-		<PromptInputButton
-			tooltip="Attach files"
-			onClick={() => attachments.openFileDialog()}
-			disabled={disabled}
-		>
-			<PlusIcon className="size-4" />
-		</PromptInputButton>
-	)
-}
-
-/**
- * Instant-scroll when session content finishes loading.
- *
- * The `<Conversation>` (StickToBottom) uses `initial="instant"` for the first
- * paint, but messages are fetched async — by the time they arrive and render,
- * the library treats the content growth as a *resize* and applies
- * `resize="smooth"`, causing a visible scroll animation from top → bottom.
- *
- * This component sits inside `<Conversation>` so it can access the
- * StickToBottom context. It watches for the loading→loaded transition
- * and forces an instant scroll-to-bottom.
- */
-function ScrollOnLoad({ loading, sessionId }: { loading: boolean; sessionId: string }) {
-	const { scrollToBottom } = useStickToBottomContext()
-	const prevLoadingRef = useRef(loading)
-	const prevSessionRef = useRef(sessionId)
-
-	useLayoutEffect(() => {
-		const wasLoading = prevLoadingRef.current
-		const sessionChanged = prevSessionRef.current !== sessionId
-		prevLoadingRef.current = loading
-		prevSessionRef.current = sessionId
-
-		// Instant scroll when: loading just finished, or session changed while not loading
-		// (e.g. messages were already cached in the Jotai store)
-		if ((wasLoading && !loading) || (sessionChanged && !loading)) {
-			scrollToBottom("instant")
-		}
-	}, [loading, sessionId, scrollToBottom])
-
-	return null
-}
-
-interface ScrollHandle {
-	scrollToBottom: (behavior?: "instant" | "smooth") => void
-	/** Returns the current scrollHeight of the scroll container */
-	getScrollHeight: () => number
-	/** Smoothly scrolls the container to a specific scrollTop value */
-	scrollToPosition: (top: number) => void
-}
-
-/**
- * Bridge that exposes the StickToBottom `scrollToBottom` to the parent
- * via a ref so imperative callers (handleSend, question reply, etc.)
- * can force a scroll-to-bottom even when the user has scrolled away.
- * Also exposes scroll position helpers for the "jump to start" feature.
- */
-function ScrollBridge({ scrollRef }: { scrollRef: React.RefObject<ScrollHandle | null> }) {
-	const ctx = useStickToBottomContext()
-	useImperativeHandle(
-		scrollRef,
-		() => ({
-			scrollToBottom: (behavior?: "instant" | "smooth") => {
-				ctx.scrollToBottom(behavior ?? "smooth")
-			},
-			getScrollHeight: () => {
-				return ctx.scrollRef.current?.scrollHeight ?? 0
-			},
-			scrollToPosition: (top: number) => {
-				ctx.scrollRef.current?.scrollTo({ top, behavior: "smooth" })
-			},
-		}),
-		[ctx],
-	)
-	return null
-}
-
-/**
- * Floating pill button that appears when the agent finishes working.
- * Scrolls to the beginning of the last assistant response so the user
- * can read it from the top. Dismisses on click or after 8 seconds.
- *
- * Captures the scroll container's scrollHeight when the agent starts
- * working (idle-to-working transition). This position corresponds to
- * "where the new response began" regardless of whether the agent
- * started from a fresh message, a question answer, or a permission grant.
- *
- * Must be rendered inside `<Conversation>` to position correctly.
- */
-function ScrollToResponseStart({
-	isWorking,
-	scrollRef,
-}: {
-	isWorking: boolean
-	scrollRef: React.RefObject<ScrollHandle | null>
-}) {
-	const [visible, setVisible] = useState(false)
-	const prevWorkingRef = useRef(isWorking)
-	// Saved scrollHeight at the moment the agent started working.
-	// This is the Y position where the new response content begins.
-	const savedScrollTopRef = useRef(0)
-
-	useEffect(() => {
-		const wasWorking = prevWorkingRef.current
-		prevWorkingRef.current = isWorking
-
-		if (!wasWorking && isWorking) {
-			// Agent just started working -- snapshot where the response will begin.
-			// scrollHeight is the total content height; subtracting a small offset
-			// so the scroll lands slightly above the first new content.
-			const handle = scrollRef.current
-			if (handle) {
-				savedScrollTopRef.current = Math.max(0, handle.getScrollHeight() - 80)
-			}
-		}
-
-		if (wasWorking && !isWorking) {
-			// Agent finished -- show the pill
-			setVisible(true)
-		}
-
-		if (isWorking) {
-			setVisible(false)
-		}
-	}, [isWorking, scrollRef])
-
-	// Auto-dismiss after 8 seconds
-	useEffect(() => {
-		if (!visible) return
-		const timer = setTimeout(() => setVisible(false), 8000)
-		return () => clearTimeout(timer)
-	}, [visible])
-
-	const handleClick = useCallback(() => {
-		scrollRef.current?.scrollToPosition(savedScrollTopRef.current)
-		setVisible(false)
-	}, [scrollRef])
-
-	if (!visible) return null
-
-	return (
-		<button
-			type="button"
-			onClick={handleClick}
-			className="absolute bottom-14 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md transition-colors hover:bg-muted hover:text-foreground"
-		>
-			<ArrowUpToLineIcon className="size-3" />
-			<span>Jump to start of response</span>
-		</button>
-	)
-}
-
-/**
- * Bridge component that syncs the PromptInputProvider's text state
- * to the persisted draft store (debounced). Must be rendered inside
- * both a <PromptInputProvider> and receive draft actions for the session.
- */
-function DraftSync({ setDraft }: { setDraft: (text: string) => void }) {
-	const controller = usePromptInputController()
-	const value = controller.textInput.value
-	const isFirstRender = useRef(true)
-
-	useEffect(() => {
-		// Skip the initial render — the provider was just hydrated from the draft
-		if (isFirstRender.current) {
-			isFirstRender.current = false
-			return
-		}
-		setDraft(value)
-	}, [value, setDraft])
-
-	return null
-}
-
-/**
- * Bridge that exposes the PromptInputProvider's text controller to the parent
- * via a ref, so handleSlashCommand can read/write the input text.
- */
-function SlashCommandBridge({
-	controllerRef,
-}: {
-	controllerRef: React.RefObject<{ setText: (text: string) => void; getText: () => string } | null>
-}) {
-	const controller = usePromptInputController()
-
-	useEffect(() => {
-		if (controllerRef && "current" in controllerRef) {
-			;(controllerRef as React.MutableRefObject<typeof controllerRef.current>).current = {
-				setText: (text: string) => controller.textInput.setInput(text),
-				getText: () => controller.textInput.value,
-			}
-		}
-		return () => {
-			if (controllerRef && "current" in controllerRef) {
-				;(controllerRef as React.MutableRefObject<typeof controllerRef.current>).current = null
-			}
-		}
-	}, [controller, controllerRef])
-
-	return null
-}
-
-/**
- * Bridge that detects `/` and `@` triggers from the text input
- * and syncs popover state. Must be rendered inside PromptInputProvider.
- *
- * Uses DOM queries to find the textarea for cursor position (since
- * PromptInputTextarea doesn't support ref forwarding).
- */
-function TriggerDetector({
-	onSlashChange,
-	onMentionChange,
-}: {
-	onSlashChange: (open: boolean, query: string) => void
-	onMentionChange: (open: boolean, query: string) => void
-}) {
-	const controller = usePromptInputController()
-	const inputText = controller.textInput.value
-
-	useEffect(() => {
-		// Find textarea via DOM query (PromptInputTextarea doesn't forward refs)
-		const textarea = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
-		const cursorPos = textarea?.selectionStart ?? inputText.length
-		const textBeforeCursor = inputText.slice(0, cursorPos)
-
-		// Slash command: entire input starts with / and no space yet
-		const slashMatch = inputText.match(/^\/(\S*)$/)
-		if (slashMatch) {
-			onSlashChange(true, slashMatch[1])
-			onMentionChange(false, "")
-			return
-		}
-
-		// @mention: @ followed by non-whitespace before cursor
-		const atMatch = textBeforeCursor.match(/@(\S*)$/)
-		if (atMatch) {
-			onMentionChange(true, atMatch[1])
-			onSlashChange(false, "")
-			return
-		}
-
-		// No trigger
-		onSlashChange(false, "")
-		onMentionChange(false, "")
-	}, [inputText, onSlashChange, onMentionChange])
-
-	return null
-}
-
-/**
- * Bridge that reconciles mentions with the current text.
- * When the user manually deletes an `@mention` marker from the text,
- * this removes the corresponding entry from the mentions list.
- * Must be rendered inside PromptInputProvider.
- */
-function MentionReconciler({
-	mentions,
-	onReconcile,
-}: {
-	mentions: PromptMention[]
-	onReconcile: (updated: PromptMention[]) => void
-}) {
-	const controller = usePromptInputController()
-	const inputText = controller.textInput.value
-
-	useEffect(() => {
-		if (mentions.length === 0) return
-		const reconciled = reconcileMentions(mentions, inputText)
-		if (reconciled.length !== mentions.length) {
-			onReconcile(reconciled)
-		}
-	}, [inputText, mentions, onReconcile])
-
-	return null
-}
+import type { SlashCommandPopoverHandle } from "./slash-command-popover"
+import { useChatMentions } from "./use-chat-mentions"
+import { useChatModelSelection } from "./use-chat-model-selection"
+import { useChatSend } from "./use-chat-send"
+import { useChatSkills } from "./use-chat-skills"
+import { useEscapeAbort } from "./use-escape-abort"
+import { useSlashCommandHandler } from "./use-slash-command-handler"
+import { useSessionWatchdog } from "../../hooks/use-session-watchdog"
+import { WatchdogBanner } from "./watchdog-banner"
 
 interface ChatViewProps {
 	turns: ChatTurn[]
@@ -788,8 +462,6 @@ function ChatInputSection({
 	reviewPanelOpen,
 	onForkFromTurn,
 }: ChatInputSectionProps) {
-	const [sending, setSending] = useState(false)
-
 	// Tree-scoped interactive requests — bubbles up from sub-agent sessions.
 	// These replace the direct `agent.permissions` / `agent.questions` arrays
 	// so the parent session's UI can respond on behalf of any descendant.
@@ -808,14 +480,23 @@ function ChatInputSection({
 		return computeTurnWorkTimeSplit(lastTurn)
 	}, [isWorking, turns])
 
-	// Mention tracking — files and agents referenced via @
-	const [mentions, setMentions] = useState<PromptMention[]>([])
+	const textControllerRef = useRef<PromptTextController | null>(null)
+	const slashPopoverRef = useRef<SlashCommandPopoverHandle>(null)
 
-	// Reset mentions when session changes
-	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional — clear on session switch
-	useEffect(() => {
-		setMentions([])
-	}, [agent.sessionId])
+	const {
+		mentions,
+		setMentions,
+		mentionOpen,
+		mentionQuery,
+		mentionPopoverRef,
+		handleMentionTriggerChange,
+		handleMentionClose,
+		handleMentionSelect,
+		handleMentionRemove,
+	} = useChatMentions({
+		sessionId: agent.sessionId,
+		textControllerRef,
+	})
 
 	// Stable callbacks for question/permission handlers
 	const handleReplyQuestion = useCallback(
@@ -842,344 +523,105 @@ function ChatInputSection({
 	const draft = useDraftSnapshot(agent.sessionId)
 	const { setDraft, clearDraft } = useDraftActions(agent.sessionId)
 
-	// Escape-to-abort: double-press within 3s
-	const [interruptCount, setInterruptCount] = useState(0)
-	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const {
+		selectedModel,
+		selectedAgent,
+		setSelectedAgent,
+		selectedVariant,
+		setSelectedVariant,
+		effectiveModel,
+		modelCapabilities,
+		recentModels,
+		handleModelSelect,
+	} = useChatModelSelection({ agent, config, providers, openCodeAgents })
 
-	// Toolbar state
-	const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null)
-	const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
-	const [selectedVariant, setSelectedVariant] = useState<string | undefined>(undefined)
+	const handleSlashCommand = useSlashCommandHandler({ agent, effectiveModel, onUndo, onRedo })
+	const { canSend, handleSend } = useChatSend({
+		agent,
+		isConnected,
+		onSendMessage,
+		effectiveModel,
+		providers,
+		compaction: config?.compaction,
+		selectedAgent,
+		selectedVariant,
+		handleSlashCommand,
+		slashCommandRef: textControllerRef,
+		clearDraft,
+		setMentions,
+		diffComments,
+		setDiffComments,
+		scrollRef,
+	})
 
-	// Initialize model, variant, and agent from the session's last user message.
-	const sessionMessages = useAtomValue(messagesFamily(agent.sessionId))
-	const projectModels = useAtomValue(projectModelsAtom)
-	const initializedForSessionRef = useRef<string | null>(null)
-	const resetForSessionRef = useRef<string | null>(null)
+	const { interruptCount, handleStop, handleEscapeAbort } = useEscapeAbort({
+		agent,
+		isWorking,
+		onStop,
+	})
+
+	const watchdogAnalysis = useSessionWatchdog(turns, isWorking)
+	const [watchdogDismissed, setWatchdogDismissed] = useState(false)
+	const autoRecoveryFiredRef = useRef(false)
+	const autoRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+	// Reset dismiss + fired flag when the agent stops so the next run gets a fresh slate.
 	useEffect(() => {
-		if (resetForSessionRef.current !== agent.sessionId) {
-			resetForSessionRef.current = agent.sessionId
-			initializedForSessionRef.current = null
-			const stored = agent.directory ? projectModels[agent.directory] : undefined
-			if (stored?.providerID && stored?.modelID) {
-				setSelectedModel(stored)
-				setSelectedVariant(stored.variant)
-			} else {
-				setSelectedModel(null)
-				setSelectedVariant(undefined)
-			}
-			setSelectedAgent(stored?.agent || null)
+		if (!isWorking) {
+			setWatchdogDismissed(false)
+			autoRecoveryFiredRef.current = false
 		}
+	}, [isWorking])
 
-		if (initializedForSessionRef.current === agent.sessionId) return
-		if (!sessionMessages || sessionMessages.length === 0) return
-		initializedForSessionRef.current = agent.sessionId
+	const handleWatchdogNudge = useCallback(async () => {
+		if (!watchdogAnalysis.recoveryPrompt) return
+		setWatchdogDismissed(true)
+		if (onStop) await onStop(agent)
+		if (onSendMessage) await onSendMessage(agent, watchdogAnalysis.recoveryPrompt)
+	}, [watchdogAnalysis.recoveryPrompt, onStop, onSendMessage, agent])
 
-		let foundModel = false
-		let foundAgent = false
-		for (let i = sessionMessages.length - 1; i >= 0; i--) {
-			const msg = sessionMessages[i]
-			if (msg.role !== "user") continue
-			const dynamic = msg as Record<string, unknown>
-
-			if (!foundModel && "model" in msg && msg.model) {
-				const model = msg.model as { providerID: string; modelID: string }
-				if (model.providerID && model.modelID) {
-					setSelectedModel(model)
-					foundModel = true
-					const variant = dynamic.variant as string | undefined
-					if (variant) {
-						setSelectedVariant(variant)
-					} else {
-						setSelectedVariant(undefined)
-					}
-				}
-			}
-
-			if (
-				!foundAgent &&
-				dynamic.agent &&
-				typeof dynamic.agent === "string" &&
-				dynamic.agent.length > 0
-			) {
-				setSelectedAgent(dynamic.agent)
-				foundAgent = true
-			}
-
-			if (foundModel && foundAgent) break
-		}
-	}, [sessionMessages, agent.sessionId, agent.directory, projectModels])
-
-	const { recentModels, addRecent: addRecentModel } = useModelState()
-
-	const activeOpenCodeAgent = useMemo(() => {
-		const agentName = selectedAgent ?? config?.defaultAgent
-		return openCodeAgents?.find((a) => a.name === agentName) ?? null
-	}, [selectedAgent, config?.defaultAgent, openCodeAgents])
-
-	const effectiveModel = useMemo(
-		() =>
-			resolveEffectiveModel(
-				selectedModel,
-				activeOpenCodeAgent,
-				config?.model,
-				providers?.defaults ?? {},
-				providers?.providers ?? [],
-			),
-		[selectedModel, activeOpenCodeAgent, config?.model, providers],
-	)
-
+	// Auto-recovery: when the watchdog detects a stuck loop and the agent is still
+	// running, automatically stop + inject the recovery prompt after a short delay.
+	// The fired ref prevents re-triggering within the same stuck episode.
 	useEffect(() => {
-		if (!selectedVariant || !effectiveModel || !providers) return
-		const available = getModelVariants(
-			effectiveModel.providerID,
-			effectiveModel.modelID,
-			providers.providers,
-		)
-		if (!available.includes(selectedVariant)) {
-			setSelectedVariant(undefined)
+		if (autoRecoveryTimerRef.current) {
+			clearTimeout(autoRecoveryTimerRef.current)
+			autoRecoveryTimerRef.current = null
 		}
-	}, [selectedVariant, effectiveModel, providers])
-
-	const modelCapabilities = useMemo(
-		() => getModelInputCapabilities(effectiveModel, providers?.providers ?? []),
-		[effectiveModel, providers],
-	)
-
-	const handleModelSelect = useCallback(
-		(model: ModelRef | null) => {
-			setSelectedModel(model)
-			setSelectedVariant(undefined)
-			if (model) addRecentModel(model)
-		},
-		[addRecentModel],
-	)
-
-	const slashCommandRef = useRef<{
-		setText: (text: string) => void
-		getText: () => string
-	} | null>(null)
-
-	const handleSlashCommand = useCallback(
-		async (text: string): Promise<boolean> => {
-			const trimmed = text.trim()
-			if (!trimmed.startsWith("/")) return false
-
-			const spaceIndex = trimmed.indexOf(" ")
-			const cmdName = spaceIndex === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIndex)
-			const cmdArgs = spaceIndex === -1 ? "" : trimmed.slice(spaceIndex + 1).trim()
-
-			// Client-only commands that don't go through the server
-			switch (cmdName.toLowerCase()) {
-				case "undo":
-					if (onUndo) await onUndo()
-					return true
-				case "redo":
-					if (onRedo) await onRedo()
-					return true
-				case "compact":
-				case "summarize":
-					if (agent.directory && effectiveModel) {
-						const client = getProjectClient(agent.directory)
-						if (client) {
-							try {
-								await client.session.summarize({
-									sessionID: agent.sessionId,
-									providerID: effectiveModel.providerID,
-									modelID: effectiveModel.modelID,
-								})
-							} catch (err) {
-								log.error("session.summarize failed", { sessionId: agent.sessionId }, err)
-							}
-						}
-					}
-					return true
-				default:
-					break
-			}
-
-			if (agent.directory) {
-				const client = getProjectClient(agent.directory)
-				if (client) {
-					try {
-						await client.session.command({
-							sessionID: agent.sessionId,
-							command: cmdName,
-							arguments: cmdArgs,
-						})
-						return true
-					} catch {
-						// Not a recognized server command
-					}
-				}
-			}
-
-			return false
-		},
-		[agent, onUndo, onRedo, effectiveModel],
-	)
-
-	const handleSend = useCallback(
-		async (text: string, files?: FileAttachment[]) => {
-			log.debug("handleSend called", {
-				textLength: text.trim().length,
-				hasOnSendMessage: !!onSendMessage,
-				sending,
-				sessionId: agent.sessionId,
-			})
-			if (!text.trim() || !onSendMessage || sending) {
-				log.warn("handleSend bailed", {
-					emptyText: !text.trim(),
-					noOnSendMessage: !onSendMessage,
-					sending,
-				})
-				return
-			}
-
-			if (text.trim().startsWith("/")) {
-				const handled = await handleSlashCommand(text)
-				if (handled) {
-					slashCommandRef.current?.setText("")
-					clearDraft()
-					setMentions([])
-					return
-				}
-			}
-
-			setSending(true)
-			try {
-				if (effectiveModel && agent.directory) {
-					appStore.set(setProjectModelAtom, {
-						directory: agent.directory,
-						model: {
-							...effectiveModel,
-							variant: selectedVariant,
-							agent: selectedAgent || undefined,
-						},
-					})
-				}
-
-				log.debug("handleSend calling onSendMessage", {
-					sessionId: agent.sessionId,
-					directory: agent.directory,
-					model: effectiveModel,
-					agentName: selectedAgent,
-					variant: selectedVariant,
-					hasFiles: !!(files && files.length > 0),
-				})
-
-				// Prepend diff comments as structured context if any exist
-				const commentPrefix = serializeCommentsForChat(diffComments)
-				const finalText = commentPrefix ? `${commentPrefix}${text.trim()}` : text.trim()
-
-				await onSendMessage(agent, finalText, {
-					model: effectiveModel ?? undefined,
-					agentName: selectedAgent || undefined,
-					variant: selectedVariant,
-					files,
-				})
-				log.debug("handleSend onSendMessage completed", { sessionId: agent.sessionId })
-				clearDraft()
-				setMentions([])
-				// Clear diff comments after successful send
-				if (diffComments.length > 0) {
-					setDiffComments([])
-				}
-				requestAnimationFrame(() => {
-					scrollRef.current?.scrollToBottom("smooth")
-				})
-			} catch (err) {
-				log.error("handleSend failed", { sessionId: agent.sessionId }, err)
-			} finally {
-				setSending(false)
-			}
-		},
-		[
-			onSendMessage,
-			sending,
-			agent,
-			effectiveModel,
-			selectedAgent,
-			selectedVariant,
-			clearDraft,
-			handleSlashCommand,
-			scrollRef,
-			diffComments,
-			setDiffComments,
-		],
-	)
-
-	const canSend = isConnected && !sending
-
-	const handleStop = useCallback(() => {
-		if (onStop && isWorking) {
-			onStop(agent)
+		if (
+			watchdogAnalysis.isStuck &&
+			isWorking &&
+			!watchdogDismissed &&
+			!autoRecoveryFiredRef.current &&
+			onStop &&
+			onSendMessage
+		) {
+			autoRecoveryTimerRef.current = setTimeout(() => {
+				autoRecoveryFiredRef.current = true
+				handleWatchdogNudge()
+			}, 8000)
 		}
-	}, [onStop, isWorking, agent])
-
-	const handleEscapeAbort = useCallback(() => {
-		if (!isWorking) return
-
-		setInterruptCount((prev) => {
-			const next = prev + 1
-			if (next >= 2) {
-				handleStop()
-				if (interruptTimerRef.current) clearTimeout(interruptTimerRef.current)
-				return 0
+		return () => {
+			if (autoRecoveryTimerRef.current) {
+				clearTimeout(autoRecoveryTimerRef.current)
 			}
-			if (interruptTimerRef.current) clearTimeout(interruptTimerRef.current)
-			interruptTimerRef.current = setTimeout(() => setInterruptCount(0), 3000)
-			return next
-		})
-	}, [isWorking, handleStop])
+		}
+	}, [watchdogAnalysis.isStuck, isWorking, watchdogDismissed, handleWatchdogNudge, onStop, onSendMessage])
 
-	// --- Popover state (slash commands + mentions) ---
+	// --- Slash command popover state ---
 	const [slashOpen, setSlashOpen] = useState(false)
 	const [slashQuery, setSlashQuery] = useState("")
-	const [mentionOpen, setMentionOpen] = useState(false)
-	const [mentionQuery, setMentionQuery] = useState("")
-
-	// --- Skills picker dialog ---
-	const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
-
-	const handleForkViaSlash = useCallback(async () => {
-		const ctrl = slashCommandRef.current
-		if (ctrl) ctrl.setText("")
-		await onForkFromTurn?.()
-	}, [onForkFromTurn])
-
-	const handleSkillsOpen = useCallback(() => {
-		const ctrl = slashCommandRef.current
-		if (ctrl) ctrl.setText("")
-		setSkillsDialogOpen(true)
-	}, [])
-
-	const handleSkillSelect = useCallback((skillName: string) => {
-		const ctrl = slashCommandRef.current
-		if (ctrl) {
-			ctrl.setText(`/${skillName} `)
-		}
-		requestAnimationFrame(() => {
-			const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
-			if (ta) {
-				ta.focus()
-				const len = `/${skillName} `.length
-				ta.setSelectionRange(len, len)
-			}
-		})
-	}, [])
-
-	const slashPopoverRef = useRef<SlashCommandPopoverHandle>(null)
-	const mentionPopoverRef = useRef<MentionPopoverHandle>(null)
+	const {
+		skillsDialogOpen,
+		setSkillsDialogOpen,
+		handleForkViaSlash,
+		handleSkillsOpen,
+		handleSkillSelect,
+	} = useChatSkills({ textControllerRef, onForkFromTurn })
 
 	const handleSlashTriggerChange = useCallback((open: boolean, query: string) => {
 		setSlashOpen(open)
 		setSlashQuery(query)
-	}, [])
-
-	const handleMentionTriggerChange = useCallback((open: boolean, query: string) => {
-		setMentionOpen(open)
-		setMentionQuery(query)
 	}, [])
 
 	const handleSlashClose = useCallback(() => {
@@ -1187,15 +629,10 @@ function ChatInputSection({
 		setSlashQuery("")
 	}, [])
 
-	const handleMentionClose = useCallback(() => {
-		setMentionOpen(false)
-		setMentionQuery("")
-	}, [])
-
 	const handleSlashSelect = useCallback(
 		(command: string) => {
 			handleSlashClose()
-			const ctrl = slashCommandRef.current
+			const ctrl = textControllerRef.current
 			// Use the command string directly instead of setText + getText round-trip,
 			// which races with React's asynchronous state batching and sometimes reads
 			// stale text (e.g. "/un" instead of "/undo").
@@ -1213,60 +650,8 @@ function ChatInputSection({
 				ctrl.setText(command)
 			}
 		},
-		[handleSlashClose, handleSlashCommand, clearDraft],
+		[handleSlashClose, handleSlashCommand, clearDraft, textControllerRef],
 	)
-
-	const handleMentionSelect = useCallback(
-		(option: MentionOption) => {
-			handleMentionClose()
-			const ctrl = slashCommandRef.current
-			if (!ctrl) return
-
-			const currentText = ctrl.getText()
-			const textarea = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
-			const cursorPos = textarea?.selectionStart ?? currentText.length
-
-			const mention =
-				option.type === "file" ? createFileMention(option.path) : createAgentMention(option.name)
-
-			const { text: newText, cursorPosition: newCursor } = insertMentionIntoText(
-				currentText,
-				cursorPos,
-				mention,
-			)
-
-			ctrl.setText(newText)
-
-			setMentions((prev) => {
-				const key = mention.type === "file" ? `file:${mention.path}` : `agent:${mention.name}`
-				if (prev.some((m) => (m.type === "file" ? `file:${m.path}` : `agent:${m.name}`) === key))
-					return prev
-				return [...prev, mention]
-			})
-
-			requestAnimationFrame(() => {
-				const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-prompt-input]")
-				if (ta) {
-					ta.focus()
-					ta.setSelectionRange(newCursor, newCursor)
-				}
-			})
-		},
-		[handleMentionClose],
-	)
-
-	const handleMentionRemove = useCallback((mention: PromptMention) => {
-		const ctrl = slashCommandRef.current
-		if (ctrl) {
-			const marker = getMentionMarker(mention)
-			const currentText = ctrl.getText()
-			ctrl.setText(currentText.replace(`${marker} `, "").replace(marker, ""))
-		}
-		setMentions((prev) => {
-			const key = mention.type === "file" ? `file:${mention.path}` : `agent:${mention.name}`
-			return prev.filter((m) => (m.type === "file" ? `file:${m.path}` : `agent:${m.name}`) !== key)
-		})
-	}, [])
 
 	const handleTextareaKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1293,6 +678,15 @@ function ChatInputSection({
 		<>
 			<div className="min-w-0 px-0 pb-0 pt-1 sm:px-4 sm:pb-4 sm:pt-2">
 				<div className={inputWidthClass}>
+					{/* Watchdog banner — shown when the agent appears stuck */}
+					{watchdogAnalysis.isStuck && !watchdogDismissed && (
+						<WatchdogBanner
+							analysis={watchdogAnalysis}
+							onDismiss={() => setWatchdogDismissed(true)}
+							onNudge={onStop && onSendMessage ? handleWatchdogNudge : undefined}
+						/>
+					)}
+
 					{/* Session task list — collapsible todo progress */}
 					<SessionTaskList sessionId={agent.sessionId} />
 
@@ -1342,112 +736,78 @@ function ChatInputSection({
 							disabled={!isConnected}
 						/>
 					) : (
-						/* Input card — PromptInputProvider wraps everything,
-					   popovers positioned relative to the card wrapper,
-					   textarea as a direct child of InputGroup inside PromptInput */
-						<PromptInputProvider key={agent.sessionId} initialInput={draft}>
-							<DraftSync setDraft={setDraft} />
-							<SlashCommandBridge controllerRef={slashCommandRef} />
-							<TriggerDetector
-								onSlashChange={handleSlashTriggerChange}
-								onMentionChange={handleMentionTriggerChange}
-							/>
-							<MentionReconciler mentions={mentions} onReconcile={setMentions} />
-							{/* Relative wrapper for absolutely-positioned popovers */}
-							<div className="relative">
-								{/* Popovers render above the card via bottom-full */}
-							<SlashCommandPopover
-								ref={slashPopoverRef}
-								query={slashQuery}
-								open={slashOpen}
-								enabled={isConnected}
-								directory={agent.directory}
-								onSelect={handleSlashSelect}
-								onSkillsOpen={handleSkillsOpen}
-								onFork={handleForkViaSlash}
-								onClose={handleSlashClose}
-							/>
-								<MentionPopover
-									ref={mentionPopoverRef}
-									query={mentionQuery}
-									open={mentionOpen}
-									directory={agent.directory}
-									agents={openCodeAgents ?? []}
-									onSelect={handleMentionSelect}
-									onClose={handleMentionClose}
-								/>
-								<PromptInput
-									className="rounded-xl"
-									accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
-									multiple
-									maxFileSize={10 * 1024 * 1024}
-									onSubmit={(message) => {
-										if (message.text.trim() && canSend)
-											handleSend(message.text, message.files.length > 0 ? message.files : undefined)
-									}}
-								>
-									{/* Mention chips above the textarea */}
-									<ContextItems mentions={mentions} onRemove={handleMentionRemove} />
-									{/* Diff comment chips above the textarea */}
-									{diffComments.length > 0 && (
-										<DiffCommentChips
-											comments={diffComments}
-											onRemove={(id) => setDiffComments((prev) => prev.filter((c) => c.id !== id))}
-										/>
-									)}
-									<PromptAttachmentPreview
-										supportsImages={modelCapabilities?.image}
-										supportsPdf={modelCapabilities?.pdf}
-									/>
-									<PromptInputTextarea
-										data-prompt-input
-										onKeyDown={handleTextareaKeyDown}
-										disabled={!isConnected}
-										placeholder={
-											isWorking ? "Send a follow-up message..." : "What would you like to do?"
-										}
-									/>
-
-									{/* Toolbar inside the card — agent + model + variant selectors + submit */}
-									<PromptInputFooter>
-										<PromptInputTools>
-											<AttachButton disabled={!isConnected} />
-											<PromptToolbar
-												agents={openCodeAgents ?? []}
-												selectedAgent={selectedAgent}
-												defaultAgent={config?.defaultAgent}
-												onSelectAgent={setSelectedAgent}
-												providers={providers ?? null}
-												effectiveModel={effectiveModel}
-												hasModelOverride={!!selectedModel}
-												onSelectModel={handleModelSelect}
-												recentModels={recentModels}
-												selectedVariant={selectedVariant}
-												onSelectVariant={setSelectedVariant}
-												disabled={!isConnected}
-											/>
-										</PromptInputTools>
-										<PromptInputSubmit
-											disabled={!canSend}
-											status={isWorking ? "streaming" : undefined}
-											onStop={handleStop}
-											size={isWorking && currentTurnWorkSplit ? "xs" : "icon-sm"}
-										>
-											{isWorking && currentTurnWorkSplit ? (
-												<LiveTurnTimer
-													completedMs={currentTurnWorkSplit.completedMs}
-													activeStartMs={currentTurnWorkSplit.activeStartMs}
-												/>
-											) : undefined}
-										</PromptInputSubmit>
-									</PromptInputFooter>
-								</PromptInput>
-							</div>
-						</PromptInputProvider>
+						<ChatInputCard
+							sessionId={agent.sessionId}
+							directory={agent.directory}
+							draft={draft}
+							setDraft={setDraft}
+							textControllerRef={textControllerRef}
+							slashPopoverRef={slashPopoverRef}
+							mentionPopoverRef={mentionPopoverRef}
+							slashOpen={slashOpen}
+							slashQuery={slashQuery}
+							mentionOpen={mentionOpen}
+							mentionQuery={mentionQuery}
+							mentions={mentions}
+							diffComments={diffComments}
+							openCodeAgents={openCodeAgents ?? []}
+							isConnected={isConnected}
+							isWorking={isWorking}
+							canSend={canSend}
+							modelSupportsImages={modelCapabilities?.image}
+							modelSupportsPdf={modelCapabilities?.pdf}
+							selectedAgent={selectedAgent}
+							defaultAgent={config?.defaultAgent}
+							providers={providers ?? null}
+							effectiveModel={effectiveModel}
+							hasModelOverride={!!selectedModel}
+							recentModels={recentModels}
+							selectedVariant={selectedVariant}
+							currentTurnWorkSplit={currentTurnWorkSplit}
+							onSlashTriggerChange={handleSlashTriggerChange}
+							onMentionTriggerChange={handleMentionTriggerChange}
+							onSlashSelect={handleSlashSelect}
+							onSkillsOpen={handleSkillsOpen}
+							onForkViaSlash={handleForkViaSlash}
+							onSlashClose={handleSlashClose}
+							onMentionSelect={handleMentionSelect}
+							onMentionClose={handleMentionClose}
+							onMentionRemove={handleMentionRemove}
+							onMentionsReconcile={setMentions}
+							onDiffCommentRemove={(id) =>
+								setDiffComments((prev) => prev.filter((comment) => comment.id !== id))
+							}
+							onTextareaKeyDown={handleTextareaKeyDown}
+							onSubmit={(message) => {
+								if (!message.text.trim() || !canSend) return
+								const filteredFiles = message.files.filter((f) => {
+									const isImage = f.mediaType?.startsWith("image/")
+									const isPdf = f.mediaType === "application/pdf"
+									if (!isImage && !isPdf) {
+										console.warn("Stripping unsupported attachment", f.filename)
+										return false
+									}
+									if (isImage && modelCapabilities?.image === false) {
+										console.warn("Stripping unsupported image attachment", f.filename)
+										return false
+									}
+									if (isPdf && modelCapabilities?.pdf === false) {
+										console.warn("Stripping unsupported PDF attachment", f.filename)
+										return false
+									}
+									return true
+								})
+								handleSend(message.text, filteredFiles.length > 0 ? filteredFiles : undefined)
+							}}
+							onStop={handleStop}
+							onSelectAgent={setSelectedAgent}
+							onSelectModel={handleModelSelect}
+							onSelectVariant={setSelectedVariant}
+						/>
 					)}
 
 					{/* Status bar — outside the card */}
-					<StatusBar
+					<ChatInputStatus
 						vcs={vcs ?? null}
 						isConnected={isConnected}
 						isWorking={isWorking}
@@ -1455,19 +815,7 @@ function ChatInputSection({
 						sessionId={agent.sessionId}
 						providers={providers}
 						compaction={config?.compaction}
-						extraSlot={
-							agent.worktreePath ? (
-								<div className="flex items-center gap-1">
-									<GitForkIcon className="size-3" />
-									<span>Worktree</span>
-								</div>
-							) : (
-								<div className="flex items-center gap-1">
-									<MonitorIcon className="size-3" />
-									<span>Local</span>
-								</div>
-							)
-						}
+						worktreePath={agent.worktreePath}
 					/>
 				</div>
 			</div>
@@ -1480,118 +828,5 @@ function ChatInputSection({
 				onSelect={handleSkillSelect}
 			/>
 		</>
-	)
-}
-
-// ============================================================
-// Live turn timer — ticks every second while the agent is working
-// ============================================================
-
-/**
- * Compact live timer that shows how long the current exchange has been working.
- * Uses the same completed + active split as the header's LiveWorkTime, so it
- * shows actual agent work time (sum of assistant message durations) rather than
- * wall-clock elapsed time.
- */
-function LiveTurnTimer({
-	completedMs,
-	activeStartMs,
-}: {
-	completedMs: number
-	activeStartMs: number | null
-}) {
-	const computeDisplay = useCallback(
-		() =>
-			formatWorkDuration(completedMs + (activeStartMs != null ? Date.now() - activeStartMs : 0)),
-		[completedMs, activeStartMs],
-	)
-
-	const [elapsed, setElapsed] = useState(computeDisplay)
-
-	useEffect(() => {
-		const tick = () => setElapsed(computeDisplay())
-		tick()
-		// Only tick if there's an active (in-progress) message
-		if (activeStartMs != null) {
-			const id = setInterval(tick, 1_000)
-			return () => clearInterval(id)
-		}
-	}, [computeDisplay, activeStartMs])
-
-	return (
-		<span className="inline-flex items-center gap-1.5 text-xs tabular-nums">
-			<SquareIcon className="size-3.5" />
-			{elapsed}
-		</span>
-	)
-}
-
-// ============================================================
-// Worktree setup progress (shown in empty state during creation)
-// ============================================================
-
-const SETUP_PHASE_LABELS: Record<NonNullable<SessionSetupPhase>, string> = {
-	"creating-worktree": "Creating worktree...",
-	"starting-session": "Starting session...",
-}
-
-function WorktreeSetupProgress({ phase }: { phase: NonNullable<SessionSetupPhase> }) {
-	return (
-		<div className="flex flex-col items-center justify-center gap-4 py-16">
-			<div className="flex size-12 items-center justify-center rounded-xl border border-border/50 bg-muted/30">
-				<GitForkIcon className="size-5 text-muted-foreground" />
-			</div>
-			<div className="flex flex-col items-center gap-2">
-				<div className="flex items-center gap-2">
-					<Loader2Icon className="size-4 animate-spin text-muted-foreground" />
-					<p className="text-sm font-medium text-foreground">{SETUP_PHASE_LABELS[phase]}</p>
-				</div>
-				<p className="text-xs text-muted-foreground">
-					Setting up an isolated workspace for this session
-				</p>
-			</div>
-		</div>
-	)
-}
-
-// ============================================================
-// Diff comment chips shown above the chat input
-// ============================================================
-
-function DiffCommentChips({
-	comments,
-	onRemove,
-}: {
-	comments: DiffComment[]
-	onRemove: (id: string) => void
-}) {
-	if (comments.length === 0) return null
-
-	return (
-		<div className="flex flex-wrap gap-1 px-1 pt-1">
-			{comments.map((comment) => {
-				const fileName = comment.filePath.split("/").pop() ?? comment.filePath
-				return (
-					<span
-						key={comment.id}
-						className="inline-flex max-w-full items-center gap-1 rounded-md border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[10px] leading-tight"
-					>
-						<span className="shrink-0 font-mono text-muted-foreground">
-							{fileName}:{comment.lineNumber}
-						</span>
-						<span className="truncate text-foreground">
-							{comment.content.length > 40 ? `${comment.content.slice(0, 40)}...` : comment.content}
-						</span>
-						<button
-							type="button"
-							onClick={() => onRemove(comment.id)}
-							className="shrink-0 text-muted-foreground/60 hover:text-foreground"
-						>
-							<XIcon className="size-2.5" />
-						</button>
-					</span>
-				)
-			})}
-		</div>
 	)
 }

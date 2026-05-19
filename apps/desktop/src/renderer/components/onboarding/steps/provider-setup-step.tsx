@@ -94,7 +94,7 @@ export function ProviderSetupStep({ onComplete, onSkip }: ProviderSetupStepProps
 					<Spinner className="size-8 text-muted-foreground" />
 					<h2 className="text-xl font-semibold">Waiting for OpenCode server...</h2>
 					<p className="max-w-md text-sm text-muted-foreground">
-						Palot is connecting to the OpenCode background process. This should only take a moment.
+						Nexus Builder is connecting to the OpenCode background process. This should only take a moment.
 					</p>
 				</div>
 				<div className="flex gap-3">

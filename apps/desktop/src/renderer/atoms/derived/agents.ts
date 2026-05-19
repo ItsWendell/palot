@@ -9,6 +9,7 @@ import type {
 } from "../../lib/types"
 import { discoveryAtom } from "../discovery"
 import { sessionFamily, sessionIdsAtom } from "../sessions"
+import { hiddenProjectsAtom, pinnedProjectsAtom } from "../projects"
 import { effectivePermissionFamily, effectiveQuestionFamily } from "./session-requests"
 
 // ============================================================
@@ -554,25 +555,35 @@ export const projectListAtom = (() => {
 			}
 		}
 
+		const pinnedDirs = new Set(get(pinnedProjectsAtom))
+		const hiddenDirs = new Set(get(hiddenProjectsAtom))
+
 		// Tiered sort for stable, predictable ordering:
+		//   Pinned: Always at the top, alphabetical within pinned set
 		//   Tier 1: Projects with active agents (running/waiting) — by recency
 		//   Tier 2: Projects with idle sessions — by recency
 		//   Tier 3: Projects with no sessions — alphabetical by name
 		// Within each tier, ties are broken by name for deterministic ordering.
-		const next = Array.from(projects.values()).sort((a, b) => {
-			const tierA = a.hasActiveAgent ? 0 : a.agentCount > 0 ? 1 : 2
-			const tierB = b.hasActiveAgent ? 0 : b.agentCount > 0 ? 1 : 2
-			if (tierA !== tierB) return tierA - tierB
+		const next = Array.from(projects.values())
+			.filter((p) => !hiddenDirs.has(p.directory))
+			.sort((a, b) => {
+				const aPinned = pinnedDirs.has(a.directory) ? 0 : 1
+				const bPinned = pinnedDirs.has(b.directory) ? 0 : 1
+				if (aPinned !== bPinned) return aPinned - bPinned
 
-			// Within tiers 0 and 1: sort by most recent activity, then name
-			if (tierA < 2) {
-				const timeDiff = b.lastActiveAt - a.lastActiveAt
-				if (timeDiff !== 0) return timeDiff
-			}
+				const tierA = a.hasActiveAgent ? 0 : a.agentCount > 0 ? 1 : 2
+				const tierB = b.hasActiveAgent ? 0 : b.agentCount > 0 ? 1 : 2
+				if (tierA !== tierB) return tierA - tierB
 
-			// Tier 2 (no sessions) or tie-breaker: alphabetical by name
-			return a.name.localeCompare(b.name)
-		})
+				// Within tiers 0 and 1: sort by most recent activity, then name
+				if (tierA < 2) {
+					const timeDiff = b.lastActiveAt - a.lastActiveAt
+					if (timeDiff !== 0) return timeDiff
+				}
+
+				// Tier 2 (no sessions) or tie-breaker: alphabetical by name
+				return a.name.localeCompare(b.name)
+			})
 
 		if (projectListEqual(prevProjects, next)) return prevProjects
 		prevProjects = next

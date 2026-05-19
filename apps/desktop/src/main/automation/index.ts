@@ -12,6 +12,7 @@ import { createLogger } from "../logger"
 import { closeDb, ensureDb, getDb } from "./database"
 import { executeRun } from "./executor"
 import { createConfig, deleteConfig, listConfigs, readConfig, updateConfig } from "./registry"
+import { classifyAutomationError, createLifecycleEvent, getRetryDecision } from "./reliability"
 import { addTask, getNextRunTime, previewSchedule, removeTask, stopAll } from "./scheduler"
 import { automationRuns, automations } from "./schema"
 import { Semaphore } from "./semaphore"
@@ -25,6 +26,10 @@ import type {
 const log = createLogger("automation")
 
 const semaphore = new Semaphore(5)
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 // ============================================================
 // Broadcast helper
@@ -354,6 +359,20 @@ async function executeAutomation(id: string, opts: ExecuteOptions = {}): Promise
 				.run()
 
 			log.info("Automation run started", { automationId: id, runId, workspace })
+			log.info("automation.lifecycle", createLifecycleEvent({
+				workflowId: id,
+				agentId: null,
+				parentAgentId: null,
+				taskId: runId,
+				eventType: "run.queued",
+				state: "queued",
+				attempt: 1,
+				metadata: {
+					workspace,
+					maxAttempts: Math.max(1, config.execution.retries + 1),
+					timeoutSec: config.execution.timeout,
+				},
+			}))
 
 			// Notify renderer that a new run appeared
 			broadcastRunsUpdated()
@@ -379,10 +398,18 @@ async function executeAutomation(id: string, opts: ExecuteOptions = {}): Promise
 							attempt,
 							maxAttempts,
 						})
-
-						// Wait before retrying
-						await new Promise((resolve) => setTimeout(resolve, config.execution.retryDelay * 1000))
 					}
+
+					log.info("automation.lifecycle", createLifecycleEvent({
+						workflowId: id,
+						agentId: lastResult?.sessionId || null,
+						parentAgentId: null,
+						taskId: runId,
+						eventType: attempt > 1 ? "run.retrying" : "run.starting",
+						state: attempt > 1 ? "retrying" : "starting",
+						attempt,
+						metadata: { maxAttempts, workspace },
+					}))
 
 					lastResult = await executeRun(config, workspace, async (info) => {
 						// Persist sessionId as soon as it is available so the
@@ -403,15 +430,48 @@ async function executeAutomation(id: string, opts: ExecuteOptions = {}): Promise
 					// If no error, break out of retry loop
 					if (!lastResult.error) break
 
-					// If this was the last attempt, don't retry
-					if (attempt >= maxAttempts) break
+					const structuredError =
+						lastResult.errorDetails ??
+						classifyAutomationError(lastResult.error, {
+							automationId: id,
+							runId,
+							sessionId: lastResult.sessionId || undefined,
+							workspace,
+							attempt,
+						})
+					const decision = getRetryDecision({
+						error: structuredError,
+						attempt,
+						maxAttempts,
+						baseDelaySec: config.execution.retryDelay,
+					})
 
-					log.warn("Automation run attempt failed, will retry", {
+					log.warn("Automation run attempt failed", {
 						automationId: id,
 						runId,
 						attempt,
-						error: lastResult.error,
+						error: structuredError,
+						retryDecision: decision,
 					})
+
+					log.warn("automation.lifecycle", createLifecycleEvent({
+						workflowId: id,
+						agentId: lastResult.sessionId || null,
+						parentAgentId: null,
+						taskId: runId,
+						eventType: decision.shouldRetry ? "run.retry_scheduled" : "run.retry_skipped",
+						state: decision.shouldRetry ? "retrying" : "failed",
+						attempt,
+						error: structuredError,
+						metadata: {
+							reason: decision.reason,
+							delayMs: decision.delayMs,
+							nextAttempt: decision.nextAttempt,
+						},
+					}))
+
+					if (!decision.shouldRetry) break
+					await sleep(decision.delayMs)
 				}
 
 				const result = lastResult!
@@ -435,7 +495,7 @@ async function executeAutomation(id: string, opts: ExecuteOptions = {}): Promise
 					log.warn("Automation run failed", {
 						automationId: id,
 						runId,
-						error: result.error,
+						error: result.errorDetails ?? result.error,
 					})
 				} else if (!result.hasActionable) {
 					// Nothing actionable -- auto-archive

@@ -52,6 +52,9 @@ function TodoStatusIcon({ status }: { status: string }) {
 			return <CheckCircle2Icon className="size-3 text-emerald-500/80" />
 		case "in_progress":
 			return <Loader2Icon className="size-3 animate-spin text-blue-400/80" />
+		case "failed":
+		case "error":
+			return <XCircleIcon className="size-3 text-red-400/80" />
 		case "cancelled":
 			return <XCircleIcon className="size-3 text-muted-foreground/30" />
 		default:
@@ -171,6 +174,8 @@ export function SessionTaskList({ sessionId }: SessionTaskListProps) {
 													? "text-muted-foreground/40 line-through"
 													: todo.status === "cancelled"
 														? "text-muted-foreground/25 line-through"
+														: todo.status === "failed" || todo.status === "error"
+															? "text-red-300/80"
 														: todo.status === "in_progress"
 															? "text-foreground/90"
 															: "text-muted-foreground/60",

@@ -1,7 +1,7 @@
 /**
- * OpenCode CLI version compatibility definitions for Palot.
+ * OpenCode CLI version compatibility definitions for Nexus Builder.
  *
- * Updated with each Palot release to reflect tested OpenCode versions.
+ * Updated with each Nexus Builder release to reflect tested OpenCode versions.
  * The environment check in the onboarding flow uses these ranges to
  * decide whether to pass, warn, or block.
  */
@@ -102,7 +102,7 @@ async function detectOpenCode(): Promise<{ version: string | null; path: string 
 // ============================================================
 
 /**
- * Check whether OpenCode is installed and compatible with this version of Palot.
+ * Check whether OpenCode is installed and compatible with this version of Nexus Builder.
  * Runs the binary to get its version, then compares against the compatibility range.
  */
 export async function checkOpenCode(): Promise<OpenCodeCheckResult> {
@@ -149,7 +149,7 @@ export async function checkOpenCode(): Promise<OpenCodeCheckResult> {
 				path: binaryPath,
 				compatible: false,
 				compatibility: "blocked",
-				message: `OpenCode ${version} has known issues with this version of Palot. Please update.`,
+				message: `OpenCode ${version} has known issues with this version of Nexus Builder. Please update.`,
 			}
 		}
 	}
@@ -162,7 +162,7 @@ export async function checkOpenCode(): Promise<OpenCodeCheckResult> {
 			path: binaryPath,
 			compatible: false,
 			compatibility: "too-old",
-			message: `OpenCode ${version} is too old. Palot requires ${OPENCODE_COMPAT.supported}.`,
+			message: `OpenCode ${version} is too old. Nexus Builder requires ${OPENCODE_COMPAT.supported}.`,
 		}
 	}
 
@@ -174,7 +174,7 @@ export async function checkOpenCode(): Promise<OpenCodeCheckResult> {
 			path: binaryPath,
 			compatible: true,
 			compatibility: "too-new",
-			message: `OpenCode ${version} is newer than tested. Palot is tested with ${OPENCODE_COMPAT.tested}. Some features may not work as expected.`,
+			message: `OpenCode ${version} is newer than tested. Nexus Builder is tested with ${OPENCODE_COMPAT.tested}. Some features may not work as expected.`,
 		}
 	}
 

@@ -2,7 +2,7 @@
  * Process ownership utilities for cross-user server safety.
  *
  * On macOS/Linux, determines which OS user owns a process listening on a
- * given TCP port. Used to prevent Palot from silently connecting to an
+ * given TCP port. Used to prevent Nexus Builder from silently connecting to an
  * OpenCode server owned by a different user (e.g., an orphaned process
  * from a previous login session).
  */

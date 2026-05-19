@@ -67,7 +67,9 @@ export function InboxRunList({
 	const handleArchive = useCallback(
 		(runId: string) => {
 			archiveLocal(runId)
-			archiveAutomationRun(runId).catch(() => {})
+			archiveAutomationRun(runId).catch((err) => {
+				console.warn("Failed to archive automation run", runId, err)
+			})
 		},
 		[archiveLocal],
 	)
@@ -75,7 +77,9 @@ export function InboxRunList({
 	const handleMarkRead = useCallback(
 		(runId: string) => {
 			markReadLocal(runId)
-			markAutomationRunRead(runId).catch(() => {})
+			markAutomationRunRead(runId).catch((err) => {
+				console.warn("Failed to mark automation run read", runId, err)
+			})
 		},
 		[markReadLocal],
 	)

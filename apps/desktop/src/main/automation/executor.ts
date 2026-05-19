@@ -18,6 +18,11 @@ import type { OpencodeClient, PermissionRuleset } from "@opencode-ai/sdk/v2/clie
 import { createLogger } from "../logger"
 import { createAutomationClient } from "./opencode-client"
 import { getConfigDir } from "./paths"
+import {
+	classifyAutomationError,
+	createLifecycleEvent,
+	type StructuredAutomationError,
+} from "./reliability"
 import type { AutomationConfig, PermissionPreset } from "./types"
 
 const log = createLogger("automation-executor")
@@ -161,6 +166,7 @@ export interface ExecutionResult {
 	hasActionable: boolean
 	branch: string | null
 	error: string | null
+	errorDetails: StructuredAutomationError | null
 }
 
 /**
@@ -275,6 +281,16 @@ async function monitorSession(
 	const outcome = await Promise.race([eventPromise, timeoutPromise])
 
 	if (outcome === "timeout") {
+		log.warn("automation.lifecycle", createLifecycleEvent({
+			workflowId: sessionId,
+			agentId: sessionId,
+			parentAgentId: null,
+			taskId: sessionId,
+			eventType: "agent.timeout",
+			state: "timed_out",
+			durationMs: timeoutMs,
+			metadata: { timeoutMs },
+		}))
 		log.warn("Session monitoring timed out", { sessionId, timeoutMs })
 		try {
 			await client.session.abort({ sessionID: sessionId })
@@ -349,9 +365,15 @@ export async function executeRun(
 ): Promise<ExecutionResult> {
 	const client = createAutomationClient(workspace)
 	if (!client) {
+		const errorDetails = classifyAutomationError("No OpenCode server running", {
+			automationId: config.id,
+			workspace,
+			operation: "createAutomationClient",
+		})
 		log.error("Cannot execute run: no OpenCode server running", {
 			automationId: config.id,
 			workspace,
+			error: errorDetails,
 		})
 		return {
 			sessionId: "",
@@ -360,7 +382,8 @@ export async function executeRun(
 			summary: "",
 			hasActionable: false,
 			branch: null,
-			error: "No OpenCode server running",
+			error: errorDetails.message,
+			errorDetails,
 		}
 	}
 
@@ -378,6 +401,21 @@ export async function executeRun(
 		agent: config.execution.agent || "default",
 		variant: config.execution.variant || "default",
 	})
+	log.info("automation.lifecycle", createLifecycleEvent({
+		workflowId: config.id,
+		agentId: null,
+		parentAgentId: null,
+		taskId: config.id,
+		eventType: "workflow.starting",
+		state: "starting",
+		metadata: {
+			workspace,
+			useWorktree: config.execution.useWorktree,
+			timeoutSec: config.execution.timeout,
+			model: config.execution.model || "default",
+			agent: config.execution.agent || "default",
+		},
+	}))
 
 	try {
 		// --- Step 1: Create worktree (if enabled) ---
@@ -445,6 +483,11 @@ export async function executeRun(
 		// biome-ignore lint/suspicious/noExplicitAny: session create response varies across SDK versions
 		const session = sessionResult.data as any
 		if (!session?.id) {
+			const errorDetails = classifyAutomationError("Failed to create session: no session ID returned", {
+				automationId: config.id,
+				workspace,
+				operation: "session.create",
+			})
 			return {
 				sessionId: "",
 				worktreePath,
@@ -452,7 +495,8 @@ export async function executeRun(
 				summary: "",
 				hasActionable: false,
 				branch: null,
-				error: "Failed to create session: no session ID returned",
+				error: errorDetails.message,
+				errorDetails,
 			}
 		}
 
@@ -462,6 +506,16 @@ export async function executeRun(
 			automationId: config.id,
 			worktreePath,
 		})
+		log.info("automation.lifecycle", createLifecycleEvent({
+			workflowId: config.id,
+			agentId: sessionId,
+			parentAgentId: null,
+			taskId: config.id,
+			eventType: "agent.started",
+			state: "running",
+			durationMs: Date.now() - sessionStart,
+			metadata: { worktreePath },
+		}))
 
 		// Notify caller immediately so sessionId can be persisted and the
 		// renderer can start showing the live session view
@@ -502,6 +556,20 @@ export async function executeRun(
 			SDK_CALL_TIMEOUT_MS,
 			"session.promptAsync",
 		)
+		log.info("automation.lifecycle", createLifecycleEvent({
+			workflowId: config.id,
+			agentId: sessionId,
+			parentAgentId: null,
+			taskId: config.id,
+			eventType: "agent.streaming",
+			state: "streaming",
+			durationMs: Date.now() - promptStart,
+			metadata: {
+				model: config.execution.model || "default",
+				agent: agent || "default",
+				variant: variant || "default",
+			},
+		}))
 		log.info("Prompt sent, starting monitor", {
 			automationId: config.id,
 			sessionId,
@@ -526,6 +594,14 @@ export async function executeRun(
 		})
 
 		// --- Step 5: Capture results ---
+		const errorDetails = error
+			? classifyAutomationError(error, {
+					automationId: config.id,
+					sessionId,
+					workspace,
+					operation: "monitorSession",
+				})
+			: null
 		const hasActionable = error ? true : parseActionable(text)
 
 		// Try to get session summary/diff info
@@ -561,6 +637,21 @@ export async function executeRun(
 			branch,
 			summaryLength: summary.length,
 		})
+		log.info("automation.lifecycle", createLifecycleEvent({
+			workflowId: config.id,
+			agentId: sessionId,
+			parentAgentId: null,
+			taskId: config.id,
+			eventType: errorDetails ? "agent.failed" : "agent.completed",
+			state: errorDetails
+				? errorDetails.category === "TimeoutError"
+					? "timed_out"
+					: "failed"
+				: "completed",
+			durationMs: totalMs,
+			error: errorDetails ?? undefined,
+			metadata: { hasActionable, branch, summaryLength: summary.length },
+		}))
 
 		return {
 			sessionId,
@@ -570,16 +661,33 @@ export async function executeRun(
 			hasActionable,
 			branch,
 			error,
+			errorDetails,
 		}
 	} catch (err) {
 		const totalMs = Date.now() - runStartTime
+		const errorDetails = classifyAutomationError(err, {
+			automationId: config.id,
+			workspace,
+			sessionId: sessionId || undefined,
+			operation: "executeRun",
+		})
 		log.error("Automation execution failed", {
 			automationId: config.id,
 			workspace,
 			sessionId: sessionId || "none",
 			totalDurationMs: totalMs,
-			error: err instanceof Error ? err.message : String(err),
+			error: errorDetails,
 		})
+		log.error("automation.lifecycle", createLifecycleEvent({
+			workflowId: config.id,
+			agentId: sessionId || null,
+			parentAgentId: null,
+			taskId: config.id,
+			eventType: "agent.failed",
+			state: errorDetails.category === "TimeoutError" ? "timed_out" : "failed",
+			durationMs: totalMs,
+			error: errorDetails,
+		}))
 		return {
 			sessionId,
 			worktreePath,
@@ -587,7 +695,8 @@ export async function executeRun(
 			summary: "",
 			hasActionable: false,
 			branch: null,
-			error: err instanceof Error ? err.message : "Unknown execution error",
+			error: errorDetails.message,
+			errorDetails,
 		}
 	} finally {
 		abortController.abort()

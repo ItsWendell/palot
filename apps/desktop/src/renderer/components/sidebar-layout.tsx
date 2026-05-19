@@ -19,9 +19,8 @@ import { activeServerConfigAtom, serverConnectedAtom } from "../atoms/connection
 import { useAgents, useProjectList, useSetCommandPaletteOpen } from "../hooks/use-agents"
 import { useAgentActions } from "../hooks/use-server"
 import type { Agent } from "../lib/types"
-import { pickDirectory } from "../services/backend"
-import { loadProjectSessions } from "../services/connection-manager"
 import { AddProjectDialog } from "./add-project-dialog"
+import { AddProjectModal } from "./add-project-modal"
 import { APP_BAR_HEIGHT, AppBar } from "./app-bar"
 import { AppSidebarContent } from "./sidebar"
 import { useSidebarSlot } from "./sidebar-slot-context"
@@ -186,22 +185,18 @@ export function SidebarLayout() {
 		setCommandPaletteOpen(true)
 	}, [setCommandPaletteOpen])
 
-	// Add project: local servers use native picker, remote servers use a dialog
+	// Add project: local servers use custom modal, remote servers use a dialog
 	const activeServer = useAtomValue(activeServerConfigAtom)
 	const [addProjectOpen, setAddProjectOpen] = useState(false)
+	const [addProjectModalOpen, setAddProjectModalOpen] = useState(false)
 
-	const handleAddProject = useCallback(async () => {
+	const handleAddProject = useCallback(() => {
 		if (activeServer.type === "local") {
-			// Local server: open native folder picker directly
-			const directory = await pickDirectory()
-			if (!directory) return
-			await loadProjectSessions(directory)
-			navigate({ to: "/" })
+			setAddProjectModalOpen(true)
 		} else {
-			// Remote server: show dialog with text input
 			setAddProjectOpen(true)
 		}
-	}, [activeServer.type, navigate])
+	}, [activeServer.type])
 
 	const handleProjectAdded = useCallback(
 		(_directory: string) => {
@@ -269,6 +264,10 @@ export function SidebarLayout() {
 				open={addProjectOpen}
 				onOpenChange={setAddProjectOpen}
 				onAdded={handleProjectAdded}
+			/>
+			<AddProjectModal
+				open={addProjectModalOpen}
+				onOpenChange={setAddProjectModalOpen}
 			/>
 		</div>
 	)

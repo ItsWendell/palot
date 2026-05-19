@@ -6,7 +6,7 @@
  * from here instead of `palot-server.ts` directly.
  *
  * In Electron mode, calls go through IPC to the main process.
- * In browser mode, calls go through HTTP to the Palot server.
+ * In browser mode, calls go through HTTP to the Nexus Builder server.
  */
 
 import type {
@@ -142,7 +142,7 @@ export async function updateModelRecent(model: {
 /**
  * Checks if the backend is available.
  * In Electron, always returns true (main process is always there).
- * In browser, pings the Palot HTTP server.
+ * In browser, pings the Nexus Builder HTTP server.
  */
 export async function checkBackendHealth(): Promise<boolean> {
 	if (isElectron) {
@@ -165,6 +165,26 @@ export async function pickDirectory(): Promise<string | null> {
 		return window.palot.pickDirectory()
 	}
 	throw new Error("Directory picker is only available in Electron mode")
+}
+
+/**
+ * Opens a native folder picker to choose a parent location, then creates
+ * a new subfolder with the given name. Returns the created path, or null if cancelled.
+ */
+export async function createProjectDirectory(name: string): Promise<string | null> {
+	if (isElectron) {
+		return window.palot.createProjectDirectory(name)
+	}
+	throw new Error("Directory creation is only available in Electron mode")
+}
+
+/**
+ * Reveals the given path in the system file manager (Finder, Explorer, etc.).
+ */
+export async function showInFinder(filePath: string): Promise<void> {
+	if (isElectron) {
+		return window.palot.showInFinder(filePath)
+	}
 }
 
 // ============================================================
@@ -423,6 +443,246 @@ export async function fetchAutomationRuns(automationId?: string): Promise<Automa
 	throw new Error("Automations are only available in Electron mode")
 }
 
+// ============================================================
+// Agents — Electron-only (reads/writes .opencode/agents/ per project)
+// ============================================================
+
+export async function listAgents(projectPath?: string): Promise<import("../../shared/agents").ManagedAgent[]> {
+	if (isElectron) {
+		return window.palot.agents.list(projectPath)
+	}
+	if (!projectPath) {
+		return []
+	}
+	const { fetchAgents } = await import("./palot-server")
+	return fetchAgents(projectPath)
+}
+
+export async function getAgent(filename: string, projectPath?: string): Promise<import("../../shared/agents").ManagedAgent | null> {
+	if (isElectron) {
+		return window.palot.agents.get(filename, projectPath)
+	}
+	throw new Error("Agents are only available in Electron mode")
+}
+
+export async function writeAgent(filename: string, raw: string, projectPath?: string): Promise<string> {
+	if (isElectron) {
+		return window.palot.agents.write(filename, raw, projectPath)
+	}
+	throw new Error("Agents are only available in Electron mode")
+}
+
+export async function deleteAgent(filename: string, projectPath?: string): Promise<boolean> {
+	if (isElectron) {
+		return window.palot.agents.delete(filename, projectPath)
+	}
+	throw new Error("Agents are only available in Electron mode")
+}
+
+// ============================================================
+// Knowledge Sources — Electron-only (reads .agents/knowledge/)
+// ============================================================
+
+export async function listKnowledgeSources(projectPath?: string): Promise<import("../../shared/knowledge").KnowledgeSource[]> {
+	if (isElectron) {
+		return window.palot.sourceKnowledge.list(projectPath)
+	}
+	return []
+}
+
+export async function getKnowledgeSource(filename: string, projectPath?: string): Promise<import("../../shared/knowledge").KnowledgeSource | null> {
+	if (isElectron) {
+		return window.palot.sourceKnowledge.get(filename, projectPath)
+	}
+	return null
+}
+
+// ============================================================
+// Mem9 (persistent memory) — Electron-only
+// ============================================================
+
+export async function mem9Init(config?: { apiKey?: string; baseUrl?: string; agentId?: string }): Promise<boolean> {
+	if (isElectron) return window.palot.mem9.init(config)
+	return false
+}
+
+export async function mem9Status(): Promise<{ initialized: boolean; configured: boolean }> {
+	if (isElectron) return window.palot.mem9.status()
+	return { initialized: false, configured: false }
+}
+
+export async function mem9Store(input: {
+	content: string
+	source?: string
+	tags?: string[]
+	metadata?: Record<string, unknown>
+}): Promise<import("../../main/mem9-service").Mem9Memory | null> {
+	if (isElectron) return window.palot.mem9.store(input)
+	return null
+}
+
+export async function mem9Search(params: {
+	q?: string
+	tags?: string
+	source?: string
+	limit?: number
+	offset?: number
+}): Promise<import("../../main/mem9-service").Mem9SearchResult> {
+	if (isElectron) return window.palot.mem9.search(params)
+	return { memories: [], total: 0, limit: params.limit ?? 10, offset: params.offset ?? 0 }
+}
+
+export async function mem9Get(id: string): Promise<import("../../main/mem9-service").Mem9Memory | null> {
+	if (isElectron) return window.palot.mem9.get(id)
+	return null
+}
+
+export async function mem9Delete(id: string): Promise<boolean> {
+	if (isElectron) return window.palot.mem9.delete(id)
+	return false
+}
+
+export async function mem9Recall(query: string, limit?: number): Promise<string | null> {
+	if (isElectron) return window.palot.mem9.recall(query, limit)
+	return null
+}
+
+export async function mem9EmbedKnowledge(projectPath: string): Promise<number> {
+	if (isElectron) return window.palot.mem9.embedKnowledge(projectPath)
+	return 0
+}
+
+export async function mem9EmbedBrain(projectPath: string): Promise<number> {
+	if (isElectron) return window.palot.mem9.embedBrain(projectPath)
+	return 0
+}
+
+export async function mem9EmbedAll(projectPath: string): Promise<number> {
+	if (isElectron) return window.palot.mem9.embedAll(projectPath)
+	return 0
+}
+
+// ============================================================
+// Skills — Electron-only (reads/writes ~/.config/opencode/skills/)
+// ============================================================
+
+// ============================================================
+// Brain — Electron-only (reads/writes .palot/brain/ per project)
+// ============================================================
+
+export async function listBrainFiles(projectPath?: string): Promise<string[]> {
+	if (isElectron) return window.palot.brain.list(projectPath)
+	throw new Error("Brain is only available in Electron mode")
+}
+
+export async function readBrainFile(slug: string, projectPath?: string): Promise<string | null> {
+	if (isElectron) return window.palot.brain.read(slug, projectPath)
+	throw new Error("Brain is only available in Electron mode")
+}
+
+export async function writeBrainFile(slug: string, content: string, projectPath?: string): Promise<void> {
+	if (isElectron) return window.palot.brain.write(slug, content, projectPath)
+	throw new Error("Brain is only available in Electron mode")
+}
+
+export async function appendBrainFile(slug: string, content: string, projectPath?: string): Promise<void> {
+	if (isElectron) return window.palot.brain.append(slug, content, projectPath)
+	throw new Error("Brain is only available in Electron mode")
+}
+
+export async function recordBrainEvent(
+	slug: string,
+	title: string,
+	body: string,
+	projectPath?: string,
+): Promise<void> {
+	if (isElectron) return window.palot.brain.recordEvent(slug, title, body, projectPath)
+	throw new Error("Brain is only available in Electron mode")
+}
+
+export async function deleteBrainFile(slug: string, projectPath?: string): Promise<boolean> {
+	if (isElectron) return window.palot.brain.delete(slug, projectPath)
+	throw new Error("Brain is only available in Electron mode")
+}
+
+export async function searchBrainFiles(
+	keyword: string,
+	projectPath?: string,
+): Promise<import("../../main/project-brain-service").BrainSearchResult[]> {
+	if (isElectron) return window.palot.brain.search(keyword, projectPath)
+	throw new Error("Brain is only available in Electron mode")
+}
+
+export async function getBrainContextSummary(projectPath: string, sessionId?: string): Promise<string> {
+	if (isElectron) return window.palot.brain.contextSummary(projectPath, sessionId)
+	throw new Error("Brain is only available in Electron mode")
+}
+
+// ============================================================
+// Agent performance — Electron-only
+// ============================================================
+
+export async function listAgentPerformance(
+	projectPath?: string,
+): Promise<import("../../shared/agent-performance").AgentPerformanceLedger> {
+	if (isElectron) return window.palot.agentPerformance.list(projectPath)
+	throw new Error("Agent performance tracking is only available in Electron mode")
+}
+
+export async function recordAgentPerformance(
+	projectPath: string,
+	input: import("../../shared/agent-performance").AgentPerformanceInput,
+): Promise<import("../../shared/agent-performance").AgentPerformanceLedger> {
+	if (isElectron) return window.palot.agentPerformance.record(projectPath, input)
+	throw new Error("Agent performance tracking is only available in Electron mode")
+}
+
+// ============================================================
+// Model routing — Electron-only
+// ============================================================
+
+export async function routeModel(taskOrText: import("../../shared/tasks").BrainTask | string): Promise<string> {
+	if (isElectron) return window.palot.tasks.routeModel(taskOrText)
+	throw new Error("Model routing is only available in Electron mode")
+}
+
+export async function listSkills(): Promise<import("../../shared/skills").ManagedSkill[]> {
+	if (isElectron) {
+		return window.palot.skills.list()
+	}
+	throw new Error("Skills are only available in Electron mode")
+}
+
+export async function listAllSkills(): Promise<import("../../shared/skills").ManagedSkill[]> {
+	if (isElectron) {
+		return window.palot.skills.listAll()
+	}
+	throw new Error("Skills are only available in Electron mode")
+}
+
+export async function importSkillFromGitHub(
+	url: string,
+): Promise<import("../../shared/skills").SkillImportResult> {
+	if (isElectron) {
+		return window.palot.skills.importGitHub(url)
+	}
+	throw new Error("Skills are only available in Electron mode")
+}
+
+export async function writeSkill(filename: string, raw: string): Promise<string> {
+	if (isElectron) {
+		return window.palot.skills.write(filename, raw)
+	}
+	throw new Error("Skills are only available in Electron mode")
+}
+
+export async function deleteSkill(filename: string): Promise<boolean> {
+	if (isElectron) {
+		return window.palot.skills.delete(filename)
+	}
+	throw new Error("Skills are only available in Electron mode")
+}
+
 export async function archiveAutomationRun(runId: string): Promise<boolean> {
 	if (isElectron) {
 		return window.palot.automation.archiveRun(runId)
@@ -452,4 +712,54 @@ export async function previewAutomationSchedule(
 		return window.palot.automation.previewSchedule(rrule, timezone)
 	}
 	throw new Error("Automations are only available in Electron mode")
+}
+
+// ============================================================
+// Knowledge graph — Electron-only
+// ============================================================
+
+export async function addKnowledge(
+	projectPath: string,
+	entry: Omit<import("../../main/knowledge-graph-service").KnowledgeEntry, "id" | "createdAt" | "updatedAt">,
+): Promise<import("../../main/knowledge-graph-service").KnowledgeEntry> {
+	if (isElectron) return window.palot.knowledge.add(projectPath, entry)
+	throw new Error("Knowledge graph is only available in Electron mode")
+}
+
+export async function queryKnowledge(
+	projectPath: string,
+	options: import("../../main/knowledge-graph-service").KnowledgeQueryOptions,
+): Promise<import("../../main/knowledge-graph-service").KnowledgeEntry[]> {
+	if (isElectron) return window.palot.knowledge.query(projectPath, options)
+	throw new Error("Knowledge graph is only available in Electron mode")
+}
+
+export async function removeKnowledge(projectPath: string, id: string): Promise<boolean> {
+	if (isElectron) return window.palot.knowledge.remove(projectPath, id)
+	throw new Error("Knowledge graph is only available in Electron mode")
+}
+
+export async function getKnowledgeContext(projectPath: string, forPrompt?: string): Promise<string> {
+	if (isElectron) return window.palot.knowledge.context(projectPath, forPrompt)
+	throw new Error("Knowledge graph is only available in Electron mode")
+}
+
+// ============================================================
+// Semantic index — Electron-only
+// ============================================================
+
+export async function buildSemanticIndex(
+	projectPath: string,
+): Promise<import("../../main/semantic-index-service").SemanticIndex> {
+	if (isElectron) return window.palot.semantic.build(projectPath)
+	throw new Error("Semantic index is only available in Electron mode")
+}
+
+export async function searchSemantic(
+	projectPath: string,
+	query: string,
+	limit?: number,
+): Promise<import("../../main/semantic-index-service").SemanticSearchResult[]> {
+	if (isElectron) return window.palot.semantic.search(projectPath, query, limit)
+	throw new Error("Semantic index is only available in Electron mode")
 }

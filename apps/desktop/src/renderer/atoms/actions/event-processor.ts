@@ -1,10 +1,21 @@
 import { createLogger } from "../../lib/logger"
 import { queryClient } from "../../lib/query-client"
+import {
+	appendPermissionAuditLog,
+	createPermissionAuditEntry,
+	evaluatePermissionBatch,
+	evaluatePermissionRequest,
+	getProjectTrustMemory,
+	getProjectTrustProfile,
+	type PermissionLike,
+} from "../../lib/trust-permissions"
 import type { Event } from "../../lib/types"
-import { serverConnectedAtom } from "../connection"
+import { connectToServer } from "../../services/opencode"
+import { authHeaderAtom, serverConnectedAtom, serverUrlAtom } from "../connection"
 import { discoveryAtom } from "../discovery"
 import { removeMessageAtom, upsertMessageAtom } from "../messages"
 import { applyPartDeltaAtom, removePartAtom, upsertPartAtom } from "../parts"
+import { recordSessionActivityAtom } from "../session-heartbeats"
 import {
 	addPermissionAtom,
 	addQuestionAtom,
@@ -13,6 +24,7 @@ import {
 	removeSessionAtom,
 	setSessionErrorAtom,
 	setSessionStatusAtom,
+	sessionFamily,
 	upsertSessionAtom,
 } from "../sessions"
 import { appStore } from "../store"
@@ -21,6 +33,40 @@ import { todosFamily } from "../todos"
 import { setSessionDiffAtom } from "../ui"
 
 const log = createLogger("event-processor")
+const isElectron = typeof window !== "undefined" && "palot" in window
+const PERMISSION_BATCH_DELAY_MS = 75
+const pendingPermissionRequests: PermissionLike[] = []
+let permissionBatchTimer: ReturnType<typeof setTimeout> | null = null
+
+function getEventSessionId(event: Event): string | undefined {
+	switch (event.type) {
+		case "session.created":
+		case "session.updated":
+		case "session.deleted":
+			return event.properties.info.id
+		case "session.status":
+		case "session.error":
+		case "permission.replied":
+		case "question.replied":
+		case "question.rejected":
+		case "message.removed":
+		case "message.part.removed":
+		case "todo.updated":
+		case "session.diff":
+			return event.properties.sessionID
+		case "permission.asked":
+		case "question.asked":
+			return event.properties.sessionID
+		case "message.updated":
+			return event.properties.info.sessionID
+		case "message.part.updated":
+			return event.properties.part.sessionID
+		case "message.part.delta":
+			return event.properties.sessionID
+		default:
+			return undefined
+	}
+}
 
 /**
  * Invalidate all OpenCode data queries for a specific directory.
@@ -44,6 +90,144 @@ function invalidateAllQueries(): void {
 	}
 }
 
+async function autoRespondToPermission(request: PermissionLike, batchId?: string): Promise<boolean> {
+	const entry = appStore.get(sessionFamily(request.sessionID))
+	const directory = entry?.directory
+	const serverUrl = appStore.get(serverUrlAtom)
+	if (!directory || !serverUrl || !isElectron) return false
+
+	try {
+		const settings = await window.palot.getSettings()
+		const profile = getProjectTrustProfile(settings.trust, directory)
+		const memory = getProjectTrustMemory(settings.trust, directory, profile)
+		const decision = evaluatePermissionRequest({
+			request,
+			projectPath: directory,
+			profile,
+			memory,
+		})
+
+		if (decision.action === "require-approval") return false
+
+		const client = connectToServer(serverUrl, {
+			directory,
+			authHeader: appStore.get(authHeaderAtom) ?? undefined,
+		})
+		await client.permission.respond({
+			sessionID: request.sessionID,
+			permissionID: request.id,
+			response: decision.action === "deny" ? "reject" : "once",
+		})
+
+		const latestSettings = await window.palot.getSettings()
+		await window.palot.updateSettings({
+			trust: appendPermissionAuditLog(
+				latestSettings.trust,
+				createPermissionAuditEntry({
+					request,
+					projectPath: directory,
+					profile,
+					decision,
+					batchId,
+				}),
+			),
+		})
+		log.info("Permission handled by trust profile", {
+			sessionId: request.sessionID,
+			permissionId: request.id,
+			permission: request.permission,
+			profile,
+			decision: decision.action,
+			reason: decision.reason,
+		})
+		return true
+	} catch (err) {
+		log.warn("Auto permission response failed; falling back to manual approval", {
+			sessionId: request.sessionID,
+			permissionId: request.id,
+		}, err)
+		return false
+	}
+}
+
+function handlePermissionAsked(request: PermissionLike): void {
+	pendingPermissionRequests.push(request)
+	if (permissionBatchTimer) return
+	permissionBatchTimer = setTimeout(() => {
+		permissionBatchTimer = null
+		const requests = pendingPermissionRequests.splice(0)
+		processPermissionBatch(requests)
+	}, PERMISSION_BATCH_DELAY_MS)
+}
+
+function processPermissionBatch(requests: PermissionLike[]): void {
+	const byProject = new Map<string, PermissionLike[]>()
+	const manualRequests: PermissionLike[] = []
+
+	for (const request of requests) {
+		const entry = appStore.get(sessionFamily(request.sessionID))
+		const directory = entry?.directory
+		if (!directory) {
+			manualRequests.push(request)
+			continue
+		}
+		const key = `${directory}\u0000${request.sessionID}`
+		byProject.set(key, [...(byProject.get(key) ?? []), request])
+	}
+
+	for (const request of manualRequests) {
+		addManualPermission(request)
+	}
+
+	for (const group of byProject.values()) {
+		processProjectPermissionBatch(group)
+	}
+}
+
+function processProjectPermissionBatch(requests: PermissionLike[]): void {
+	if (requests.length === 0) return
+	const first = requests[0]
+	const entry = appStore.get(sessionFamily(first.sessionID))
+	const directory = entry?.directory
+	const serverUrl = appStore.get(serverUrlAtom)
+	if (!directory || !serverUrl || !isElectron) {
+		for (const request of requests) addManualPermission(request)
+		return
+	}
+
+	window.palot
+		.getSettings()
+		.then(async (settings) => {
+			const profile = getProjectTrustProfile(settings.trust, directory)
+			const memory = getProjectTrustMemory(settings.trust, directory, profile)
+			const decisions = evaluatePermissionBatch(requests, {
+				projectPath: directory,
+				profile,
+				memory,
+			})
+
+			for (const decision of decisions) {
+				if (decision.action === "require-approval") {
+					addManualPermission(decision.request)
+					continue
+				}
+				const handled = await autoRespondToPermission(decision.request, decision.batchId)
+				if (!handled) addManualPermission(decision.request)
+			}
+		})
+		.catch((err) => {
+			log.warn("Permission batch evaluation failed; falling back to manual approval", err)
+			for (const request of requests) addManualPermission(request)
+		})
+}
+
+function addManualPermission(request: PermissionLike): void {
+	appStore.set(addPermissionAtom, {
+		sessionId: request.sessionID,
+		permission: request,
+	})
+}
+
 /**
  * Central SSE event dispatcher.
  * A standalone function that writes to Jotai atoms via the store API.
@@ -51,6 +235,10 @@ function invalidateAllQueries(): void {
  */
 export function processEvent(event: Event): void {
 	const { set } = appStore
+	const sessionId = getEventSessionId(event)
+	if (sessionId) {
+		set(recordSessionActivityAtom, { sessionId })
+	}
 
 	switch (event.type) {
 		case "server.connected":
@@ -125,10 +313,7 @@ export function processEvent(event: Event): void {
 		}
 
 		case "permission.asked":
-			set(addPermissionAtom, {
-				sessionId: event.properties.sessionID,
-				permission: event.properties,
-			})
+			handlePermissionAsked(event.properties)
 			break
 
 		case "permission.replied":

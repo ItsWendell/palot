@@ -1,8 +1,8 @@
 {
 	"name": "@palot/desktop",
 	"version": "0.11.0",
-	"description": "AI-powered coding assistant desktop app",
-	"author": "Palot",
+	"description": "Nexus Builder AI-powered coding assistant desktop app",
+	"author": "Nexus Builder",
 	"license": "MIT",
 	"homepage": "https://github.com/ItsWendell/palot",
 	"repository": {

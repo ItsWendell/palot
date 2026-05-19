@@ -1,17 +1,59 @@
 {
 	"$schema": "https://opencode.ai/config.json",
 	"instructions": ["**/AGENTS.local.md", "./.local/memory.md"],
-	"model": "openrouter/deepseek/deepseek-chat",
-	"default_agent": "builder",
+	"model": "openrouter/deepseek/deepseek-chat-v3.1",
+	"small_model": "openrouter/deepseek/deepseek-chat-v3.1",
+	"default_agent": "lead-agent",
 	"agent": {
+		"lead-agent": {
+			"model": "openrouter/deepseek/deepseek-r1",
+			"mode": "primary"
+		},
+		"architect": {
+			"model": "openrouter/deepseek/deepseek-r1",
+			"mode": "subagent"
+		},
 		"spec-writer": {
-			"model": "openrouter/deepseek/deepseek-chat"
+			"model": "openrouter/deepseek/deepseek-r1",
+			"mode": "subagent"
 		},
 		"builder": {
-			"model": "openrouter/deepseek/deepseek-chat"
+			"model": "openrouter/deepseek/deepseek-chat-v3.1",
+			"mode": "subagent"
 		},
 		"reviewer": {
-			"model": "openrouter/deepseek/deepseek-chat"
+			"model": "openrouter/google/gemini-2.5-flash-preview-09-2025",
+			"mode": "subagent"
+		}
+	},
+	"permission": {
+		"*": "ask",
+		"bash": {
+			"gh repo *": "allow",
+			"pkill -f \"opencode\"": "allow",
+			"opencode --help": "allow",
+			"opencode run *": "allow",
+			"opencode models *": "allow",
+			"git -C ~/palot status": "allow",
+			"git -C ~/palot diff --stat": "allow",
+			"git *": "allow",
+			"gh pr create --title 'feat: overhaul agent pipeline with architect, corrected models, and golf pace utility' --body ' *": "allow",
+			"npm run *": "allow",
+			"pkill -f \"electron\\\\|vite\\\\|palot.*dev\"": "allow",
+			"xargs kill *": "allow",
+			"pkill -f \"Electron\\\\|electron\"": "allow",
+			"grep -rn 'projectSlug\\\\|project/$projectSlug\\\\|/project/' /Users/cristianruizjr/palot/apps/desktop/src/renderer/ '--include=*.ts' '--include=*.tsx'": "allow",
+			"npx biome *": "allow",
+			"npx tsc *": "allow",
+			"bun test *": "allow",
+			"xargs cat *": "allow",
+			"xargs ls -la": "allow"
+		},
+		"read": {
+			"//Users/cristianruizjr/.claude/skills/**": "allow"
+		},
+		"skill": {
+			"oh-my-claudecode:autopilot": "allow"
 		}
 	}
 }

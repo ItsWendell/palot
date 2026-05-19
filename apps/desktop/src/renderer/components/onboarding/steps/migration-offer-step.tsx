@@ -124,7 +124,7 @@ export function MigrationOfferStep({ provider, onPreview, onSkip }: MigrationOff
 				<div className="text-center">
 					<h2 className="text-xl font-semibold text-foreground">Migrate from {label}</h2>
 					<p className="mt-1 text-sm text-muted-foreground">
-						We detected an existing {label} setup. Palot can migrate your configuration to OpenCode
+						We detected an existing {label} setup. Nexus Builder can migrate your configuration to OpenCode
 						format.
 					</p>
 				</div>

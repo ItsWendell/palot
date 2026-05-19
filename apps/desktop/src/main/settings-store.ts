@@ -3,6 +3,7 @@ import path from "node:path"
 import { app } from "electron"
 import type { AppSettings, NotificationSettings } from "../preload/api"
 import { DEFAULT_SERVER_SETTINGS } from "../shared/server-config"
+import { DEFAULT_TRUST_SETTINGS } from "../shared/trust"
 import { createLogger } from "./logger"
 
 const log = createLogger("settings-store")
@@ -23,6 +24,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 	},
 	opaqueWindows: false,
 	servers: DEFAULT_SERVER_SETTINGS,
+	trust: DEFAULT_TRUST_SETTINGS,
 }
 
 // ============================================================

@@ -1,10 +1,10 @@
 # Worktrees: Isolated Agent Sessions
 
-How Palot creates and manages git worktrees for agent sessions, the OpenCode API integration, and the apply-to-local / commit-and-push workflows.
+How Nexus Builder creates and manages git worktrees for agent sessions, the OpenCode API integration, and the apply-to-local / commit-and-push workflows.
 
 ## Overview
 
-When a user starts a new chat with "worktree mode" enabled, Palot creates a git worktree so the agent operates in an isolated copy of the repository. The user's working copy stays untouched. After the session, changes can be applied back to the local checkout or committed and pushed to a remote.
+When a user starts a new chat with "worktree mode" enabled, Nexus Builder creates a git worktree so the agent operates in an isolated copy of the repository. The user's working copy stays untouched. After the session, changes can be applied back to the local checkout or committed and pushed to a remote.
 
 Worktrees are managed entirely through OpenCode's worktree HTTP API (`client.worktree.*` from `@opencode-ai/sdk`). This works identically for local and remote OpenCode servers, with no Electron-specific worktree logic.
 
@@ -75,7 +75,7 @@ const result = await client.worktree.create({
 ```
 
 - Branch is always prefixed with `opencode/` (not configurable without upstream changes).
-- Creation is asynchronous on the server: the API returns immediately but checkout and bootstrap happen in the background. Palot polls `worktree.list()` to detect readiness.
+- Creation is asynchronous on the server: the API returns immediately but checkout and bootstrap happen in the background. Nexus Builder polls `worktree.list()` to detect readiness.
 - The `startCommand` runs on the server's filesystem after the worktree is created, which is how `.env` file sync works for both local and remote servers.
 
 ### List
@@ -115,7 +115,7 @@ The prompt text is converted to a kebab-case slug (first 4 words, max 40 chars).
 
 ### 2. `.env` file sync via `startCommand`
 
-Palot builds a shell snippet that copies `.env*` files (excluding `.example` and `.sample`) from the source directory to the worktree:
+Nexus Builder builds a shell snippet that copies `.env*` files (excluding `.example` and `.sample`) from the source directory to the worktree:
 
 ```sh
 for f in "/source/dir"/.env*; do
@@ -129,17 +129,17 @@ This is passed as `startCommand` to the API, so it runs on the server (works for
 
 ### 3. Readiness polling
 
-After creation, Palot polls `client.worktree.list()` every 500ms (up to 60s) until the worktree directory appears in the list. This is necessary because OpenCode creates worktrees asynchronously.
+After creation, Nexus Builder polls `client.worktree.list()` every 500ms (up to 60s) until the worktree directory appears in the list. This is necessary because OpenCode creates worktrees asynchronously.
 
 The event processor also listens for `worktree.ready` and `worktree.failed` SSE events, but the polling approach is the primary readiness mechanism.
 
 ### 4. Monorepo workspace subpath
 
-If the project's source directory is a subdirectory of the git root (e.g., `/repo/packages/app`), Palot computes the relative subpath and appends it to the worktree directory. The session is then scoped to `/worktree/packages/app` so the agent operates in the correct workspace.
+If the project's source directory is a subdirectory of the git root (e.g., `/repo/packages/app`), Nexus Builder computes the relative subpath and appends it to the worktree directory. The session is then scoped to `/worktree/packages/app` so the agent operates in the correct workspace.
 
 ### 5. Session directory override
 
-The OpenCode session is created with the worktree workspace directory, but Palot overrides the session's stored directory back to the original project directory. This ensures the session groups correctly under the right project in the sidebar.
+The OpenCode session is created with the worktree workspace directory, but Nexus Builder overrides the session's stored directory back to the original project directory. This ensures the session groups correctly under the right project in the sidebar.
 
 ### 6. Loading phases
 
@@ -147,7 +147,7 @@ The UI shows two distinct loading phases during creation:
 - "Creating worktree..." -- while calling the API and waiting for readiness
 - "Starting session..." -- while creating the OpenCode session
 
-If worktree creation fails, Palot falls back to local mode with a warning rather than blocking the user.
+If worktree creation fails, Nexus Builder falls back to local mode with a warning rather than blocking the user.
 
 ## Apply to Local
 
@@ -188,7 +188,7 @@ Since the API only returns directory paths, the settings page does not show disk
 
 Worktrees created by OpenCode are tracked as "sandboxes" on the parent project. Each `Project` from the API has a `sandboxes: string[]` array listing worktree directories it owns.
 
-Palot merges sandbox projects into their parent so the sidebar stays clean:
+Nexus Builder merges sandbox projects into their parent so the sidebar stays clean:
 
 1. **`sandboxMappingsAtom`** -- derived atom that builds two maps from discovery data:
    - `sandboxToParent`: sandbox directory -> parent project directory

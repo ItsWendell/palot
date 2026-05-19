@@ -10,10 +10,12 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from "@palot/ui/components/sidebar"
+import { cn } from "@palot/ui/lib/utils"
 import { useAtomValue } from "jotai"
 import { CoinsIcon } from "lucide-react"
 import { memo } from "react"
 import { agentCostsAtom } from "../atoms/cost-tracking"
+import { getBudgetDisplay } from "../lib/agent-progress-display"
 
 // ============================================================
 // CostTracker
@@ -29,6 +31,8 @@ export const CostTracker = memo(function CostTracker() {
 
 	if (totalCost === 0 && entries.length === 0) return null
 
+	const budget = getBudgetDisplay(totalCost)
+
 	return (
 		<SidebarMenuItem>
 			<Popover>
@@ -36,7 +40,7 @@ export const CostTracker = memo(function CostTracker() {
 					render={
 						<SidebarMenuButton
 							tooltip="Live agent spend"
-							className="text-muted-foreground tabular-nums"
+							className={cn("tabular-nums", budget.textClassName)}
 						/>
 					}
 				>
@@ -52,7 +56,13 @@ export const CostTracker = memo(function CostTracker() {
 						{/* Header */}
 						<div className="flex items-center justify-between">
 							<p className="font-medium text-foreground/80">Live Spend</p>
-							<span className="text-muted-foreground tabular-nums">{totalTokensFormatted} tok total</span>
+							<span className={cn("rounded-full border px-1.5 py-0.5 text-[10px] font-medium", budget.badgeClassName)}>
+								{budget.label}
+							</span>
+						</div>
+						<div className="flex items-center justify-between text-[11px] tabular-nums text-muted-foreground/60">
+							<span>{totalTokensFormatted} tok total</span>
+							<span>{totalCostFormatted}</span>
 						</div>
 
 						{/* Per-agent rows */}

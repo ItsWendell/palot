@@ -117,13 +117,13 @@ export function AboutSettings() {
 
 			<SettingsSection title="CLI">
 				<SettingsRow
-					label="palot CLI"
+					label="nexus-builder CLI"
 					description={
 						cliError
 							? cliError
 							: cliInstalled
-								? "Installed at /usr/local/bin/palot"
-								: "Install the palot command-line tool"
+								? "Installed at /usr/local/bin/nexus-builder"
+								: "Install the nexus-builder command-line tool"
 					}
 				>
 					{cliLoading ? (

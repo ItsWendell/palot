@@ -9,7 +9,13 @@ import { Switch } from "@palot/ui/components/switch"
 import { useAtomValue, useSetAtom } from "jotai"
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
+import {
+	AUTO_APPROVED_ACTIONS,
+	TRUST_PROFILE_OPTIONS,
+	type TrustProfile,
+} from "../../../shared/trust"
 import { type DisplayMode, displayModeAtom, opaqueWindowsAtom } from "../../atoms/preferences"
+import { useSettings } from "../../hooks/use-settings"
 import { useColorScheme, useSetColorScheme } from "../../hooks/use-theme"
 import type { ColorScheme } from "../../lib/themes"
 import { fetchOpenInTargets, setOpenInPreferred } from "../../services/backend"
@@ -29,12 +35,61 @@ export function GeneralSettings() {
 				<OpenDestinationRow />
 			</SettingsSection>
 
+			<SettingsSection title="Agent autonomy">
+				<TrustProfileRow />
+			</SettingsSection>
+
 			<SettingsSection title="Appearance">
 				<ThemeRow />
 				<OpaqueWindowsRow />
 				<DisplayModeRow />
 			</SettingsSection>
 		</div>
+	)
+}
+
+function TrustProfileRow() {
+	const { settings, updateSettings } = useSettings()
+	const profile = settings.trust.defaultProfile
+	const actions = AUTO_APPROVED_ACTIONS[profile]
+
+	const handleChange = useCallback(
+		async (value: TrustProfile | null) => {
+			if (!value) return
+			await updateSettings({
+				trust: {
+					defaultProfile: value,
+				},
+			})
+		},
+		[updateSettings],
+	)
+
+	return (
+		<SettingsRow
+			label="Trust profile"
+			description="Controls which routine agent actions can continue without asking"
+		>
+			<div className="flex max-w-[360px] flex-col items-end gap-2">
+				<Select value={profile} onValueChange={handleChange}>
+					<SelectTrigger className="min-w-[180px]">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{TRUST_PROFILE_OPTIONS.map((option) => (
+							<SelectItem key={option.value} value={option.value}>
+								{option.label}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+				<div className="space-y-1 text-right text-xs text-muted-foreground">
+					{actions.map((action) => (
+						<div key={action}>{action}</div>
+					))}
+				</div>
+			</div>
+		</SettingsRow>
 	)
 }
 

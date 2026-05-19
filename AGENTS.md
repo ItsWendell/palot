@@ -1,4 +1,4 @@
-# Palot Agent Instructions
+# Nexus Builder Agent Instructions
 
 ## Purpose of This File
 
@@ -46,13 +46,13 @@ generic knowledge.
 - **Rebuild server types**: `cd apps/server && bun run build:types` (required after adding server routes)
 - **Add UI component**: `cd packages/ui && bunx shadcn@latest add <component>`
 - **Package**: `cd apps/desktop && bun run package` (or `package:linux`, `package:mac`, `package:win`, `package:all`)
-- **Package without code signing (macOS)**: `CSC_IDENTITY_AUTO_DISCOVERY=false cd apps/desktop && bun run package:mac`
+- **Package without code signing (macOS)**: `cd apps/desktop && CSC_IDENTITY_AUTO_DISCOVERY=false bun run package:mac`
 - **Changeset -- add**: `bun changeset` (interactive -- pick packages, bump type, write description)
 - **Changeset -- version**: `bun run version-packages` (applies pending changesets, bumps versions, updates changelogs)
 
 ## Code Style
 
-### Formatting (enforced by Biome 2.3.14)
+### Formatting (enforced by Biome 2.4.2)
 
 - Tabs for indentation (width 2), line width 100, LF line endings
 - Double quotes, no semicolons, trailing commas everywhere
@@ -175,9 +175,9 @@ The `window.palot` bridge is not available until the preload script finishes. Ea
 
 Never open external URLs inside the Electron window. Use `setWindowOpenHandler` in the main process to deny and redirect to `shell.openExternal()`. This prevents navigation to untrusted content inside the app.
 
-### Palot storage -- XDG Base Directory
+### Nexus Builder storage -- XDG Base Directory
 
-Palot follows the XDG Base Directory Specification (same convention as OpenCode). Config at `~/.config/palot/`, data at `~/.local/share/palot/`. Automation configs live at `~/.config/palot/automations/<id>/`, SQLite database at `~/.local/share/palot/palot.db`. See `main/automation/paths.ts` for the implementation. Do NOT use `~/.palot/` (legacy) or Electron's `userData` path for automation storage.
+Nexus Builder follows the XDG Base Directory Specification (same convention as OpenCode). Config at `~/.config/palot/`, data at `~/.local/share/palot/`. Automation configs live at `~/.config/palot/automations/<id>/`, SQLite database at `~/.local/share/palot/palot.db`. See `main/automation/paths.ts` for the implementation. Do NOT use `~/.palot/` (legacy) or Electron's `userData` path for automation storage.
 
 ### electron-vite -- Three Build Targets
 
