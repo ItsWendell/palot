@@ -3,7 +3,7 @@
  *
  * Tests the write() function with dry-run mode and actual writes to temp directories.
  */
-import { afterEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -30,6 +30,14 @@ function tempDir(): string {
 
 describe("write()", () => {
 	const tempDirs: string[] = []
+	let originalXdgConfigHome: string | undefined
+
+	beforeEach(() => {
+		originalXdgConfigHome = process.env.XDG_CONFIG_HOME
+		const configDir = tempDir()
+		tempDirs.push(configDir)
+		process.env.XDG_CONFIG_HOME = configDir
+	})
 
 	afterEach(async () => {
 		for (const dir of tempDirs) {
@@ -38,6 +46,11 @@ describe("write()", () => {
 			} catch {}
 		}
 		tempDirs.length = 0
+		if (originalXdgConfigHome === undefined) {
+			delete process.env.XDG_CONFIG_HOME
+		} else {
+			process.env.XDG_CONFIG_HOME = originalXdgConfigHome
+		}
 	})
 
 	describe("dry-run mode", () => {

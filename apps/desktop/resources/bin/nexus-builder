@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 #
-# palot — Open the installed Palot desktop application.
+# nexus-builder — Open the installed Nexus Builder desktop application.
 #
-# This script is bundled inside the Palot.app package and symlinked
-# to /usr/local/bin/palot by the "Install CLI Command" action.
+# This script is bundled inside the Nexus Builder.app package and symlinked
+# to /usr/local/bin/nexus-builder by the "Install CLI Command" action.
 #
 # Usage:
-#   palot              Open Palot (or focus existing window)
-#   palot /path/to/dir Open Palot with a specific project directory
+#   nexus-builder              Open Nexus Builder (or focus existing window)
+#   nexus-builder /path/to/dir Open Nexus Builder with a specific project directory
 
 set -euo pipefail
 
 case "$(uname -s)" in
 	Darwin)
 		# Resolve the .app bundle — this script lives at
-		# Palot.app/Contents/Resources/bin/palot
+		# Nexus Builder.app/Contents/Resources/bin/nexus-builder
 		SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 		APP_BUNDLE="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
@@ -33,14 +33,14 @@ case "$(uname -s)" in
 			exec "$ELECTRON_BIN" "$@"
 		else
 			# Fallback: try system PATH
-			echo "Error: Could not find Palot binary at $ELECTRON_BIN" >&2
+			echo "Error: Could not find Nexus Builder binary at $ELECTRON_BIN" >&2
 			echo "Try launching from your application menu instead." >&2
 			exit 1
 		fi
 		;;
 	*)
 		echo "Error: Unsupported platform $(uname -s)" >&2
-		echo "On Windows, use 'palot.cmd' instead." >&2
+		echo "On Windows, use 'nexus-builder.cmd' instead." >&2
 		exit 1
 		;;
 esac

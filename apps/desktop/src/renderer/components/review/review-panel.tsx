@@ -723,11 +723,11 @@ const FileDiffSection = memo(function FileDiffSection({
 	)
 
 	const oldFile = useMemo(
-		() => ({ name: diff.file, contents: diff.before }),
+		() => ({ name: diff.file, contents: diff.before ?? "" }),
 		[diff.file, diff.before],
 	)
 	const newFile = useMemo(
-		() => ({ name: diff.file, contents: diff.after }),
+		() => ({ name: diff.file, contents: diff.after ?? "" }),
 		[diff.file, diff.after],
 	)
 

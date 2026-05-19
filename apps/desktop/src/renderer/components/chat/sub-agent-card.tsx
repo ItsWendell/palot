@@ -3,7 +3,9 @@ import { cn } from "@palot/ui/lib/utils"
 import { useNavigate, useParams } from "@tanstack/react-router"
 import { useAtomValue } from "jotai"
 import {
+	AlertCircleIcon,
 	ArrowRightIcon,
+	CheckCircle2Icon,
 	ChevronDownIcon,
 	ChevronRightIcon,
 	ChevronUpIcon,
@@ -12,14 +14,21 @@ import {
 	ShieldAlertIcon,
 	ZapIcon,
 } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { messagesFamily } from "../../atoms/messages"
+import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { messagesFamily, setMessagesAtom } from "../../atoms/messages"
 import { partsFamily } from "../../atoms/parts"
+import { sessionMetricsFamily } from "../../atoms/derived/session-metrics"
 import { sessionFamily } from "../../atoms/sessions"
 import { appStore } from "../../atoms/store"
 import { getStreamingPartsForSession, streamingVersionFamily } from "../../atoms/streaming"
 import { useToolElapsedTime } from "../../hooks/use-elapsed-time"
-import type { ToolPart, ToolState } from "../../lib/types"
+import { getBaseClient } from "../../services/connection-manager"
+import {
+	getAgentDisplayName,
+	getAgentStatusBadgeClass,
+	getAgentStatusLabel,
+} from "../../lib/agent-progress-display"
+import type { Message, Part, ToolPart, ToolState } from "../../lib/types"
 import { getToolDuration, getToolInfo, getToolSubtitle } from "./chat-tool-call"
 import { getToolCategory, TOOL_CATEGORY_COLORS } from "./tool-card"
 
@@ -59,21 +68,6 @@ interface SubAgentCardProps {
 	part: ToolPart
 }
 
-/**
- * Renders a sub-agent (task tool) as a three-state collapsible card.
- *
- * **Closed**: Header bar only — chevron, Zap icon, "Agent" label,
- * agent type, truncated task description, live status / duration, Open button.
- *
- * **Summary**: Header + first ~4 lines of the agent's final text as a
- * preview with a "Show more" affordance. No tool rows shown.
- *
- * **Expanded**: Header + task description + tool activity rows + full
- * markdown-rendered agent response.
- *
- * While running the card is fully expanded. On completion it auto-collapses
- * to the summary state (or closed if there's no text).
- */
 export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAgentCardProps) {
 	const navigate = useNavigate()
 	const { projectSlug } = useParams({ strict: false }) as { projectSlug?: string }
@@ -125,7 +119,11 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 		(part.state.input?.description as string) ??
 		("title" in part.state ? part.state.title : undefined) ??
 		"Sub-agent"
-	const agentType = (part.state.input?.subagent_type as string) ?? "general"
+	const agentLabel = getAgentDisplayName(
+		(part.state.input?.agent as string | undefined) ??
+			(part.state.input?.subagent_type as string | undefined) ??
+			"agent",
+	)
 
 	// Determine if the sub-agent is still running
 	const isRunning = part.state.status === "running" || part.state.status === "pending"
@@ -136,9 +134,19 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 	// This lets the card header show a "waiting" indicator while the user hasn't
 	// yet responded in the parent session's input area.
 	const childSessionEntry = useAtomValue(sessionFamily(sessionId ?? ""))
+	const metrics = useAtomValue(sessionMetricsFamily(sessionId ?? ""))
 	const childHasPendingPermission = (childSessionEntry?.permissions.length ?? 0) > 0
 	const childHasPendingQuestion = (childSessionEntry?.questions.length ?? 0) > 0
 	const childIsWaiting = isRunning && (childHasPendingPermission || childHasPendingQuestion)
+	const displayStatus = childIsWaiting
+		? "waiting"
+		: isError
+			? "failed"
+			: isRunning
+				? "running"
+				: "completed"
+	const displayStatusLabel = getAgentStatusLabel(displayStatus)
+	const modelName = metrics.modelDistributionDisplay[0]?.name
 
 	// ── Three-state collapse ───────────────────────────────────
 	// "closed"   → header only
@@ -147,18 +155,14 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 	const [collapseState, setCollapseState] = useState<CollapseState>(
 		hasParallelSiblings ? "summary" : "expanded",
 	)
-	const wasRunningRef = useRef(isRunning)
 
 	useEffect(() => {
-		// When transitioning from running → completed/error,
-		// auto-collapse to "summary" if there's text, otherwise "closed"
-		if (wasRunningRef.current && !isRunning) {
-			// We defer to next render so latestText is populated
+		// Completed/error cards should settle into their one-line summary.
+		if (!isRunning) {
 			requestAnimationFrame(() => {
 				setCollapseState((prev) => (prev === "expanded" ? "summary" : prev))
 			})
 		}
-		wasRunningRef.current = isRunning
 	}, [isRunning])
 
 	const handleHeaderToggle = useCallback(() => {
@@ -181,10 +185,39 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 
 	// ── Duration ───────────────────────────────────────────────
 	const duration = getToolDuration(part)
+	const summaryDuration = metrics.workTime !== "0s" ? metrics.workTime : duration
 	const elapsedTime = useToolElapsedTime(part)
 
 	// Access child session data from the store.
 	const childMessages = useAtomValue(messagesFamily(sessionId ?? ""))
+
+	useEffect(() => {
+		if (!sessionId || childMessages.length > 0) return
+
+		let cancelled = false
+		const client = getBaseClient()
+		if (!client) return
+
+		client.session
+			.messages({ sessionID: sessionId, limit: 30 })
+			.then((result) => {
+				if (cancelled) return
+				const raw = (result.data ?? []) as Array<{ info: Message; parts: Part[] }>
+				const messages = raw.map((m) => m.info)
+				const parts: Record<string, Part[]> = {}
+				for (const m of raw) {
+					parts[m.info.id] = m.parts
+				}
+				appStore.set(setMessagesAtom, { sessionId, messages, parts })
+			})
+			.catch(() => {
+				// Best-effort hydration only. The card remains useful with tool metadata.
+			})
+
+		return () => {
+			cancelled = true
+		}
+	}, [sessionId, childMessages.length])
 
 	// Subscribe to the per-session streaming version so we only re-render
 	// when this child session streams, not when any other session streams.
@@ -281,16 +314,11 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 		return rest.length > 0
 	}, [latestText, firstLine])
 
-	// If there's no text and we're in summary mode, fall back to closed
-	// (summary with nothing to show is pointless)
-	useEffect(() => {
-		if (collapseState === "summary" && !firstLine) {
-			setCollapseState("closed")
-		}
-	}, [collapseState, firstLine])
-
 	const showSummary = collapseState === "summary" || collapseState === "expanded"
 	const showExpanded = collapseState === "expanded"
+	const completedSummary = `✓ ${agentLabel} · ${metrics.tokens} tok · ${metrics.cost}${
+		summaryDuration ? ` · ${summaryDuration}` : ""
+	}`
 
 	return (
 		<div
@@ -320,39 +348,67 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 					<ZapIcon
 						className={cn(
 							"size-3.5 shrink-0",
-							isRunning ? "text-violet-400 animate-pulse" : "text-muted-foreground",
+							isRunning ? "text-emerald-400 animate-pulse" : "text-muted-foreground",
 						)}
 					/>
-					<span className="text-xs font-medium text-foreground/80">Agent</span>
-					<span className="shrink-0 text-xs text-muted-foreground/60">({agentType})</span>
+					<span className="text-xs font-medium text-foreground/80">{agentLabel}</span>
+					{modelName && (
+						<span className="shrink-0 text-xs text-muted-foreground/50">{modelName}</span>
+					)}
 					{/* Truncated task title in header */}
 					<span className="min-w-0 truncate text-xs text-muted-foreground/50">{taskTitle}</span>
 				</button>
 				{/* Right side: status / duration / open button — outside trigger */}
 				<div className="flex shrink-0 items-center gap-2.5">
-				{/* Waiting indicator: shown when sub-agent has a pending permission or question */}
-				{childIsWaiting && childHasPendingPermission && (
-					<span className="flex items-center gap-1 text-[11px] font-medium text-amber-400">
-						<ShieldAlertIcon className="size-3 shrink-0" aria-hidden="true" />
-						Needs approval
+					<span
+						className={cn(
+							"inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+							getAgentStatusBadgeClass(displayStatus),
+						)}
+					>
+						{displayStatus === "running" && (
+							<span
+								className="size-1.5 rounded-full bg-current animate-pulse"
+								aria-hidden="true"
+							/>
+						)}
+						{displayStatus === "completed" && (
+							<CheckCircle2Icon className="size-3" aria-hidden="true" />
+						)}
+						{displayStatus === "failed" && (
+							<AlertCircleIcon className="size-3" aria-hidden="true" />
+						)}
+						{displayStatusLabel}
 					</span>
-				)}
-				{childIsWaiting && childHasPendingQuestion && !childHasPendingPermission && (
-					<span className="flex items-center gap-1 text-[11px] font-medium text-amber-400">
-						<MessageCircleQuestionIcon className="size-3 shrink-0" aria-hidden="true" />
-						Asking a question
-					</span>
-				)}
-				{isRunning && !childIsWaiting && childStatus && (
-					<span className="text-[11px] text-muted-foreground/60">{childStatus}</span>
-				)}
-				{isRunning && elapsedTime && (
-					<span className="text-[11px] tabular-nums text-muted-foreground/40">
-						{elapsedTime}
-					</span>
-				)}
-				{isRunning && !childIsWaiting && <Loader2Icon className="size-3 animate-spin text-muted-foreground/40" />}
-				{childIsWaiting && <Loader2Icon className="size-3 animate-spin text-amber-400/60" />}
+					{/* Waiting indicator: shown when sub-agent has a pending permission or question */}
+					{childIsWaiting && childHasPendingPermission && (
+						<span className="flex items-center gap-1 text-[11px] font-medium text-amber-400">
+							<ShieldAlertIcon className="size-3 shrink-0" aria-hidden="true" />
+							Needs approval
+						</span>
+					)}
+					{childIsWaiting && childHasPendingQuestion && !childHasPendingPermission && (
+						<span className="flex items-center gap-1 text-[11px] font-medium text-amber-400">
+							<MessageCircleQuestionIcon className="size-3 shrink-0" aria-hidden="true" />
+							Asking a question
+						</span>
+					)}
+					{isRunning && !childIsWaiting && childStatus && (
+						<span className="max-w-40 truncate text-[11px] text-muted-foreground/60">
+							{childStatus}
+						</span>
+					)}
+					{isRunning && elapsedTime && (
+						<span className="text-[11px] tabular-nums text-muted-foreground/40">
+							{elapsedTime}
+						</span>
+					)}
+					{isRunning && !childIsWaiting && (
+						<Loader2Icon className="size-3 animate-spin text-muted-foreground/40" />
+					)}
+					{childIsWaiting && (
+						<Loader2Icon className="size-3 animate-spin text-amber-400/60" />
+					)}
 					{!isRunning && duration && (
 						<span className="text-[11px] text-muted-foreground/40">{duration}</span>
 					)}
@@ -370,21 +426,41 @@ export const SubAgentCard = memo(function SubAgentCard({ part: propPart }: SubAg
 			</div>
 
 			{/* ── Summary state: single-line teaser ────────────────── */}
-			{showSummary && !showExpanded && firstLine && (
+			{showSummary && !showExpanded && !isRunning && !isError && (
+				<div className="border-t border-border/30 px-3.5 py-2">
+					<div className="flex items-center gap-2">
+						<p className="min-w-0 flex-1 truncate text-[11px] leading-relaxed text-muted-foreground/75">
+							{completedSummary}
+						</p>
+						{hasMore && (
+							<button
+								type="button"
+								onClick={handleShowMore}
+								className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-primary/70 transition-colors hover:text-primary"
+							>
+								Show more
+								<ChevronDownIcon className="size-3" />
+							</button>
+						)}
+					</div>
+					{latestText && (
+						<p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/45">
+							<span aria-hidden="true">←</span>
+							<span>{agentLabel} returned results</span>
+						</p>
+					)}
+				</div>
+			)}
+
+			{showSummary && !showExpanded && isRunning && firstLine && (
 				<div className="flex items-baseline gap-2 border-t border-border/30 px-3.5 py-2">
 					<p className="min-w-0 flex-1 truncate text-[11px] leading-relaxed text-muted-foreground/70 italic">
 						{firstLine}
 					</p>
-					{hasMore && (
-						<button
-							type="button"
-							onClick={handleShowMore}
-							className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-primary/70 transition-colors hover:text-primary"
-						>
-							Show more
-							<ChevronDownIcon className="size-3" />
-						</button>
-					)}
+					<span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-emerald-300/70">
+						<span className="size-1 rounded-full bg-current animate-pulse" aria-hidden="true" />
+						streaming
+					</span>
 				</div>
 			)}
 

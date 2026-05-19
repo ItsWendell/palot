@@ -143,11 +143,11 @@ contextBridge.exposeInMainWorld("palot", {
 	// --- CLI install ---
 
 	cli: {
-		/** Checks whether the `palot` CLI command is installed. */
+		/** Checks whether the `nexus-builder` CLI command is installed. */
 		isInstalled: () => ipcRenderer.invoke("cli:is-installed"),
-		/** Installs the `palot` CLI command (symlinks to /usr/local/bin). */
+		/** Installs the `nexus-builder` CLI command (symlinks to /usr/local/bin). */
 		install: () => ipcRenderer.invoke("cli:install"),
-		/** Uninstalls the `palot` CLI command. */
+		/** Uninstalls the `nexus-builder` CLI command. */
 		uninstall: () => ipcRenderer.invoke("cli:uninstall"),
 	},
 
@@ -181,6 +181,12 @@ contextBridge.exposeInMainWorld("palot", {
 
 	/** Opens a native folder picker dialog. Returns the selected path, or null if cancelled. */
 	pickDirectory: () => ipcRenderer.invoke("dialog:open-directory"),
+
+	/** Picks a parent folder then creates a new subfolder with the given name. Returns the created path, or null if cancelled. */
+	createProjectDirectory: (name: string) => ipcRenderer.invoke("dialog:create-directory", name),
+
+	/** Reveals a path in the system file manager (Finder on macOS, Explorer on Windows). */
+	showInFinder: (filePath: string) => ipcRenderer.invoke("shell:show-in-finder", filePath),
 
 	// --- Fetch proxy (bypasses Chromium connection limits) ---
 
@@ -259,6 +265,109 @@ contextBridge.exposeInMainWorld("palot", {
 		return () => {
 			ipcRenderer.removeListener("automation:runs-updated", listener)
 		}
+	},
+
+	// --- Agents ---
+
+	agents: {
+		list: (projectPath?: string) => ipcRenderer.invoke("agents:list", projectPath),
+		get: (filename: string, projectPath?: string) => ipcRenderer.invoke("agents:get", filename, projectPath),
+		write: (filename: string, raw: string, projectPath?: string) =>
+			ipcRenderer.invoke("agents:write", filename, raw, projectPath),
+		delete: (filename: string, projectPath?: string) => ipcRenderer.invoke("agents:delete", filename, projectPath),
+	},
+
+	// --- Knowledge Sources (agent reference docs) ---
+
+	sourceKnowledge: {
+		list: (projectPath?: string) => ipcRenderer.invoke("knowledge-src:list", projectPath),
+		get: (filename: string, projectPath?: string) => ipcRenderer.invoke("knowledge-src:get", filename, projectPath),
+	},
+
+	// --- Skills ---
+
+	skills: {
+		list: () => ipcRenderer.invoke("skills:list"),
+		listAll: () => ipcRenderer.invoke("skills:list-all"),
+		importGitHub: (url: string) => ipcRenderer.invoke("skills:import-github", url),
+		write: (filename: string, raw: string) => ipcRenderer.invoke("skills:write", filename, raw),
+		delete: (filename: string) => ipcRenderer.invoke("skills:delete", filename),
+		brainSummary: () => ipcRenderer.invoke("skills:brain-summary"),
+	},
+
+	// --- Mem9 (persistent memory) ---
+
+	mem9: {
+		init: (config?: { apiKey?: string; baseUrl?: string; agentId?: string }) =>
+			ipcRenderer.invoke("mem9:init", config),
+		status: () => ipcRenderer.invoke("mem9:status"),
+		store: (input: { content: string; source?: string; tags?: string[]; metadata?: Record<string, unknown> }) =>
+			ipcRenderer.invoke("mem9:store", input),
+		search: (params: { q?: string; tags?: string; source?: string; limit?: number; offset?: number }) =>
+			ipcRenderer.invoke("mem9:search", params),
+		get: (id: string) => ipcRenderer.invoke("mem9:get", id),
+		delete: (id: string) => ipcRenderer.invoke("mem9:delete", id),
+		recall: (query: string, limit?: number) => ipcRenderer.invoke("mem9:recall", query, limit),
+		embedKnowledge: (projectPath: string) => ipcRenderer.invoke("mem9:embed-knowledge", projectPath),
+		embedBrain: (projectPath: string) => ipcRenderer.invoke("mem9:embed-brain", projectPath),
+		embedAll: (projectPath: string) => ipcRenderer.invoke("mem9:embed-all", projectPath),
+	},
+
+	// --- Brain ---
+
+	brain: {
+		list: (projectPath?: string) => ipcRenderer.invoke("brain:list", projectPath),
+		read: (slug: string, projectPath?: string) => ipcRenderer.invoke("brain:read", slug, projectPath),
+		write: (slug: string, content: string, projectPath?: string) => ipcRenderer.invoke("brain:write", slug, content, projectPath),
+		append: (slug: string, content: string, projectPath?: string) => ipcRenderer.invoke("brain:append", slug, content, projectPath),
+		recordEvent: (slug: string, title: string, body: string, projectPath?: string) => ipcRenderer.invoke("brain:record-event", slug, title, body, projectPath),
+		delete: (slug: string, projectPath?: string) => ipcRenderer.invoke("brain:delete", slug, projectPath),
+		search: (keyword: string, projectPath?: string) => ipcRenderer.invoke("brain:search", keyword, projectPath),
+		summary: () => ipcRenderer.invoke("skills:brain-summary"),
+		contextSummary: (projectPath: string, sessionId?: string) => ipcRenderer.invoke("brain:context-summary", projectPath, sessionId),
+	},
+
+	// --- Tasks ---
+
+	tasks: {
+		load: () => ipcRenderer.invoke("tasks:load"),
+		upsert: (task: unknown) => ipcRenderer.invoke("tasks:upsert", task),
+		updateStatus: (taskId: string, status: string) => ipcRenderer.invoke("tasks:update-status", taskId, status),
+		executionPlan: (tasks: unknown[]) => ipcRenderer.invoke("tasks:execution-plan", tasks),
+		routeModel: (taskOrText: unknown) => ipcRenderer.invoke("tasks:route-model", taskOrText),
+	},
+
+	// --- Knowledge graph ---
+
+	knowledge: {
+		add: (projectPath: string, entry: unknown) => ipcRenderer.invoke("knowledge:add", projectPath, entry),
+		query: (projectPath: string, options: unknown) => ipcRenderer.invoke("knowledge:query", projectPath, options),
+		remove: (projectPath: string, id: string) => ipcRenderer.invoke("knowledge:remove", projectPath, id),
+		context: (projectPath: string, forPrompt?: string) => ipcRenderer.invoke("knowledge:context", projectPath, forPrompt),
+	},
+
+	// --- Supervisor ---
+
+	supervisor: {
+		load: (projectPath: string) => ipcRenderer.invoke("supervisor:load", projectPath),
+		save: (projectPath: string, state: unknown) => ipcRenderer.invoke("supervisor:save", projectPath, state),
+		appendOutput: (projectPath: string, output: unknown) => ipcRenderer.invoke("supervisor:append-output", projectPath, output),
+		setMilestone: (projectPath: string, milestone: string) => ipcRenderer.invoke("supervisor:set-milestone", projectPath, milestone),
+		markTaskActive: (projectPath: string, taskId: string) => ipcRenderer.invoke("supervisor:mark-task-active", projectPath, taskId),
+	},
+
+	// --- Agent performance ---
+
+	agentPerformance: {
+		list: (projectPath?: string) => ipcRenderer.invoke("agent-performance:list", projectPath),
+		record: (projectPath: string, input: unknown) => ipcRenderer.invoke("agent-performance:record", projectPath, input),
+	},
+
+	// --- Semantic index ---
+
+	semantic: {
+		build: (projectPath: string) => ipcRenderer.invoke("semantic:build", projectPath),
+		search: (projectPath: string, query: string, limit?: number) => ipcRenderer.invoke("semantic:search", projectPath, query, limit),
 	},
 
 	// --- Onboarding ---

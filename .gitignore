@@ -44,6 +44,13 @@ AGENTS.local.md
 
 # Git worktrees
 .worktrees/
+.claude/
 
 # Local working directory
 .local/
+
+# Local launch helpers
+Launch Palot.command*
+
+# OMC state
+.omc/

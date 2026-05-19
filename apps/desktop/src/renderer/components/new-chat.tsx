@@ -2,6 +2,7 @@ import {
 	PromptInput,
 	PromptInputFooter,
 	PromptInputProvider,
+	PromptInputSubmit,
 	PromptInputTextarea,
 	PromptInputTools,
 	usePromptInputController,
@@ -54,7 +55,10 @@ import { useSetAppBarContent } from "./app-bar-context"
 import { BranchPicker } from "./branch-picker"
 import { PromptAttachmentPreview } from "./chat/prompt-attachments"
 import { PromptToolbar, StatusBar } from "./chat/prompt-toolbar"
-import { PalotWordmark } from "./palot-wordmark"
+import { NexusBuilderWordmark } from "./palot-wordmark"
+
+const NO_ATTACHMENT_TYPES = "application/x-palot-no-attachments"
+const IMAGE_ATTACHMENT_TYPES = "image/png,image/jpeg,image/gif,image/webp"
 
 // ============================================================
 // Worktree mode toggle
@@ -213,7 +217,7 @@ export function NewChat() {
 	const setAppBarContent = useSetAppBarContent()
 	useLayoutEffect(() => {
 		setAppBarContent(
-			<PalotWordmark className="h-[11px] w-auto shrink-0 text-muted-foreground/70" />,
+			<NexusBuilderWordmark className="h-[11px] w-auto shrink-0 text-muted-foreground/70" />,
 		)
 		return () => setAppBarContent(null)
 	}, [setAppBarContent])
@@ -382,6 +386,12 @@ export function NewChat() {
 		() => getModelInputCapabilities(effectiveModel, providers?.providers ?? []),
 		[effectiveModel, providers],
 	)
+	const acceptedAttachmentTypes = useMemo(() => {
+		const types: string[] = []
+		if (modelCapabilities?.image !== false) types.push(IMAGE_ATTACHMENT_TYPES)
+		if (modelCapabilities?.pdf !== false) types.push("application/pdf")
+		return types.length > 0 ? types.join(",") : NO_ATTACHMENT_TYPES
+	}, [modelCapabilities])
 
 	useEffect(() => {
 		if (projects.length === 0) return
@@ -433,7 +443,7 @@ export function NewChat() {
 	const launchLocal = useCallback(
 		async (promptText: string, files?: FileAttachment[]) => {
 			const session = await createSession(selectedDirectory)
-			if (!session) return
+			if (!session) throw new Error("OpenCode did not create a session.")
 
 			const currentBranch = vcs?.branch ?? ""
 			if (currentBranch) {
@@ -573,7 +583,8 @@ export function NewChat() {
 
 	const handleLaunch = useCallback(
 		async (promptText: string, files?: FileAttachment[]) => {
-			if (!selectedDirectory || !promptText) return
+			if (!selectedDirectory) throw new Error("Choose a project before starting a session.")
+			if (!promptText) return
 			setLaunching(true)
 			setError(null)
 			try {
@@ -586,7 +597,9 @@ export function NewChat() {
 					await launchLocal(promptText, files)
 				}
 			} catch (err) {
-				setError(err instanceof Error ? err.message : "Failed to create session")
+				const message = err instanceof Error ? err.message : "Failed to create session"
+				setError(message)
+				throw new Error(message)
 			} finally {
 				setLaunching(false)
 			}
@@ -596,19 +609,27 @@ export function NewChat() {
 
 	const hasToolbar = providers
 
+	const getGreeting = () => {
+		const h = new Date().getHours()
+		if (h >= 5 && h < 12) return "Good morning, CJ."
+		if (h >= 12 && h < 17) return "Good afternoon, CJ."
+		if (h >= 17 && h < 21) return "Good evening, CJ."
+		return "Hey, let's build something."
+	}
+	const [greeting, setGreeting] = useState(getGreeting)
+	useEffect(() => {
+		const id = setInterval(() => setGreeting(getGreeting()), 60_000)
+		return () => clearInterval(id)
+	}, [])
+
 	return (
 		<div className="relative flex h-full flex-col">
 			{/* Hero area — vertically centered */}
 			<div className="flex flex-1 flex-col items-center justify-center px-0 sm:px-6">
 				<div className="w-full max-w-4xl space-y-8">
-					{/* Wordmark */}
-					<div className="flex justify-center">
-						<PalotWordmark className="h-4 w-auto text-foreground" />
-					</div>
-
-					{/* "Build what's next" + project name */}
+					{/* Greeting + project name */}
 					<div className="text-center">
-						<h1 className="text-2xl font-semibold text-foreground">Build what's next</h1>
+						<h1 className="text-2xl font-semibold text-foreground">{greeting}</h1>
 						{projects.length > 1 ? (
 							<Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
 								<PopoverTrigger
@@ -698,15 +719,33 @@ export function NewChat() {
 							/>
 						<PromptInput
 							className="rounded-xl"
-							accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+							accept={acceptedAttachmentTypes}
 							multiple
 							maxFileSize={10 * 1024 * 1024}
 							onSubmit={(message) => {
-								if (message.text.trim())
-									handleLaunch(
+								if (message.text.trim()) {
+									const filteredFiles = message.files.filter((f) => {
+										const isImage = f.mediaType?.startsWith("image/")
+										const isPdf = f.mediaType === "application/pdf"
+										if (!isImage && !isPdf) {
+											console.warn("Stripping unsupported attachment", f.filename)
+											return false
+										}
+										if (isImage && modelCapabilities?.image === false) {
+											console.warn("Stripping unsupported image attachment", f.filename)
+											return false
+										}
+										if (isPdf && modelCapabilities?.pdf === false) {
+											console.warn("Stripping unsupported PDF attachment", f.filename)
+											return false
+										}
+										return true
+									})
+									return handleLaunch(
 										message.text.trim(),
-										message.files.length > 0 ? message.files : undefined,
+										filteredFiles.length > 0 ? filteredFiles : undefined,
 									)
+								}
 							}}
 						>
 							<PromptAttachmentPreview
@@ -739,6 +778,10 @@ export function NewChat() {
 											onSelectVariant={setSelectedVariant}
 										/>
 									</PromptInputTools>
+									<PromptInputSubmit
+										disabled={launching || !selectedDirectory || projects.length === 0}
+										status={launching ? "submitted" : undefined}
+									/>
 								</PromptInputFooter>
 							)}
 						</PromptInput>

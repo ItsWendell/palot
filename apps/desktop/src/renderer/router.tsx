@@ -19,6 +19,10 @@ import { GeneralSettings } from "./components/settings/general-settings"
 import { NotificationSettings } from "./components/settings/notification-settings"
 import { ProviderSettings } from "./components/settings/provider-settings"
 import { ServerSettings } from "./components/settings/server-settings"
+import { AgentsPage } from "./components/agents-page"
+import { BrainPage } from "./components/brain-page"
+import { KnowledgePage } from "./components/knowledge-page"
+import { SkillsPage } from "./components/skills-page"
 import { SettingsPage } from "./components/settings/settings-page"
 import { SetupSettings } from "./components/settings/setup-settings"
 import { WorktreeSettings } from "./components/settings/worktree-settings"
@@ -119,6 +123,30 @@ const settingsAboutRoute = createRoute({
 	component: AboutSettings,
 })
 
+const agentsRoute = createRoute({
+	getParentRoute: () => sidebarLayout,
+	path: "agents",
+	component: AgentsPage,
+})
+
+const skillsRoute = createRoute({
+	getParentRoute: () => sidebarLayout,
+	path: "skills",
+	component: SkillsPage,
+})
+
+const knowledgeRoute = createRoute({
+	getParentRoute: () => sidebarLayout,
+	path: "knowledge",
+	component: KnowledgePage,
+})
+
+const brainRoute = createRoute({
+	getParentRoute: () => sidebarLayout,
+	path: "brain",
+	component: BrainPage,
+})
+
 const automationsRoute = createRoute({
 	getParentRoute: () => sidebarLayout,
 	path: "automations",
@@ -152,6 +180,10 @@ const routeTree = rootRoute.addChildren([
 	sidebarLayout.addChildren([
 		indexRoute,
 		projectRoute.addChildren([projectIndexRoute, sessionRoute]),
+		agentsRoute,
+		skillsRoute,
+		knowledgeRoute,
+		brainRoute,
 		automationsRoute.addChildren([
 			automationsIndexRoute,
 			automationDetailRoute.addChildren([automationDetailIndexRoute, automationRunRoute]),

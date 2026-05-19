@@ -1,7 +1,7 @@
 /**
- * Lockfile for the Palot-managed OpenCode server process.
+ * Lockfile for the Nexus Builder-managed OpenCode server process.
  *
- * Written when Palot spawns a server, removed on clean shutdown. On next
+ * Written when Nexus Builder spawns a server, removed on clean shutdown. On next
  * launch, a stale lockfile (dead PID) tells us the previous instance
  * crashed and we need to spawn fresh. A live lockfile with a different
  * UID triggers the cross-user conflict dialog.

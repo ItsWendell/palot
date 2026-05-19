@@ -114,7 +114,7 @@ export interface OpenInTargetsResult {
 // Server config types (shared between main process and renderer)
 // ============================================================
 
-/** Built-in local server, auto-managed by Palot via OpenCodeManager. */
+/** Built-in local server, auto-managed by Nexus Builder via OpenCodeManager. */
 export interface LocalServerConfig {
 	id: "local"
 	name: string
@@ -165,6 +165,43 @@ export interface SshServerConfig {
 export type ServerConfig = LocalServerConfig | RemoteServerConfig | SshServerConfig
 
 // ============================================================
+// Agent types
+// ============================================================
+
+export type AgentDef = ManagedAgent
+
+// ============================================================
+// Knowledge types
+// ============================================================
+
+export type KnowledgeSourceDef = import("../shared/knowledge").KnowledgeSource
+
+// ============================================================
+// Skills types
+// ============================================================
+
+export type Skill = ManagedSkill
+export type SkillImportResult = import("../shared/skills").SkillImportResult
+
+// ============================================================
+// Task graph types (re-exported from shared)
+// ============================================================
+
+export type { BrainTask, ExecutionPlan, TaskGraph, TaskStatus } from "../shared/tasks"
+
+// ============================================================
+// Trust profile types
+// ============================================================
+
+export type {
+	PermissionAuditEntry,
+	PermissionMemoryEntry,
+	ProjectTrustSettings,
+	TrustProfile,
+	TrustSettings,
+} from "../shared/trust"
+
+// ============================================================
 // mDNS discovery types
 // ============================================================
 
@@ -212,6 +249,8 @@ export interface AppSettings {
 	opaqueWindows: boolean
 	/** Server connection configuration. */
 	servers: ServerSettings
+	/** Agent trust profile, approval memory, and audit log. */
+	trust: import("../shared/trust").TrustSettings
 }
 
 // ============================================================
@@ -405,7 +444,7 @@ export interface UpdateAutomationInput {
 	execution?: Partial<ExecutionConfig>
 }
 
-export interface PalotAPI {
+export interface NexusBuilderAPI {
 	/** The host platform: "darwin", "win32", or "linux". */
 	platform: NodeJS.Platform
 	getAppInfo: () => Promise<AppInfo>
@@ -507,6 +546,108 @@ export interface PalotAPI {
 
 	// Directory picker
 	pickDirectory: () => Promise<string | null>
+	createProjectDirectory: (name: string) => Promise<string | null>
+	showInFinder: (filePath: string) => Promise<void>
+
+	// Agents
+	agents: {
+		list: (projectPath?: string) => Promise<AgentDef[]>
+		get: (filename: string, projectPath?: string) => Promise<AgentDef | null>
+		write: (filename: string, raw: string, projectPath?: string) => Promise<string>
+		delete: (filename: string, projectPath?: string) => Promise<boolean>
+	}
+
+	// Skills
+	skills: {
+		list: () => Promise<Skill[]>
+		listAll: () => Promise<Skill[]>
+		importGitHub: (url: string) => Promise<SkillImportResult>
+		write: (filename: string, raw: string) => Promise<string>
+		delete: (filename: string) => Promise<boolean>
+		brainSummary: () => Promise<string>
+	}
+
+	// Knowledge sources (agent reference docs)
+	sourceKnowledge: {
+		list: (projectPath?: string) => Promise<KnowledgeSourceDef[]>
+		get: (filename: string, projectPath?: string) => Promise<KnowledgeSourceDef | null>
+	}
+
+	// Mem9 (persistent memory)
+	mem9: {
+		init: (config?: { apiKey?: string; baseUrl?: string; agentId?: string }) => Promise<boolean>
+		status: () => Promise<{ initialized: boolean; configured: boolean }>
+		store: (input: {
+			content: string
+			source?: string
+			tags?: string[]
+			metadata?: Record<string, unknown>
+		}) => Promise<import("../main/mem9-service").Mem9Memory | null>
+		search: (params: {
+			q?: string
+			tags?: string
+			source?: string
+			limit?: number
+			offset?: number
+		}) => Promise<import("../main/mem9-service").Mem9SearchResult>
+		get: (id: string) => Promise<import("../main/mem9-service").Mem9Memory | null>
+		delete: (id: string) => Promise<boolean>
+		recall: (query: string, limit?: number) => Promise<string | null>
+		embedKnowledge: (projectPath: string) => Promise<number>
+		embedBrain: (projectPath: string) => Promise<number>
+		embedAll: (projectPath: string) => Promise<number>
+	}
+
+	// Brain
+	brain: {
+		list: (projectPath?: string) => Promise<string[]>
+		read: (slug: string, projectPath?: string) => Promise<string | null>
+		write: (slug: string, content: string, projectPath?: string) => Promise<void>
+		append: (slug: string, content: string, projectPath?: string) => Promise<void>
+		recordEvent: (slug: string, title: string, body: string, projectPath?: string) => Promise<void>
+		delete: (slug: string, projectPath?: string) => Promise<boolean>
+		search: (keyword: string, projectPath?: string) => Promise<import("../main/project-brain-service").BrainSearchResult[]>
+		summary: () => Promise<string>
+		contextSummary: (projectPath: string, sessionId?: string) => Promise<string>
+	}
+
+	// Tasks
+	tasks: {
+		load: () => Promise<import("../shared/tasks").TaskGraph>
+		upsert: (task: import("../shared/tasks").BrainTask) => Promise<import("../shared/tasks").TaskGraph>
+		updateStatus: (taskId: string, status: import("../shared/tasks").TaskStatus) => Promise<void>
+		executionPlan: (tasks: import("../shared/tasks").BrainTask[]) => Promise<import("../shared/tasks").ExecutionPlan>
+		routeModel: (taskOrText: import("../shared/tasks").BrainTask | string) => Promise<string>
+	}
+
+	// Knowledge graph
+	knowledge: {
+		add: (projectPath: string, entry: Omit<import("../main/knowledge-graph-service").KnowledgeEntry, "id" | "createdAt" | "updatedAt">) => Promise<import("../main/knowledge-graph-service").KnowledgeEntry>
+		query: (projectPath: string, options: import("../main/knowledge-graph-service").KnowledgeQueryOptions) => Promise<import("../main/knowledge-graph-service").KnowledgeEntry[]>
+		remove: (projectPath: string, id: string) => Promise<boolean>
+		context: (projectPath: string, forPrompt?: string) => Promise<string>
+	}
+
+	// Supervisor state
+	supervisor: {
+		load: (projectPath: string) => Promise<import("../main/supervisor-state-service").SupervisorState>
+		save: (projectPath: string, state: import("../main/supervisor-state-service").SupervisorState) => Promise<void>
+		appendOutput: (projectPath: string, output: import("../main/supervisor-state-service").SubagentOutput) => Promise<import("../main/supervisor-state-service").SupervisorState>
+		setMilestone: (projectPath: string, milestone: string) => Promise<void>
+		markTaskActive: (projectPath: string, taskId: string) => Promise<void>
+	}
+
+	// Agent performance
+	agentPerformance: {
+		list: (projectPath?: string) => Promise<import("../shared/agent-performance").AgentPerformanceLedger>
+		record: (projectPath: string, input: import("../shared/agent-performance").AgentPerformanceInput) => Promise<import("../shared/agent-performance").AgentPerformanceLedger>
+	}
+
+	// Semantic index
+	semantic: {
+		build: (projectPath: string) => Promise<import("../main/semantic-index-service").SemanticIndex>
+		search: (projectPath: string, query: string, limit?: number) => Promise<import("../main/semantic-index-service").SemanticSearchResult[]>
+	}
 
 	// Fetch proxy (bypasses Chromium connection limits)
 	fetch: (req: {
@@ -591,6 +732,8 @@ export interface PalotAPI {
 
 declare global {
 	interface Window {
-		palot: PalotAPI
+		palot: NexusBuilderAPI
 	}
 }
+import type { ManagedAgent } from "../shared/agents"
+import type { ManagedSkill } from "../shared/skills"

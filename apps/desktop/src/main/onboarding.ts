@@ -1,5 +1,5 @@
 /**
- * Onboarding handlers for the Palot desktop app.
+ * Onboarding handlers for the Nexus Builder desktop app.
  *
  * Provides IPC-callable functions for the first-run experience:
  * - OpenCode CLI detection and version compatibility check
@@ -484,7 +484,7 @@ export async function previewMigration(
 ): Promise<MigrationPreview> {
 	const { universalConvert } = await import("@palot/configconv")
 
-	// Convert from source provider to OpenCode (the target for Palot)
+	// Convert from source provider to OpenCode (the target for Nexus Builder)
 	// biome-ignore lint/suspicious/noExplicitAny: scanResult is dynamically typed from IPC
 	const conversion = universalConvert(scanResult as any, { to: "opencode" })
 
@@ -498,7 +498,7 @@ export async function previewMigration(
 			itemCount: 1,
 			files: [
 				{
-					path: "~/.config/opencode/opencode.json",
+					path: path.join(homedir(), ".config/opencode/opencode.json"),
 					status: "new",
 					lineCount: content.split("\n").length,
 					content,
@@ -596,7 +596,7 @@ export async function previewMigration(
 					itemCount: sessionCount,
 					files: [
 						{
-							path: "~/.local/share/opencode/storage/",
+							path: path.join(homedir(), ".local/share/opencode/storage/"),
 							status: "new",
 							lineCount: 0,
 							content: `${sessionCount} chat sessions across ${sessionProjectCount} projects will be imported`,

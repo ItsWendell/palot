@@ -304,7 +304,7 @@ export function EnvironmentCheckStep({ onComplete, onSkip }: EnvironmentCheckSte
 				<div className="text-center">
 					<h2 className="text-xl font-semibold text-foreground">Environment Check</h2>
 					<p className="mt-1 text-sm text-muted-foreground">
-						Verifying your setup is ready for Palot.
+						Verifying your setup is ready for Nexus Builder.
 					</p>
 				</div>
 
@@ -338,7 +338,7 @@ export function EnvironmentCheckStep({ onComplete, onSkip }: EnvironmentCheckSte
 						<p className="text-sm text-muted-foreground">
 							{needsUpdate
 								? "Your OpenCode version is too old. Update to continue."
-								: "Palot needs the OpenCode CLI to function. Install it to continue."}
+								: "Nexus Builder needs the OpenCode CLI to function. Install it to continue."}
 						</p>
 						<div className="flex gap-2">
 							<Button size="sm" onClick={handleInstall} className="gap-2">

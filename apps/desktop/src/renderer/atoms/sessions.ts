@@ -228,9 +228,10 @@ export const addPermissionAtom = atom(
 	) => {
 		const entry = get(sessionFamily(args.sessionId))
 		if (!entry) return
+		const permissions = Array.isArray(entry.permissions) ? entry.permissions : []
 		set(sessionFamily(args.sessionId), {
 			...entry,
-			permissions: [...entry.permissions, args.permission],
+			permissions: [...permissions, args.permission],
 		})
 	},
 )
@@ -247,9 +248,10 @@ export const removePermissionAtom = atom(
 	) => {
 		const entry = get(sessionFamily(args.sessionId))
 		if (!entry) return
+		const permissions = Array.isArray(entry.permissions) ? entry.permissions : []
 		set(sessionFamily(args.sessionId), {
 			...entry,
-			permissions: entry.permissions.filter((p) => p.id !== args.permissionId),
+			permissions: permissions.filter((p) => p.id !== args.permissionId),
 		})
 	},
 )
@@ -266,11 +268,12 @@ export const addQuestionAtom = atom(
 	) => {
 		const entry = get(sessionFamily(args.sessionId))
 		if (!entry) return
+		const questions = Array.isArray(entry.questions) ? entry.questions : []
 		// Avoid duplicates
-		if (entry.questions.some((q) => q.id === args.question.id)) return
+		if (questions.some((q) => q.id === args.question.id)) return
 		set(sessionFamily(args.sessionId), {
 			...entry,
-			questions: [...entry.questions, args.question],
+			questions: [...questions, args.question],
 		})
 	},
 )
@@ -287,9 +290,10 @@ export const removeQuestionAtom = atom(
 	) => {
 		const entry = get(sessionFamily(args.sessionId))
 		if (!entry) return
+		const questions = Array.isArray(entry.questions) ? entry.questions : []
 		set(sessionFamily(args.sessionId), {
 			...entry,
-			questions: entry.questions.filter((q) => q.id !== args.requestId),
+			questions: questions.filter((q) => q.id !== args.requestId),
 		})
 	},
 )

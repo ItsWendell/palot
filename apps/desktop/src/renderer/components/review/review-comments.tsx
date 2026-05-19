@@ -11,19 +11,10 @@ import { atom, useAtomValue, useSetAtom } from "jotai"
 import { atomFamily } from "jotai/utils"
 import { MessageSquarePlusIcon, XIcon } from "lucide-react"
 import { useCallback, useRef, useState } from "react"
+import type { DiffComment } from "./diff-comment-model"
 
-// ============================================================
-// Types
-// ============================================================
-
-export interface DiffComment {
-	id: string
-	filePath: string
-	lineNumber: number
-	side: "additions" | "deletions"
-	content: string
-	createdAt: number
-}
+export type { DiffComment } from "./diff-comment-model"
+export { serializeCommentsForChat } from "./diff-comment-model"
 
 // ============================================================
 // Atoms
@@ -248,24 +239,4 @@ function CommentPill({
 			</button>
 		</span>
 	)
-}
-
-// ============================================================
-// Serialize comments to structured text for chat messages
-// ============================================================
-
-/**
- * Serialize diff comments into structured context to prepend to a user message.
- * Returns empty string if no comments exist.
- */
-export function serializeCommentsForChat(comments: DiffComment[]): string {
-	if (comments.length === 0) return ""
-
-	const lines = ["[Code Review Comments]", ""]
-	for (const c of comments) {
-		const side = c.side === "additions" ? "new" : "old"
-		lines.push(`- ${c.filePath}:${c.lineNumber} (${side}): ${c.content}`)
-	}
-	lines.push("")
-	return lines.join("\n")
 }

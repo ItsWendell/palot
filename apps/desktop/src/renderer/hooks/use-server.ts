@@ -1,11 +1,25 @@
 import { useAtomValue } from "jotai"
 import { useCallback } from "react"
 import { connectionAtom } from "../atoms/connection"
+import { sessionMetricsFamily } from "../atoms/derived/session-metrics"
 import { upsertMessageAtom } from "../atoms/messages"
 import { upsertPartAtom } from "../atoms/parts"
 import { sessionFamily, upsertSessionAtom } from "../atoms/sessions"
 import { appStore } from "../atoms/store"
+import { childSessionsFamily } from "../atoms/sub-agents"
+import { recordSupervisionEventAtom } from "../atoms/supervision-events"
 import { createLogger } from "../lib/logger"
+import {
+	DEFAULT_SUPERVISION_POLICY,
+	evaluateSupervisionPolicy,
+	SupervisionPolicyError,
+	type SupervisedAgentState,
+} from "../lib/supervision-policy"
+import {
+	getProjectTrustProfile,
+	rememberPermissionApproval,
+	type PermissionLike,
+} from "../lib/trust-permissions"
 import type {
 	FileAttachment,
 	FilePart,
@@ -18,6 +32,80 @@ import type {
 import { getProjectClient } from "../services/connection-manager"
 
 const log = createLogger("use-server")
+const isElectron = typeof window !== "undefined" && "palot" in window
+
+function unwrapSdkData<T>(result: T | { data?: T } | null | undefined): T | null {
+	if (!result) return null
+	if (typeof result === "object" && "data" in result) {
+		return result.data ?? null
+	}
+	return result as T
+}
+
+function getCurrentAgentState(sessionId: string): SupervisedAgentState {
+	const entry = appStore.get(sessionFamily(sessionId))
+	const metrics = appStore.get(sessionMetricsFamily(sessionId))
+	if (!entry) return "idle"
+	if (entry.permissions.length > 0 || entry.questions.length > 0) return "waiting"
+	if (entry.status.type === "retry") return "retrying"
+	if (entry.status.type === "busy") return "running"
+	if (metrics.errorCount > 0) return "failed"
+	if (metrics.assistantMessageCount > 0) return "completed"
+	return "idle"
+}
+
+async function enforceSupervisionPolicy({
+	directory,
+	sessionId,
+	abortSession,
+}: {
+	directory: string
+	sessionId: string
+	abortSession: () => Promise<void>
+}) {
+	const children = appStore.get(childSessionsFamily(sessionId))
+	const parentMetrics = appStore.get(sessionMetricsFamily(sessionId))
+	const totalCost = parentMetrics.costRaw + children.reduce((sum, child) => sum + child.costRaw, 0)
+	const totalTokens =
+		parentMetrics.tokensRaw + children.reduce((sum, child) => sum + child.tokensRaw, 0)
+	const policyInput = {
+		workflowId: sessionId,
+		parentAgentId: sessionId,
+		childAgentCount: children.length,
+		runningAgentCount: children.filter((child) => child.agentStatus === "running").length,
+		failedAgentCount: children.filter((child) => child.agentStatus === "failed").length,
+		waitingAgentCount: children.filter((child) => child.agentStatus === "waiting").length,
+		totalTokens,
+		totalCost,
+		configuredBudget: DEFAULT_SUPERVISION_POLICY.configuredBudget,
+		maxChildren: DEFAULT_SUPERVISION_POLICY.maxChildren,
+		maxConcurrentAgents: DEFAULT_SUPERVISION_POLICY.maxConcurrentAgents,
+		currentAgentState: getCurrentAgentState(sessionId),
+	}
+	const policy = evaluateSupervisionPolicy(policyInput)
+
+	if (policy.decision === "allow") return
+
+	appStore.set(recordSupervisionEventAtom, {
+		policy,
+		input: policyInput,
+		sessionId,
+	})
+
+	log.warn("supervision policy decision", {
+		directory,
+		sessionId,
+		policy,
+	})
+
+	if (policy.decision === "warn") return
+
+	if (policy.decision === "stop") {
+		await abortSession()
+	}
+
+	throw new SupervisionPolicyError(policy)
+}
 
 /**
  * Hook for OpenCode server connection state.
@@ -74,6 +162,14 @@ export function useAgentActions() {
 				throw new Error("Not connected to OpenCode server")
 			}
 			log.debug("sendPrompt: got client", { directory })
+
+			await enforceSupervisionPolicy({
+				directory,
+				sessionId,
+				abortSession: async () => {
+					await client.session.abort({ sessionID: sessionId })
+				},
+			})
 
 			// Optimistic user message — include variant so it's available when
 			// re-initializing the session's toolbar state (the v1 UserMessage type
@@ -156,13 +252,13 @@ export function useAgentActions() {
 		[],
 	)
 
-	const createSession = useCallback(async (directory: string, title?: string) => {
+	const createSession = useCallback(async (directory: string, title?: string, parentID?: string) => {
 		const client = getProjectClient(directory)
 		if (!client) throw new Error("Not connected to OpenCode server")
-		log.debug("createSession", { directory, title })
+		log.debug("createSession", { directory, title, parentID })
 		try {
-			const result = await client.session.create({ title })
-			const session = result.data
+			const result = await client.session.create({ title, parentID: parentID || undefined })
+			const session = unwrapSdkData<Session>(result)
 			if (session) {
 				appStore.set(upsertSessionAtom, { session, directory })
 			}
@@ -224,6 +320,22 @@ export function useAgentActions() {
 					permissionID: permissionId,
 					response,
 				})
+				if (response === "always") {
+					const entry = appStore.get(sessionFamily(sessionId))
+					const request = entry?.permissions.find((permission) => permission.id === permissionId)
+					if (entry && request && isElectron) {
+						const settings = await window.palot.getSettings()
+						const profile = getProjectTrustProfile(settings.trust, directory)
+						await window.palot.updateSettings({
+							trust: rememberPermissionApproval({
+								settings: settings.trust,
+								projectPath: directory,
+								profile,
+								request: request as PermissionLike,
+							}),
+						})
+					}
+				}
 			} catch (err) {
 				log.error("respondToPermission failed", { sessionId, permissionId, response }, err)
 				throw err

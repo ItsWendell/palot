@@ -21,6 +21,7 @@ export type ToolCategory =
 	| "plan"
 	| "ask"
 	| "fetch"
+	| "memory"
 	| "other"
 
 export const TOOL_CATEGORY_COLORS: Record<ToolCategory, string> = {
@@ -31,10 +32,12 @@ export const TOOL_CATEGORY_COLORS: Record<ToolCategory, string> = {
 	plan: "border-l-emerald-500/60",
 	ask: "border-l-cyan-500/60",
 	fetch: "border-l-sky-500/60",
+	memory: "border-l-fuchsia-500/60",
 	other: "border-l-muted-foreground/20",
 }
 
 export function getToolCategory(tool: string): ToolCategory {
+	if (tool.startsWith("brain_") || tool.startsWith("mem9_")) return "memory"
 	switch (tool) {
 		case "read":
 		case "glob":
