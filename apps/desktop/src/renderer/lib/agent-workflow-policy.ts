@@ -1,7 +1,7 @@
 /**
  * Pure policy for simultaneous child-agent workflows.
  *
- * OpenCode sessions can stream multiple child sessions, but Palot should only
+ * OpenCode sessions can stream multiple child sessions, but Nexus Builder should only
  * treat work as parallel-safe when write ownership is isolated.
  */
 

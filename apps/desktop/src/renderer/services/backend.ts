@@ -6,7 +6,7 @@
  * from here instead of `palot-server.ts` directly.
  *
  * In Electron mode, calls go through IPC to the main process.
- * In browser mode, calls go through HTTP to the Palot server.
+ * In browser mode, calls go through HTTP to the Nexus Builder server.
  */
 
 import type {
@@ -142,7 +142,7 @@ export async function updateModelRecent(model: {
 /**
  * Checks if the backend is available.
  * In Electron, always returns true (main process is always there).
- * In browser, pings the Palot HTTP server.
+ * In browser, pings the Nexus Builder HTTP server.
  */
 export async function checkBackendHealth(): Promise<boolean> {
 	if (isElectron) {
@@ -451,7 +451,11 @@ export async function listAgents(projectPath?: string): Promise<import("../../sh
 	if (isElectron) {
 		return window.palot.agents.list(projectPath)
 	}
-	throw new Error("Agents are only available in Electron mode")
+	if (!projectPath) {
+		return []
+	}
+	const { fetchAgents } = await import("./palot-server")
+	return fetchAgents(projectPath)
 }
 
 export async function getAgent(filename: string, projectPath?: string): Promise<import("../../shared/agents").ManagedAgent | null> {

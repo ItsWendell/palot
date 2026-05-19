@@ -2,7 +2,7 @@
  * Pure context compaction policy decisions.
  *
  * The caller owns state and side effects. This module only converts known
- * context usage into the UI/runtime state Palot should apply.
+ * context usage into the UI/runtime state Nexus Builder should apply.
  */
 import type { ContextUsage } from "./session-metrics"
 
@@ -116,7 +116,7 @@ export function evaluateContextCompactionPolicy({
 			shouldAutoCompact: autoCompactionEnabled,
 			shouldBlockNewWork: false,
 			operatorMessage: "Context is high enough to auto-compact.",
-			recommendedAction: "Palot will compact before sending the next prompt.",
+			recommendedAction: "Nexus Builder will compact before sending the next prompt.",
 		}
 	}
 

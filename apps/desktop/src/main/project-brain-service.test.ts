@@ -122,7 +122,7 @@ describe("ProjectBrainService", () => {
 		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "palot-brain-"))
 		const service = new ProjectBrainService(dir)
 		try {
-			await service.writeFile("README", "# Palot\nA short description.")
+			await service.writeFile("README", "# Nexus Builder\nA short description.")
 			await service.writeFile("architecture", "# Arch\n" + "x".repeat(1000))
 			await service.writeFile("tasks", "# Tasks\n| col1 | col2 |\n|------|------|\n| a | b |")
 			await service.writeFile("issues", "# Issues\nNone.")

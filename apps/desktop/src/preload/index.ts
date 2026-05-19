@@ -143,11 +143,11 @@ contextBridge.exposeInMainWorld("palot", {
 	// --- CLI install ---
 
 	cli: {
-		/** Checks whether the `palot` CLI command is installed. */
+		/** Checks whether the `nexus-builder` CLI command is installed. */
 		isInstalled: () => ipcRenderer.invoke("cli:is-installed"),
-		/** Installs the `palot` CLI command (symlinks to /usr/local/bin). */
+		/** Installs the `nexus-builder` CLI command (symlinks to /usr/local/bin). */
 		install: () => ipcRenderer.invoke("cli:install"),
-		/** Uninstalls the `palot` CLI command. */
+		/** Uninstalls the `nexus-builder` CLI command. */
 		uninstall: () => ipcRenderer.invoke("cli:uninstall"),
 	},
 

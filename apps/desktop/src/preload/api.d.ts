@@ -114,7 +114,7 @@ export interface OpenInTargetsResult {
 // Server config types (shared between main process and renderer)
 // ============================================================
 
-/** Built-in local server, auto-managed by Palot via OpenCodeManager. */
+/** Built-in local server, auto-managed by Nexus Builder via OpenCodeManager. */
 export interface LocalServerConfig {
 	id: "local"
 	name: string
@@ -444,7 +444,7 @@ export interface UpdateAutomationInput {
 	execution?: Partial<ExecutionConfig>
 }
 
-export interface PalotAPI {
+export interface NexusBuilderAPI {
 	/** The host platform: "darwin", "win32", or "linux". */
 	platform: NodeJS.Platform
 	getAppInfo: () => Promise<AppInfo>
@@ -732,7 +732,7 @@ export interface PalotAPI {
 
 declare global {
 	interface Window {
-		palot: PalotAPI
+		palot: NexusBuilderAPI
 	}
 }
 import type { ManagedAgent } from "../shared/agents"

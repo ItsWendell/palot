@@ -1,5 +1,5 @@
 /**
- * Dynamic system tray for Palot.
+ * Dynamic system tray for Nexus Builder.
  *
  * Shows live agent statuses grouped by project, pending action counts,
  * and quick-access actions. Rebuilds the context menu whenever session
@@ -26,6 +26,7 @@ import {
 import { getServerUrl } from "./opencode-manager"
 
 const log = createLogger("tray")
+const APP_NAME = "Nexus Builder"
 
 // ESM equivalent for __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -118,7 +119,7 @@ export function createTray(windowGetter: () => BrowserWindow | undefined): void 
 	}
 
 	tray = new Tray(icon)
-	tray.setToolTip("Palot")
+	tray.setToolTip(APP_NAME)
 
 	// Click to show/focus window
 	tray.on("click", () => {
@@ -194,7 +195,7 @@ function rebuildMenu(): void {
 
 	// --- Quick actions ---
 	template.push({
-		label: "Show Palot",
+		label: `Show ${APP_NAME}`,
 		click: () => showWindow(),
 	})
 
@@ -448,7 +449,7 @@ function updateTrayTitle(
 		(s) => !s.parentID && (s.status === "busy" || s.status === "retry"),
 	).length
 
-	let tooltip = "Palot"
+	let tooltip = APP_NAME
 	if (totalSessions > 0) {
 		tooltip += ` - ${totalSessions} agent${totalSessions !== 1 ? "s" : ""}`
 		if (busyCount > 0) {

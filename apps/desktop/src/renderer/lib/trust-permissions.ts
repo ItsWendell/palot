@@ -299,7 +299,7 @@ function evaluateCommandRequest(input: PermissionEvaluationInput): PermissionDec
 	if (!command) {
 		return {
 			action: "require-approval",
-			reason: "Command text was unavailable, so Palot could not verify it is safe.",
+			reason: "Command text was unavailable, so Nexus Builder could not verify it is safe.",
 			batchKey: "unknown-command",
 		}
 	}

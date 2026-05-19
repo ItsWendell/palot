@@ -17,10 +17,21 @@ import { createTray, destroyTray } from "./tray"
 import { initAutoUpdater, stopAutoUpdater } from "./updater"
 
 const log = createLogger("app")
+const APP_NAME = "Nexus Builder"
+const DEV_APP_NAME = "Nexus Builder Dev"
 
 // ESM equivalent for __dirname
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const EXTERNAL_URL_PROTOCOLS = new Set(["https:", "http:", "mailto:"])
+
+function isAllowedExternalUrl(url: string): boolean {
+	try {
+		return EXTERNAL_URL_PROTOCOLS.has(new URL(url).protocol)
+	} catch {
+		return false
+	}
+}
 
 // Start resolving the shell environment asynchronously. On macOS/Linux, Electron
 // GUI launches get a minimal launchd environment missing user PATH additions
@@ -146,12 +157,12 @@ if (isDev) {
 // The single-instance lock and user-data directory are both keyed on app name,
 // so changing it here prevents the two from conflicting.
 if (isDev) {
-	app.setName("Palot Dev")
-	app.setPath("userData", path.join(app.getPath("appData"), "Palot Dev"))
+	app.setName(DEV_APP_NAME)
+	app.setPath("userData", path.join(app.getPath("appData"), DEV_APP_NAME))
 }
 
 async function createWindow(): Promise<BrowserWindow> {
-	const title = isDev ? "Palot (Dev)" : "Palot"
+	const title = isDev ? `${APP_NAME} (Dev)` : APP_NAME
 
 	const isMac = process.platform === "darwin"
 
@@ -216,7 +227,13 @@ async function createWindow(): Promise<BrowserWindow> {
 
 	// Open external links in default browser instead of new Electron windows
 	win.webContents.setWindowOpenHandler(({ url }) => {
-		shell.openExternal(url)
+		if (!isAllowedExternalUrl(url)) {
+			log.warn("Blocked external URL with unsupported protocol", { url })
+			return { action: "deny" }
+		}
+		void shell.openExternal(url).catch((err) => {
+			log.warn("Failed to open external URL", { error: String(err), url })
+		})
 		return { action: "deny" }
 	})
 

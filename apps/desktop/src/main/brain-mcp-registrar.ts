@@ -1,9 +1,9 @@
 /**
- * Brain MCP Registrar — Auto-registers the Palot Brain MCP server in the global
+ * Brain MCP Registrar — Auto-registers the Nexus Builder Brain MCP server in the global
  * OpenCode config (~/.config/opencode/opencode.json).
  *
  * This removes the need for each project to manually add "palot-brain" to their
- * opencode.json — the Palot desktop app ensures it's globally available on startup.
+ * opencode.json — the Nexus Builder desktop app ensures it's globally available on startup.
  */
 
 import fs from "node:fs"
@@ -96,7 +96,7 @@ function writeConfig(config: Record<string, unknown>): boolean {
 }
 
 /**
- * Register the Palot Brain MCP server in the global OpenCode config.
+ * Register the Nexus Builder Brain MCP server in the global OpenCode config.
  *
  * Merges with any existing config:
  * - Preserves all existing top-level keys (model, agent, provider, etc.)
@@ -159,9 +159,9 @@ export function registerBrainMcpServer(): BrainMcpStatus {
 }
 
 /**
- * Remove the Palot Brain MCP entry from the global OpenCode config.
+ * Remove the Nexus Builder Brain MCP entry from the global OpenCode config.
  *
- * Called on app quit / shutdown so stale entries don't linger if Palot is
+ * Called on app quit / shutdown so stale entries don't linger if Nexus Builder is
  * uninstalled. Does NOT remove other users' MCP servers.
  */
 export function unregisterBrainMcpServer(): boolean {

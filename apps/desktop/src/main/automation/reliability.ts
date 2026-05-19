@@ -101,7 +101,7 @@ export function classifyAutomationError(
 	} else if (normalized.includes("rate limit") || normalized.includes("429")) {
 		category = "RateLimitError"
 		retryable = true
-		userMessage = "The model provider rate-limited the request. Palot can retry after a delay."
+		userMessage = "The model provider rate-limited the request. Nexus Builder can retry after a delay."
 	} else if (
 		normalized.includes("unauthorized") ||
 		normalized.includes("forbidden") ||
@@ -121,7 +121,7 @@ export function classifyAutomationError(
 	) {
 		category = "ProviderError"
 		retryable = true
-		userMessage = "The provider or network connection failed temporarily. Palot can retry safely."
+		userMessage = "The provider or network connection failed temporarily. Nexus Builder can retry safely."
 	} else if (
 		normalized.includes("enoent") ||
 		normalized.includes("executable") ||
@@ -129,7 +129,7 @@ export function classifyAutomationError(
 		normalized.includes("no opencode server")
 	) {
 		category = "SpawnError"
-		userMessage = "Palot could not start or reach the OpenCode runtime."
+		userMessage = "Nexus Builder could not start or reach the OpenCode runtime."
 	} else if (
 		normalized.includes("json") ||
 		normalized.includes("parse") ||
@@ -137,7 +137,7 @@ export function classifyAutomationError(
 		normalized.includes("no session id")
 	) {
 		category = "ValidationError"
-		userMessage = "The agent returned an invalid response that Palot could not safely process."
+		userMessage = "The agent returned an invalid response that Nexus Builder could not safely process."
 	}
 
 	return {

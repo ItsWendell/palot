@@ -1,5 +1,5 @@
 /**
- * XDG Base Directory paths for Palot automation storage.
+ * XDG Base Directory paths for Nexus Builder automation storage.
  *
  * Follows the XDG Base Directory Specification, matching the convention
  * used by OpenCode (see packages/opencode/src/global/index.ts):
@@ -17,7 +17,7 @@ import path from "node:path"
 const APP_NAME = "palot"
 
 /**
- * Returns the XDG config directory for Palot.
+ * Returns the XDG config directory for Nexus Builder.
  * Automations configs are stored at `<config>/automations/<id>/`.
  */
 export function getConfigDir(): string {
@@ -26,7 +26,7 @@ export function getConfigDir(): string {
 }
 
 /**
- * Returns the XDG data directory for Palot.
+ * Returns the XDG data directory for Nexus Builder.
  * The SQLite database is stored at `<data>/palot.db`.
  */
 export function getDataDir(): string {

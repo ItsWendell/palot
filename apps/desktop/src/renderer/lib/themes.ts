@@ -1,5 +1,5 @@
 // ============================================================
-// Theme definitions for Palot
+// Theme definitions for Nexus Builder
 //
 // Each theme defines CSS custom property overrides for light and
 // dark modes plus optional font, radius, and density changes.
@@ -110,7 +110,7 @@ export interface ThemeDefinition {
 //
 // Key traits:
 //   - Neutral (cool) grays
-//   - Palot Blue accent (#05bdf5 base, oklch 228.71 hue)
+//   - Nexus Builder Blue accent (#05bdf5 base, oklch 228.71 hue)
 //   - System fonts (SF Pro on macOS, Segoe UI on Windows)
 //   - Squircle-style 12px border-radius
 //   - Tight 13px text density
@@ -119,7 +119,7 @@ export interface ThemeDefinition {
 export const cortexTheme: ThemeDefinition = {
 	id: "cortex",
 	name: "Cortex",
-	description: "Cool neutrals with Palot Blue accent, clean and minimal",
+	description: "Cool neutrals with Nexus Builder Blue accent, clean and minimal",
 	cssVars: {
 		light: {
 			"--glass-sidebar-accent": "35%",
@@ -208,7 +208,7 @@ export const liquidGlassTheme: ThemeDefinition = {
 // Key traits:
 //   - Inherits the Cortex base palette
 //   - Accent-related variables reference --system-accent with
-//     Palot Blue fallbacks, so they track the OS accent color
+//     Nexus Builder Blue fallbacks, so they track the OS accent color
 //     automatically (set on :root by useSystemAccentColor)
 // ============================================================
 

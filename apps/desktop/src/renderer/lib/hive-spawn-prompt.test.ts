@@ -25,7 +25,7 @@ describe("buildHiveSpawnPrompt", () => {
 			skills: [reactSkill],
 		})
 
-		expect(prompt).toContain("Palot Hive Operating Protocol")
+		expect(prompt).toContain("Nexus Builder Hive Operating Protocol")
 		expect(prompt).toContain("brain_search")
 		expect(prompt).toContain("brain_append")
 		expect(prompt).toContain("brain_record_event")
@@ -127,12 +127,12 @@ describe("buildHiveSpawnPrompt", () => {
 		})
 
 		const systemPromptIdx = prompt.indexOf(systemPrompt)
-		const hiveIdx = prompt.indexOf("## Palot Hive Operating Protocol")
+		const hiveIdx = prompt.indexOf("## Nexus Builder Hive Operating Protocol")
 
 		expect(systemPromptIdx).toBeGreaterThanOrEqual(0)
 		expect(hiveIdx).toBeGreaterThan(systemPromptIdx)
 		// Identity fallback line should NOT appear when system prompt is set
-		expect(prompt).not.toContain("spawned by the Lead Agent (Boss) inside Palot's Hive Mind.")
+		expect(prompt).not.toContain("spawned by the Lead Agent (Boss) inside Nexus Builder's Hive Mind.")
 	})
 
 	test("falls back to identity header when agentSystemPrompt is empty string", () => {
@@ -143,8 +143,8 @@ describe("buildHiveSpawnPrompt", () => {
 			customInstruction: "Build the feature.",
 		})
 
-		expect(prompt).toContain("spawned by the Lead Agent (Boss) inside Palot's Hive Mind.")
-		expect(prompt).toContain("## Palot Hive Operating Protocol")
+		expect(prompt).toContain("spawned by the Lead Agent (Boss) inside Nexus Builder's Hive Mind.")
+		expect(prompt).toContain("## Nexus Builder Hive Operating Protocol")
 	})
 
 	test("falls back to identity header when agentSystemPrompt is omitted", () => {
@@ -155,6 +155,6 @@ describe("buildHiveSpawnPrompt", () => {
 		})
 
 		expect(prompt).toContain("You are **architect**")
-		expect(prompt).toContain("spawned by the Lead Agent (Boss) inside Palot's Hive Mind.")
+		expect(prompt).toContain("spawned by the Lead Agent (Boss) inside Nexus Builder's Hive Mind.")
 	})
 })

@@ -945,18 +945,6 @@ export function registerIpcHandlers(): void {
 		return new KnowledgeGraphService(getBrainService(projectPath))
 	}
 
-	// --- Knowledge Sources (agent reference docs from .agents/knowledge/) ---
-
-	ipcMain.handle("knowledge-src:list", withLogging("knowledge-src:list", (_, projectPath?: string) => {
-		const dir = projectPath ?? app.getPath("home")
-		return KnowledgeService.fromProjectRoot(dir).list()
-	}))
-
-	ipcMain.handle("knowledge-src:get", withLogging("knowledge-src:get", (_, filename: string, projectPath?: string) => {
-		const dir = projectPath ?? app.getPath("home")
-		return KnowledgeService.fromProjectRoot(dir).get(filename)
-	}))
-
 	// --- Knowledge Graph (structured entries) ---
 
 	ipcMain.handle("knowledge:add", withLogging("knowledge:add", (_, projectPath: string, entry: Omit<KnowledgeEntry, "id" | "createdAt" | "updatedAt">) => {

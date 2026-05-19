@@ -1,6 +1,6 @@
-appId: com.palot.desktop
-productName: Palot
-copyright: Copyright (c) 2025 Palot Contributors
+appId: com.nexusbuilder.desktop
+productName: Nexus Builder
+copyright: Copyright (c) 2025 Nexus Builder
 directories:
   buildResources: resources
   output: release
@@ -64,7 +64,7 @@ win:
       arch: [x64, arm64]
 
 linux:
-  executableName: palot
+  executableName: nexus-builder
   icon: resources/linux-icons
   target:
     - target: AppImage
@@ -74,13 +74,13 @@ linux:
     - target: rpm
       arch: [x64]
   category: Development
-  maintainer: palot
+  maintainer: nexus-builder
   desktop:
     entry:
-      Name: Palot
+      Name: Nexus Builder
       Comment: AI-powered coding assistant
       Categories: Development;IDE;
-      StartupWMClass: Palot
+      StartupWMClass: Nexus Builder
 
 nsis:
   oneClick: false

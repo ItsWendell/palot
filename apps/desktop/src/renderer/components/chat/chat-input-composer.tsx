@@ -27,6 +27,9 @@ import {
 import { PromptToolbar, StatusBar } from "./prompt-toolbar"
 import { SlashCommandPopover, type SlashCommandPopoverHandle } from "./slash-command-popover"
 
+const NO_ATTACHMENT_TYPES = "application/x-palot-no-attachments"
+const IMAGE_ATTACHMENT_TYPES = "image/png,image/jpeg,image/gif,image/webp"
+
 interface ChatInputCardProps {
 	sessionId: string
 	directory: string
@@ -120,6 +123,15 @@ export function ChatInputCard({
 	onSelectModel,
 	onSelectVariant,
 }: ChatInputCardProps) {
+	const acceptedAttachmentTypes = (() => {
+		const types: string[] = []
+		if (modelSupportsImages !== false) types.push(IMAGE_ATTACHMENT_TYPES)
+		if (modelSupportsPdf !== false) types.push("application/pdf")
+		return types.length > 0 ? types.join(",") : NO_ATTACHMENT_TYPES
+	})()
+	const attachmentsDisabled =
+		!isConnected || (modelSupportsImages === false && modelSupportsPdf === false)
+
 	return (
 		<PromptInputProvider key={sessionId} initialInput={draft}>
 			<DraftSync setDraft={setDraft} />
@@ -152,7 +164,7 @@ export function ChatInputCard({
 				/>
 				<PromptInput
 					className="rounded-xl"
-					accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
+					accept={acceptedAttachmentTypes}
 					multiple
 					maxFileSize={10 * 1024 * 1024}
 					onSubmit={onSubmit}
@@ -173,7 +185,7 @@ export function ChatInputCard({
 					/>
 					<PromptInputFooter>
 						<PromptInputTools>
-							<AttachButton disabled={!isConnected} />
+							<AttachButton disabled={attachmentsDisabled} />
 							<PromptToolbar
 								agents={openCodeAgents}
 								selectedAgent={selectedAgent}

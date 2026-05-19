@@ -110,7 +110,7 @@ export function evaluateSupervisionPolicy(input: SupervisionPolicyInput): Superv
 				machineCode: "SUPERVISION_STOP_BUDGET_EXCEEDED",
 				retryable: false,
 				reason: `Workflow cost ${input.totalCost.toFixed(4)} is at or above budget ${configuredBudget.toFixed(4)}.`,
-				operatorMessage: "Budget exceeded. Palot should stop the active workflow before spending more.",
+				operatorMessage: "Budget exceeded. Nexus Builder should stop the active workflow before spending more.",
 				recommendedAction: "Stop active work and ask the lead agent to summarize partial results.",
 			}
 		}
@@ -122,7 +122,7 @@ export function evaluateSupervisionPolicy(input: SupervisionPolicyInput): Superv
 			machineCode: "SUPERVISION_BLOCK_BUDGET_EXCEEDED",
 			retryable: false,
 			reason: `Workflow cost ${input.totalCost.toFixed(4)} is at or above budget ${configuredBudget.toFixed(4)}.`,
-			operatorMessage: "Budget exceeded. Palot blocked new work for this workflow.",
+			operatorMessage: "Budget exceeded. Nexus Builder blocked new work for this workflow.",
 			recommendedAction: "Review current results, raise the budget, or start a smaller follow-up task.",
 		}
 	}
@@ -135,7 +135,7 @@ export function evaluateSupervisionPolicy(input: SupervisionPolicyInput): Superv
 			machineCode: "SUPERVISION_BLOCK_MAX_CHILDREN",
 			retryable: false,
 			reason: `Child-agent count ${input.childAgentCount} reached max ${maxChildren}.`,
-			operatorMessage: "Maximum child-agent count reached. Palot blocked new delegated work.",
+			operatorMessage: "Maximum child-agent count reached. Nexus Builder blocked new delegated work.",
 			recommendedAction: "Wait for children to finish or summarize before spawning more agents.",
 		}
 	}
@@ -148,7 +148,7 @@ export function evaluateSupervisionPolicy(input: SupervisionPolicyInput): Superv
 			machineCode: "SUPERVISION_THROTTLE_CONCURRENCY",
 			retryable: true,
 			reason: `Running-agent count ${input.runningAgentCount} reached max concurrency ${maxConcurrentAgents}.`,
-			operatorMessage: "Too many agents are already running. Palot throttled new work.",
+			operatorMessage: "Too many agents are already running. Nexus Builder throttled new work.",
 			recommendedAction: "Retry after one or more active agents complete.",
 		}
 	}

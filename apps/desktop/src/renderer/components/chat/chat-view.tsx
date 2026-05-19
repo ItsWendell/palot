@@ -779,8 +779,25 @@ function ChatInputSection({
 							}
 							onTextareaKeyDown={handleTextareaKeyDown}
 							onSubmit={(message) => {
-								if (message.text.trim() && canSend)
-									handleSend(message.text, message.files.length > 0 ? message.files : undefined)
+								if (!message.text.trim() || !canSend) return
+								const filteredFiles = message.files.filter((f) => {
+									const isImage = f.mediaType?.startsWith("image/")
+									const isPdf = f.mediaType === "application/pdf"
+									if (!isImage && !isPdf) {
+										console.warn("Stripping unsupported attachment", f.filename)
+										return false
+									}
+									if (isImage && modelCapabilities?.image === false) {
+										console.warn("Stripping unsupported image attachment", f.filename)
+										return false
+									}
+									if (isPdf && modelCapabilities?.pdf === false) {
+										console.warn("Stripping unsupported PDF attachment", f.filename)
+										return false
+									}
+									return true
+								})
+								handleSend(message.text, filteredFiles.length > 0 ? filteredFiles : undefined)
 							}}
 							onStop={handleStop}
 							onSelectAgent={setSelectedAgent}

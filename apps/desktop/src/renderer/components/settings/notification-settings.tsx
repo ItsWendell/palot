@@ -34,7 +34,7 @@ export function NotificationSettings() {
 			<SettingsSection>
 				<SettingsRow
 					label="Completion notifications"
-					description="Set when Palot alerts you that an agent is finished"
+					description="Set when Nexus Builder alerts you that an agent is finished"
 				>
 					<Select
 						value={notif.completionMode}

@@ -2,7 +2,7 @@
  * Pending-spawn queue — two detection modes:
  *
  * 1. JSON message blocks (primary) — Lead Agent emits a structured JSON block
- *    in its chat output. Palot detects it in real-time without requiring any
+ *    in its chat output. Nexus Builder detects it in real-time without requiring any
  *    MCP tool call to succeed.
  *
  *    Format:

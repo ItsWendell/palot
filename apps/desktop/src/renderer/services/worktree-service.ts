@@ -17,7 +17,7 @@ const log = createLogger("worktree-service")
 // Types
 // ============================================================
 
-/** Result shaped for the existing Palot UI (compatible with new-chat.tsx flow) */
+/** Result shaped for the existing Nexus Builder UI (compatible with new-chat.tsx flow) */
 export interface WorktreeResult {
 	/** Absolute path to the worktree root (git worktree directory) */
 	worktreeRoot: string
@@ -323,7 +323,7 @@ export async function resetWorktree(projectDir: string, worktreeDir: string): Pr
  * then applies it to the local checkout using Electron IPC (`git apply`).
  *
  * This enables "apply to local" for worktrees running on remote servers, where
- * Palot cannot directly access the worktree filesystem.
+ * Nexus Builder cannot directly access the worktree filesystem.
  *
  * @param projectDir  The project directory (for SDK client scoping)
  * @param sessionId   The OpenCode session ID running in the remote worktree

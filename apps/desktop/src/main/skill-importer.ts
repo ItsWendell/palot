@@ -14,7 +14,7 @@ import { normalizeSkillFilename } from "./skills-service"
 const MAX_CONTENT_BYTES = 160_000
 const MAX_SINGLE_FILE_BYTES = 96_000
 const FETCH_TIMEOUT_MS = 8_000
-const USER_AGENT = "Palot-Skill-Importer"
+const USER_AGENT = "Nexus Builder-Skill-Importer"
 
 interface ParsedGitHubUrl {
 	type: "repo" | "file" | "raw" | "gist"
@@ -150,7 +150,7 @@ function descriptionFrom(text: string): string {
 		if (/^[-*]\s+/.test(line)) continue
 		return line.slice(0, 180)
 	}
-	return "Imported from GitHub after passing Palot safety review."
+	return "Imported from GitHub after passing Nexus Builder safety review."
 }
 
 function extractBullets(text: string): string[] {

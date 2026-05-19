@@ -1,5 +1,5 @@
 /**
- * Type-safe RPC client for the Palot local backend server (Bun + Hono).
+ * Type-safe RPC client for the Nexus Builder local backend server (Bun + Hono).
  *
  * Uses Hono's RPC client (`hc`) with the server's AppType for end-to-end
  * type safety. The type is resolved from compiled declarations (.d.ts)
@@ -29,7 +29,7 @@ export async function fetchServers() {
 
 /**
  * Ensures the single OpenCode server is running and returns its URL.
- * Calls `GET /api/servers/opencode` on the Palot backend.
+ * Calls `GET /api/servers/opencode` on the Nexus Builder backend.
  */
 export async function fetchOpenCodeUrl(): Promise<{ url: string }> {
 	const res = await client.api.servers.opencode.$get()
@@ -75,7 +75,22 @@ export async function updateModelRecent(model: { providerID: string; modelID: st
 }
 
 /**
- * Checks if the Palot server is running.
+ * Lists project-local OpenCode agent definitions in browser mode.
+ */
+export async function fetchAgents(projectPath: string): Promise<import("../../shared/agents").ManagedAgent[]> {
+	const res = await client.api.agents.$get({
+		query: { projectPath },
+	})
+	if (!res.ok) {
+		const data = await res.json()
+		throw new Error("error" in data ? data.error : "Failed to list agents")
+	}
+	const data = await res.json()
+	return data.agents as import("../../shared/agents").ManagedAgent[]
+}
+
+/**
+ * Checks if the Nexus Builder server is running.
  */
 export async function checkServerHealth() {
 	try {

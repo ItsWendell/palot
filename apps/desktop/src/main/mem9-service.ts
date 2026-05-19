@@ -1,5 +1,5 @@
 /**
- * Mem9Service — persistent memory and retrieval layer for Palot.
+ * Mem9Service — persistent memory and retrieval layer for Nexus Builder.
  *
  * Makes direct HTTP calls to the Mem9 REST API (v1alpha2).
  * No SDK dependency needed — the API surface is small.

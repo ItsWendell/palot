@@ -47,26 +47,38 @@ import type { KnowledgeSource } from "../../shared/knowledge"
 import {
 	getBrainContextSummary,
 	getKnowledgeSource,
+	isElectron,
 	listAgents,
 	listAllSkills,
 	mem9Recall,
 	readBrainFile,
 	writeBrainFile,
 } from "../services/backend"
-import { markRequestApproved, parseSpawnRequests, parseSpawnRequestsFromText, pendingRequests } from "../lib/pending-spawn-queue"
+import {
+	SPAWN_TEAM_TEMPLATES,
+	markRequestApproved,
+	parseSpawnRequests,
+	parseSpawnRequestsFromText,
+	pendingRequests,
+} from "../lib/pending-spawn-queue"
 import type { SpawnRequest } from "../lib/pending-spawn-queue"
 import type { ManagedAgent } from "../../shared/agents"
 import { useMem9MemoryStorage } from "../hooks/use-mem9-memory"
 import { TeamRoster } from "./team-roster"
 import { recoveryConfigFamily, recoveryStateFamily } from "../atoms/session-heartbeats"
 import { supervisionEventsForWorkflowFamily } from "../atoms/supervision-events"
-import type { AgentStatus } from "../lib/types"
+import type { AgentStatus, ToolPart } from "../lib/types"
 import { formatCost, formatTokens, formatWorkDuration } from "../lib/session-metrics"
 import { evaluateAgentWorkflowPolicy } from "../lib/agent-workflow-policy"
 import { DEFAULT_SUPERVISION_POLICY, evaluateSupervisionPolicy } from "../lib/supervision-policy"
 import { buildHiveSpawnPrompt } from "../lib/hive-spawn-prompt"
 
 const log = createLogger("multi-agent-panel")
+const TEAM_AGENT_NAMES = new Set(
+	Object.values(SPAWN_TEAM_TEMPLATES).flatMap((template) =>
+		template.agents.map((agent) => agent.toLowerCase()),
+	),
+)
 
 /** Parse "providerID/modelID" from a model string like "openrouter/deepseek/deepseek-chat". */
 function parseModelString(model: string): { providerID: string; modelID: string } | null {
@@ -77,6 +89,24 @@ function parseModelString(model: string): { providerID: string; modelID: string 
 
 function formatErrorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err)
+}
+
+function createFallbackTeamAgent(agentName: string, reason: string): ManagedAgent | null {
+	if (!TEAM_AGENT_NAMES.has(agentName.toLowerCase())) {
+		return null
+	}
+
+	return {
+		filename: agentName,
+		name: agentName,
+		description: reason,
+		model: "",
+		mode: "subagent",
+		color: "",
+		raw: "",
+		prompt: "",
+		origin: "builtin",
+	}
 }
 
 // ============================================================
@@ -202,13 +232,15 @@ export const MultiAgentPanel = memo(function MultiAgentPanel({
 	const [brainSpawns, setBrainSpawns] = useState<SpawnRequest[]>([])
 	useEffect(() => {
 		const dir = parentEntry?.directory
-		if (!dir) return
+		if (!dir || !isElectron) return
 		let mounted = true
 		const poll = () => {
 			readBrainFile("spawn-requests", dir).then((content) => {
 				if (!mounted) return
 				setBrainSpawns(pendingRequests(parseSpawnRequests(content)))
-			}).catch(() => {})
+			}).catch((err) => {
+				if (mounted) log.warn("Failed to poll spawn-requests brain file", { error: String(err) })
+			})
 		}
 		poll()
 		const id = setInterval(poll, 10_000)
@@ -454,10 +486,11 @@ export const MultiAgentPanel = memo(function MultiAgentPanel({
 				warnings: contextWarnings,
 			})
 
-			// Pass model + agent name so the server uses the right config
+			// Nexus Builder builtin specialists are injected through the spawn prompt.
+			// Do not pass the Nexus Builder agent name as an OpenCode-native agent id;
+			// OpenCode only knows agents registered in its own config.
 			const model = agentModel ? parseModelString(agentModel) : undefined
 			await sendPrompt(dir, child.id, prompt, {
-				agent: agentName.toLowerCase(),
 				model: model ?? undefined,
 			})
 		},
@@ -468,6 +501,7 @@ export const MultiAgentPanel = memo(function MultiAgentPanel({
 		const dir = parentEntry?.directory
 		if (!dir) return
 		const agent = knownAgents.find((a) => a.filename === request.agent || a.name.toLowerCase() === request.agent.toLowerCase())
+			?? createFallbackTeamAgent(request.agent, request.reason)
 		if (!agent) {
 			log.warn("Ignoring spawn request for unknown agent", { agent: request.agent })
 			return
@@ -835,6 +869,71 @@ export const MultiAgentPanel = memo(function MultiAgentPanel({
 })
 
 // ============================================================
+// Agent activity timeline (last 5 tool calls)
+// ============================================================
+
+function AgentActivityTimeline({ sessionId }: { sessionId: string }) {
+	const messages = useAtomValue(messagesFamily(sessionId))
+	const [open, setOpen] = useState(false)
+
+	const toolCalls = useMemo(() => {
+		const results: { id: string; name: string; status: "running" | "completed" | "error" }[] = []
+		for (const msg of messages) {
+			const parts = appStore.get(partsFamily(msg.id))
+			for (const part of parts) {
+				if (part.type === "tool") {
+					const tp = part as ToolPart
+					const s = (tp.state as { status?: string } | undefined)?.status
+					results.push({
+						id: tp.id,
+						name: tp.tool,
+						status: s === "error" ? "error" : s === "running" ? "running" : "completed",
+					})
+				}
+			}
+		}
+		return results.slice(-5)
+	}, [messages])
+
+	if (toolCalls.length === 0) return null
+
+	return (
+		<div className="ml-5 mt-0.5">
+			<button
+				type="button"
+				onClick={(e) => {
+					e.stopPropagation()
+					setOpen((o) => !o)
+				}}
+				className="text-[10px] text-muted-foreground/45 hover:text-muted-foreground/65 transition-colors"
+			>
+				{open ? "▾" : "▸"} {toolCalls.length} recent calls
+			</button>
+			{open && (
+				<ul className="mt-0.5 space-y-px pl-1">
+					{toolCalls.map((tc) => (
+						<li key={tc.id} className="flex items-center gap-1 text-[10px] text-muted-foreground/55">
+							<span
+								className={
+									tc.status === "error"
+										? "text-red-400"
+										: tc.status === "running"
+											? "text-emerald-400 animate-pulse"
+											: "text-muted-foreground/30"
+								}
+							>
+								{tc.status === "error" ? "✕" : tc.status === "running" ? "●" : "○"}
+							</span>
+							<span className="font-mono">{tc.name}</span>
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	)
+}
+
+// ============================================================
 // Per-sub-agent row
 // ============================================================
 
@@ -997,6 +1096,7 @@ function SubAgentRow({
 							</>
 						)}
 					</div>
+					<AgentActivityTimeline sessionId={entry.sessionId} />
 					<div className="ml-5 h-1 overflow-hidden rounded-full bg-muted/50">
 						<div
 							className={cn(

@@ -34,6 +34,14 @@ import { getProjectClient } from "../services/connection-manager"
 const log = createLogger("use-server")
 const isElectron = typeof window !== "undefined" && "palot" in window
 
+function unwrapSdkData<T>(result: T | { data?: T } | null | undefined): T | null {
+	if (!result) return null
+	if (typeof result === "object" && "data" in result) {
+		return result.data ?? null
+	}
+	return result as T
+}
+
 function getCurrentAgentState(sessionId: string): SupervisedAgentState {
 	const entry = appStore.get(sessionFamily(sessionId))
 	const metrics = appStore.get(sessionMetricsFamily(sessionId))
@@ -250,7 +258,7 @@ export function useAgentActions() {
 		log.debug("createSession", { directory, title, parentID })
 		try {
 			const result = await client.session.create({ title, parentID: parentID || undefined })
-			const session = result.data
+			const session = unwrapSdkData<Session>(result)
 			if (session) {
 				appStore.set(upsertSessionAtom, { session, directory })
 			}

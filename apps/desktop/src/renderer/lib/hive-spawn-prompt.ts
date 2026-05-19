@@ -2,7 +2,7 @@
  * Builds the task prompt sent to spawned Hive agents.
  *
  * The named OpenCode agent file supplies role/model identity. This prompt supplies
- * Palot-specific operating rules: Brain memory, hive reporting, tools, skills,
+ * Nexus Builder-specific operating rules: Brain memory, hive reporting, tools, skills,
  * and selected knowledge references.
  */
 
@@ -89,14 +89,14 @@ export function buildHiveSpawnPrompt(input: HiveSpawnPromptInput): string {
 	const agentIdentity = input.agentSystemPrompt
 		? [input.agentSystemPrompt.trim(), "", "---", ""]
 		: [
-				`You are **${input.agentName}**, spawned by the Lead Agent (Boss) inside Palot's Hive Mind.`,
+				`You are **${input.agentName}**, spawned by the Lead Agent (Boss) inside Nexus Builder's Hive Mind.`,
 				input.agentDescription ? `Role: ${input.agentDescription}` : "",
 				"",
 			]
 
 	const parts: string[] = [
 		...agentIdentity,
-		"## Palot Hive Operating Protocol",
+		"## Nexus Builder Hive Operating Protocol",
 		"",
 		"### Required workflow",
 		"",
