@@ -1,6 +1,6 @@
 # Hive Mind UI Validation
 
-This document explains how Palot renders multi-agent progress for Lead Agent
+This document explains how Nexus Builder renders multi-agent progress for Lead Agent
 sessions and how to smoke-test the UI after changing the sidebar, chat task
 cards, cost tracking, or session tree plumbing.
 
@@ -56,7 +56,7 @@ The current expected orchestration flow is:
 
 ## Progress Tracking Model
 
-Palot receives OpenCode session, status, message, and part events through the
+Nexus Builder receives OpenCode session, status, message, and part events through the
 global SSE stream in `connection-manager.ts`.
 
 The `Hive Mind` sidebar panel tracks progress by:
@@ -119,7 +119,7 @@ When child output is available, the card also shows:
 
 ## Smoke Test Prompt
 
-After restarting Palot, select `Lead-Agent` and send:
+After restarting Nexus Builder, select `Lead-Agent` and send:
 
 ```text
 Build a simple TypeScript utility function that takes an array of golf groups,
@@ -157,7 +157,7 @@ Confirm `YES` when the Lead Agent asks to proceed.
 
 - No `Hive Mind` panel:
   - The selected session has no known child sessions and no parent metrics yet.
-  - Palot has not received child `session.created` events.
+  - Nexus Builder has not received child `session.created` events.
 - Child card shows `0 tokens · $0.00` after a few seconds:
   - Child session messages may not be loaded or the child session may not expose
     token/cost metadata.
@@ -168,7 +168,7 @@ Confirm `YES` when the Lead Agent asks to proceed.
   - One of the OpenRouter model IDs in `.opencode/agents` or
     `~/.config/opencode/agents` is invalid.
 - `PRAGMA wal_checkpoint(PASSIVE)`:
-  - OpenCode local database is busy. Fully quit Palot/OpenCode and restart.
+  - OpenCode local database is busy. Fully quit Nexus Builder/OpenCode and restart.
 
 ## Verification Commands
 

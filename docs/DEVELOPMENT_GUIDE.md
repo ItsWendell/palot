@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide defines the engineering conventions for Palot contributors.
+This guide defines the engineering conventions for Nexus Builder contributors.
 
 ## Local Development
 

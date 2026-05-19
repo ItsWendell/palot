@@ -1,6 +1,6 @@
 # API Reference
 
-Palot has two API surfaces:
+Nexus Builder has two API surfaces:
 
 1. Browser-mode HTTP routes in `apps/server`.
 2. Electron IPC methods exposed to the renderer through `window.palot`.

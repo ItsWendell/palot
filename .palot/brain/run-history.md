@@ -58,3 +58,35 @@ Replaced the naive substring-based knowledge filtering in the spawn dialog with 
 - Moved and fixed `mem9-service.test.ts` (24 tests) to correct package
 
 **Status:** All gates green — 614 tests / 0 fail, lint clean, build clean
+
+## 2026-05-17T19:35:17.452Z — React Specialist failed
+
+- Session: ses_1c890756fffeAntky4gwZuFoNF
+- Parent: ses_1c8910d60ffe3BYME2SqBVRkYY
+- Status: failed
+- Team: engineering
+- Model: unknown
+- Time: 0s
+- Cost: $0.0000
+- Tokens: 0
+- Tool calls: 0
+- Errors: 0
+- Error: UnknownError: Agent not found: "react-specialist". Available agents: lead-agent, architect, build, builder, explore, general, plan, reviewer, spec-writer
+### Summary
+Agent React Specialist completed.
+
+## 2026-05-17T19:35:17.496Z — Reviewer failed
+
+- Session: ses_1c8907537ffekZuxoG1iKyeq10
+- Parent: ses_1c8910d60ffe3BYME2SqBVRkYY
+- Status: failed
+- Team: unassigned
+- Model: unknown
+- Time: 0s
+- Cost: $0.0000
+- Tokens: 0
+- Tool calls: 0
+- Errors: 0
+- Error: UnknownError: Agent not found: "code-reviewer". Available agents: lead-agent, architect, build, builder, explore, general, plan, reviewer, spec-writer
+### Summary
+Agent Reviewer completed.

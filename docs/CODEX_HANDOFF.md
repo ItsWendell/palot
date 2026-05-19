@@ -1,4 +1,4 @@
-# Codex Handoff — Palot Agent Orchestration
+# Codex Handoff — Nexus Builder Agent Orchestration
 
 Branch: `feat/agent-overhaul` | Last updated: 2026-05-14
 
@@ -6,7 +6,7 @@ Branch: `feat/agent-overhaul` | Last updated: 2026-05-14
 
 ## 1. Current Project Status
 
-**What Palot is now:** Electron desktop wrapper around [OpenCode](https://opencode.ai) with a multi-agent orchestration layer bolted on. Forked from ItsWendell/palot and extended with: a Lead Agent pipeline (Lead → Architect → Builder → Reviewer), a Hive Mind sidebar panel showing live sub-agent status, supervision policy enforcement, cost tracking per agent, a skills system, and a decomposed chat input (14 new renderer files replacing the original monolithic chat-input.tsx).
+**What Nexus Builder is now:** Electron desktop wrapper around [OpenCode](https://opencode.ai) with a multi-agent orchestration layer bolted on. Forked from ItsWendell/palot and extended with: a Lead Agent pipeline (Lead → Architect → Builder → Reviewer), a Hive Mind sidebar panel showing live sub-agent status, supervision policy enforcement, cost tracking per agent, a skills system, and a decomposed chat input (14 new renderer files replacing the original monolithic chat-input.tsx).
 
 **Works end-to-end:**
 - Lead Agent PRE-FLIGHT REPORT → user confirms → Architect → Builder → Reviewer sequential pipeline
@@ -79,9 +79,9 @@ Stored in two places (kept in sync manually):
 
 ### OpenCode integration points
 
-- **Child session spawning:** OpenCode's `task` tool creates child sessions. Palot reads these via the same SSE event stream (`childrenMapAtom` in `atoms/derived/session-requests.ts`).
+- **Child session spawning:** OpenCode's `task` tool creates child sessions. Nexus Builder reads these via the same SSE event stream (`childrenMapAtom` in `atoms/derived/session-requests.ts`).
 - **IPC boundary:** `apps/desktop/src/main/ipc-handlers.ts` exposes OpenCode session/message APIs to the renderer. Skills and project-directory services are also IPC-backed.
-- **No backend kill switch:** OpenCode does not expose an API to terminate a running child session from outside. Palot cannot forcibly stop a sub-agent once spawned.
+- **No backend kill switch:** OpenCode does not expose an API to terminate a running child session from outside. Nexus Builder cannot forcibly stop a sub-agent once spawned.
 - **Supervision enforcement boundary:** Policy is evaluated in the renderer at prompt submission time. OpenCode's internal `task` tool spawn path is not intercepted.
 
 ---
@@ -157,7 +157,7 @@ bun test apps/desktop/src/renderer/components/chat/slash-commands.test.ts
 - Fixed stale `SupervisorState` test assumptions and added missing `bun:test` imports.
 - Updated `research-orchestrator.ts` to use the OpenCode SDK v2 response shapes (`data`, `promptAsync`, `messages`, `status`).
 - Corrected root agent docs for Biome 2.4.2 and the macOS unsigned packaging command.
-- Ignored local launcher helpers (`Launch Palot.command*`) so absolute-path/keychain convenience scripts stay local.
+- Ignored local launcher helpers (`Launch Nexus Builder.command*`) so absolute-path/keychain convenience scripts stay local.
 
 2026-05-14 agent reliability notes:
 - Raised default supervision limits from `$0.50`/6 children to `$1.00`/12 children to avoid normal workflows stopping at the sixth child session.
@@ -168,8 +168,8 @@ bun test apps/desktop/src/renderer/components/chat/slash-commands.test.ts
 
 ## 5. Remaining Risks
 
-- **Enforcement boundary:** Policy fires at Palot's prompt submission hook, not inside OpenCode's internal `task` tool spawn. A lead agent that spawns sub-agents autonomously mid-turn bypasses all enforcement.
-- **Manual heartbeat recovery only:** Palot detects stalled/unresponsive child sessions and exposes restart/terminate controls, but does not automatically recover them.
+- **Enforcement boundary:** Policy fires at Nexus Builder's prompt submission hook, not inside OpenCode's internal `task` tool spawn. A lead agent that spawns sub-agents autonomously mid-turn bypasses all enforcement.
+- **Manual heartbeat recovery only:** Nexus Builder detects stalled/unresponsive child sessions and exposes restart/terminate controls, but does not automatically recover them.
 - **No kill switch:** OpenCode exposes no API to terminate a running child session from outside. Budget overruns can only be surfaced to the user, not stopped automatically.
 - **Hardcoded thresholds:** `DEFAULT_SUPERVISION_POLICY` in `supervision-policy.ts` defines `configuredBudget: 1.0`, `maxChildren: 12`, `maxConcurrentAgents: 3`. Not user-configurable.
 - **No integration test:** No automated test covers the full Lead → Architect → Builder → Reviewer flow end-to-end.
@@ -269,7 +269,7 @@ Provider prefix for all: `openrouter/`
 
 **Prompt:**
 
-Overhaul the agent progress display in Palot — both the sidebar and the main chat. Goal: at any moment the user can see exactly which agent is running, what it's doing, how much it's spent, and feel the agents communicating back.
+Overhaul the agent progress display in Nexus Builder — both the sidebar and the main chat. Goal: at any moment the user can see exactly which agent is running, what it's doing, how much it's spent, and feel the agents communicating back.
 
 Read these files before touching anything:
 - `apps/desktop/src/renderer/components/multi-agent-panel.tsx`
@@ -383,7 +383,7 @@ question/session entries while child agents are starting or asking for input, so
 array access can throw in the renderer. The fix normalizes missing `status`, `permissions`, and
 `questions`, and reads nested question headers through optional access.
 
-**OpenCode compaction API:** Palot already uses `client.session.summarize({ sessionID })`; slash
+**OpenCode compaction API:** Nexus Builder already uses `client.session.summarize({ sessionID })`; slash
 commands `/compact` and `/summarize` call the same endpoint. The context badge already derives
 usage from the last assistant message plus provider model limits.
 
@@ -395,9 +395,9 @@ usage from the last assistant message plus provider model limits.
 - `BLOCKED_UNTIL_COMPACTED` at 95%
 
 The prompt send path now calls OpenCode summarization before sending when the policy asks for
-auto-compaction. If auto-compaction is disabled and context is critical, Palot blocks new work.
+auto-compaction. If auto-compaction is disabled and context is critical, Nexus Builder blocks new work.
 
 **Simultaneous agents:** OpenCode can expose multiple child sessions and global SSE can interleave
-their events, but no file locking or merge protection was found in Palot. The safe policy is:
+their events, but no file locking or merge protection was found in Nexus Builder. The safe policy is:
 parallel for planning, research, docs, and explicitly isolated file ownership; sequential for
 shared writes unless locking exists.

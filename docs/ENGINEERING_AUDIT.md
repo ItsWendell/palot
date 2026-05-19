@@ -5,7 +5,7 @@ the refactors completed during the cleanup pass.
 
 ## Executive Summary
 
-Palot already has a strong monorepo foundation: runtime boundaries are clear,
+Nexus Builder already has a strong monorepo foundation: runtime boundaries are clear,
 the UI stack is modern, automation logic is isolated, and shared packages keep
 migration and UI primitives reusable. The largest risks are not framework
 choices; they are maintainability pressure from oversized files, hand-maintained

@@ -1,12 +1,12 @@
 # Database Schema
 
-Palot currently owns one SQLite database for automation scheduling and run
+Nexus Builder currently owns one SQLite database for automation scheduling and run
 history. OpenCode stores its own session data separately.
 
 ## Storage Location
 
 The database is created by `apps/desktop/src/main/automation/database.ts` inside
-Palot's application data directory as `palot.db`.
+Nexus Builder's application data directory as `palot.db`.
 
 Migrations live under:
 

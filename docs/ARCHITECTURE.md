@@ -1,6 +1,6 @@
-# Palot Architecture
+# Nexus Builder Architecture
 
-Palot is a monorepo desktop application that wraps the OpenCode CLI/server with
+Nexus Builder is a monorepo desktop application that wraps the OpenCode CLI/server with
 an Electron interface. The application is split into process boundaries first,
 then feature boundaries inside each process.
 
@@ -19,7 +19,7 @@ Preload process
 
 Renderer process
   - React UI, TanStack Router, Jotai state
-  - talks to OpenCode through SDK clients and Palot IPC/service helpers
+  - talks to OpenCode through SDK clients and Nexus Builder IPC/service helpers
   - renders chat, review, automation, settings, skills, and project UX
 
 Browser-mode server
@@ -34,7 +34,7 @@ Shared packages
 
 ## Runtime Data Flow
 
-1. The main process starts Palot and ensures a local OpenCode server is
+1. The main process starts Nexus Builder and ensures a local OpenCode server is
    available.
 2. The renderer requests server configuration through the preload bridge or the
    browser-mode Hono server.
@@ -99,8 +99,8 @@ without rendering React.
 
 ## Authentication and Secrets
 
-Palot does not currently own a user authentication flow. It delegates AI provider
-authentication to OpenCode and stores Palot server credentials using Electron
+Nexus Builder does not currently own a user authentication flow. It delegates AI provider
+authentication to OpenCode and stores Nexus Builder server credentials using Electron
 `safeStorage`.
 
 Security-sensitive rules:
@@ -129,7 +129,7 @@ it remains easy to inspect and edit outside the app.
 
 ## Skills Flow
 
-OpenCode-style skills live in `~/.config/opencode/skills/`. Palot manages them
+OpenCode-style skills live in `~/.config/opencode/skills/`. Nexus Builder manages them
 through:
 
 - main process: `skills-service.ts`
