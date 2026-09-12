@@ -72,6 +72,10 @@ win:
 linux:
   icon: resources/icons/stable
   executableName: palot
+  # Explicit maintainer avoids electron-builder requiring an invented author email.
+  maintainer: Palot contributors
+  # Keep electron-builder's per-executable AppArmor profile and install/remove hooks.
+  # They allow user namespaces on Ubuntu 24+ without disabling Chromium's sandbox.
   syncDesktopName: true
   extraResources:
     - from: resources/opencode/linux/${arch}
@@ -81,6 +85,12 @@ linux:
       arch:
         - x64
     - target: deb
+      arch:
+        - x64
+    - target: rpm
+      arch:
+        - x64
+    - target: tar.gz
       arch:
         - x64
   category: Development

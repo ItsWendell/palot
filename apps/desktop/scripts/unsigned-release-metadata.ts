@@ -8,7 +8,16 @@ import type { PalotReleaseBuildInfo } from "../src/shared/release-build-info";
 import { artifactIdentity, REPOSITORY_ROOT, resolveReleaseBuildInfo } from "./release-build-info";
 
 const GENERATED_FILE_NAMES = new Set(["SHA256SUMS", "release-manifest.json"]);
-const ARTIFACT_EXTENSIONS = [".dmg", ".zip", ".exe", ".AppImage", ".deb", ".blockmap"] as const;
+const ARTIFACT_EXTENSIONS = [
+  ".dmg",
+  ".zip",
+  ".exe",
+  ".AppImage",
+  ".deb",
+  ".rpm",
+  ".tar.gz",
+  ".blockmap",
+] as const;
 
 interface ArtifactDigest {
   name: string;
@@ -53,8 +62,9 @@ export async function generateUnsignedReleaseMetadata(input: {
   }
   const generatedAt = new Date().toISOString();
   const identity = artifactIdentity(input.buildInfo);
-  const sbomName = `Palot-${input.buildInfo.version}-${identity}.cdx.json`;
-  const provenanceName = `Palot-${input.buildInfo.version}-${identity}.intoto.jsonl`;
+  const target = `${platform()}-${arch()}`;
+  const sbomName = `Palot-${input.buildInfo.version}-${identity}-${target}.cdx.json`;
+  const provenanceName = `Palot-${input.buildInfo.version}-${identity}-${target}.intoto.jsonl`;
   const lockBytes = await readFile(path.join(REPOSITORY_ROOT, "bun.lock"));
 
   await Promise.all([

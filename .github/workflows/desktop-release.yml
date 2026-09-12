@@ -1,0 +1,280 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ["v0.*"]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Stable requires an existing version tag; Nightly uses this main revision
+        type: choice
+        options: [nightly, stable]
+        default: nightly
+        required: true
+      tag:
+        description: Existing stable tag (for example v0.12.1); leave empty for Nightly
+        type: string
+      publish:
+        description: Publish after all package checks pass (otherwise Actions artifacts only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Serialize promotion, not individual runners. Never cancel a release mid-upload.
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.4.2
+  NODE_VERSION: 24
+
+jobs:
+  plan:
+    if: github.repository == 'ItsWendell/palot'
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      tag: ${{ steps.plan.outputs.tag }}
+      channel: ${{ steps.plan.outputs.channel }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Resolve one exact release identity
+        id: plan
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: bun apps/desktop/scripts/desktop-release-plan.ts
+
+  package:
+    needs: plan
+    name: Package (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x64
+          - os: macos-15
+            target: mac-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: bash
+    env:
+      PALOT_RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+      PALOT_BUILD_CHANNEL: ${{ needs.plan.outputs.channel }}
+      PALOT_COMMIT_SHA: ${{ needs.plan.outputs.sha }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
+        with:
+          version-file: package.json
+          node-version: ${{ env.NODE_VERSION }}
+          run-install: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install and check exact source
+        run: |
+          mkdir -p .local/desktop-release
+          test "$(git rev-parse HEAD)" = "$PALOT_COMMIT_SHA"
+          test "$(bun --version)" = "$BUN_VERSION"
+          vp install --frozen-lockfile 2>&1 | tee .local/desktop-release/install.log
+          bun apps/desktop/scripts/check-public-docs.ts
+          bun run check 2>&1 | tee .local/desktop-release/check.log
+          test -z "$(git status --porcelain)"
+      - name: Prepare Linux package tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y rpm libarchive-tools squashfs-tools xvfb xauth dbus-x11 libgtk-3-0t64 libnss3 libasound2t64
+      - name: Build all installers
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            bun apps/desktop/scripts/package.ts "$PALOT_BUILD_CHANNEL" --linux --x64
+          else
+            test "$(uname -m)" = arm64
+            bun apps/desktop/scripts/package.ts "$PALOT_BUILD_CHANNEL" --mac --arm64
+          fi 2>&1 | tee .local/desktop-release/package.log
+      - name: Verify macOS package and isolated renderer
+        if: runner.os == 'macOS'
+        run: |
+          product=Palot
+          if [ "$PALOT_BUILD_CHANNEL" = nightly ]; then product='Palot Nightly'; fi
+          zips=(apps/desktop/release/*-mac-arm64.zip)
+          dmgs=(apps/desktop/release/*-mac-arm64.dmg)
+          test "${#zips[@]}" -eq 1
+          test "${#dmgs[@]}" -eq 1
+          # Smoke the ZIP's extracted app, not merely the pre-archive build directory.
+          ditto -x -k "${zips[0]}" apps/desktop/release/zip-extracted
+          bun apps/desktop/scripts/release-verification.ts "$PALOT_BUILD_CHANNEL" \
+            "apps/desktop/release/zip-extracted/$product.app" --smoke 2>&1 | tee .local/desktop-release/verify.log
+          hdiutil verify "${dmgs[0]}"
+          mount="$PWD/apps/desktop/release/dmg-mounted"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "${dmgs[0]}"
+          trap 'hdiutil detach "$mount"' EXIT
+          bun apps/desktop/scripts/release-verification.ts "$PALOT_BUILD_CHANNEL" \
+            "$mount/$product.app" 2>&1 | tee -a .local/desktop-release/verify.log
+          hdiutil detach "$mount"
+          trap - EXIT
+      - name: Verify Linux distributions
+        if: runner.os == 'Linux'
+        run: |
+          bun apps/desktop/scripts/linux-distribution.ts verify "$PALOT_BUILD_CHANNEL" \
+            apps/desktop/release/*.AppImage apps/desktop/release/*.deb \
+            apps/desktop/release/*.rpm apps/desktop/release/*.tar.gz 2>&1 | tee .local/desktop-release/verify.log
+      - name: Install, smoke, and uninstall the Ubuntu package
+        if: runner.os == 'Linux'
+        run: |
+          package=palot
+          product=Palot
+          if [ "$PALOT_BUILD_CHANNEL" = nightly ]; then package=palot-nightly; product='Palot Nightly'; fi
+          test ! -e "/opt/$product"
+          cleanup() { sudo apt-get purge -y "$package"; }
+          trap cleanup EXIT
+          sudo apt-get install -y ./apps/desktop/release/*.deb
+          test -x "/opt/$product/$package"
+          export OPENCODE_BIN="/opt/$product/resources/opencode/opencode2"
+          # Non-root, real installed executable; no --no-sandbox or global policy changes.
+          dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' \
+            bun run test:e2e -- smoke --executable "/opt/$product/$package"
+          cleanup
+          trap - EXIT
+          test ! -e "/opt/$product"
+          test ! -e "/usr/bin/$package"
+          test ! -e "/etc/apparmor.d/$package"
+      # Never downgrade an incomplete inventory to a warning in a publisher.
+      - name: Validate distribution notices
+        run: bun apps/desktop/scripts/generate-dependency-licenses.ts --check 2>&1 | tee .local/desktop-release/licenses.log
+      - name: Stage exact artifact set
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bun apps/desktop/scripts/desktop-release.ts stage apps/desktop/release .local/desktop-release/staged "$TARGET"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: .local/desktop-release/staged/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload failure diagnostics only
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-failure-${{ matrix.target }}-${{ github.run_attempt }}
+          path: |
+            .local/desktop-release/*.log
+            apps/desktop/release/builder-debug.yml
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  assemble:
+    needs: [plan, package]
+    runs-on: ubuntu-24.04
+    env:
+      PALOT_RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+      PALOT_BUILD_CHANNEL: ${{ needs.plan.outputs.channel }}
+      PALOT_COMMIT_SHA: ${{ needs.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: desktop-linux-x64
+          path: .local/desktop-release/input/linux-x64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: desktop-mac-arm64
+          path: .local/desktop-release/input/mac-arm64
+      - name: Recompute hashes and require the complete matrix
+        run: |
+          bun apps/desktop/scripts/desktop-release.ts assemble .local/desktop-release/input .local/desktop-release/upload
+          (cd .local/desktop-release/upload && sha256sum --check SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-release
+          path: .local/desktop-release/upload/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [plan, assemble]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+      RELEASE_SHA: ${{ needs.plan.outputs.sha }}
+      RELEASE_CHANNEL: ${{ needs.plan.outputs.channel }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: desktop-release
+          path: release
+      - name: Verify transferred files
+        run: cd release && sha256sum --check SHA256SUMS
+      - name: Attest exact release bytes
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: release/*
+      - name: Create draft, upload, verify, then promote
+        shell: bash
+        run: |
+          # Fail safely on existing releases, including an interrupted draft.
+          # Never clobber assets or move an existing tag on a retry.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release already exists; inspect the draft/assets before retrying." >&2
+            exit 1
+          fi
+          cat > notes.md <<'NOTES'
+          Desktop downloads for Linux x64 and macOS Apple Silicon.
+
+          - Linux: AppImage, Debian/Ubuntu DEB, Fedora RPM, and portable tar.gz.
+          - macOS: DMG and ZIP. Ad-hoc signed, **not Developer ID signed or notarized**.
+          - Install and signing instructions: https://github.com/ItsWendell/palot#installation
+          - Verify downloads with SHA256SUMS; GitHub build attestations are available with `gh attestation verify`.
+          - Updates are manual. No legacy Palot 0.11 auto-update feeds are published.
+          - Intel Mac, Linux ARM64, and Windows packages are not included.
+          NOTES
+          printf '\nSource: `%s` · channel: `%s`\n' "$RELEASE_SHA" "$RELEASE_CHANNEL" >> notes.md
+          args=(--draft --target "$RELEASE_SHA" --title "Palot ${RELEASE_TAG#v}" --notes-file notes.md)
+          if [ "$RELEASE_CHANNEL" = nightly ]; then args+=(--prerelease); else args+=(--verify-tag); fi
+          gh release create "$RELEASE_TAG" "${args[@]}"
+          gh release upload "$RELEASE_TAG" release/*
+          # Download from the draft and compare every byte before public promotion.
+          gh release download "$RELEASE_TAG" --dir downloaded
+          diff -qr release downloaded
+          if [ "$RELEASE_CHANNEL" = nightly ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          fi

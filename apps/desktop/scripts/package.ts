@@ -98,6 +98,9 @@ await run(
     `--config.appId=${identity.appId}`,
     `--config.productName=${identity.productName}`,
     `--config.extraMetadata.version=${releaseBuildInfo.version}`,
+    ...(buildingLinux
+      ? [`--config.extraMetadata.name=${channel === "stable" ? "palot" : `palot-${channel}`}`]
+      : []),
     `--config.artifactName=${artifactPrefix}-\${version}-${artifactSuffix}-\${os}-\${arch}.\${ext}`,
     ...Object.entries(releaseBuildInfo).map(
       ([key, value]) => `--config.extraMetadata.palotBuild.${key}=${String(value)}`,
