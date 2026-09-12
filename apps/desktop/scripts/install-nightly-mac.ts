@@ -51,11 +51,16 @@ const packageManifest = path.join(cacheDirectory, "package-fingerprint");
 const skeletonManifest = path.join(cacheDirectory, "skeleton-fingerprint");
 const asarExecutable = path.join(REPOSITORY_ROOT, "node_modules", ".bin", "asar");
 const execFileAsync = promisify(execFile);
-const buildEnvironment = {
+const buildEnvironment: NodeJS.ProcessEnv = {
   ...process.env,
   PALOT_BUILD_CHANNEL: "nightly",
   PALOT_LOCAL_PACKAGE: "1",
+  PALOT_RELEASE_BUILD: "1",
 };
+// Build and the later --skip-build package must share one rolling version.
+const buildInfo = resolveReleaseBuildInfo(buildEnvironment);
+buildEnvironment.PALOT_RELEASE_TAG = `v${buildInfo.version}`;
+buildEnvironment.PALOT_BUILD_INFO_JSON = JSON.stringify(buildInfo);
 
 await timed("Application build", () =>
   run(process.execPath, ["run", "scripts/build.ts"], buildEnvironment),
@@ -105,7 +110,7 @@ if (packageIsCurrent) {
       await rm(cacheDirectory, { recursive: true, force: true });
       await mkdir(cacheDirectory, { recursive: true });
       await cloneBundle(source, cachedBundle);
-      await signBundle(cachedBundle, true);
+      await signBundle(cachedBundle);
     } else {
       const sourceContents = path.join(source, "Contents");
       const cachedContents = path.join(cachedBundle, "Contents");
@@ -156,8 +161,13 @@ await withInstallStaging(installRoot, identity.productName, async (staging, sign
     if (await exists(temporaryUnpacked)) {
       await rename(temporaryUnpacked, path.join(resources, "app.asar.unpacked"));
     }
+    await run(
+      process.execPath,
+      ["run", "scripts/packaged-dependency-licenses.ts", APP_ROOT, resources],
+      buildEnvironment,
+    );
     await updateAsarIntegrity(staging);
-    await signBundle(staging, false, "-");
+    await signBundle(staging, "-");
   });
   await timed("Package verification", () =>
     verifyMacRelease({
@@ -166,7 +176,7 @@ await withInstallStaging(installRoot, identity.productName, async (staging, sign
       expectedArchitecture: packageTarget.machoArchitecture,
     }),
   );
-  await timed("Local signing", () => signBundle(staging, false));
+  await timed("Local signing", () => signBundle(staging));
   await timed("Signature verification", () => verifySignature(staging));
   await run(
     "osascript",
@@ -282,7 +292,7 @@ async function skeletonFingerprint(): Promise<string> {
   return createHash("sha256")
     .update(
       [
-        "nightly-skeleton-v2",
+        "nightly-skeleton-v3",
         packageTarget.architecture,
         signingIdentity,
         identity.productName,
@@ -364,19 +374,10 @@ async function updateAsarIntegrity(bundle: string): Promise<void> {
   ]);
 }
 
-async function signBundle(
-  bundle: string,
-  deep: boolean,
-  certificate = signingIdentity,
-): Promise<void> {
-  await run("codesign", [
-    "--force",
-    ...(deep ? ["--deep"] : []),
-    "--timestamp=none",
-    "--sign",
-    certificate,
-    bundle,
-  ]);
+async function signBundle(bundle: string, certificate = signingIdentity): Promise<void> {
+  // The packaged nested code is already signed. Re-sign only the app envelope;
+  // deep signing would replace the upstream OpenCode signature and pinned bytes.
+  await run("codesign", ["--force", "--timestamp=none", "--sign", certificate, bundle]);
 }
 
 async function verifySignature(bundle: string): Promise<void> {
