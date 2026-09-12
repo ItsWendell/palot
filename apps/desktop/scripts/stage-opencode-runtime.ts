@@ -82,6 +82,13 @@ export async function stageOpenCodeRuntime(
           `OpenCode binary architecture is ${architectures.trim() || "unknown"}, expected ${expectedMachOArchitecture}.`,
         );
       }
+      // The outer app signer excludes this executable so the upstream signature
+      // and the pinned source bytes survive packaging unchanged.
+      await execFileAsync("codesign", ["--verify", "--strict", sourceBinary]);
+      const signature = await execFileAsync("codesign", ["--display", "--verbose=4", sourceBinary]);
+      if (!/flags=0x[\da-f]+\([^)]*\bruntime\b[^)]*\)/i.test(signature.stderr)) {
+        throw new Error("The upstream OpenCode signature does not enable hardened runtime.");
+      }
     } else {
       const binary = await readFile(sourceBinary);
       const machine = binary.readUInt16LE(18);

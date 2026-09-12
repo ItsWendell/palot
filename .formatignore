@@ -2,3 +2,4 @@
 apps/desktop/src/renderer/components/ui/
 apps/desktop/src/renderer/routeTree.gen.ts
 tools/oxlint/anti-slop/
+apps/desktop/resources/licenses/upstream/

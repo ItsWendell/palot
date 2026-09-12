@@ -2,6 +2,7 @@ import { isBuiltin } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite-plus";
+import { buildInputPlugin } from "./scripts/build-inputs";
 
 const APP_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_EXTERNALS = new Set([
@@ -23,6 +24,7 @@ function isExternal(id: string): boolean {
 }
 
 export default defineConfig({
+  plugins: [buildInputPlugin("main")],
   define: {
     __PALOT_BUILD_CHANNEL__: JSON.stringify(process.env.PALOT_BUILD_CHANNEL ?? "stable"),
   },

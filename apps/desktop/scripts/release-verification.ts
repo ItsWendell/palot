@@ -19,6 +19,7 @@ import { resolveReleaseBuildInfo, verifyPackagedReleaseVersion } from "./release
 import { verifyBundledOpenCodeBinary } from "../src/main/opencode-runtime-release";
 import { verifyLiquidGlassExports } from "./native-module-exports";
 import { availableLoopbackPort, withReleaseSmokeService } from "./release-smoke-service";
+import { verifyPackagedDependencyNotices } from "./packaged-dependency-licenses";
 
 const execFileAsync = promisify(execFile);
 
@@ -263,6 +264,7 @@ export async function verifyMacRelease(input: {
   await verifyLiquidGlassExports(path.join(unpacked, "node_modules", "electron-liquid-glass"));
 
   const licenseDirectory = path.join(contents, "Resources", "licenses");
+  await verifyPackagedDependencyNotices(path.join(contents, "Resources"), expectedBuild);
   await Promise.all(
     REQUIRED_LICENSE_RESOURCES.map((entry) => access(path.join(licenseDirectory, entry))),
   );
@@ -276,17 +278,6 @@ export async function verifyMacRelease(input: {
   ]) {
     if (!notices.includes(marker)) throw new Error(`Packaged notices are missing ${marker}.`);
   }
-  const dependencyLicenses = await readFile(
-    path.join(licenseDirectory, "DEPENDENCY_LICENSES.md"),
-    "utf8",
-  );
-  if (
-    !dependencyLicenses.includes("# Installed dependency licenses") ||
-    dependencyLicenses.length < 10_000
-  ) {
-    throw new Error("Packaged dependency license inventory is incomplete.");
-  }
-
   if (input.smoke) {
     await withReleaseSmokeService(
       {

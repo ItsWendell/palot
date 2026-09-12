@@ -6,6 +6,7 @@ import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import reactComponentName from "react-scan/react-component-name/vite";
 import { defineConfig } from "vite-plus";
+import { buildInputPlugin } from "./scripts/build-inputs";
 import { buildInfoDefine } from "./scripts/release-build-info";
 
 type VitePlusConfig = Exclude<
@@ -37,6 +38,7 @@ export default defineConfig({
   root: RENDERER_ROOT,
   base: "./",
   plugins: vitePlusPlugins(
+    buildInputPlugin("renderer"),
     tanstackRouter({
       target: "react",
       routesDirectory: path.join(RENDERER_ROOT, "routes"),
@@ -76,6 +78,7 @@ export default defineConfig({
   },
   worker: {
     format: "es",
+    plugins: () => [buildInputPlugin("renderer", true)],
   },
   build: {
     target: "chrome144",

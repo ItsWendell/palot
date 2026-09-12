@@ -160,9 +160,8 @@ jobs:
           test ! -e "/opt/$product"
           test ! -e "/usr/bin/$package"
           test ! -e "/etc/apparmor.d/$package"
-      # Never downgrade an incomplete inventory to a warning in a publisher.
-      - name: Validate distribution notices
-        run: bun apps/desktop/scripts/generate-dependency-licenses.ts --check 2>&1 | tee .local/desktop-release/licenses.log
+      # Packaging checks build inputs and extracted dependency notices; each
+      # platform verifier rechecks the retained evidence from the final archives.
       - name: Stage exact artifact set
         env:
           TARGET: ${{ matrix.target }}

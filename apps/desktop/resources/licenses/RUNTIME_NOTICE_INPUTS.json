@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "scope": "Artifact SHA-256 and retained notice-file hashes.",
+  "artifacts": [
+    {
+      "id": "ghostty-web-wasm",
+      "packageName": "ghostty-web",
+      "version": "83c0a07b8628b748aed073b232cb4b52a6ca11c1",
+      "sha256": ["b9579e2993a3fc6edde73121141ad6b2eaa94bdc3e43d46fd496177d12e503af"],
+      "source": "https://github.com/anomalyco/ghostty-web/tree/83c0a07b8628b748aed073b232cb4b52a6ca11c1",
+      "notices": [
+        "ghostty-web",
+        "ghostty",
+        "uucode",
+        "uucode-unicode",
+        "uucode-utf8",
+        "z2d",
+        "z2d-mpl",
+        "z2d-pixman",
+        "zig",
+        "sources"
+      ]
+    },
+    {
+      "id": "opencode-linux-x64",
+      "packageName": "@opencode/cli-linux-x64-baseline",
+      "version": "2.0.2",
+      "sha256": ["bfacbcf90591209e8e4b65f398e81d3a60b78759e385f11bbf1e5b556a1069c8"],
+      "source": "https://github.com/anomalyco/opencode/tree/cf4f1fb45e2695d86a4ef8c20a3883f4ac79935a",
+      "notices": ["opencode", "bun", "bun-webkit", "sources"]
+    },
+    {
+      "id": "opencode-darwin-arm64",
+      "packageName": "@opencode/cli-darwin-arm64",
+      "version": "2.0.2",
+      "sha256": [
+        "8fdef3f28447375cad5dbb9ce26b65e38bbd5a7af3b142eae88ace63b86194a8",
+        "4002de664c29c314b4ce78037aac7b248edb151e395f1893cdcc787e87910b61"
+      ],
+      "source": "https://github.com/anomalyco/opencode/tree/cf4f1fb45e2695d86a4ef8c20a3883f4ac79935a",
+      "notices": ["opencode", "bun", "bun-webkit", "sources"]
+    }
+  ],
+  "notices": {
+    "ghostty-web": {
+      "file": "upstream/ghostty-web.LICENSE.txt",
+      "sha256": "5eccd0eeca906db6d661b64dd05e1d4a4b2e49d37d43bbcfd2c8cce4d7832920"
+    },
+    "ghostty": {
+      "file": "upstream/ghostty.LICENSE.txt",
+      "sha256": "386211873e5b7a02f663ae4d7adf96285999f91608f8f9f31fecfd0f4095e6f1"
+    },
+    "uucode": {
+      "file": "upstream/uucode.LICENSE.txt",
+      "sha256": "312e901e142be2477b4ca859e9311f9e3f80d33372991759b7921c1893605f33"
+    },
+    "uucode-unicode": {
+      "file": "upstream/uucode-unicode.LICENSE.txt",
+      "sha256": "1eda5a3b026870c737b22e8bcd4954338612c790db688242e003f41a4fa95175"
+    },
+    "uucode-utf8": {
+      "file": "upstream/uucode-utf8.LICENSE.txt",
+      "sha256": "de219cece932aad5a817bf763393d8d149d378a15d2ad5320e3331eac07626dd"
+    },
+    "z2d": {
+      "file": "upstream/z2d.LICENSE.txt",
+      "sha256": "3ca3ed7707db3f5561bff7c2eec62ee1c127947af928189572148f122917b474"
+    },
+    "z2d-mpl": {
+      "file": "upstream/z2d.COPYING.txt",
+      "sha256": "d8d2562a7cb68ffdfe91fc66af1ed4a8a4e272aa4ab59bea7451ba34b9aba3d4"
+    },
+    "z2d-pixman": {
+      "file": "upstream/z2d-pixman.NOTICE.txt",
+      "sha256": "2fd40d6c871254a76993ec44f36145148690b7760d50eb6a18e4d3c1f4ded2cf"
+    },
+    "zig": {
+      "file": "upstream/zig.LICENSE.txt",
+      "sha256": "5c537d6853e005298a285d508cff9ac7192cea23576c840d485b2b586a7ff177"
+    },
+    "opencode": {
+      "file": "upstream/opencode.LICENSE.txt",
+      "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+    },
+    "bun": {
+      "file": "upstream/bun-1.4.2.LICENSE.md",
+      "sha256": "b9caf52728691b4057e371232c221a132883198be2f3d2ddf92c90404c984b1a"
+    },
+    "bun-webkit": {
+      "file": "upstream/bun-webkit.COPYING.LIB.txt",
+      "sha256": "5094ecb9c9dcd0eadc34f3c11511d9b5535063032bc150164ecd1a5d5a445547"
+    },
+    "sources": {
+      "file": "upstream/RUNTIME_SOURCES.md",
+      "sha256": "9b991a191c36a481e66ba8b86d87b3bfe38f080cc34dd6ec101ac8ce3654f62a"
+    }
+  }
+}

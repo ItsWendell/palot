@@ -22,8 +22,6 @@ describe("bundled OpenCode runtime release", () => {
       expect(manifest.packageName).toBe(
         `@opencode/cli-${platform}-${architecture}${architecture === "x64" ? "-baseline" : ""}`,
       );
-      if (platform === "linux") expect(manifest.binarySha256).toBe(manifest.sourceSha256);
-      else expect(manifest.binarySha256).not.toBe(manifest.sourceSha256);
     },
   );
 

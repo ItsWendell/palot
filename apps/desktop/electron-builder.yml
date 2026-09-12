@@ -60,6 +60,10 @@ mac:
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
+  # Staging verifies the pinned upstream Developer ID signature. Preserve its bytes:
+  # ad-hoc re-signing produces different executable hashes across macOS versions.
+  signIgnore:
+    - /Contents/Resources/opencode/opencode2$
 
 win:
   icon: resources/icons/stable/icon.ico

@@ -150,7 +150,8 @@
     "valibot": "1.4.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1",
     "vite-plus": "0.3.1",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "yaml": "2.9.0"
   },
   "optionalDependencies": {
     "electron-liquid-glass": "workspace:*",

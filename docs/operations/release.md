@@ -46,7 +46,11 @@ The required matrix is:
 | Linux x64           | AppImage, DEB, RPM, tar.gz | Extract every format, verify app/channel/runtime; install the DEB on Ubuntu, run isolated non-root renderer smoke, uninstall |
 | macOS Apple Silicon | DMG, ZIP                   | Verify app, native modules, fuses and signatures; isolated packaged runtime/renderer smoke                                   |
 
-All source checks and the dependency-license inventory must pass. Assembly rejects
+All source checks and the package-scoped dependency inventory must pass. Packaging
+records loaded modules, workers, CSS/assets and output hashes, then reconciles them
+with the actual ASAR. It includes installed dependencies copied into the app and
+checks the retained runtime notices. Missing or changed inputs fail the build.
+Assembly rejects
 missing formats, duplicate names, mixed revisions, dirty builds, unexpected files,
 or changed hashes. Each platform retains its manifest, checksums, CycloneDX SBOM,
 and unsigned build statement. The SBOM describes the pinned workspace lockfile,
@@ -77,7 +81,6 @@ vp install --frozen-lockfile
 bun run release:verify-config
 bun apps/desktop/scripts/check-public-docs.ts
 bun run check
-bun apps/desktop/scripts/generate-dependency-licenses.ts --check
 
 # Native Linux x64: all four formats.
 bun apps/desktop/scripts/package.ts nightly --linux --x64
@@ -97,6 +100,11 @@ smoke-plan <stable.deb> <nightly.deb>` prints a separate destructive co-install 
 removal test for a fresh disposable VM. It never runs the plan on the developer
 host. RPM pairs use the same command with `.rpm` files. Containers cannot validate
 the host's AppArmor policy.
+
+`generate-dependency-licenses.ts --check` remains a separate diagnostic for the
+whole development installation. Its build-tool inventory is not the release
+artifact's dependency set. Packaged notices and `PACKAGED_DEPENDENCIES.json` are
+generated inside the app before signing and checked again from the final archives.
 
 Packaging performs its own build with the correct identity. Do not substitute a
 development build with `--skip-build`. Mac smoke requires a logged-in GUI session

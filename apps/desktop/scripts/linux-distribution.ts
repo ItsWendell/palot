@@ -13,6 +13,7 @@ import { verifyBundledOpenCodeBinary } from "../src/main/opencode-runtime-releas
 import { resolveBuildIdentity } from "../src/shared/build-identity";
 import { resolveReleaseBuildInfo } from "./release-build-info";
 import { verifyPackagedBuildIdentity } from "./release-verification";
+import { verifyPackagedDependencyNotices } from "./packaged-dependency-licenses";
 
 const exec = promisify(execFile);
 type Channel = "stable" | "nightly";
@@ -144,7 +145,10 @@ export async function verifyLinuxArtifact(artifact: string, channel: Channel, ve
     }
     const metadata = JSON.parse(extractFile(asar, "package.json").toString());
     verifyLinuxPackageMetadata(metadata, channel);
-    if (verifyBuild) verifyPackagedBuildIdentity(metadata, channel);
+    if (verifyBuild) {
+      const build = verifyPackagedBuildIdentity(metadata, channel);
+      await verifyPackagedDependencyNotices(path.join(app, "resources"), build);
+    }
     // Same pinned binary/manifest/hash/version contract as linux-package.ts.
     await verifyBundledOpenCodeBinary({ directory: path.join(app, "resources/opencode") });
     const desktop = await readFile(path.join(app, "resources", identity.desktopName), "utf8");

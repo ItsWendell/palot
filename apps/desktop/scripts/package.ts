@@ -1,6 +1,7 @@
 /** Builds a channel-specific Palot desktop package. */
 
 import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -13,8 +14,8 @@ import {
   generateUnsignedReleaseMetadata,
   removePreviousUnsignedReleaseArtifacts,
 } from "./unsigned-release-metadata";
-import { generateDependencyLicenses } from "./generate-dependency-licenses";
 import { stageOpenCodeRuntime } from "./stage-opencode-runtime";
+import { packageBuildConfig } from "./package-build-config";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY_ROOT = path.resolve(APP_ROOT, "../..");
@@ -38,10 +39,10 @@ const environment = {
   PALOT_BUILD_CHANNEL: channel,
   PALOT_BUILD_INFO_JSON: JSON.stringify(releaseBuildInfo),
   PALOT_RELEASE_BUILD: "1",
+  PALOT_PACKAGE_RUNNER: process.execPath,
 };
 
 await run(process.execPath, ["run", "scripts/generate-icons.ts", "--check"], environment);
-await generateDependencyLicenses();
 const requestedPlatform = builderArguments.some((argument) =>
   ["--mac", "--win", "--linux"].some(
     (platform) => argument === platform || argument.startsWith(`${platform}=`),
@@ -88,34 +89,45 @@ const executable = path.join(
 );
 const artifactPrefix = identity.productName.replaceAll(/[^A-Za-z0-9]+/g, "-");
 const artifactSuffix = artifactIdentity(releaseBuildInfo);
-await run(
-  executable,
-  [
-    "--config",
-    "electron-builder.yml",
-    "--publish",
-    "never",
-    `--config.appId=${identity.appId}`,
-    `--config.productName=${identity.productName}`,
-    `--config.extraMetadata.version=${releaseBuildInfo.version}`,
-    ...(buildingLinux
-      ? [`--config.extraMetadata.name=${channel === "stable" ? "palot" : `palot-${channel}`}`]
-      : []),
-    `--config.artifactName=${artifactPrefix}-\${version}-${artifactSuffix}-\${os}-\${arch}.\${ext}`,
-    ...Object.entries(releaseBuildInfo).map(
-      ([key, value]) => `--config.extraMetadata.palotBuild.${key}=${String(value)}`,
+const temporaryRoot = path.join(REPOSITORY_ROOT, ".local", "package-config");
+await mkdir(temporaryRoot, { recursive: true });
+const temporary = await mkdtemp(path.join(temporaryRoot, "build-"));
+const builderConfig = path.join(temporary, "electron-builder.json");
+await writeFile(
+  builderConfig,
+  JSON.stringify(
+    packageBuildConfig(
+      path.join(APP_ROOT, "electron-builder.yml"),
+      releaseBuildInfo,
+      buildingLinux ? (channel === "stable" ? "palot" : `palot-${channel}`) : undefined,
     ),
-    `--config.mac.icon=resources/icons/${identity.iconVariant}/icon.icns`,
-    `--config.win.icon=resources/icons/${identity.iconVariant}/icon.ico`,
-    `--config.linux.icon=resources/icons/${identity.iconVariant}`,
-    `--config.linux.executableName=${identity.channel === "stable" ? "palot" : `palot-${identity.channel}`}`,
-    `--config.linux.desktop.entry.StartupWMClass=${identity.appId}`,
-    `--config.extraMetadata.desktopName=${identity.appId}.desktop`,
-    `--config.linux.desktop.desktopActions.NewTask.Exec=${identity.channel === "stable" ? "palot" : `palot-${identity.channel}`} --new-task`,
-    ...builderArguments,
-  ],
-  environment,
+  ),
 );
+try {
+  await run(
+    executable,
+    [
+      "--config",
+      builderConfig,
+      "--publish",
+      "never",
+      `--config.appId=${identity.appId}`,
+      `--config.productName=${identity.productName}`,
+      `--config.artifactName=${artifactPrefix}-\${version}-${artifactSuffix}-\${os}-\${arch}.\${ext}`,
+      `--config.mac.icon=resources/icons/${identity.iconVariant}/icon.icns`,
+      `--config.win.icon=resources/icons/${identity.iconVariant}/icon.ico`,
+      `--config.linux.icon=resources/icons/${identity.iconVariant}`,
+      `--config.linux.executableName=${identity.channel === "stable" ? "palot" : `palot-${identity.channel}`}`,
+      `--config.linux.desktop.entry.StartupWMClass=${identity.appId}`,
+      `--config.extraMetadata.desktopName=${identity.appId}.desktop`,
+      `--config.linux.desktop.desktopActions.NewTask.Exec=${identity.channel === "stable" ? "palot" : `palot-${identity.channel}`} --new-task`,
+      ...builderArguments,
+    ],
+    environment,
+  );
+} finally {
+  await rm(temporary, { recursive: true, force: true });
+}
 if (!directoryOnly) {
   await generateUnsignedReleaseMetadata({
     releaseDirectory: path.join(APP_ROOT, "release"),

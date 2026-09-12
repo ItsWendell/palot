@@ -26,8 +26,9 @@ checklist records release requirements, not a claim that they have been met.
 ## Binary candidates
 
 - Follow [release operations](release.md); keep build and publication separate.
-- Run `bun apps/desktop/scripts/generate-dependency-licenses.ts --check` and resolve
-  missing license files or metadata reported by the dependency-license inventory.
+- Require the package-scoped inventory generated during packaging and verified
+  from the final archives. The separate whole-installation diagnostic
+  `generate-dependency-licenses.ts --check` also includes excluded build tools.
 - Attach package verification, deterministic smoke, checksums, SBOM, and source
   revision evidence for the exact artifact. Failed jobs must not promote artifacts.
 - Qualify each advertised OS, architecture, and package format. Linux x64 testing

@@ -223,6 +223,8 @@ async function createWindow(
     window.once("ready-to-show", () => {
       if (showcaseBackdrop && !showcaseBackdrop.isDestroyed()) showcaseBackdrop.showInactive();
       if (showcase) {
+        // Keep the native capture scene above unrelated desktop windows.
+        window.setAlwaysOnTop(true, "pop-up-menu");
         window.show();
         window.focus();
       } else if (startupPresentation === "inactive") window.showInactive();

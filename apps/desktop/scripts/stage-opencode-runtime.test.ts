@@ -78,4 +78,62 @@ describe("OpenCode runtime staging", () => {
     );
     expect(mocks.rename).not.toHaveBeenCalled();
   });
+
+  describe("macOS upstream signatures", () => {
+    beforeEach(() => {
+      mocks.execFile.mockImplementation((command, args, options, callback) => {
+        const done = typeof options === "function" ? options : callback;
+        const stdout = command === "lipo" ? "x86_64\n" : "runtime.tgz\n";
+        const stderr =
+          command === "codesign" && args.includes("--display")
+            ? "CodeDirectory v=20500 flags=0x10000(runtime) hashes=100+7\n"
+            : "";
+        done(null, { stdout, stderr });
+      });
+    });
+
+    it("verifies the upstream signature and retains its original executable bytes", async () => {
+      await stageOpenCodeRuntime("x64", "darwin");
+      expect(mocks.execFile).toHaveBeenCalledWith(
+        "codesign",
+        ["--verify", "--strict", "/tmp/opencode/staging-test/extracted/package/bin/opencode"],
+        expect.any(Function),
+      );
+      expect(mocks.execFile.mock.calls.some(([, args]) => args.includes("--sign"))).toBe(false);
+      expect(mocks.copyFile).toHaveBeenCalledOnce();
+      expect(mocks.rename).toHaveBeenCalledOnce();
+    });
+
+    it("rejects an invalid signature before publishing staged resources", async () => {
+      const original = mocks.execFile.getMockImplementation()!;
+      mocks.execFile.mockImplementation((command, args, options, callback) => {
+        if (command === "codesign" && args.includes("--verify")) {
+          (typeof options === "function" ? options : callback)(new Error("invalid signature"));
+          return;
+        }
+        original(command, args, options, callback);
+      });
+      await expect(stageOpenCodeRuntime("x64", "darwin")).rejects.toThrow("invalid signature");
+      expect(mocks.copyFile).not.toHaveBeenCalled();
+      expect(mocks.rename).not.toHaveBeenCalled();
+    });
+
+    it("rejects a signature without hardened runtime", async () => {
+      const original = mocks.execFile.getMockImplementation()!;
+      mocks.execFile.mockImplementation((command, args, options, callback) => {
+        if (command === "codesign" && args.includes("--display")) {
+          (typeof options === "function" ? options : callback)(null, {
+            stdout: "",
+            stderr: "CodeDirectory v=20500 flags=0x0(none) hashes=100+7\n",
+          });
+          return;
+        }
+        original(command, args, options, callback);
+      });
+      await expect(stageOpenCodeRuntime("x64", "darwin")).rejects.toThrow(
+        "does not enable hardened runtime",
+      );
+      expect(mocks.rename).not.toHaveBeenCalled();
+    });
+  });
 });

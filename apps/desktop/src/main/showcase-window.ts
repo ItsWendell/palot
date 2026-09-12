@@ -56,6 +56,7 @@ export async function createShowcaseBackdrop(
     frame: false,
     show: false,
     focusable: false,
+    alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
     movable: false,

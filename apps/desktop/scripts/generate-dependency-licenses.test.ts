@@ -118,6 +118,40 @@ async function packageAt(
 }
 
 describe("dependency license inventory", () => {
+  it("validates explicit artifact roots without sweeping unrelated store neighbors", async () => {
+    const used = await packageAt(path.join(nodeModules, ".bun/pkg/node_modules/used"), "used");
+    await packageAt(
+      path.join(nodeModules, ".bun/pkg/node_modules/build-only"),
+      "build-only",
+      null,
+      null,
+    );
+    const nested = await packageAt(path.join(used, "node_modules/nested"), "nested", null, null);
+    const inventory = await collectDependencyLicenses(nodeModules, [used]);
+    expect(inventory.entries.map((entry) => entry.name)).toEqual(["used"]);
+    expect(inventory.issues).toEqual([]);
+    // Inclusion is owned by the caller's verified inventory, never a license-error filter.
+    const included = await collectDependencyLicenses(nodeModules, [used, nested]);
+    expect(included.issues.length).toBeGreaterThan(0);
+    await expect(collectDependencyLicenses(nodeModules, [])).rejects.toThrow("cannot be empty");
+  });
+
+  it("fails a scoped report for missing roots or notices just like the complete inventory", async () => {
+    const used = await packageAt(path.join(nodeModules, "used"), "used", "MIT", null);
+    const output = path.join(fixture, "artifact-licenses.md");
+    await expect(
+      generateDependencyLicenses({ nodeModules, output, check: true, packageDirectories: [used] }),
+    ).rejects.toThrow("inventory issues");
+    await expect(
+      generateDependencyLicenses({
+        nodeModules,
+        output,
+        check: true,
+        packageDirectories: [path.join(fixture, "missing")],
+      }),
+    ).rejects.toThrow("inventory issues");
+  });
+
   it("retains complete upstream license and notice text only for the reviewed installed manifest", async () => {
     const directory = await packageAt(
       path.join(nodeModules, "upstream-example"),

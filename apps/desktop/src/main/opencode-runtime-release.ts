@@ -18,20 +18,19 @@ export interface BundledOpenCodeRuntimeManifest {
   version: string;
 }
 
-// Source hashes cover npm executables; binary hashes cover the same executables
-// after ad-hoc signing with app-builder-lib/templates/entitlements.mac.plist and
-// hardened runtime enabled. Verify both before updating a release.
+// Preserve the exact upstream-signed npm executables. Staging verifies their
+// hardened signatures; outer app signing must not replace the runtime signature.
 export const BUNDLED_OPENCODE_RUNTIMES = {
   arm64: {
     architecture: "arm64",
-    binarySha256: "4002de664c29c314b4ce78037aac7b248edb151e395f1893cdcc787e87910b61",
+    binarySha256: "8fdef3f28447375cad5dbb9ce26b65e38bbd5a7af3b142eae88ace63b86194a8",
     packageName: "@opencode/cli-darwin-arm64",
     sourceSha256: "8fdef3f28447375cad5dbb9ce26b65e38bbd5a7af3b142eae88ace63b86194a8",
     version: "2.0.2",
   },
   x64: {
     architecture: "x64",
-    binarySha256: "88375d3f5f86e5739347b8542983588a2c3ac6516f5661444e1f27169c04df7c",
+    binarySha256: "d48e1502a83e4a51fcdc6e3c14c751cce6bfc8cd108200360da874cd77a1479e",
     packageName: "@opencode/cli-darwin-x64-baseline",
     sourceSha256: "d48e1502a83e4a51fcdc6e3c14c751cce6bfc8cd108200360da874cd77a1479e",
     version: "2.0.2",

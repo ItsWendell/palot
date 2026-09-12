@@ -1,0 +1,34 @@
+[
+  {
+    "name": "@tanstack/markdown",
+    "version": "0.0.13",
+    "license": "MIT",
+    "manifestSha256": "2885c8a041b10b4746cdc54d366937315311c0472ee8e3cd1c704fd9f2df500e",
+    "archive": "https://registry.npmjs.org/@tanstack/markdown/-/markdown-0.0.13.tgz",
+    "integrity": "sha512-ZSQP2ulBvlPzdpZeRheBJnaELo7e4ET/D/XrfgweHyqhhLMN5vUJJAUl7ufSRd7GlfO/vwdzjKPh0E0JwqJkDA==",
+    "source": {
+      "repository": "TanStack/markdown",
+      "commit": "720e8c2db5973a3401914a8b96d9fd05c30d6fc5",
+      "manifest": "package.json",
+      "manifestSha256": "ec2c6fda4898a7af57faa54f8c0df437c6c939b4c761992afb08339c6b8e8664",
+      "name": "@tanstack/markdown",
+      "version": "0.0.13",
+      "license": "MIT"
+    },
+    "standard": {
+      "licenseId": "MIT",
+      "repository": "spdx/license-list-data",
+      "release": "v3.28.0",
+      "commit": "c4a7237ec8f4654e867546f9f409749300f1bf4c",
+      "source": "text/MIT.txt",
+      "file": "spdx-MIT-3.28.0.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+      "metadataSource": "json/details/MIT.json",
+      "metadataSha256": "7ee089dccc625bf18b0ab1e80e0c4bcac5587884f5be25d9013b8ad6c61dd439",
+      "headingLine": 1,
+      "termsFirstLine": 5,
+      "termsLastLine": 18,
+      "templateCopyrightLine": 3
+    }
+  }
+]

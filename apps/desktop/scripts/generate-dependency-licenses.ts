@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import reviewedEvidence from "../resources/licenses/DEPENDENCY_LICENSE_EVIDENCE.json" with { type: "json" };
 import upstreamEvidence from "../resources/licenses/DEPENDENCY_LICENSE_UPSTREAM.json" with { type: "json" };
+import { collectDeclaredLicenseText } from "./declared-license-inputs";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NODE_MODULES = path.resolve(APP_ROOT, "../../node_modules");
@@ -34,6 +35,8 @@ interface GenerateOptions {
   output?: string;
   /** Write the report, then fail if the inventory contains errors. */
   check?: boolean;
+  /** Explicit roots from a verified build/package inventory; do not traverse adjacent stores. */
+  packageDirectories?: readonly string[];
 }
 
 /**
@@ -43,7 +46,10 @@ interface GenerateOptions {
 export async function generateDependencyLicenses(
   options: GenerateOptions = {},
 ): Promise<Inventory> {
-  const inventory = await collectDependencyLicenses(options.nodeModules ?? NODE_MODULES);
+  const inventory = await collectDependencyLicenses(
+    options.nodeModules ?? NODE_MODULES,
+    options.packageDirectories,
+  );
   const output = options.output ?? OUTPUT;
   const { entries, issues } = inventory;
   const diagnostics = issues.length
@@ -56,12 +62,20 @@ export async function generateDependencyLicenses(
     const reviewed = entry.reviewedLicense
       ? `Source license: ${entry.reviewedLicense} (verified against the recorded text hash).\n\n`
       : "";
-    return `## ${entry.name}@${entry.version}\n\nInstalled location: ${JSON.stringify(entry.location)}\n\nDeclared license: ${entry.license}\n\n${reviewed}${files || "No readable license or notice text found.\n"}`;
+    const location =
+      options.packageDirectories === undefined
+        ? `Installed location: ${JSON.stringify(entry.location)}\n\n`
+        : "";
+    return `## ${entry.name}@${entry.version}\n\n${location}Declared license: ${entry.license}\n\n${reviewed}${files || "No readable license or notice text found.\n"}`;
   });
+  const scope =
+    options.packageDirectories === undefined
+      ? "Generated from packages reachable from the repository root node_modules, including nested dependencies and symlink targets. Linked packages and their node_modules containers are followed; unlinked package-manager stores and workspace installations are excluded. Build, test, and workspace packages may appear even when absent from a particular artifact. The release SBOM separately describes the pinned workspace lockfile."
+      : "Generated from explicit package roots recorded by the build and extracted from the packaged application. Adjacent package-manager stores and unrelated build tools are not traversed. Embedded runtime components have separate notices.";
   await mkdir(path.dirname(output), { recursive: true });
   await writeFile(
     output,
-    `# Installed dependency licenses\n\nGenerated from packages reachable from the repository root node_modules, including nested dependencies and symlink targets. Linked packages and their node_modules containers are followed; unlinked package-manager stores and workspace installations are excluded. Build, test, and workspace packages may appear even when absent from a particular artifact. See the release SBOM for the artifact inventory.\n\nLicense and notice text comes from package-root LICENSE, LICENCE, COPYING, and NOTICE files, supplemented by version-bound texts verified against recorded hashes. Declared metadata and source-text licenses are listed separately.\n\n## Inventory status: ${issues.length ? "INCOMPLETE" : "COMPLETE"}\n\n${entries.length} physical packages inventoried; ${issues.length} inventory issues. Run \`bun apps/desktop/scripts/generate-dependency-licenses.ts --check\` to write this report and fail on missing text, invalid metadata, or changed source hashes.\n\n### Diagnostics\n\n${diagnostics}\n\n${sections.join("\n")}\n`,
+    `# Dependency licenses\n\n${scope}\n\nLicense and notice text comes from package-root LICENSE, LICENCE, COPYING, and NOTICE files, supplemented by version-bound texts verified against recorded hashes. Declared metadata and source-text licenses are listed separately.\n\n## Inventory status: ${issues.length ? "INCOMPLETE" : "COMPLETE"}\n\n${entries.length} physical packages inventoried; ${issues.length} inventory issues.\n\n### Diagnostics\n\n${diagnostics}\n\n${sections.join("\n")}\n`,
   );
   if (issues.length) {
     const message = `Dependency license inventory has ${issues.length} inventory issues; see ${output}`;
@@ -71,7 +85,10 @@ export async function generateDependencyLicenses(
   return inventory;
 }
 
-export async function collectDependencyLicenses(nodeModules: string): Promise<Inventory> {
+export async function collectDependencyLicenses(
+  nodeModules: string,
+  packageDirectories?: readonly string[],
+): Promise<Inventory> {
   const root = path.resolve(nodeModules);
   const inventory: Inventory = { entries: [], issues: [] };
   const packages = new Set<string>();
@@ -155,16 +172,18 @@ export async function collectDependencyLicenses(nodeModules: string): Promise<In
       );
     }
     const hasRootLicense = await collectText(resolved, entry);
-    const hasReviewedLicense =
+    const hasEvidenceLicense =
       (!hasRootLicense || entry.license === "Not declared") &&
       ((await collectReviewedText(resolved, entry)) ||
-        (await collectUpstreamText(resolved, entry)));
-    if (entry.license === "Not declared" && !hasReviewedLicense) {
+        (await collectUpstreamText(resolved, entry)) ||
+        (await collectDeclaredText(resolved, entry)));
+    if (entry.license === "Not declared" && !hasEvidenceLicense) {
       issue(resolved, "Declared license is missing or invalid.");
     }
-    if (!hasRootLicense && !hasReviewedLicense) {
+    if (!hasRootLicense && !hasEvidenceLicense) {
       issue(resolved, "No readable package-root license text (NOTICE alone is insufficient).");
     }
+    if (packageDirectories !== undefined) return;
     await scanContainer(path.join(resolved, "node_modules"), true);
 
     // Isolated Bun/pnpm installs put dependency links beside the real package,
@@ -203,6 +222,29 @@ export async function collectDependencyLicenses(nodeModules: string): Promise<In
       }
     }
     return hasLicense;
+  }
+
+  async function collectDeclaredText(directory: string, entry: LicenseEntry): Promise<boolean> {
+    try {
+      const declared = await collectDeclaredLicenseText(
+        directory,
+        entry.name,
+        entry.version,
+        entry.license,
+      );
+      if (!declared) return false;
+      entry.files.push({
+        name: `${declared.sourceLabel} (${declared.name})`,
+        content: declared.content,
+      });
+      return true;
+    } catch (error) {
+      issue(
+        directory,
+        `Invalid declared-license evidence: ${error instanceof Error ? error.message : errorCode(error)}`,
+      );
+      return false;
+    }
   }
 
   async function collectUpstreamText(directory: string, entry: LicenseEntry): Promise<boolean> {
@@ -344,7 +386,12 @@ export async function collectDependencyLicenses(nodeModules: string): Promise<In
     }
   }
 
-  await scanContainer(root);
+  if (packageDirectories === undefined) await scanContainer(root);
+  else {
+    if (packageDirectories.length === 0)
+      throw new Error("An artifact package inventory cannot be empty.");
+    for (const directory of packageDirectories) await scanPackage(directory);
+  }
   inventory.entries.sort((a, b) =>
     `${a.name}@${a.version}\0${a.location}`.localeCompare(`${b.name}@${b.version}\0${b.location}`),
   );

@@ -456,6 +456,44 @@
     ]
   },
   {
+    "repository": "theKashey/react-remove-scroll-bar",
+    "commit": "8ca9ba5ea52de03308fe8ced94f7b159a44d28ff",
+    "release": "License-only successor to v2.3.7 (29e9fcd1eecf7d3b77a767941c4a57fe461fc1e4); the 2.3.8 archive differs from 2.3.7 only in package.json version and dependencies.react-style-singleton. The npm 2.3.8 gitHead b3b1287aad81def2e2ae707274b74531b61ddbaf does not resolve in the declared repository; this is an archive-equivalence mapping, not a claim that the license commit published 2.3.8.",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "react-remove-scroll-bar.LICENSE.txt",
+        "sha256": "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84"
+      }
+    ],
+    "packages": [
+      {
+        "name": "react-remove-scroll-bar",
+        "version": "2.3.8",
+        "license": "MIT",
+        "sourceManifest": "package.json",
+        "sourceManifestSha256": "484ad46c8cc261e168d7e2602bbb70b80f8d10307b7de91d99485da28c350a03",
+        "archive": "https://registry.npmjs.org/react-remove-scroll-bar/-/react-remove-scroll-bar-2.3.8.tgz",
+        "integrity": "sha512-9r+yi9+mgU33AKcj6IbT9oRCO78WriSj6t/cF8DWBZJ9aOGPOTEDvdUDz1FwKim7QXWwmHqtdHnRJfhAxEG46Q==",
+        "manifestSha256": "e372f857ce05f266137c65293436b5380fec42ac311e6acb9378ed78b98d75d0",
+        "archiveEquivalence": {
+          "version": "2.3.7",
+          "commit": "29e9fcd1eecf7d3b77a767941c4a57fe461fc1e4",
+          "release": "npm gitHead and tag v2.3.7",
+          "archive": "https://registry.npmjs.org/react-remove-scroll-bar/-/react-remove-scroll-bar-2.3.7.tgz",
+          "integrity": "sha512-UzA0npskGFA2bUqwWsSRJscuQEt7zyfVtMpCtBl/lk+k/ky6lzYImEks9jwgxTDe/B0tb5hyrYgbQv/JQaHjDw==",
+          "manifestSha256": "484ad46c8cc261e168d7e2602bbb70b80f8d10307b7de91d99485da28c350a03",
+          "identicalFiles": 26,
+          "manifestDifferences": {
+            "version": ["2.3.7", "2.3.8"],
+            "dependencies.react-style-singleton": ["^2.2.1", "^2.2.2"]
+          },
+          "sourceChangesToLicenseCommit": ["LICENSE added"]
+        }
+      }
+    ]
+  },
+  {
     "repository": "sindresorhus/type-fest",
     "commit": "d07df21f8b79e35ad8411cb9ceb8b5cb8f40f9d4",
     "release": "npm gitHead",

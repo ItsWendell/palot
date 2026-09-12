@@ -5,22 +5,23 @@ the pinned client and protocol contract. Packaging downloads the official
 architecture-specific npm artifact and checks its version and pinned source
 SHA-256 before staging it. Linux uses `resources/opencode`; macOS uses
 `Contents/Resources/opencode` and additionally verifies the Mach-O architecture.
-The macOS ad-hoc signing pass changes the executable, so source and post-sign
-packaged SHA-256 values are pinned and verified separately.
+The macOS runtime retains its upstream Developer ID signature and hardened runtime.
+Outer application signing excludes only that exact runtime path, so its packaged
+SHA-256 stays identical to the verified npm executable. Palot's own app remains
+ad-hoc signed unless explicitly signed with a local certificate.
 
 The current 2.0.2 Linux and macOS arm64 and x64-baseline archives were checked
-against npm integrity metadata before extraction. Both macOS signed hashes were
-reproduced from the original npm bytes using the packaging entitlements and
-hardened runtime. Isolated `--version` execution passed on Linux x64 and macOS
-arm64 (both original and Palot-signed bytes); Linux arm64 and macOS Intel
-qualification is static only. These artifact checks do not constitute full app
-packaging or native integration verification for 2.0.2.
+against npm integrity metadata before extraction. Isolated `--version` execution
+passed on Linux x64, native macOS arm64, and macOS x64 through Rosetta. The arm64
+runtime retained its exact bytes and valid signature through application signing
+and ZIP extraction. Linux arm64 remains statically checked only. These results
+don't qualify a native Intel installation or every supported macOS version.
 
 Historically, beta19507 Apple Silicon runtime execution, native integration, and
 isolated package smoke passed on macOS 26.6.2. That result does not qualify the
 current release, an Intel installation, or every macOS version back to the
-declared macOS 13 floor. No Intel binary or Rosetta smoke was run.
-Do not substitute unsigned source hashes for signed hashes on future updates.
+declared macOS 13 floor. Future updates must verify the new runtime's exact bytes,
+signature and hardened-runtime flag before changing the pins.
 
 `bun run package:mac` stages the current host architecture. Passing an explicit Electron Builder
 architecture stages only that target. The first qualified release target is Apple Silicon.

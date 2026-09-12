@@ -9,6 +9,8 @@ models, and tool execution. The desktop app adds a focused interface for
 working across sessions, reviewing activity and changes, handling requests,
 and managing local OpenCode connections.
 
+![Palot on macOS showing demo sessions, a conversation, and a code diff](docs/assets/palot-readme-cover.webp)
+
 ## Status
 
 **0.12.0 — Palot v2** is a ground-up rebuild for OpenCode v2 and a breaking
