@@ -1,0 +1,11 @@
+# Ubuntu 24.04: allow Chromium's namespace sandbox for the trusted, default
+# user-local Nightly installation. This does not confine filesystem/network access.
+# Review this executable path before an administrator loads the profile. Any
+# executable placed at this user-writable path receives the same userns allowance.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile palot-nightly @{HOME}/.local/share/palot/nightly/palot-nightly flags=(unconfined) {
+  userns,
+  include if exists <local/palot-nightly>
+}

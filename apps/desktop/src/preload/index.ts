@@ -1,300 +1,224 @@
-import { contextBridge, ipcRenderer } from "electron"
+/** Narrow, typed bridge from the sandboxed renderer to Electron main. */
 
-/**
- * Preload bridge — exposes a typed API from the main process to the renderer.
- *
- * The renderer accesses these via `window.palot.*`.
- * All methods return Promises (backed by `ipcRenderer.invoke`).
- */
-contextBridge.exposeInMainWorld("palot", {
-	/** The host platform: "darwin", "win32", or "linux". */
-	platform: process.platform,
+import { contextBridge, ipcRenderer } from "electron";
+import type { PalotApi, PalotEventBatch, PalotOpenTarget } from "../shared/opencode-contract";
+import type {
+  AutomationChangedEvent,
+  AutomationNotificationTarget,
+} from "../shared/automation-contract";
+import { IPC_CHANNELS } from "../shared/opencode-contract";
+import {
+  hasStoredAppearancePreferencesArgument,
+  parseAppearancePreferencesArgument,
+  REDUCED_TRANSPARENCY_ARGUMENT,
+  type AppearancePreferences,
+} from "../shared";
+import { isWindowChromeTier, type WindowChromeTier } from "../shared/window-chrome";
 
-	/** Returns app version and dev/production mode. */
-	getAppInfo: () => ipcRenderer.invoke("app:info"),
+const CHROME_TIER_ARGUMENT = "--palot-chrome-tier=";
 
-	// --- Window chrome / liquid glass ---
+window.addEventListener("online", () => {
+  void ipcRenderer.invoke(IPC_CHANNELS.networkRestored).catch(() => undefined);
+});
 
-	/**
-	 * Subscribes to the window chrome tier notification from the main process.
-	 * Fired once after the window finishes loading.
-	 * Tier values: "liquid-glass" | "vibrancy" | "opaque"
-	 */
-	onChromeTier: (callback: (tier: string) => void) => {
-		const listener = (_event: unknown, tier: string) => callback(tier)
-		ipcRenderer.on("chrome-tier", listener)
-		return () => {
-			ipcRenderer.removeListener("chrome-tier", listener)
-		}
-	},
+function initialChromeTier(): WindowChromeTier {
+  const value = process.argv
+    .find((argument) => argument.startsWith(CHROME_TIER_ARGUMENT))
+    ?.slice(CHROME_TIER_ARGUMENT.length);
+  return value && isWindowChromeTier(value) ? value : "opaque";
+}
 
-	/** Get the current chrome tier (pull-based, avoids race with push event). */
-	getChromeTier: () => ipcRenderer.invoke("chrome-tier:get"),
+const api: PalotApi = {
+  platform: process.platform,
+  appearancePreferences: parseAppearancePreferencesArgument(process.argv),
+  hasStoredAppearancePreferences: hasStoredAppearancePreferencesArgument(process.argv),
+  reducedTransparency: process.argv.includes(REDUCED_TRANSPARENCY_ARGUMENT),
+  chromeTier: initialChromeTier(),
+  loadAppearance: () => ipcRenderer.invoke(IPC_CHANNELS.appearanceLoad),
+  updateAppearance: (input) => ipcRenderer.invoke(IPC_CHANNELS.appearanceUpdate, input),
+  onAppearanceChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: AppearancePreferences) =>
+      listener(value);
+    ipcRenderer.on(IPC_CHANNELS.appearanceChanged, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.appearanceChanged, handler);
+  },
+  nativeSystemAppearance: () => ipcRenderer.invoke(IPC_CHANNELS.nativeSystemAppearance),
+  onNativeSystemAppearanceChanged: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      appearance: Parameters<typeof listener>[0],
+    ) => listener(appearance);
+    ipcRenderer.on(IPC_CHANNELS.nativeSystemAppearanceChanged, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.nativeSystemAppearanceChanged, handler);
+  },
+  nativeSymbol: (input) => ipcRenderer.invoke(IPC_CHANNELS.nativeSymbol, input),
+  onReducedTransparencyChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, reduced: boolean) => listener(reduced);
+    ipcRenderer.on(IPC_CHANNELS.reducedTransparencyChanged, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.reducedTransparencyChanged, handler);
+  },
+  getChromeTier: () => ipcRenderer.invoke(IPC_CHANNELS.chromeTier),
+  onChromeTierChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, tier: WindowChromeTier) => listener(tier);
+    ipcRenderer.on(IPC_CHANNELS.chromeTierChanged, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.chromeTierChanged, handler);
+  },
+  runtimeStatus: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeStatus),
+  openCodeReleaseStatus: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeReleaseStatus),
+  setOpenCodeReleaseChannel: (channel) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openCodeReleaseChannel, channel),
+  checkOpenCodeRelease: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeReleaseCheck),
+  prepareOpenCodeRelease: (input) => ipcRenderer.invoke(IPC_CHANNELS.openCodeReleasePrepare, input),
+  resetOpenCodeRelease: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeReleaseReset),
+  inspectOpenCodeInstallations: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeInstallationsInspect),
+  openCodeInstallationStatus: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeInstallationStatus),
+  setOpenCodeRuntimePreference: (preference) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openCodeRuntimePreference, preference),
+  selectOpenCodeInstallation: (id) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openCodeInstallationSelect, id),
+  upgradeOpenCodeInstallation: (input) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openCodeInstallationUpgrade, input),
+  listOpenCodeRuntimes: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeList),
+  connectOpenCodeProfile: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.profileConnect, profileID),
+  disconnectOpenCodeProfile: (profileID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.profileDisconnect, profileID),
+  connectOpenCode: (input) => ipcRenderer.invoke(IPC_CHANNELS.connect, input),
+  listOpenCodeProfiles: () => ipcRenderer.invoke(IPC_CHANNELS.profilesList),
+  getSshConnectionState: () => ipcRenderer.invoke(IPC_CHANNELS.sshState),
+  respondSshPrompt: (input) => ipcRenderer.invoke(IPC_CHANNELS.sshRespond, input),
+  cancelSshConnection: (operationID) => ipcRenderer.invoke(IPC_CHANNELS.sshCancel, operationID),
+  onSshConnectionState: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) =>
+      listener(state);
+    ipcRenderer.on(IPC_CHANNELS.sshStateChanged, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.sshStateChanged, handler);
+  },
+  createOpenCodeProfile: (input) => ipcRenderer.invoke(IPC_CHANNELS.profilesCreate, input),
+  updateOpenCodeProfile: (input) => ipcRenderer.invoke(IPC_CHANNELS.profilesUpdate, input),
+  deleteOpenCodeProfile: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.profilesDelete, profileID),
+  testOpenCodeProfile: (input) => ipcRenderer.invoke(IPC_CHANNELS.profilesTest, input),
+  switchOpenCodeProfile: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.profilesSwitch, profileID),
+  openCodePairingInfo: () => ipcRenderer.invoke(IPC_CHANNELS.pairingInfo),
+  importOpenCodePairing: (input) => ipcRenderer.invoke(IPC_CHANNELS.pairingImport, input),
+  openCodeWebAccessInfo: () => ipcRenderer.invoke(IPC_CHANNELS.webAccessInfo),
+  enableOpenCodeTailscaleAccess: () => ipcRenderer.invoke(IPC_CHANNELS.webAccessEnableTailscale),
+  disableOpenCodeTailscaleAccess: () => ipcRenderer.invoke(IPC_CHANNELS.webAccessDisableTailscale),
+  restartLocalOpenCodeService: () => ipcRenderer.invoke(IPC_CHANNELS.localServiceRestart),
+  createPty: (input, connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ptyCreate, input, connectionID),
+  connectPty: (input, connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ptyConnect, input, connectionID),
+  startPty: (connectionID) => ipcRenderer.invoke(IPC_CHANNELS.ptyStart, connectionID),
+  writePty: (input) => ipcRenderer.invoke(IPC_CHANNELS.ptyWrite, input),
+  disconnectPty: (connectionID) => ipcRenderer.invoke(IPC_CHANNELS.ptyDisconnect, connectionID),
+  onPtyEvent: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) =>
+      listener(value);
+    ipcRenderer.on(IPC_CHANNELS.ptyEvents, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.ptyEvents, handler);
+  },
+  loadSessionTriage: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.triageLoad, profileID),
+  dispatchSessionTriage: (command) => ipcRenderer.invoke(IPC_CHANNELS.triageDispatch, command),
+  loadAutomations: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.automationLoad, profileID),
+  dispatchAutomation: (command) => ipcRenderer.invoke(IPC_CHANNELS.automationDispatch, command),
+  previewAutomationSchedule: (trigger) =>
+    ipcRenderer.invoke(IPC_CHANNELS.automationPreview, trigger),
+  takeAutomationNotificationTarget: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.automationTakeNotification),
+  loadAutomationHostSettings: () => ipcRenderer.invoke(IPC_CHANNELS.automationSettingsLoad),
+  updateAutomationHostSettings: (settings) =>
+    ipcRenderer.invoke(IPC_CHANNELS.automationSettingsUpdate, settings),
+  onAutomationChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, input: AutomationChangedEvent) =>
+      listener(input);
+    ipcRenderer.on(IPC_CHANNELS.automationChanged, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.automationChanged, handler);
+  },
+  onAutomationNotificationOpened: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, input: AutomationNotificationTarget) =>
+      listener(input);
+    ipcRenderer.on(IPC_CHANNELS.automationNotificationOpened, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.automationNotificationOpened, handler);
+  },
+  openCodeRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.request, input),
+  cancelOpenCodeRequest: (requestID) => ipcRenderer.invoke(IPC_CHANNELS.cancelRequest, requestID),
+  pickDirectory: (connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.pickDirectory, undefined, connectionID),
+  openExternalUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openExternalUrl, url),
+  revealFileInFinder: (path, connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.revealFileInFinder, path, connectionID),
+  externalOpenTargets: (sessionID, connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.externalOpenTargets, sessionID, connectionID),
+  externalOpen: (input, connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.externalOpen, input, connectionID),
+  pickFiles: (connectionID) => ipcRenderer.invoke(IPC_CHANNELS.pickFiles, undefined, connectionID),
+  saveSessionExport: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveSessionExport, input),
+  pickSessionImport: () => ipcRenderer.invoke(IPC_CHANNELS.pickSessionImport),
+  writeClipboardText: (value) => ipcRenderer.invoke(IPC_CHANNELS.writeClipboardText, value),
+  attachClipboardImages: (images, connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.attachClipboardImages, images, connectionID),
+  attachmentPreview: (grant, connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.attachmentPreview, grant, connectionID),
+  downloadUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.downloadUrl, url),
+  performanceSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.performanceSnapshot),
+  performanceTraceStart: () => ipcRenderer.invoke(IPC_CHANNELS.performanceTraceStart),
+  performanceTraceStop: () => ipcRenderer.invoke(IPC_CHANNELS.performanceTraceStop),
+  restartApp: (input) => ipcRenderer.invoke(IPC_CHANNELS.restartApp, input),
+  reportRendererStartupFailure: (message) =>
+    ipcRenderer.invoke(IPC_CHANNELS.rendererStartupFailure, message),
+  dataLocations: () => ipcRenderer.invoke(IPC_CHANNELS.dataLocations),
+  revealDataLocation: (location) => ipcRenderer.invoke(IPC_CHANNELS.dataReveal, location),
+  exportSupportBundle: () => ipcRenderer.invoke(IPC_CHANNELS.supportBundleExport),
+  resetPalotData: (scope) => ipcRenderer.invoke(IPC_CHANNELS.dataReset, scope),
+  showAttentionNotification: (input) =>
+    ipcRenderer.invoke(IPC_CHANNELS.attentionNotification, input),
+  loadAttentionSnapshot: (input) => ipcRenderer.invoke(IPC_CHANNELS.attentionSnapshot, input),
+  loadDesktopNotificationSettings: () => ipcRenderer.invoke(IPC_CHANNELS.notificationSettingsLoad),
+  updateDesktopNotificationSettings: (settings) =>
+    ipcRenderer.invoke(IPC_CHANNELS.notificationSettingsUpdate, settings),
+  desktopNotificationDeliveryStatus: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.notificationDeliveryStatus),
+  requestDesktopNotificationPermission: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.notificationPermissionRequest),
+  openDesktopNotificationSystemSettings: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.notificationSystemSettingsOpen),
+  sendDesktopTestNotification: () => ipcRenderer.invoke(IPC_CHANNELS.notificationTest),
+  takeOpenTarget: () => ipcRenderer.invoke(IPC_CHANNELS.openTargetTake),
+  openSessionWindow: (sessionID, connectionID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openSessionWindow, sessionID, connectionID),
+  closeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.closeWindow),
+  onOpenTargetRequested: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, target: PalotOpenTarget) =>
+      listener(target);
+    ipcRenderer.on(IPC_CHANNELS.openTargetRequested, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.openTargetRequested, handler);
+  },
+  onOpenCodeEvents: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, batch: PalotEventBatch) =>
+      listener({ ...batch, rendererReceivedAt: Date.now() });
+    ipcRenderer.on(IPC_CHANNELS.events, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.events, handler);
+  },
+};
 
-	/** Ensures the OpenCode server is running. Spawns it if not. */
-	ensureOpenCode: () => ipcRenderer.invoke("opencode:ensure"),
+const reportStartupError = (event: ErrorEvent) => {
+  void api.reportRendererStartupFailure(
+    event.error instanceof Error ? event.error.message : event.message,
+  );
+};
+const reportStartupRejection = (event: PromiseRejectionEvent) => {
+  const reason = event.reason;
+  void api.reportRendererStartupFailure(reason instanceof Error ? reason.message : String(reason));
+};
+window.addEventListener("error", reportStartupError);
+window.addEventListener("unhandledrejection", reportStartupRejection);
+window.addEventListener(
+  "DOMContentLoaded",
+  () => {
+    window.removeEventListener("error", reportStartupError);
+    window.removeEventListener("unhandledrejection", reportStartupRejection);
+  },
+  { once: true },
+);
 
-	/** Gets the URL of the running server, or null. */
-	getServerUrl: () => ipcRenderer.invoke("opencode:url"),
-
-	/** Stops the managed OpenCode server. */
-	stopOpenCode: () => ipcRenderer.invoke("opencode:stop"),
-
-	/** Restarts the managed OpenCode server (stops and re-starts with current settings). */
-	restartOpenCode: () => ipcRenderer.invoke("opencode:restart"),
-
-	// --- Credential storage (safeStorage-backed) ---
-
-	credential: {
-		store: (serverId: string, password: string) =>
-			ipcRenderer.invoke("credential:store", serverId, password),
-		get: (serverId: string) => ipcRenderer.invoke("credential:get", serverId),
-		delete: (serverId: string) => ipcRenderer.invoke("credential:delete", serverId),
-	},
-
-	/** Test connectivity to a remote OpenCode server. Returns null on success or error message. */
-	testServerConnection: (url: string, username?: string, password?: string) =>
-		ipcRenderer.invoke("server:test-connection", url, username, password),
-
-	// --- mDNS discovery ---
-
-	mdns: {
-		/** Get the current list of discovered servers. */
-		getDiscovered: () => ipcRenderer.invoke("mdns:get-discovered"),
-		/** Subscribe to discovered server list changes. */
-		onChanged: (callback: (servers: unknown[]) => void) => {
-			const listener = (_event: unknown, servers: unknown[]) => callback(servers)
-			ipcRenderer.on("mdns:servers-changed", listener)
-			return () => {
-				ipcRenderer.removeListener("mdns:servers-changed", listener)
-			}
-		},
-	},
-
-	/** Reads model state (recent models, favorites, variants). */
-	getModelState: () => ipcRenderer.invoke("model-state"),
-
-	/** Updates the recent model list (adds model to front, deduplicates, caps at 10). */
-	updateModelRecent: (model: { providerID: string; modelID: string }) =>
-		ipcRenderer.invoke("model-state:update-recent", model),
-
-	// --- Auto-updater ---
-
-	/** Gets the current auto-updater state. */
-	getUpdateState: () => ipcRenderer.invoke("updater:state"),
-
-	/** Manually triggers an update check. */
-	checkForUpdates: () => ipcRenderer.invoke("updater:check"),
-
-	/** Starts downloading the available update. */
-	downloadUpdate: () => ipcRenderer.invoke("updater:download"),
-
-	/** Quits the app and installs the downloaded update. */
-	installUpdate: () => ipcRenderer.invoke("updater:install"),
-
-	/** Opens the GitHub release page for the current update version. */
-	openReleasePage: () => ipcRenderer.invoke("updater:open-release-page"),
-
-	/** Subscribes to update state changes pushed from the main process. */
-	onUpdateStateChanged: (callback: (state: unknown) => void) => {
-		const listener = (_event: unknown, state: unknown) => callback(state)
-		ipcRenderer.on("updater:state-changed", listener)
-		return () => {
-			ipcRenderer.removeListener("updater:state-changed", listener)
-		}
-	},
-
-	// --- Git operations ---
-
-	git: {
-		listBranches: (directory: string) => ipcRenderer.invoke("git:branches", directory),
-		getStatus: (directory: string) => ipcRenderer.invoke("git:status", directory),
-		checkout: (directory: string, branch: string) =>
-			ipcRenderer.invoke("git:checkout", directory, branch),
-		stashAndCheckout: (directory: string, branch: string) =>
-			ipcRenderer.invoke("git:stash-and-checkout", directory, branch),
-		stashPop: (directory: string) => ipcRenderer.invoke("git:stash-pop", directory),
-		getRoot: (directory: string) => ipcRenderer.invoke("git:root", directory),
-		diffStat: (directory: string) => ipcRenderer.invoke("git:diff-stat", directory),
-		commitAll: (directory: string, message: string) =>
-			ipcRenderer.invoke("git:commit-all", directory, message),
-		push: (directory: string, remote?: string) => ipcRenderer.invoke("git:push", directory, remote),
-		createBranch: (directory: string, branchName: string) =>
-			ipcRenderer.invoke("git:create-branch", directory, branchName),
-		applyToLocal: (worktreeDir: string, localDir: string) =>
-			ipcRenderer.invoke("git:apply-to-local", worktreeDir, localDir),
-		applyDiffText: (localDir: string, diffText: string) =>
-			ipcRenderer.invoke("git:apply-diff-text", localDir, diffText),
-		getRemoteUrl: (directory: string, remote?: string) =>
-			ipcRenderer.invoke("git:remote-url", directory, remote),
-	},
-
-	// --- Window preferences (opaque windows / transparency) ---
-
-	/** Get the persisted opaque windows preference from the main process. */
-	getOpaqueWindows: () => ipcRenderer.invoke("prefs:get-opaque-windows"),
-
-	/** Set the opaque windows preference and persist it in the main process. */
-	setOpaqueWindows: (value: boolean) => ipcRenderer.invoke("prefs:set-opaque-windows", value),
-
-	/** Relaunch the app (used after toggling transparency, which requires a restart). */
-	relaunch: () => ipcRenderer.invoke("app:relaunch"),
-
-	// --- CLI install ---
-
-	cli: {
-		/** Checks whether the `palot` CLI command is installed. */
-		isInstalled: () => ipcRenderer.invoke("cli:is-installed"),
-		/** Installs the `palot` CLI command (symlinks to /usr/local/bin). */
-		install: () => ipcRenderer.invoke("cli:install"),
-		/** Uninstalls the `palot` CLI command. */
-		uninstall: () => ipcRenderer.invoke("cli:uninstall"),
-	},
-
-	// --- Open in external app ---
-
-	openIn: {
-		getTargets: () => ipcRenderer.invoke("open-in:targets"),
-		open: (directory: string, targetId: string, persistPreferred?: boolean) =>
-			ipcRenderer.invoke("open-in:open", directory, targetId, persistPreferred),
-		setPreferred: (targetId: string) => ipcRenderer.invoke("open-in:set-preferred", targetId),
-	},
-
-	// --- Native theme (syncs macOS glass tint to app color scheme) ---
-
-	/** Set the native theme source to control macOS glass tint color. */
-	setNativeTheme: (source: string) => ipcRenderer.invoke("theme:set-native", source),
-
-	/** Get the system accent color as an 8-char hex RRGGBBAA string, or null if unavailable. */
-	getAccentColor: () => ipcRenderer.invoke("theme:accent-color"),
-
-	/** Subscribe to system accent color changes (fired when the user changes OS accent color). */
-	onAccentColorChanged: (callback: (color: string) => void) => {
-		const listener = (_event: unknown, color: string) => callback(color)
-		ipcRenderer.on("theme:accent-color-changed", listener)
-		return () => {
-			ipcRenderer.removeListener("theme:accent-color-changed", listener)
-		}
-	},
-
-	// --- Directory picker ---
-
-	/** Opens a native folder picker dialog. Returns the selected path, or null if cancelled. */
-	pickDirectory: () => ipcRenderer.invoke("dialog:open-directory"),
-
-	// --- Fetch proxy (bypasses Chromium connection limits) ---
-
-	/**
-	 * Proxies an HTTP request through the main process using Electron's `net.fetch()`.
-	 * This bypasses Chromium's 6-connections-per-origin limit for HTTP/1.1.
-	 * The renderer serializes the Request, sends it over IPC, and gets back
-	 * a serialized Response.
-	 */
-	fetch: (req: {
-		url: string
-		method: string
-		headers: Record<string, string>
-		body: string | null
-	}) => ipcRenderer.invoke("fetch:request", req),
-
-	// --- Notifications ---
-
-	/**
-	 * Subscribes to notification navigation events from the main process.
-	 * Fired when the user clicks a native OS notification — the renderer
-	 * should navigate to the specified session.
-	 */
-	onNotificationNavigate: (callback: (data: { sessionId: string }) => void) => {
-		const listener = (_event: unknown, data: { sessionId: string }) => callback(data)
-		ipcRenderer.on("notification:navigate", listener)
-		return () => {
-			ipcRenderer.removeListener("notification:navigate", listener)
-		}
-	},
-
-	/** Dismiss any active notification for a session (e.g. when the user navigates to it). */
-	dismissNotification: (sessionId: string) => ipcRenderer.invoke("notification:dismiss", sessionId),
-
-	/** Update the dock badge / app badge count. */
-	updateBadgeCount: (count: number) => ipcRenderer.invoke("notification:badge", count),
-
-	// --- Settings ---
-
-	/** Get the full app settings object. */
-	getSettings: () => ipcRenderer.invoke("settings:get"),
-
-	/** Update settings with a partial object (deep-merged). */
-	updateSettings: (partial: Record<string, unknown>) =>
-		ipcRenderer.invoke("settings:update", partial),
-
-	/** Subscribe to settings changes pushed from the main process. */
-	onSettingsChanged: (callback: (settings: unknown) => void) => {
-		const listener = (_event: unknown, settings: unknown) => callback(settings)
-		ipcRenderer.on("settings:changed", listener)
-		return () => {
-			ipcRenderer.removeListener("settings:changed", listener)
-		}
-	},
-
-	// --- Automations ---
-
-	automation: {
-		list: () => ipcRenderer.invoke("automation:list"),
-		get: (id: string) => ipcRenderer.invoke("automation:get", id),
-		create: (input: unknown) => ipcRenderer.invoke("automation:create", input),
-		update: (input: unknown) => ipcRenderer.invoke("automation:update", input),
-		delete: (id: string) => ipcRenderer.invoke("automation:delete", id),
-		runNow: (id: string) => ipcRenderer.invoke("automation:run-now", id),
-		listRuns: (automationId?: string) => ipcRenderer.invoke("automation:list-runs", automationId),
-		archiveRun: (runId: string) => ipcRenderer.invoke("automation:archive-run", runId),
-		acceptRun: (runId: string) => ipcRenderer.invoke("automation:accept-run", runId),
-		markRunRead: (runId: string) => ipcRenderer.invoke("automation:mark-run-read", runId),
-		previewSchedule: (rrule: string, timezone: string) =>
-			ipcRenderer.invoke("automation:preview-schedule", rrule, timezone),
-	},
-
-	onAutomationRunsUpdated: (callback: () => void) => {
-		const listener = () => callback()
-		ipcRenderer.on("automation:runs-updated", listener)
-		return () => {
-			ipcRenderer.removeListener("automation:runs-updated", listener)
-		}
-	},
-
-	// --- Onboarding ---
-
-	onboarding: {
-		/** Check if OpenCode CLI is installed and compatible. */
-		checkOpenCode: () => ipcRenderer.invoke("onboarding:check-opencode"),
-		/** Install OpenCode CLI via the official install script. */
-		installOpenCode: () => ipcRenderer.invoke("onboarding:install-opencode"),
-		/** Subscribe to install output lines (streamed from the install script). */
-		onInstallOutput: (callback: (text: string) => void) => {
-			const listener = (_event: unknown, text: string) => callback(text)
-			ipcRenderer.on("onboarding:install-output", listener)
-			return () => {
-				ipcRenderer.removeListener("onboarding:install-output", listener)
-			}
-		},
-		/** Quick detect all supported providers (Claude Code, Cursor, OpenCode). */
-		detectProviders: () => ipcRenderer.invoke("onboarding:detect-providers"),
-		/** Full scan of a specific provider's configuration. */
-		scanProvider: (provider: string) => ipcRenderer.invoke("onboarding:scan-provider", provider),
-		/** Dry-run migration preview for a provider. */
-		previewMigration: (provider: string, scanResult: unknown, categories: string[]) =>
-			ipcRenderer.invoke("onboarding:preview-migration", provider, scanResult, categories),
-		/** Execute migration (writes files with backup). */
-		executeMigration: (provider: string, scanResult: unknown, categories: string[]) =>
-			ipcRenderer.invoke("onboarding:execute-migration", provider, scanResult, categories),
-		/** Subscribe to migration progress updates (history writing). */
-		onMigrationProgress: (callback: (progress: unknown) => void) => {
-			const listener = (_event: unknown, progress: unknown) => callback(progress)
-			ipcRenderer.on("onboarding:migration-progress", listener)
-			return () => {
-				ipcRenderer.removeListener("onboarding:migration-progress", listener)
-			}
-		},
-		/** Restore the most recent migration backup. */
-		restoreBackup: () => ipcRenderer.invoke("onboarding:restore-backup"),
-	},
-})
+contextBridge.exposeInMainWorld("palot", api);

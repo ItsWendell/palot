@@ -1,283 +1,132 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="apps/desktop/resources/brand/lockup-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="apps/desktop/resources/brand/lockup-light.png">
-  <img alt="palot." src="apps/desktop/resources/brand/lockup-dark.png" width="420">
-</picture>
+# Palot
 
-### A desktop GUI for [OpenCode](https://opencode.ai)
+Palot is an independent desktop client for OpenCode 2 on Linux and macOS. It is not
+an official OpenCode project and is not affiliated with or endorsed by the
+OpenCode maintainers.
 
-[![CI](https://github.com/ItsWendell/palot/actions/workflows/ci.yml/badge.svg)](https://github.com/ItsWendell/palot/actions/workflows/ci.yml)
-[![Release](https://github.com/ItsWendell/palot/actions/workflows/release.yml/badge.svg)](https://github.com/ItsWendell/palot/actions/workflows/release.yml)
-[![GitHub release](https://img.shields.io/github/v/release/ItsWendell/palot?include_prereleases&label=version)](https://github.com/ItsWendell/palot/releases)
-[![GitHub Downloads](https://img.shields.io/github/downloads/ItsWendell/palot/total?label=downloads)](https://github.com/ItsWendell/palot/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+Palot keeps OpenCode as the source of truth for projects, sessions, messages,
+models, and tool execution. The desktop app adds a focused interface for
+working across sessions, reviewing activity and changes, handling requests,
+and managing local OpenCode connections.
 
-> **Alpha Software** -- Palot is under active development. Expect breaking changes, missing features, and rough edges. Feedback and contributions are welcome!
+## Status
 
-<p align="center">
-  <img src="apps/desktop/resources/brand/screenshot.jpg" alt="Palot desktop app" width="900" style="border-radius: 12px;">
-</p>
+**0.12.0 — Palot v2** is a ground-up rebuild for OpenCode v2 and a breaking
+upgrade from Palot 0.11.x. “Palot v2” names the rebuild; the application follows
+the `0.x` SemVer release sequence. OpenCode has its own independent version.
 
----
+Palot is open-source pre-release software under active development. Install from
+source; there is no supported public binary release yet. Linux has a user-local
+Nightly installer and a local Arch package recipe. Ubuntu requires the guide's
+per-app sandbox profile. Fedora native Wayland has a known presentation issue;
+the guide includes an XWayland diagnostic fallback. macOS supports local ad-hoc
+and development-certificate signing, not Apple Developer ID signing or
+notarization. See the installation guide's platform matrix for tested systems
+and qualification limits.
 
-## What is Palot?
+Expect incomplete features, breaking changes, and release paths that have not
+been qualified on clean supported machines. Startup recovery exists, but it is
+still pre-release and should not be the only protection for important work.
 
-Palot is an open-source Electron app that gives [OpenCode](https://opencode.ai) a full desktop interface. OpenCode is a powerful terminal-based AI coding agent, but it runs one project at a time and lives in the terminal. Palot wraps it with a visual UI so you can manage multiple projects and sessions from a single window, review file changes in a dedicated diff panel, schedule automated agent runs, and migrate your existing setup from other coding agents.
+Earlier Palot release downloads and tags do not install this source snapshot.
+Use the source installation instructions below.
 
-Palot spawns and manages the OpenCode server automatically, streams responses in real time, and renders tool calls with syntax-highlighted diffs, file previews, and terminal output.
+## Local service lifecycle
 
-<br>
+Palot connects to the registered local OpenCode service by default. Opening Palot,
+retrying a connection, or recovering a disconnected event stream does not start,
+replace, or upgrade that service. If no reachable service is found, use **Start
+OpenCode** and review the confirmation: the official startup API can also recover
+an unresponsive service, which may interrupt other connected clients. Restarting
+or replacing a service version requires a separate confirmed action.
 
-## Features
+An existing user-installed OpenCode runtime is preferred for explicit local
+startup. Connection settings let you choose an installation, check the Stable or
+Beta channel, and explicitly update it using OpenCode's npm, Bun, pnpm, Yarn or
+curl upgrade support. Updating the executable does not restart the service.
+The bundled runtime and optional verified Palot-owned downloads are fallbacks,
+not replacements for a global installation. A service started by Palot is still
+shared with other OpenCode clients; closing Palot leaves it running.
+Remote and SSH profiles do not fall back to local startup. Automatic shared-service
+startup and a separate isolated managed profile are not currently offered.
 
-### Chat & Agent Interaction
+## Install from source
 
-- **Multi-project workspace** -- Manage AI sessions across all your projects from a single window. OpenCode is scoped to one project per instance; Palot lifts that limitation.
+Start with the **[installation guide](docs/installation.md)** for Arch Linux,
+Fedora, Ubuntu, and macOS prerequisites, pinned Bun/Vite+ setup, and the exact
+development CLI version. It also covers updating, uninstalling, and local macOS
+self-signing without weakening Gatekeeper.
 
-- **Full chat interface** -- Conversational UI with real-time SSE streaming, Markdown rendering, auto-scroll, lazy-load pagination, and draft persistence across session switches.
+| Platform       | Start here                                                                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Arch / Omarchy | [Pacman prerequisites and user-local or local package installation](docs/installation.md#arch-linux--omarchy-rolling-x86_64)                   |
+| Fedora 43      | [DNF prerequisites and Wayland qualification notes](docs/installation.md#fedora-43-workstation-x86_64)                                         |
+| Ubuntu 24.04   | [APT prerequisites and per-app sandbox setup](docs/installation.md#ubuntu-2404-lts-desktop-amd64)                                              |
+| macOS          | `xcode-select --install`, then [native prerequisites and self-signing](docs/installation.md#macos-local-self-signing-and-nightly-installation) |
 
-- **Undo / redo** -- `Cmd+Z` to revert the agent's last turn (including file changes), `Shift+Cmd+Z` to redo.
+With the pinned [Bun and Vite+ toolchain](docs/installation.md#2-clone-and-bootstrap-the-toolchain)
+available, install project dependencies using `vp install --frozen-lockfile`.
 
-- **Slash commands** -- Type `/` to invoke server-side commands like `/compact` and `/help` directly from the chat input.
+After cloning and completing that setup, run from the repository root:
 
-- **File and context mentions** -- Use `@` to reference files or specific context, giving the agent precise scope.
+```sh
+# Linux: build, verify, install for your user, and launch Nightly
+bun run install:nightly:linux
 
-- **Rich tool call visualization** -- Every tool call is rendered inline:
-  - File reads with line numbers and syntax highlighting
-  - Edits as inline diffs (old vs new)
-  - Bash commands with ANSI-colored terminal output
-  - Search results (glob, grep) with matched patterns
-  - Web fetches with URL and content preview
-  - Task lists with real-time progress tracking
+# macOS: one-time local signing identity (requires OpenSSL 3)
+bun run setup:signing:mac
+# Then build, verify, locally sign, install, and launch
+bun run install:nightly:mac
 
-- **Sub-agent cards** -- Live activity cards for delegated tasks, with collapsible child session views and automatic collapse on completion.
-
-- **Model and agent selector** -- Searchable model picker across all connected providers (Anthropic, OpenAI, Google, and more), with reasoning variant support, a "recently used" section, and favorites. Switch between available agents.
-
-- **Permission management** -- Inline approve/deny UI for agent permission requests, with "allow once" and "allow always" options.
-
-- **Interactive questions** -- Radio, checkbox, and free-text input for agent questions, with keyboard shortcuts.
-
-- **File attachments** -- Drag-and-drop images (PNG, JPEG, GIF, WebP) and PDFs into the chat, with model capability warnings.
-
-- **Session compaction** -- Summarize long conversations to reclaim context window tokens, manually or automatically.
-
-### Review & Git Workflow
-
-- **Review panel** -- A dedicated, collapsible side panel that shows all file changes from the current session. Powered by virtualized rendering and a worker pool for off-thread syntax highlighting, so it stays fast even with hundreds of changed files.
-
-- **Diff commenting** -- Click any line in the diff viewer to leave a comment. Comments are automatically collected and injected into the chat input so you can send feedback to the agent in one go.
-
-- **Commit and push** -- Integrated dialog to create branches, commit changes, push to remotes, and open a GitHub Pull Request, all without leaving Palot.
-
-- **Smart diff gates** -- Auto-collapses generated files (lockfiles, etc.) and very large diffs to keep the review panel responsive.
-
-### Automations
-
-- **Scheduled agent runs** -- Define recurring tasks with RRule-based scheduling. Palot runs the agent in the background and queues the results for your review.
-
-- **Human-in-the-loop review** -- Automation runs land in a `pending_review` state so you can inspect changes in the review panel before accepting or archiving them.
-
-- **Auto-archiving** -- Runs with no actionable changes are automatically archived to keep the list clean.
-
-- **Retry with backoff** -- Configurable execution retries with exponential backoff for flaky tasks.
-
-### Migration & Onboarding
-
-- **Migrate from Claude Code and Cursor** -- A guided wizard detects existing configurations and chat history from Claude Code and Cursor. It converts global/project settings, MCP servers, custom agents, commands, rules (e.g. `CLAUDE.md` to `AGENTS.md`), and hooks to the OpenCode format.
-
-- **History import** -- Convert past sessions and conversations from Cursor (`state.vscdb`) and Claude Code into OpenCode, so you don't lose context when switching.
-
-- **Backup and restore** -- Automatic backups before any migration, with a one-click restore option.
-
-- **CLI setup helper** -- Built-in UI to check, install, or repair the OpenCode CLI environment.
-
-### Desktop & OS Integration
-
-- **Liquid Glass (macOS 26+)** -- Native `NSGlassEffectView` window chrome on macOS Tahoe, with vibrancy fallback for older versions and an opaque mode for other platforms.
-
-- **System accent color** -- The UI adapts to the OS accent color on macOS and Windows.
-
-- **System tray** -- Runs in the background with a tray icon (including a dedicated Linux variant).
-
-- **Dock / app badges** -- Badge count on the app icon for pending tasks or required permissions.
-
-- **Secure credential storage** -- Encrypts server passwords and API keys using Electron's `safeStorage`.
-
-- **mDNS server discovery** -- Automatically scans the local network for OpenCode servers, letting you connect to remote or headless instances.
-
-- **Open in editor** -- Quick-launch buttons to open the current project in VS Code, Cursor, JetBrains IDEs, or the terminal.
-
-- **Command palette** -- `Cmd+K` to search sessions, switch projects, toggle feature flags, and run commands.
-
-- **Auto-updates** -- Built-in update mechanism with download progress and one-click restart.
-
-<br>
-
-## Download
-
-| Platform | Architectures | Formats |
-|----------|---------------|---------|
-| macOS | Apple Silicon, Intel | DMG, ZIP |
-| Windows | x64, ARM64 | NSIS installer |
-| Linux | x64 | AppImage, DEB, RPM |
-
-Download the latest release from the [Releases page](https://github.com/ItsWendell/palot/releases).
-
-### macOS: unsigned app warning
-
-Palot is not yet code-signed or notarized. macOS Gatekeeper will block the app on first launch with a message like *"Palot is damaged and can't be opened"* or *"Apple could not verify Palot"*. To fix this:
-
-**Option A** -- Right-click (or Control-click) the app in Finder and select **Open**, then click **Open** in the dialog.
-
-**Option B** -- Remove the quarantine attribute from the terminal:
-
-```bash
-xattr -cr /Applications/Palot.app
+# Or Linux/macOS: launch the development app in the foreground
+bun run dev:focus
 ```
 
-This is expected behavior for unsigned apps and does not indicate malware.
+Source builds require Bun `1.4.2`, Node.js `24` or later, and Vite+. Packaged apps
+include a pinned OpenCode fallback; stable OpenCode **2.x** and the reviewed beta
+are supported as external services. Unreviewed betas require explicit consent.
+`bun run dev` starts hidden; `bun run dev:visible` shows the window without taking
+focus. Windows is not a qualified installation target.
 
-<br>
+On macOS, the signing script creates a local certificate and changes trust in
+your user keychain; review it first and run it in an interactive Terminal. It
+does **not** provide Apple Developer ID signing or notarization. If you use
+Homebrew, `brew install openssl@3` provides the required signing tool; the guide
+shows the scoped PATH command. Never disable Gatekeeper or run the build as root.
 
-## Getting Started
+### Upgrading from 0.11.x
 
-### From a release (recommended)
+Back up important work and configuration before switching. The new app requires
+OpenCode v2; a V1 server is not compatible. Follow the
+[official OpenCode migration guide](https://opencode.ai/v2/docs/migrate-v1) for
+OpenCode-owned data and configuration. Palot settings, plugins, installation
+paths and workflows from 0.11.x are not all guaranteed to carry over. Existing
+0.11.x binary downloads are legacy releases, not builds of this source tree.
 
-1. Download and install from the [Releases page](https://github.com/ItsWendell/palot/releases)
-2. Make sure [OpenCode CLI](https://opencode.ai) is installed (`~/.opencode/bin/opencode`)
-3. Palot will automatically manage the OpenCode server
+## Privacy
 
-> OpenCode needs at least one AI provider configured (Anthropic, OpenAI, Google, etc.). Run `opencode` in a terminal once to complete initial setup.
+Palot does not currently include usage analytics, crash reporting, or telemetry
+that sends data to Palot maintainers. It stores app settings, local logs, and
+some Palot-owned state on the device. Prompts, repository context, model
+requests, and tool activity are handled by the OpenCode service and providers
+you configure.
 
-### Coming from Claude Code or Cursor?
+Read [PRIVACY.md](PRIVACY.md) before using Palot with sensitive repositories or
+remote OpenCode servers.
 
-On first launch, Palot offers a guided migration wizard that detects your existing config and history. You can also trigger it later from Settings.
+## Contributing and support
 
-### Configuration
+- [Contributing](CONTRIBUTING.md)
+- [Documentation index](docs/README.md)
+- [Support](SUPPORT.md)
+- [Security policy](SECURITY.md)
+- [Accessibility](ACCESSIBILITY.md)
+- [GitHub Issues](https://github.com/ItsWendell/palot/issues)
+- [GitHub Discussions](https://github.com/ItsWendell/palot/discussions), planned
+  but currently disabled
 
-Palot is a GUI layer on top of OpenCode, so core configuration like model providers, MCP servers, custom tools, and agent behavior is managed through OpenCode's own config files. Refer to the [OpenCode documentation](https://opencode.ai/docs) for setup instructions.
-
-### From source
-
-**Prerequisites:** [Bun](https://bun.sh) 1.3.8+ and [OpenCode CLI](https://opencode.ai)
-
-```bash
-git clone https://github.com/ItsWendell/palot.git
-cd palot
-bun install
-
-# Run the Electron app
-cd apps/desktop && bun run dev
-```
-
-#### Browser-only mode (no Electron)
-
-For frontend development without Electron:
-
-```bash
-# Terminal 1: Start the backend
-cd apps/server && bun run dev     # port 3100
-
-# Terminal 2: Start the renderer
-cd apps/desktop && bun run dev:web  # port 1420
-```
-
-<br>
-
-## Architecture
-
-```
-apps/
-  desktop/       Electron 40 + Vite + React 19 desktop app
-  server/        Bun + Hono backend (browser-mode dev only)
-packages/
-  ui/            Shared shadcn/ui component library (@palot/ui)
-  configconv/    Universal agent config converter (Claude Code, Cursor, OpenCode)
-  configconv-cli/ CLI wrapper for the config converter
-```
-
-The desktop app has three runtime contexts:
-
-- **Main process** (Node.js) -- Window management, IPC handlers, OpenCode server lifecycle, automation scheduler
-- **Preload** -- Secure bridge exposing `window.palot` API via `contextBridge`
-- **Renderer** (Chromium) -- React app with components, hooks, services, and Jotai atoms
-
-<br>
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Desktop shell | Electron 40, electron-vite |
-| Frontend | React 19, Vite 6, TypeScript |
-| Styling | Tailwind CSS v4 |
-| State | Jotai |
-| Routing | TanStack Router |
-| UI components | shadcn/ui, Base UI, cmdk |
-| Code highlighting | Shiki |
-| Diff rendering | @pierre/diffs |
-| Virtualization | TanStack Virtual |
-| AI integration | @opencode-ai/sdk |
-| Monorepo | Turborepo + Bun workspaces |
-| Linting | Biome |
-| Packaging | electron-builder |
-| Versioning | Changesets |
-
-<br>
-
-## Commands
-
-```bash
-# Development
-bun run dev              # Electron dev mode (from apps/desktop)
-bun run dev:web          # Browser-only dev mode (from apps/desktop, needs apps/server)
-
-# Build and package
-bun run build            # Production build
-bun run package          # Package for current platform
-bun run package:all      # Package for all platforms
-
-# Quality
-bun run lint             # Lint with Biome
-bun run lint:fix         # Lint and auto-fix
-bun run check-types      # Type-check all packages
-
-# Testing
-cd packages/configconv && bun test   # Run tests
-
-# Versioning
-bun changeset            # Add a changeset
-bun run version-packages # Apply changesets and bump versions
-```
-
-<br>
-
-## Contributing
-
-Palot is in early alpha and we welcome contributions! Here's how to get started:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Make your changes
-4. Run quality checks: `bun run lint && bun run check-types`
-5. Add a changeset: `bun changeset`
-6. Open a pull request
-
-Please see the [AGENTS.md](AGENTS.md) file for code style conventions, naming patterns, and important architectural notes.
-
-<br>
-
-## Acknowledgments
-
-Palot is built on top of [OpenCode](https://github.com/opencode-ai/opencode), an open-source AI coding agent. Palot communicates with the OpenCode server via the [`@opencode-ai/sdk`](https://www.npmjs.com/package/@opencode-ai/sdk) package.
-
-The UI component library is built with [shadcn/ui](https://ui.shadcn.com/), [Base UI](https://base-ui.com/), and [Tailwind CSS](https://tailwindcss.com/).
-
-See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for a full list of third-party dependencies and their licenses.
-
-<br>
-
-## License
-
-[MIT](LICENSE)
+Palot-authored code is licensed under the [MIT License](LICENSE). Vendored code,
+skills and assets retain their applicable licenses and notices; see
+[third-party notices](apps/desktop/resources/licenses/THIRD_PARTY_NOTICES.md).
+See [TRADEMARKS.md](TRADEMARKS.md) before publishing a fork or distribution using
+the Palot name or branding.

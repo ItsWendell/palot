@@ -1,0 +1,28 @@
+export type GlassMaterialVariant = number;
+
+export const GlassMaterialVariant = {
+  regular: 0,
+  clear: 1,
+  dock: 2,
+  appIcons: 3,
+  widgets: 4,
+  text: 5,
+  avplayer: 6,
+  facetime: 7,
+  controlCenter: 8,
+  notificationCenter: 9,
+  monogram: 10,
+  bubbles: 11,
+  identity: 12,
+  focusBorder: 13,
+  focusPlatter: 14,
+  keyboard: 15,
+  sidebar: 16,
+  abuttedSidebar: 17,
+  inspector: 18,
+  control: 19,
+  loupe: 20,
+  slider: 21,
+  camera: 22,
+  cartouchePopover: 23,
+} as const;

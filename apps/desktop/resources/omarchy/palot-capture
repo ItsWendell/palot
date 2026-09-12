@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+
+# Select a region, save through Omarchy, then attach through Palot's normal file pipeline.
+# PALOT_BIN can be an absolute path to a user-local install.
+project="${1:-$PWD}"
+capture="$(omarchy capture screenshot region save)"
+[[ -n "$capture" && -f "$capture" ]] || exit 0
+exec "${PALOT_BIN:-palot-nightly}" --project "$project" --attach "$capture"

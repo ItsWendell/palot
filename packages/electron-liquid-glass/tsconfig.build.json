@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "isolatedDeclarations": true,
+    "outDir": "dist",
+    "rootDir": "js",
+    "moduleResolution": "node",
+    "allowImportingTsExtensions": false,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["js/**/*"],
+  "exclude": ["node_modules", "dist", "build", "examples"]
+}

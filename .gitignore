@@ -1,49 +1,21 @@
-# Dependencies
 node_modules/
-
-# Build outputs
-dist/
-.next/
-out/
-
-# Turborepo
-.turbo/
-
-# Tauri
-src-tauri/target/
-
-# Electron Builder
-release/
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Research (local only)
-research/
-
-# Private docs and notes (local only)
+.vite-plus/
+.local/
+.notes/
 .private/
 
-# Local agent instructions (private per-developer)
-AGENTS.local.md
+apps/desktop/out/
+apps/desktop/release/
+apps/desktop/test-results/
+apps/desktop/playwright-report/
+apps/desktop/resources/licenses/DEPENDENCY_LICENSES.md
+apps/desktop/.tanstack/
+packages/*/dist/
 
-# Git worktrees
-.worktrees/
-
-# Local working directory
-.local/
+.DS_Store
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+apps/desktop/resources/opencode/

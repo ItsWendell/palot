@@ -1,4 +1,20 @@
 {
-	"$schema": "https://opencode.ai/config.json",
-	"instructions": ["**/AGENTS.local.md", "./.local/memory.md"]
+  "$schema": "https://opencode.ai/config.json",
+  "references": {
+    "opencode-v2": {
+      "repository": "anomalyco/opencode",
+      "branch": "dev",
+      "description": "Use as the primary source for OpenCode V2 architecture, API, client, desktop, and UI behavior. Prefer V2 documentation and implementation in this branch over legacy OpenCode sources."
+    },
+    "t3chat-inspiration": {
+      "repository": "pingdotgg/t3code",
+      "branch": "main",
+      "description": "Use as a first-party T3 reference for chat interface, interaction, timeline, and desktop product inspiration. T3 Chat itself does not have a public first-party source repository."
+    },
+    "orca-inspiration": {
+      "repository": "stablyai/orca",
+      "branch": "main",
+      "description": "Use as a reference for parallel-agent fleet UX, worktree workflows, terminal and review surfaces, remote access, mobile companion behavior, and desktop productivity patterns. Preserve Palot's OpenCode-native ownership boundaries instead of copying Orca's orchestration state model."
+    }
+  }
 }

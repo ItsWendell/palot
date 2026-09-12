@@ -1,0 +1,72 @@
+{
+  "name": "electron-liquid-glass",
+  "version": "1.1.1",
+  "private": true,
+  "description": "macOS glass / vibrancy wrapper for Electron BrowserWindow",
+  "keywords": [
+    "electron",
+    "glass",
+    "macos",
+    "nsvisualeffectview",
+    "vibrancy"
+  ],
+  "homepage": "https://github.com/Meridius-Labs/electron-liquid-glass#readme",
+  "bugs": {
+    "url": "https://github.com/Meridius-Labs/electron-liquid-glass/issues"
+  },
+  "license": "MIT",
+  "author": "Meridius Labs",
+  "repository": "https://github.com/Meridius-Labs/electron-liquid-glass",
+  "files": [
+    "dist",
+    "js",
+    "src",
+    "build/Release/*.node",
+    "prebuilds/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsdown && cp js/index.d.ts dist/index.d.ts && cp js/index.d.ts dist/index.d.cts",
+    "build:native": "prebuildify --napi --strip --tag-armv --arch=arm64 && prebuildify --napi --strip --arch=x64",
+    "build:all": "bun run build:native && bun run build",
+    "clean": "rimraf build prebuilds dist",
+    "prepack": "bun run build:all"
+  },
+  "dependencies": {
+    "bindings": "^1.5.0",
+    "node-addon-api": "^8.9.2"
+  },
+  "devDependencies": {
+    "prebuildify": "^6.0.1",
+    "rimraf": "^6.1.3",
+    "tsdown": "^0.22.14"
+  },
+  "optionalDependencies": {
+    "node-gyp-build": "^4"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "bun@1.2.23",
+  "gypfile": false
+}

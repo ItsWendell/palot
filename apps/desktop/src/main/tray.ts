@@ -1,529 +1,477 @@
-/**
- * Dynamic system tray for Palot.
- *
- * Shows live agent statuses grouped by project, pending action counts,
- * and quick-access actions. Rebuilds the context menu whenever session
- * state changes via the notification-watcher's SSE stream.
- *
- * macOS features:
- * - Template images that adapt to menu bar appearance (light/dark/Liquid Glass)
- * - Tray title badge showing pending permission/question count
- * - Status indicators via Unicode symbols (●/◐/○)
- */
-import fs from "node:fs"
-import path from "node:path"
-import { fileURLToPath } from "node:url"
-import type { Project, Session } from "@opencode-ai/sdk/v2/client"
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
-import { app, type BrowserWindow, Menu, nativeImage, Tray } from "electron"
-import { createLogger } from "./logger"
+import path from "node:path";
+import type { OpenCodeEvent, Project, SessionInfo } from "@opencode/client";
+import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions } from "electron";
+import type {
+  AttentionNotificationInput,
+  AttentionSnapshotInput,
+  PalotSession,
+} from "../shared/opencode-contract";
+import { openCodeAttentionIndex } from "./attention-index";
+import { desktopNavigation } from "./desktop-navigation";
+import { openCodeRuntime } from "./opencode-runtime";
+import { sessionTriageStore } from "./session-triage-store";
+import { DesktopStatus } from "./desktop-status";
+import { desktopProbe } from "./linux-desktop";
+import { followLinuxTrayAppearance } from "./tray-appearance";
 import {
-	getPendingCount,
-	getSessionStates,
-	onStateChanged,
-	type SessionState,
-} from "./notification-watcher"
-import { getServerUrl } from "./opencode-manager"
+  formatTrayRelativeTime,
+  prioritizeTrayTasks,
+  type TrayTaskItem,
+  type TrayTaskSection,
+  type TrayTaskSections,
+} from "./tray-menu";
 
-const log = createLogger("tray")
+const REQUEST_TIMEOUT_MS = 30_000;
+const RECENT_SESSION_LIMIT = 50;
+const REFRESH_DELAY_MS = 150;
+const REFRESH_EVENT_TYPES = new Set<OpenCodeEvent["type"]>([
+  "session.created",
+  "session.deleted",
+  "session.renamed",
+  "session.moved",
+  "session.execution.started",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+  "session.status",
+]);
+const SECTION_LABELS: Record<TrayTaskSection, string> = {
+  attention: "Needs Attention",
+  pinned: "Pinned",
+  running: "Running",
+  recent: "Recent",
+};
 
-// ESM equivalent for __dirname
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+let controller: TrayController | null = null;
 
-// ============================================================
-// Constants
-// ============================================================
+class TrayController {
+  private readonly tray: Tray | null;
+  private stopFollowingAppearance?: () => void;
+  private disposed = false;
+  private sections: TrayTaskSections = { attention: [], pinned: [], running: [], recent: [] };
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshPromise: Promise<void> | null = null;
+  private attentionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private attentionInput: AttentionSnapshotInput | null = null;
+  private attentionState: "syncing" | "ready" | "error" = "syncing";
+  private attentionConnectionID: string | null = null;
+  private activated = false;
+  private readonly unsubscribeEvent: () => void;
+  private readonly unsubscribeReconnect: () => void;
+  private unsubscribeAttention?: () => void;
 
-const IS_MAC = process.platform === "darwin"
-const IS_LINUX = process.platform === "linux"
+  constructor(
+    iconPath: string | null,
+    private readonly displayName: string,
+    private readonly status: DesktopStatus,
+  ) {
+    if (iconPath) {
+      const icon = nativeImage.createFromPath(iconPath);
+      icon.setTemplateImage(process.platform === "darwin");
+      this.tray = new Tray(icon);
+      if (process.platform === "linux")
+        this.stopFollowingAppearance = followLinuxTrayAppearance(this.tray, iconPath);
+      this.tray.setToolTip(displayName);
+      if (process.platform === "darwin") {
+        this.tray.on("click", () => void this.openMenu());
+        this.tray.on("right-click", () => void this.openMenu());
+      } else {
+        this.tray.setContextMenu(this.buildMenu());
+      }
+    } else this.tray = null;
+    this.unsubscribeEvent = openCodeRuntime.onEvent((event) => this.handleEvent(event));
+    this.unsubscribeReconnect = openCodeRuntime.onReconnect(() => {
+      if (!this.activated) return;
+      this.attentionState = "syncing";
+      this.publish();
+      return this.refresh();
+    });
+    if (process.platform === "linux") {
+      this.activated = true;
+      this.invalidate();
+    }
+  }
 
-/** Max agents shown per project before "View More" submenu kicks in. */
-const MAX_AGENTS_INLINE = 3
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    this.stopFollowingAppearance?.();
+    this.unsubscribeEvent();
+    this.unsubscribeReconnect();
+    this.unsubscribeAttention?.();
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    if (this.attentionRefreshTimer) clearTimeout(this.attentionRefreshTimer);
+    this.refreshTimer = null;
+    this.attentionRefreshTimer = null;
+    this.tray?.destroy();
+    await this.status.dispose();
+  }
 
-/** How often to refresh discovery data (offline sessions). */
-const DISCOVERY_REFRESH_MS = 60_000
+  invalidate(): void {
+    if (!this.activated || this.disposed) return;
+    if (this.refreshTimer) return;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      void this.refresh();
+    }, REFRESH_DELAY_MS);
+  }
 
-/** Status symbols for menu labels. */
-const STATUS_ICON: Record<string, string> = {
-	busy: "●",
-	retry: "◐",
-	idle: "○",
+  private async openMenu(): Promise<void> {
+    this.activated = true;
+    await this.refresh();
+    if (!this.disposed) this.tray?.popUpContextMenu(this.buildMenu());
+  }
+
+  private handleEvent(event: OpenCodeEvent): void {
+    if (this.activated && REFRESH_EVENT_TYPES.has(event.type)) this.invalidate();
+  }
+
+  private invalidateAttention(): void {
+    if (!this.attentionInput || this.attentionRefreshTimer) return;
+    this.attentionState = "syncing";
+    this.publish();
+    this.attentionRefreshTimer = setTimeout(() => {
+      this.attentionRefreshTimer = null;
+      void this.refreshAttention();
+    }, REFRESH_DELAY_MS);
+  }
+
+  private async refreshAttention(): Promise<void> {
+    const input = this.attentionInput;
+    if (!input) return;
+    const result = await this.loadAttention(input).catch(() => null);
+    if (input !== this.attentionInput || this.disposed) return;
+    this.attentionState = result?.complete ? "ready" : "error";
+    if (!result) {
+      this.publish();
+      return;
+    }
+    const attention = result.complete
+      ? result.items
+      : [
+          ...new Map(
+            [...this.sections.attention, ...result.items].map((item) => [item.sessionID, item]),
+          ).values(),
+        ];
+    this.sections = prioritizeTrayTasks({ ...this.sections, attention });
+    this.publish();
+  }
+
+  private refresh(): Promise<void> {
+    if (this.refreshPromise) return this.refreshPromise;
+    this.refreshPromise = this.loadSections()
+      .then((sections) => {
+        this.sections = sections;
+        this.publish();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.refreshPromise = null;
+      });
+    return this.refreshPromise;
+  }
+
+  private publish(): void {
+    if (this.disposed) return;
+    if (process.platform === "linux") this.tray?.setContextMenu(this.buildMenu());
+    this.status.publish(this.sections);
+  }
+
+  private async loadSections(): Promise<TrayTaskSections> {
+    const connectionID = openCodeRuntime.runtimeStatus().connectionID;
+    return openCodeRuntime.withClient(async (client) => {
+      const [recentResponse, active, projects] = await Promise.all([
+        client.session.list(
+          { limit: RECENT_SESSION_LIMIT, order: "desc", parentID: null },
+          { signal: requestSignal() },
+        ),
+        client.session.active({ signal: requestSignal() }),
+        client.project.list({ signal: requestSignal() }),
+      ]);
+      const recent = recentResponse.data.filter((session) => session.time.archived === undefined);
+      const sessions = new Map(recent.map((session) => [session.id, session]));
+      const getSession = async (sessionID: string) => {
+        const cached = sessions.get(sessionID);
+        if (cached) return cached;
+        const session = await client.session.get({ sessionID }, { signal: requestSignal() });
+        sessions.set(session.id, session);
+        return session;
+      };
+      const rootSession = async (sessionID: string) => {
+        let session = await getSession(sessionID);
+        const visited = new Set([session.id]);
+        while (session.parentID && !visited.has(session.parentID)) {
+          visited.add(session.parentID);
+          session = await getSession(session.parentID);
+        }
+        return session;
+      };
+      const activeRoots = await settledValues(
+        Object.keys(active).map((sessionID) => rootSession(sessionID)),
+      );
+      const pinnedRecords = sessionTriageStore()
+        .load(openCodeRuntime.runtimeStatus().profileID)
+        .sessions.filter((record) => record.pinnedAt !== null)
+        .toSorted((left, right) => (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0));
+      const pinnedRoots = await settledValues(
+        pinnedRecords.map(async (record) => ({
+          session: await rootSession(record.sessionID),
+          pinnedAt: record.pinnedAt ?? 0,
+        })),
+      );
+      if (connectionID !== openCodeRuntime.runtimeStatus().connectionID) {
+        throw new Error("OpenCode connection changed while loading tray tasks");
+      }
+      const attentionInput = attentionSnapshotInput(connectionID, sessions.values());
+      if (this.attentionConnectionID !== connectionID) {
+        this.unsubscribeAttention?.();
+        this.attentionConnectionID = connectionID;
+        this.attentionState = "syncing";
+        this.sections = { ...this.sections, attention: [] };
+        this.unsubscribeAttention = openCodeAttentionIndex(connectionID).subscribe(() =>
+          this.invalidateAttention(),
+        );
+      }
+      this.attentionInput = attentionInput;
+      this.invalidateAttention();
+      const projectNames = new Map(projects.map((project) => [project.id, projectName(project)]));
+
+      return prioritizeTrayTasks({
+        attention: this.sections.attention,
+        pinned: pinnedRoots.map(({ session }) =>
+          taskItem(session, `${projectNames.get(session.projectID) ?? "Project"} · Pinned`),
+        ),
+        running: activeRoots
+          .toSorted((left, right) => right.time.updated - left.time.updated)
+          .map((session) =>
+            taskItem(session, `${projectNames.get(session.projectID) ?? "Project"} · Running`),
+          ),
+        recent: recent.map((session) =>
+          taskItem(
+            session,
+            `${projectNames.get(session.projectID) ?? "Project"} · ${formatTrayRelativeTime(session.time.updated)}`,
+          ),
+        ),
+      });
+    });
+  }
+
+  private async loadAttention(
+    input: AttentionSnapshotInput,
+  ): Promise<{ items: TrayTaskItem[]; complete: boolean }> {
+    const snapshot = await openCodeAttentionIndex(input.connectionID).snapshot(input);
+    const sessions = new Map(
+      [...input.sessions, ...snapshot.sessions].map((session) => [session.id, session]),
+    );
+    const requests: AttentionNotificationInput[] = [];
+    for (const entry of snapshot.requests) {
+      for (const value of entry.value.permissions) {
+        requests.push({ sessionID: value.sessionID, requestID: value.id, type: "permission" });
+      }
+      for (const value of entry.value.forms) {
+        requests.push({
+          sessionID: value.sessionID,
+          requestID: value.id,
+          type: value.metadata?.kind === "question" ? "question" : "form",
+        });
+      }
+    }
+    const byRoot = new Map<
+      string,
+      { root: PalotSession; request: AttentionNotificationInput; count: number }
+    >();
+    for (const request of new Map(requests.map((value) => [attentionKey(value), value])).values()) {
+      const root = rootSessionFromMap(sessions, request.sessionID);
+      if (!root) continue;
+      const current = byRoot.get(root.id);
+      if (current) current.count += 1;
+      else byRoot.set(root.id, { root, request, count: 1 });
+    }
+    const items: TrayTaskItem[] = [...byRoot.values()]
+      .toSorted((left, right) => left.root.updatedAt - right.root.updatedAt)
+      .map(({ root, request, count }) => ({
+        sessionID: root.id,
+        title: sessionTitle(root),
+        detail: count > 1 ? `${count} requests waiting` : attentionLabel(request.type),
+        target: {
+          type: "session",
+          sessionID: request.sessionID,
+          requestID: request.requestID,
+          requestType: request.type,
+        },
+      }));
+    return { items, complete: snapshot.complete };
+  }
+
+  private buildMenu(): Menu {
+    const template: MenuItemConstructorOptions[] = [];
+    if (this.attentionInput && this.attentionState !== "ready") {
+      template.push({
+        label: this.attentionState === "syncing" ? "Syncing requests…" : "Requests unavailable",
+        enabled: false,
+      });
+    }
+    for (const section of ["attention", "pinned", "running", "recent"] as const) {
+      const items = this.sections[section];
+      if (items.length === 0) continue;
+      if (template.length > 0) template.push({ type: "separator" });
+      template.push({ label: SECTION_LABELS[section], enabled: false });
+      template.push(
+        ...items.map((item) => ({
+          label: item.title,
+          sublabel: item.detail,
+          click: () => desktopNavigation.request(item.target),
+        })),
+      );
+    }
+    if (template.length === 0) template.push({ label: "No tasks yet", enabled: false });
+    template.push(
+      { type: "separator" },
+      {
+        label: `Open ${this.displayName}`,
+        click: () => desktopNavigation.request({ type: "open" }),
+      },
+      { label: "New Task", click: () => desktopNavigation.request({ type: "new-task" }) },
+      {
+        label: "Notification Settings...",
+        click: () => desktopNavigation.request({ type: "notification-settings" }),
+      },
+      { type: "separator" },
+      { label: `Quit ${this.displayName}`, role: "quit" },
+    );
+    return Menu.buildFromTemplate(template);
+  }
 }
 
-// ============================================================
-// Types
-// ============================================================
-
-interface DiscoveryCache {
-	projects: Project[]
-	sessions: Session[]
+export async function installTray(input: {
+  currentDirectory: string;
+  displayName: string;
+  appID: string;
+  iconVariant: string;
+}): Promise<void> {
+  if ((process.platform !== "darwin" && process.platform !== "linux") || controller) return;
+  const linux = process.platform === "linux";
+  const names = linux
+    ? await desktopProbe("busctl", ["--user", "--no-pager", "--no-legend", "list"])
+    : null;
+  const host = !linux || Boolean(names?.includes("org.kde.StatusNotifierWatcher"));
+  if (!host && process.env.PALOT_OMARCHY_STATUS !== "1") return;
+  const resource = linux ? "tray/trayLinux.png" : "tray/trayTemplate.png";
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "icons", resource)
+    : path.join(input.currentDirectory, "../../resources/icons", resource);
+  try {
+    controller = new TrayController(
+      host ? iconPath : null,
+      input.displayName,
+      new DesktopStatus(input.appID),
+    );
+  } catch (error) {
+    console.warn("[tray] Desktop tray unavailable", error);
+  }
 }
 
-// ============================================================
-// State
-// ============================================================
-
-let tray: Tray | null = null
-let getWindow: (() => BrowserWindow | undefined) | null = null
-let unsubscribeWatcher: (() => void) | null = null
-let discoveryCache: DiscoveryCache | null = null
-let discoveryTimer: ReturnType<typeof setInterval> | null = null
-
-// ============================================================
-// Public API
-// ============================================================
-
-export function createTray(windowGetter: () => BrowserWindow | undefined): void {
-	if (tray) return
-
-	getWindow = windowGetter
-
-	const resourcesPath = app.isPackaged
-		? process.resourcesPath
-		: path.join(__dirname, "../../resources")
-
-	let icon: Electron.NativeImage
-
-	if (IS_MAC) {
-		const templatePath = path.join(resourcesPath, "iconTemplate.png")
-		if (!fs.existsSync(templatePath)) {
-			log.error(`Tray icon not found at ${templatePath} — tray will be invisible`)
-		}
-		icon = nativeImage.createFromPath(templatePath)
-		icon.setTemplateImage(true)
-	} else if (IS_LINUX) {
-		// Linux: use 22x22 icon (standard tray size), fallback to icon.png if not available.
-		// Explicitly resize to 22x22 to ensure the GTK pixbuf is in a format the
-		// StatusNotifierItem (SNI) protocol on Wayland can handle — avoids
-		// GDK_IS_PIXBUF assertion failures from malformed pixbuf handoff.
-		const trayIconPath = path.join(resourcesPath, "iconTray.png")
-		if (!fs.existsSync(trayIconPath)) {
-			log.warn(`Tray icon not found at ${trayIconPath} — falling back to icon.png`)
-		}
-		const rawIcon = fs.existsSync(trayIconPath)
-			? nativeImage.createFromPath(trayIconPath)
-			: nativeImage.createFromPath(path.join(resourcesPath, "icon.png"))
-		icon = rawIcon.resize({ width: 22, height: 22 })
-	} else {
-		const iconPath = path.join(resourcesPath, "icon.png")
-		if (!fs.existsSync(iconPath)) {
-			log.error(`Tray icon not found at ${iconPath} — tray will be invisible`)
-		}
-		icon = nativeImage.createFromPath(iconPath)
-	}
-
-	if (icon.isEmpty()) {
-		log.error("Tray icon is empty — file may be missing or corrupt")
-	}
-
-	tray = new Tray(icon)
-	tray.setToolTip("Palot")
-
-	// Click to show/focus window
-	tray.on("click", () => {
-		showWindow()
-	})
-
-	// Subscribe to notification-watcher state changes for live updates
-	unsubscribeWatcher = onStateChanged(() => {
-		rebuildMenu()
-	})
-
-	// Load discovery data for offline sessions, then refresh periodically
-	refreshDiscovery()
-	discoveryTimer = setInterval(refreshDiscovery, DISCOVERY_REFRESH_MS)
-
-	// Build initial menu
-	rebuildMenu()
-
-	log.info(`Tray created (platform: ${IS_MAC ? "macOS" : IS_LINUX ? "Linux" : "Windows"})`)
+export function refreshTrayMenu(): void {
+  controller?.invalidate();
 }
 
-export function destroyTray(): void {
-	if (unsubscribeWatcher) {
-		unsubscribeWatcher()
-		unsubscribeWatcher = null
-	}
-	if (discoveryTimer) {
-		clearInterval(discoveryTimer)
-		discoveryTimer = null
-	}
-	if (tray) {
-		tray.destroy()
-		tray = null
-	}
-	getWindow = null
-	discoveryCache = null
+export async function destroyTray(): Promise<void> {
+  await controller?.dispose();
+  controller = null;
 }
 
-// ============================================================
-// Menu Building
-// ============================================================
-
-function rebuildMenu(): void {
-	if (!tray) return
-
-	const liveSessions = getSessionStates()
-	const pendingCount = getPendingCount()
-	const template: Electron.MenuItemConstructorOptions[] = []
-
-	// --- Pending actions banner ---
-	if (pendingCount > 0) {
-		template.push({
-			label: `⚠ ${pendingCount} Pending ${pendingCount === 1 ? "Approval" : "Approvals"}`,
-			enabled: true,
-			click: () => showWindow(),
-		})
-		template.push({ type: "separator" })
-	}
-
-	// --- Live agents grouped by project ---
-	const agentSection = buildAgentSection(liveSessions)
-	if (agentSection.length > 0) {
-		template.push(...agentSection)
-		template.push({ type: "separator" })
-	}
-
-	// --- Recent sessions (from API discovery, not currently live) ---
-	const recentSection = buildRecentSection(liveSessions)
-	if (recentSection.length > 0) {
-		template.push(...recentSection)
-		template.push({ type: "separator" })
-	}
-
-	// --- Quick actions ---
-	template.push({
-		label: "Show Palot",
-		click: () => showWindow(),
-	})
-
-	// Server status indicator
-	const serverUrl = getServerUrl()
-	if (serverUrl) {
-		template.push({
-			label: `Server Running`,
-			enabled: false,
-		})
-	}
-
-	template.push({ type: "separator" })
-	template.push({
-		label: "Quit",
-		click: () => app.quit(),
-	})
-
-	const contextMenu = Menu.buildFromTemplate(template)
-	tray.setContextMenu(contextMenu)
-
-	// macOS: show pending count next to tray icon
-	updateTrayTitle(pendingCount, liveSessions)
+function taskItem(session: SessionInfo, detail: string): TrayTaskItem {
+  return {
+    sessionID: session.id,
+    title: sessionTitle(session),
+    detail,
+    target: { type: "session", sessionID: session.id },
+  };
 }
 
-// ============================================================
-// Agent Section — live sessions grouped by project directory
-// ============================================================
-
-interface ProjectGroup {
-	name: string
-	directory: string
-	agents: Array<{
-		sessionId: string
-		title: string
-		status: string
-		parentID?: string
-	}>
+function sessionTitle(session: Pick<SessionInfo, "title"> | Pick<PalotSession, "title">): string {
+  const title = session.title?.trim() || "Untitled task";
+  return title.length <= 64 ? title : `${title.slice(0, 61)}...`;
 }
 
-function buildAgentSection(
-	liveSessions: ReadonlyMap<string, SessionState>,
-): Electron.MenuItemConstructorOptions[] {
-	if (liveSessions.size === 0) return []
-
-	// Group by directory, excluding sub-agents
-	const groups = new Map<string, ProjectGroup>()
-
-	for (const [sessionId, state] of liveSessions) {
-		if (state.parentID) continue // Skip sub-agents
-		const dir = state.directory || "Unknown"
-		let group = groups.get(dir)
-		if (!group) {
-			group = {
-				name: projectNameFromDir(dir),
-				directory: dir,
-				agents: [],
-			}
-			groups.set(dir, group)
-		}
-		group.agents.push({
-			sessionId,
-			title: state.title || "Untitled",
-			status: state.status,
-		})
-	}
-
-	if (groups.size === 0) return []
-
-	// Sort groups: busiest first, then alphabetical
-	const sortedGroups = Array.from(groups.values()).sort((a, b) => {
-		const aBusy = a.agents.filter((a) => a.status === "busy" || a.status === "retry").length
-		const bBusy = b.agents.filter((a) => a.status === "busy" || a.status === "retry").length
-		if (aBusy !== bBusy) return bBusy - aBusy
-		return a.name.localeCompare(b.name)
-	})
-
-	const items: Electron.MenuItemConstructorOptions[] = []
-
-	// Header
-	const totalBusy = Array.from(liveSessions.values()).filter(
-		(s) => !s.parentID && (s.status === "busy" || s.status === "retry"),
-	).length
-	const headerLabel =
-		totalBusy > 0
-			? `Active Agents (${totalBusy} running)`
-			: `Agents (${liveSessions.size} sessions)`
-	items.push({ label: headerLabel, enabled: false })
-
-	for (const group of sortedGroups) {
-		// Sort agents: busy first, then by title
-		group.agents.sort((a, b) => {
-			const aActive = a.status === "busy" || a.status === "retry" ? 0 : 1
-			const bActive = b.status === "busy" || b.status === "retry" ? 0 : 1
-			if (aActive !== bActive) return aActive - bActive
-			return a.title.localeCompare(b.title)
-		})
-
-		if (sortedGroups.length > 1) {
-			// Multi-project: use submenu per project
-			const busyInGroup = group.agents.filter(
-				(a) => a.status === "busy" || a.status === "retry",
-			).length
-			const projectLabel = busyInGroup > 0 ? `${group.name}  (${busyInGroup} running)` : group.name
-
-			items.push({
-				label: projectLabel,
-				submenu: buildAgentItems(group.agents),
-			})
-		} else {
-			// Single project: inline agents directly
-			items.push(...buildAgentItems(group.agents))
-		}
-	}
-
-	return items
+function attentionSnapshotInput(
+  connectionID: string,
+  sessions: Iterable<SessionInfo>,
+): AttentionSnapshotInput {
+  const mappedSessions = [...sessions].map(mapSession);
+  return { connectionID, sessions: mappedSessions };
 }
 
-function buildAgentItems(agents: ProjectGroup["agents"]): Electron.MenuItemConstructorOptions[] {
-	const items: Electron.MenuItemConstructorOptions[] = []
-	const visible = agents.slice(0, MAX_AGENTS_INLINE)
-	const overflow = agents.slice(MAX_AGENTS_INLINE)
-
-	for (const agent of visible) {
-		items.push(agentMenuItem(agent))
-	}
-
-	if (overflow.length > 0) {
-		items.push({
-			label: `View More (${overflow.length})`,
-			submenu: overflow.map((a) => agentMenuItem(a)),
-		})
-	}
-
-	return items
+function rootSessionFromMap(
+  sessions: ReadonlyMap<string, PalotSession>,
+  sessionID: string,
+): PalotSession | null {
+  let session = sessions.get(sessionID);
+  if (!session) return null;
+  const visited = new Set([session.id]);
+  while (session.parentID && !visited.has(session.parentID)) {
+    const parent = sessions.get(session.parentID);
+    if (!parent) break;
+    visited.add(parent.id);
+    session = parent;
+  }
+  return session;
 }
 
-function agentMenuItem(agent: {
-	sessionId: string
-	title: string
-	status: string
-}): Electron.MenuItemConstructorOptions {
-	const icon = STATUS_ICON[agent.status] ?? "○"
-	// Truncate long titles for menu readability
-	const maxLen = 40
-	const title = agent.title.length > maxLen ? `${agent.title.slice(0, maxLen)}...` : agent.title
-
-	return {
-		label: `${icon}  ${title}`,
-		click: () => navigateToSession(agent.sessionId),
-	}
+function mapSession(session: SessionInfo): PalotSession {
+  return {
+    id: session.id,
+    parentID: session.parentID ?? null,
+    projectID: session.projectID,
+    title: session.title ?? null,
+    agent: session.agent ?? null,
+    model: session.model ? { ...session.model } : null,
+    location: { ...session.location },
+    createdAt: session.time.created,
+    updatedAt: session.time.updated,
+    ...(session.time.idle === undefined ? {} : { idleAt: session.time.idle }),
+    ...(session.time.viewed === undefined ? {} : { viewedAt: session.time.viewed }),
+    ...(session.outcome ? { outcome: session.outcome } : {}),
+    archivedAt: session.time.archived ?? null,
+    cost: session.cost,
+    tokens: {
+      input: session.tokens.input,
+      output: session.tokens.output,
+      reasoning: session.tokens.reasoning,
+      cache: { ...session.tokens.cache },
+    },
+    ...(session.revert
+      ? {
+          revert: {
+            ...session.revert,
+            ...(session.revert.files
+              ? { files: session.revert.files.map((file) => ({ ...file })) }
+              : {}),
+          },
+        }
+      : {}),
+  };
 }
 
-// ============================================================
-// Recent Section — offline sessions from API discovery
-// ============================================================
-
-function buildRecentSection(
-	liveSessions: ReadonlyMap<string, SessionState>,
-): Electron.MenuItemConstructorOptions[] {
-	if (!discoveryCache) return []
-
-	const { projects, sessions } = discoveryCache
-	const liveIds = new Set(liveSessions.keys())
-
-	// Build a project lookup by ID for directory resolution
-	const projectById = new Map<string, Project>()
-	for (const project of projects) {
-		projectById.set(project.id, project)
-	}
-
-	// Collect all non-live, non-sub-agent sessions with their project info
-	const recentSessions: Array<{
-		session: Session
-		project: Project | undefined
-	}> = []
-
-	for (const session of sessions) {
-		if (liveIds.has(session.id)) continue
-		if (session.parentID) continue
-		recentSessions.push({ session, project: projectById.get(session.projectID) })
-	}
-
-	if (recentSessions.length === 0) return []
-
-	// Sort by most recently updated
-	recentSessions.sort((a, b) => {
-		const aTime = a.session.time.updated ?? a.session.time.created
-		const bTime = b.session.time.updated ?? b.session.time.created
-		return bTime - aTime
-	})
-
-	const items: Electron.MenuItemConstructorOptions[] = []
-	items.push({ label: "Recent Sessions", enabled: false })
-
-	// Show top 5 recent sessions
-	const topRecent = recentSessions.slice(0, 5)
-	for (const { session, project } of topRecent) {
-		const projectName = projectNameFromDir(session.directory || project?.worktree || "")
-		const timeAgo = formatRelativeTime(session.time.updated ?? session.time.created)
-		const maxLen = 30
-		const title =
-			session.title.length > maxLen ? `${session.title.slice(0, maxLen)}...` : session.title
-
-		items.push({
-			label: `${title}`,
-			sublabel: `${projectName} - ${timeAgo}`,
-			click: () => navigateToSession(session.id),
-		})
-	}
-
-	if (recentSessions.length > 5) {
-		items.push({
-			label: `View All (${recentSessions.length})`,
-			click: () => showWindow(),
-		})
-	}
-
-	return items
+function projectName(project: Project): string {
+  return project.name?.trim() || path.basename(project.canonical) || "Project";
 }
 
-// ============================================================
-// Tray Title / Icon State (macOS)
-// ============================================================
-
-function updateTrayTitle(
-	pendingCount: number,
-	liveSessions: ReadonlyMap<string, SessionState>,
-): void {
-	if (!tray) return
-
-	if (IS_MAC) {
-		// Show counts next to the tray icon
-		const busyCount = Array.from(liveSessions.values()).filter(
-			(s) => !s.parentID && (s.status === "busy" || s.status === "retry"),
-		).length
-
-		let title = ""
-		if (pendingCount > 0) {
-			title = `${pendingCount}!`
-		} else if (busyCount > 0) {
-			title = `${busyCount}`
-		}
-
-		tray.setTitle(title, { fontType: "monospacedDigit" })
-	}
-
-	// Update tooltip with summary
-	const totalSessions = Array.from(liveSessions.values()).filter((s) => !s.parentID).length
-	const busyCount = Array.from(liveSessions.values()).filter(
-		(s) => !s.parentID && (s.status === "busy" || s.status === "retry"),
-	).length
-
-	let tooltip = "Palot"
-	if (totalSessions > 0) {
-		tooltip += ` - ${totalSessions} agent${totalSessions !== 1 ? "s" : ""}`
-		if (busyCount > 0) {
-			tooltip += ` (${busyCount} running)`
-		}
-	}
-	if (pendingCount > 0) {
-		tooltip += ` - ${pendingCount} pending`
-	}
-	tray.setToolTip(tooltip)
+function attentionLabel(type: AttentionNotificationInput["type"]): string {
+  if (type === "permission") return "Permission required";
+  if (type === "form") return "Form response required";
+  if (type === "question") return "Question waiting";
+  return "Input required";
 }
 
-// ============================================================
-// Discovery Data — fetched from OpenCode API via SDK
-// ============================================================
-
-async function refreshDiscovery(): Promise<void> {
-	const serverUrl = getServerUrl()
-	if (!serverUrl) return
-
-	try {
-		const client = createOpencodeClient({ baseUrl: serverUrl })
-		const [projectsResult, sessionsResult] = await Promise.all([
-			client.project.list(),
-			client.session.list({ roots: true }),
-		])
-
-		discoveryCache = {
-			projects: (projectsResult.data ?? []) as Project[],
-			sessions: (sessionsResult.data ?? []) as Session[],
-		}
-
-		// Rebuild menu with fresh discovery data
-		rebuildMenu()
-	} catch (err) {
-		log.warn("Failed to refresh discovery data for tray", err)
-	}
+function attentionKey(input: AttentionNotificationInput): string {
+  return `${input.sessionID}:${input.type}:${input.requestID}`;
 }
 
-// ============================================================
-// Navigation & Window Helpers
-// ============================================================
-
-function showWindow(): void {
-	const win = getWindow?.()
-	if (win) {
-		if (win.isMinimized()) win.restore()
-		win.show()
-		win.focus()
-	}
+function requestSignal(): AbortSignal {
+  return AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 }
 
-function navigateToSession(sessionId: string): void {
-	const win = getWindow?.()
-	if (win) {
-		if (win.isMinimized()) win.restore()
-		win.show()
-		win.focus()
-		win.webContents.send("notification:navigate", { sessionId })
-	}
-}
-
-function projectNameFromDir(directory: string): string {
-	return directory.split("/").pop() || "/"
-}
-
-function formatRelativeTime(timestampMs: number): string {
-	const seconds = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000))
-	if (seconds < 60) return "now"
-	const minutes = Math.floor(seconds / 60)
-	if (minutes < 60) return `${minutes}m ago`
-	const hours = Math.floor(minutes / 60)
-	if (hours < 24) return `${hours}h ago`
-	const days = Math.floor(hours / 24)
-	if (days < 30) return `${days}d ago`
-	const months = Math.floor(days / 30)
-	return `${months}mo ago`
+async function settledValues<T>(promises: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 }

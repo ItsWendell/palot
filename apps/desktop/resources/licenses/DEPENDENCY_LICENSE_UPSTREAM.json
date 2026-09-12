@@ -1,0 +1,487 @@
+[
+  {
+    "repository": "anomalyco/opencode",
+    "commit": "cf4f1fb45e2695d86a4ef8c20a3883f4ac79935a",
+    "release": "GitHub publish run 34680612424, v2 branch, run_number 19527, attempt 1; version/publish logs record 2.0.2; source version 2.0.1 rewritten by script/publish.ts.",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "opencode.LICENSE.txt",
+        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@opencode/client",
+        "version": "2.0.2",
+        "license": "MIT",
+        "sourceManifest": "packages/client/package.json",
+        "sourceManifestSha256": "fbf936d41f950bc3426d300e5b4aae45474e21f447f815ab508689d87f780925",
+        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.0.2.tgz",
+        "integrity": "sha512-w8rrSsxY9qnuFrsQAHdLDE6mrEqUKQeo7fNsw2i/tFtimgspT53/8/3ckEVRuRUM5k6v68KiU2deG0W2gEIVDQ==",
+        "manifestSha256": "17dcc8cb34b8226ab142721846dc7ee9672aac69eafc8c4421f0fe6af30f2702"
+      },
+      {
+        "name": "@opencode/protocol",
+        "version": "2.0.2",
+        "license": "MIT",
+        "sourceManifest": "packages/protocol/package.json",
+        "sourceManifestSha256": "f04d06f89118da7e93b00614d61e50cc52a276a54ed20379bdb5404122b3aa60",
+        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.2.tgz",
+        "integrity": "sha512-FxTxdHPNz46NkG8ZBB2S60QzXbZDlVEyZ6KeYTt2G7hcWB5JlMYBh8jeqHlsLbquKinvMKA2iuEsA1NaccN+YQ==",
+        "manifestSha256": "7e4d49375a8a4461aa5cb940ae465d4f10e82c02b10ad2fe5edf8a40dd956664"
+      },
+      {
+        "name": "@opencode/schema",
+        "version": "2.0.2",
+        "license": "MIT",
+        "sourceManifest": "packages/schema/package.json",
+        "sourceManifestSha256": "c0939e43d96bbc44f1a90b7a42d1c52b0864a4d5744107b3fedfd2d7c2dfd669",
+        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.2.tgz",
+        "integrity": "sha512-jF23H41j6zM2Az1pYLD6NFfzpoQ79CX0AxRkfNxTZFbPfjGGc+EPSOzVQP/r4Y/5bkSSqVga0Vn7MyoP8QhwDQ==",
+        "manifestSha256": "949bcfbc20b4dce85d3a3c6ded6bc8cd76e6d3bf894ceb60d6e779fa4da99bec"
+      }
+    ]
+  },
+  {
+    "repository": "anomalyco/opencode",
+    "commit": "0f26ad8787ffed233aeaf5ab2f4efb0241b13bf5",
+    "release": "GitHub publish run 34663206897, beta branch, run_number 19507, attempt 1; source version 2.0.0 rewritten by script/publish.ts using packages/script/src/index.ts.",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "opencode.LICENSE.txt",
+        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@opencode/client",
+        "version": "0.0.0-beta-19507",
+        "license": "MIT",
+        "sourceManifest": "packages/client/package.json",
+        "sourceManifestSha256": "08a9a4cc33fe62273ff7889155cb725862fbca2332d7150aa32bc2a0bd183249",
+        "archive": "https://registry.npmjs.org/@opencode/client/-/client-0.0.0-beta-19507.tgz",
+        "integrity": "sha512-Tfks3mPQy6wYXo2iQaekN2x+CpwiR8plgavgSo20sPGRhEMUxNC8pwlQBP49fNYE+WRYngg571kHVUGI5cmSpw==",
+        "manifestSha256": "feb9c3e3d968ba06b18a0203ba19c7ada4b4270af1eae23677e351c2e13bfb92"
+      },
+      {
+        "name": "@opencode/protocol",
+        "version": "0.0.0-beta-19507",
+        "license": "MIT",
+        "sourceManifest": "packages/protocol/package.json",
+        "sourceManifestSha256": "7dcce90ff07743366ecdfba47b289b64bd0b74ded226929e05a6eba45429287e",
+        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-0.0.0-beta-19507.tgz",
+        "integrity": "sha512-lFgJIHWQ5BgePsH/xt7wLhFes/wgZuboiN6uAE4fDOvC0kOLrzK/Ekzd1UZGWitxjUnHsaAAeCPyb3b92R2K6w==",
+        "manifestSha256": "9f52d24fbde62da89458cacf09d446b403904850d14e985c18aad0a3682d3422"
+      },
+      {
+        "name": "@opencode/schema",
+        "version": "0.0.0-beta-19507",
+        "license": "MIT",
+        "sourceManifest": "packages/schema/package.json",
+        "sourceManifestSha256": "64709254139be9c7c0c18fa4aa77b71271a360e54a563dff0f30e87b85c051ea",
+        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-0.0.0-beta-19507.tgz",
+        "integrity": "sha512-isU9pnKXcfslahZ5CZ9o3wUuN/QWAhRBc9p59zpSRvEG5XDjmNaGdpN7llgJ6dhYB01E1OJoMw4+APmGZAzAeQ==",
+        "manifestSha256": "6b82113a77e99702eaa5cf42132043883519ddfd479356e4bfa61e5c2519920c"
+      }
+    ]
+  },
+  {
+    "repository": "lukeed/polka",
+    "commit": "02cbdb529ddca0a9f3d225e2abb2931924219cc3",
+    "release": "npm gitHead",
+    "files": [
+      {
+        "source": "license",
+        "file": "lukeed.LICENSE.txt",
+        "sha256": "ba573393f24555ac0528612ad39665fab5bdcc80330a61096024bbf5f736526d"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@polka/url",
+        "version": "1.0.0-next.29",
+        "license": "MIT",
+        "sourceManifest": "packages/url/package.json",
+        "sourceManifestSha256": "edc9d88105fe9c7123b8c26dd121c13b3b1dc6bbd5445fc616657ea1a9c2bba1",
+        "archive": "https://registry.npmjs.org/@polka/url/-/url-1.0.0-next.29.tgz",
+        "integrity": "sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==",
+        "manifestSha256": "edc9d88105fe9c7123b8c26dd121c13b3b1dc6bbd5445fc616657ea1a9c2bba1"
+      }
+    ]
+  },
+  {
+    "repository": "lukeed/sirv",
+    "commit": "1135207e92c40354543cbd15c763c7a61d79d432",
+    "release": "npm gitHead",
+    "files": [
+      {
+        "source": "license",
+        "file": "lukeed.LICENSE.txt",
+        "sha256": "ba573393f24555ac0528612ad39665fab5bdcc80330a61096024bbf5f736526d"
+      }
+    ],
+    "packages": [
+      {
+        "name": "sirv",
+        "version": "3.0.2",
+        "license": "MIT",
+        "sourceManifest": "packages/sirv/package.json",
+        "sourceManifestSha256": "8ea2c94fa39ec92ed0f61b22a629f597c92a2e02039e6c4acf2653cb32a776a2",
+        "archive": "https://registry.npmjs.org/sirv/-/sirv-3.0.2.tgz",
+        "integrity": "sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g==",
+        "manifestSha256": "8ea2c94fa39ec92ed0f61b22a629f597c92a2e02039e6c4acf2653cb32a776a2"
+      }
+    ]
+  },
+  {
+    "repository": "davidjerleke/embla-carousel",
+    "commit": "0fe65834136f1aa35e4c1a4a477e5ccb4bb5ee54",
+    "release": "npm gitHead",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "embla-carousel.LICENSE.txt",
+        "sha256": "992490064b90ec94c302fe5f29dcc14cb44145857064e46f9ffe6c8f511c1093"
+      }
+    ],
+    "packages": [
+      {
+        "name": "embla-carousel",
+        "version": "8.6.0",
+        "license": "MIT",
+        "sourceManifest": "packages/embla-carousel/package.json",
+        "sourceManifestSha256": "c6ae3309d97829ff46b26a037c1dcc6e494ffa95f73e37fc1d77d4585f84d092",
+        "archive": "https://registry.npmjs.org/embla-carousel/-/embla-carousel-8.6.0.tgz",
+        "integrity": "sha512-SjWyZBHJPbqxHOzckOfo8lHisEaJWmwd23XppYFYVh10bU66/Pn5tkVkbkCMZVdbUE5eTCI2nD8OyIP4Z+uwkA==",
+        "manifestSha256": "25a173f262cefcb739f4b11268e866cff088976e0f0e79059f75811ddab8e77c"
+      },
+      {
+        "name": "embla-carousel-react",
+        "version": "8.6.0",
+        "license": "MIT",
+        "sourceManifest": "packages/embla-carousel-react/package.json",
+        "sourceManifestSha256": "522db07188f768f3817d181001bc31aea72e6841e630ada25266d68eb89a0056",
+        "archive": "https://registry.npmjs.org/embla-carousel-react/-/embla-carousel-react-8.6.0.tgz",
+        "integrity": "sha512-0/PjqU7geVmo6F734pmPqpyHqiM99olvyecY7zdweCw+6tKEXnrE90pBiBbMMU8s5tICemzpQ3hi5EpxzGW+JA==",
+        "manifestSha256": "c3b98c1f6ab7f079cee036c666d9b9d761ab1ff2ca328e0d139b19bf89b014ee"
+      },
+      {
+        "name": "embla-carousel-reactive-utils",
+        "version": "8.6.0",
+        "license": "MIT",
+        "sourceManifest": "packages/embla-carousel-reactive-utils/package.json",
+        "sourceManifestSha256": "ec9039d7a67092c62df6f85095ee0f1c8b304f06b988e809ac02c6b1d7684b03",
+        "archive": "https://registry.npmjs.org/embla-carousel-reactive-utils/-/embla-carousel-reactive-utils-8.6.0.tgz",
+        "integrity": "sha512-fMVUDUEx0/uIEDM0Mz3dHznDhfX+znCCDCeIophYb1QGVM7YThSWX+wz11zlYwWFOr74b4QLGg0hrGPJeG2s4A==",
+        "manifestSha256": "3fd96f05014a38ef57e5f4ad7c7081778769b0f6bfa85761d925a6de8af5c3ab"
+      }
+    ]
+  },
+  {
+    "repository": "drizzle-team/brocli",
+    "commit": "99ecf495db5c35892fa6bb48422d0996e01a74a9",
+    "release": "tag 0.11.0",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "drizzle.LICENSE.txt",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@drizzle-team/brocli",
+        "version": "0.11.0",
+        "license": "Apache-2.0",
+        "sourceManifest": "package.json",
+        "sourceManifestSha256": "1c54bf053ab088a90e0bd6a709d85371bfa364d2a34db07ab080512c3d594bca",
+        "archive": "https://registry.npmjs.org/@drizzle-team/brocli/-/brocli-0.11.0.tgz",
+        "integrity": "sha512-hD3pekGiPg0WPCCGAZmusBBJsDqGUR66Y452YgQsZOnkdQ7ViEPKuyP4huUGEZQefp8g34RRodXYmJ2TbCH+tg==",
+        "manifestSha256": "1c54bf053ab088a90e0bd6a709d85371bfa364d2a34db07ab080512c3d594bca"
+      }
+    ]
+  },
+  {
+    "repository": "getsentry/sentry-javascript",
+    "commit": "0356ffd7e92f2ed8bc61fd3d7b928d1c9fd3e83f",
+    "release": "tag 10.70.0",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "sentry.LICENSE.txt",
+        "sha256": "497d5a7036220d5763088d161612f9f7f2e499fe3ce186826f4369b465769312"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@sentry/server-utils",
+        "version": "10.70.0",
+        "license": "MIT",
+        "sourceManifest": "packages/server-utils/package.json",
+        "sourceManifestSha256": "acc4c2784e70f504f7fec9403c7fc79aa08bd09419609633242adbfe5ca8902d",
+        "archive": "https://registry.npmjs.org/@sentry/server-utils/-/server-utils-10.70.0.tgz",
+        "integrity": "sha512-rzegZjMFFgCp3o+N8+XU13rfSvz4B+f8rU0ijBGrQcHdMNyfsFDTu1UTm262JofmrV2u+s+D0u0vFTnqtOGkbA==",
+        "manifestSha256": "acc4c2784e70f504f7fec9403c7fc79aa08bd09419609633242adbfe5ca8902d"
+      }
+    ]
+  },
+  {
+    "repository": "yuku-toolchain/yuku",
+    "commit": "ccbd465f295e954e6ef8c6d1fec63063ac221f47",
+    "release": "tag v0.9.5",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "yuku.LICENSE.txt",
+        "sha256": "8ac8d8d1663cc193ccb3fde7494ccb8e41d63de07047c20c6778c24ca09bc37f"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@yuku-toolchain/types",
+        "version": "0.9.5",
+        "license": "MIT",
+        "sourceManifest": "npm/yuku-types/package.json",
+        "sourceManifestSha256": "04f3315d8accfdc8337904188d96ce2b7b7f62fb12449663b8fdd84c813c6169",
+        "archive": "https://registry.npmjs.org/@yuku-toolchain/types/-/types-0.9.5.tgz",
+        "integrity": "sha512-KiuLNNgX9uNealaWAR+G3/cMXnRk9x4TY2EkYe/KIag+UPdwiA0RRf1hr1WAxzTP8KGzCTkqUdLPvqh32sEO3w==",
+        "manifestSha256": "04f3315d8accfdc8337904188d96ce2b7b7f62fb12449663b8fdd84c813c6169"
+      },
+      {
+        "name": "yuku-ast",
+        "version": "0.9.5",
+        "license": "MIT",
+        "sourceManifest": "npm/yuku-ast/package.json",
+        "sourceManifestSha256": "007cbbad3aa49450d5b67f67edae98777fd692eae3948bed2d4be451df3ade58",
+        "archive": "https://registry.npmjs.org/yuku-ast/-/yuku-ast-0.9.5.tgz",
+        "integrity": "sha512-Q8qW8WwQnN5Cm0ZZivdRIfv0sRLTjUq0YumXJkw8CYN1aCdICH9rk4C47/4n6kA5EqDtlj+F608twoTSV2MwdQ==",
+        "manifestSha256": "14d8233d35c34b3cfd001766a8a6f66bade61afa830176c2be822ddd4cbbb96c"
+      },
+      {
+        "name": "yuku-codegen",
+        "version": "0.9.5",
+        "license": "MIT",
+        "sourceManifest": "npm/yuku-codegen/package.json",
+        "sourceManifestSha256": "e1438f41990bd9cdd57e83187ffc4a58a07729b28630d6993d672e558b30aca1",
+        "archive": "https://registry.npmjs.org/yuku-codegen/-/yuku-codegen-0.9.5.tgz",
+        "integrity": "sha512-zGUVyDpSK4b6c9B0yyxi2P0wujn1XZTbG9dCb7d6gyAoP63EMgyLzUwPUvwxPG5jgYqhlI7w+S3oCyapqGr4PA==",
+        "manifestSha256": "5dca12b707de240ce9a5408650390871c60d15aecc056453e1eab532f2451843"
+      },
+      {
+        "name": "yuku-parser",
+        "version": "0.9.5",
+        "license": "MIT",
+        "sourceManifest": "npm/yuku-parser/package.json",
+        "sourceManifestSha256": "9a99b50bdfb99243b6e7c964740539ab8afe8c09ca439643fcf2e29a0a5ee198",
+        "archive": "https://registry.npmjs.org/yuku-parser/-/yuku-parser-0.9.5.tgz",
+        "integrity": "sha512-IBnAdNVMswWbJcM7woPluOudectJzFjJ1N8jVRxP9Uq4CIv5hZdBIcdmtRbFDYF/Ph2j2gVup4YJ4N9mh0jYFA==",
+        "manifestSha256": "b8c21f0cee7f3c61dd5466fdae18409832f60f597660d9a2a293ddb167d34dd9"
+      }
+    ]
+  },
+  {
+    "repository": "yuku-toolchain/yuku",
+    "commit": "3bef742b1be327a3c9cc524cefad1b7090e99cb2",
+    "release": "tag v0.8.7",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "yuku.LICENSE.txt",
+        "sha256": "8ac8d8d1663cc193ccb3fde7494ccb8e41d63de07047c20c6778c24ca09bc37f"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@yuku-toolchain/types",
+        "version": "0.8.7",
+        "license": "MIT",
+        "sourceManifest": "npm/yuku-types/package.json",
+        "sourceManifestSha256": "1ee0a2a9cf76125f1273b3eacd2a7284ff8165ef4df69bd9951647482c26ad21",
+        "archive": "https://registry.npmjs.org/@yuku-toolchain/types/-/types-0.8.7.tgz",
+        "integrity": "sha512-2Z53dNxAJL6UvFoIrDZvYf3zlO8s4VJK4O2hhaB4mXVwwpX/7ajtss3cmfqKvamlNLWyt9FSWs4eoYdlbxpnHA==",
+        "manifestSha256": "1ee0a2a9cf76125f1273b3eacd2a7284ff8165ef4df69bd9951647482c26ad21"
+      },
+      {
+        "name": "yuku-ast",
+        "version": "0.8.7",
+        "license": "MIT",
+        "sourceManifest": "npm/yuku-ast/package.json",
+        "sourceManifestSha256": "44a9773f8d6966652ab3f66d748d663d8af126c850561b357c328f4c0530ee11",
+        "archive": "https://registry.npmjs.org/yuku-ast/-/yuku-ast-0.8.7.tgz",
+        "integrity": "sha512-h6+4bDfyootiMB9vckk5uKo5r5j0GHrkr17FQTDNfEsFT3DWlN9uu1HJwQwc64pgmLCI945fWM3lbTIqxjT3GQ==",
+        "manifestSha256": "c506677cdec5bfccc3e84f82324db59a7bbf9b0c82f87ecc3324450cf8fd8be1"
+      },
+      {
+        "name": "yuku-codegen",
+        "version": "0.8.7",
+        "license": "MIT",
+        "sourceManifest": "npm/yuku-codegen/package.json",
+        "sourceManifestSha256": "6eff385b4ab51cfbba993a9ee4f5f28319eb2ad1c54a8cab04c105958618b815",
+        "archive": "https://registry.npmjs.org/yuku-codegen/-/yuku-codegen-0.8.7.tgz",
+        "integrity": "sha512-adwDZSh8oVDzhE6Du9PwVWxcOxeV0e2EVhUuMKWfhSY4wkrDq9eqixlxFF3l/XGUV1E7UFzhpz9393MUumkyNw==",
+        "manifestSha256": "3408bdf5867acab2a368534318410ef3989f68f2da6c1d5f8cc26061b5b192be"
+      },
+      {
+        "name": "yuku-parser",
+        "version": "0.8.7",
+        "license": "MIT",
+        "sourceManifest": "npm/yuku-parser/package.json",
+        "sourceManifestSha256": "4789245a87d7f25081f7b94635792c7fa2f99b3663dce16a1dd95c48b732cd40",
+        "archive": "https://registry.npmjs.org/yuku-parser/-/yuku-parser-0.8.7.tgz",
+        "integrity": "sha512-vRD9nwt4L3aYpxNqeSC4WqLv58xrXef0Ong1Mc45CTXTIpvLafx7JO05sczmQZwdLEZvywrLOGdNC5+Rp5N1BQ==",
+        "manifestSha256": "5142cd755b87371fee9e1b82df0dc25a1126893e712a1a4736d010f26772b627"
+      }
+    ]
+  },
+  {
+    "repository": "electron-userland/electron-builder",
+    "commit": "512a57ec9bcda593d3e0970bd2b9a33a63beeb57",
+    "release": "tag electron-builder@26.15.3",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "electron-builder.LICENSE.txt",
+        "sha256": "bed8d0ab3e6031817f775a641ff37313b0f5591bc8ba0ed79b978dafbd4231ce"
+      }
+    ],
+    "packages": [
+      {
+        "name": "app-builder-lib",
+        "version": "26.15.3",
+        "license": "MIT",
+        "sourceManifest": "packages/app-builder-lib/package.json",
+        "sourceManifestSha256": "65e313ff6f24fc36efb06761a12410d64e109e057f6897a4a310f3da451f28bf",
+        "archive": "https://registry.npmjs.org/app-builder-lib/-/app-builder-lib-26.15.3.tgz",
+        "integrity": "sha512-2VnyWkqsP5v5XbBhL3tD5Syx8iNPBYsoU7kY4S2fz7wg8Rj/nztWKCUzGKaFRTv0Xwf3/H058CR1Kvtd/3lRow==",
+        "manifestSha256": "3abe63010a62a67512f1dedaae48747081dfe22e22e4f197767bf2f4c51b60f9"
+      },
+      {
+        "name": "dmg-builder",
+        "version": "26.15.3",
+        "license": "MIT",
+        "sourceManifest": "packages/dmg-builder/package.json",
+        "sourceManifestSha256": "c80557512e0d51e7cbc51707d0ae4fb5efabef4a9c7bc6c8aaa2b5f3635f4f15",
+        "archive": "https://registry.npmjs.org/dmg-builder/-/dmg-builder-26.15.3.tgz",
+        "integrity": "sha512-O3zJUFUYHJKgzPqioHxfxzBzlSC1eXCSr79gMSBKBP5AgjjpmrydMsMLotEg9fAJF36vdUncb+4ndRNxoPdlSQ==",
+        "manifestSha256": "7ce4b59669e1035aac6ccf36fb922cf440eae6a2316aa291bd1b91e858d73409"
+      }
+    ]
+  },
+  {
+    "repository": "drizzle-team/drizzle-orm",
+    "commit": "c98b4215a937b09af587be8f0fb1cc32572f5f4e",
+    "release": "tag v1.0.0-beta.22",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "drizzle.LICENSE.txt",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ],
+    "packages": [
+      {
+        "name": "drizzle-orm",
+        "version": "1.0.0-beta.22",
+        "license": "Apache-2.0",
+        "sourceManifest": "drizzle-orm/package.json",
+        "sourceManifestSha256": "3944abdec7ee68a9fcc2140ed321167b5333eea3c00773a2c8b24154ddf89e87",
+        "archive": "https://registry.npmjs.org/drizzle-orm/-/drizzle-orm-1.0.0-beta.22.tgz",
+        "integrity": "sha512-F+DZyVIvH0oVKa/w08Cle1xfoH+pc+htIXHG/frnMLG72aby9NYYr9oc+9XvghnoO4umxFItduz0OMmQJMnenw==",
+        "manifestSha256": "8310615e58b905ae3d6532a02d677593c4bf5e96131849ca65fb68d8371f04c5"
+      }
+    ]
+  },
+  {
+    "repository": "mde/filelist",
+    "commit": "7032f94d04ad905b4f32b92d2278785859e1d55f",
+    "release": "tag v1.0.6",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "jake.LICENSE.txt",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "source": "index.js",
+        "sourceLines": "1-17",
+        "sourceSha256": "cae1deb98621f487d8da5fd2f77c4cdd2f0312ecd3ee9c7ff2021defec89c9af",
+        "file": "jake.NOTICE.txt",
+        "sha256": "c7e69411ad0251db3dd4f47cce1338137128b9f668e47a6c88f7059b6a63a29f"
+      }
+    ],
+    "packages": [
+      {
+        "name": "filelist",
+        "version": "1.0.6",
+        "license": "Apache-2.0",
+        "sourceManifest": "package.json",
+        "sourceManifestSha256": "eac5bb1401d225696f74ade3e216b771f458690b0bb82de68eac8880f4272a75",
+        "archive": "https://registry.npmjs.org/filelist/-/filelist-1.0.6.tgz",
+        "integrity": "sha512-5giy2PkLYY1cP39p17Ech+2xlpTRL9HLspOfEgm0L6CwBXBTgsK5ou0JtzYuepxkaQ/tvhCFIJ5uXo0OrM2DxA==",
+        "manifestSha256": "eac5bb1401d225696f74ade3e216b771f458690b0bb82de68eac8880f4272a75"
+      }
+    ]
+  },
+  {
+    "repository": "jakejs/jake",
+    "commit": "28a9960b506d3259dd2f708ea9bc82f615be91b5",
+    "release": "tag v10.9.4",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "jake.LICENSE.txt",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "source": "lib/jake.js",
+        "sourceLines": "1-17",
+        "sourceSha256": "9c539800da079d34932cdf7dae6b52ad0a0491a4c1c65a664e41833a4b1e2523",
+        "file": "jake.NOTICE.txt",
+        "sha256": "c7e69411ad0251db3dd4f47cce1338137128b9f668e47a6c88f7059b6a63a29f"
+      }
+    ],
+    "packages": [
+      {
+        "name": "jake",
+        "version": "10.9.4",
+        "license": "Apache-2.0",
+        "sourceManifest": "package.json",
+        "sourceManifestSha256": "96fd372f49f294e7ca4bbe3cb578046dd45b3542801b1337ece092363d5d89e3",
+        "archive": "https://registry.npmjs.org/jake/-/jake-10.9.4.tgz",
+        "integrity": "sha512-wpHYzhxiVQL+IV05BLE2Xn34zW1S223hvjtqk0+gsPrwd/8JNLXJgZZM/iPFsYc1xyphF+6M6EvdE5E9MBGkDA==",
+        "manifestSha256": "96fd372f49f294e7ca4bbe3cb578046dd45b3542801b1337ece092363d5d89e3"
+      }
+    ]
+  },
+  {
+    "repository": "sindresorhus/type-fest",
+    "commit": "d07df21f8b79e35ad8411cb9ceb8b5cb8f40f9d4",
+    "release": "npm gitHead",
+    "files": [
+      {
+        "source": "license-mit",
+        "file": "type-fest.LICENSE-MIT.txt",
+        "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+      },
+      {
+        "source": "license-cc0",
+        "file": "type-fest.LICENSE-CC0.txt",
+        "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+      }
+    ],
+    "packages": [
+      {
+        "name": "type-fest",
+        "version": "2.19.0",
+        "license": "(MIT OR CC0-1.0)",
+        "sourceManifest": "package.json",
+        "sourceManifestSha256": "253bf6cd34d58314361fcda6d7eeaa12974cbf4f251e3171e0fb9ffccb1b07f4",
+        "archive": "https://registry.npmjs.org/type-fest/-/type-fest-2.19.0.tgz",
+        "integrity": "sha512-RAH822pAdBgcNMAfWnCBU3CFZcfZ/i1eZjwFU/dsLKumyuuP3niueg2UAukXYF0E2AAoc82ZSSf9J0WQBinzHA==",
+        "manifestSha256": "253bf6cd34d58314361fcda6d7eeaa12974cbf4f251e3171e0fb9ffccb1b07f4"
+      }
+    ]
+  }
+]

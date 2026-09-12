@@ -1,0 +1,4 @@
+interface:
+  display_name: "Palot Design"
+  short_description: "Apply Palot's renderer design contract"
+  default_prompt: "Use $palot-design to apply Palot's design and responsive-layout rules."

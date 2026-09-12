@@ -1,0 +1,192 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "062d340b-0020-4530-af6f-ed54724c08dd",
+  "prevIds": ["dc01684c-6a8e-43fd-8182-c3715908dfc4"],
+  "ddl": [
+    {
+      "name": "session_triage",
+      "entityType": "tables"
+    },
+    {
+      "name": "triage_profiles",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "profile_id",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "disposition",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "disposition_changed_at",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "settled_session_id",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "pinned_at",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "snoozed_until",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "snoozed_updated_at",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "snoozed_session_id",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "session_triage"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "profile_id",
+      "entityType": "columns",
+      "table": "triage_profiles"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "bootstrap_at",
+      "entityType": "columns",
+      "table": "triage_profiles"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "bootstrap_session_id",
+      "entityType": "columns",
+      "table": "triage_profiles"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "triage_profiles"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "triage_profiles"
+    },
+    {
+      "columns": ["profile_id"],
+      "tableTo": "triage_profiles",
+      "columnsTo": ["profile_id"],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_session_triage_profile_id_triage_profiles_profile_id_fk",
+      "entityType": "fks",
+      "table": "session_triage"
+    },
+    {
+      "columns": ["profile_id", "session_id"],
+      "nameExplicit": false,
+      "name": "session_triage_pk",
+      "entityType": "pks",
+      "table": "session_triage"
+    },
+    {
+      "columns": ["profile_id"],
+      "nameExplicit": false,
+      "name": "triage_profiles_pk",
+      "table": "triage_profiles",
+      "entityType": "pks"
+    }
+  ],
+  "renames": []
+}

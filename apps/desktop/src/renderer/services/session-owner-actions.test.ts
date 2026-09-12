@@ -1,0 +1,92 @@
+import type { SessionInfo } from "@opencode/client";
+import { afterEach, expect, it, vi } from "vitest";
+import type { OpenCodeRuntimeStatus, PalotApi } from "../../shared";
+import { resetOpenCodeClientForTest, setFocusedOpenCodeRuntime } from "./opencode-client";
+import { palot } from "./palot";
+
+const owner = {
+  connectionID: "background",
+  profileID: "background-profile",
+  connected: true,
+  phase: "connected",
+} as OpenCodeRuntimeStatus;
+const session: SessionInfo = {
+  id: "duplicate",
+  projectID: "project",
+  cost: 0,
+  location: { directory: "/repo" },
+  time: { created: 1, updated: 1 },
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+};
+
+afterEach(() => {
+  resetOpenCodeClientForTest();
+  Reflect.deleteProperty(window, "palot");
+});
+
+it.each(["fork", "delete", "export", "copy", "list worktrees", "create worktree"] as const)(
+  "%s uses the explicit owner's official client instead of the focused duplicate",
+  async (operation) => {
+    setFocusedOpenCodeRuntime(owner);
+    setFocusedOpenCodeRuntime({ ...owner, connectionID: "focused", profileID: "focused-profile" });
+    const request = vi.fn().mockImplementation(async (input: { path: string; method: string }) => {
+      const data =
+        operation === "export" || operation === "copy"
+          ? { info: session, messages: [] }
+          : operation === "list worktrees"
+            ? []
+            : operation === "create worktree"
+              ? { directory: "/worktrees/new" }
+              : operation === "delete"
+                ? undefined
+                : session;
+      // Change focus between worktree creation and its location-registration follow-up.
+      if (operation === "create worktree" && input.method === "POST") {
+        setFocusedOpenCodeRuntime({
+          ...owner,
+          connectionID: "changed",
+          profileID: "changed-profile",
+        });
+      }
+      return {
+        status: operation === "delete" ? 204 : 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body:
+          operation === "delete"
+            ? null
+            : new TextEncoder().encode(
+                JSON.stringify(
+                  operation === "list worktrees" || operation === "create worktree"
+                    ? data
+                    : { data },
+                ),
+              ).buffer,
+      };
+    });
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: {
+        runtimeStatus: vi.fn().mockResolvedValue(owner),
+        openCodeRequest: request,
+        saveSessionExport: vi.fn().mockResolvedValue(null),
+        writeClipboardText: vi.fn().mockResolvedValue(undefined),
+      } as unknown as PalotApi,
+    });
+
+    if (operation === "fork")
+      await palot.forkSession({ sessionID: session.id }, owner.connectionID);
+    if (operation === "delete") await palot.removeSession(session.id, owner.connectionID);
+    if (operation === "export") await palot.exportSession(session.id, "Task", owner.connectionID);
+    if (operation === "copy") await palot.copySessionMarkdown(session.id, owner.connectionID);
+    if (operation === "list worktrees")
+      await palot.listProjectDirectories(session.projectID, "/repo", undefined, owner.connectionID);
+    if (operation === "create worktree")
+      await palot.createProjectCopy(session.projectID, "/repo", undefined, owner.connectionID);
+
+    expect(request).toHaveBeenCalledTimes(operation === "create worktree" ? 2 : 1);
+    for (const [input] of request.mock.calls) {
+      expect(input).toMatchObject({ connectionID: owner.connectionID, profileID: owner.profileID });
+    }
+  },
+);

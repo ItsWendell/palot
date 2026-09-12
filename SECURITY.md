@@ -1,32 +1,42 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+Palot is pre-release software and does not currently publish supported binary
+releases. Security fixes target the current `main` branch. Older commits and
+locally built packages may not receive fixes.
 
-Only the latest stable release of Palot is currently supported for security updates.
+## Report a vulnerability
 
-| Version | Supported          |
-| ------- | ------------------ |
-| Latest  | :white_check_mark: |
-| < 0.2.0 | :x:                |
+Report vulnerabilities privately through
+[GitHub Security Advisories](https://github.com/ItsWendell/palot/security/advisories/new).
+Do not open a public issue for a suspected vulnerability.
 
-## Reporting a Vulnerability
+Include the affected commit or version, operating system version and architecture,
+OpenCode version, reproduction steps, impact, and a minimal proof of concept if
+one is safe to share. Remove prompts, credentials, private source, repository
+paths, tokens, and unrelated logs.
 
-We take the security of Palot seriously. If you believe you have found a security
-vulnerability, please report it to us as described below.
+There is no guaranteed response or remediation timeline while the project is
+pre-release. Please allow time for the report to be reproduced and assessed
+before public disclosure.
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+## Security boundaries
 
-Instead, please report them via email to [wendell@saber.app](mailto:wendell@saber.app).
+Palot is a desktop client, not a sandbox for model output or developer tools.
+OpenCode, model providers, plugins, MCP servers, shell commands, and tools may
+read or change files and access networks according to their own configuration
+and the permissions you approve.
 
-You should receive a response within 48 hours. If for some reason you do not,
-please follow up via email to ensure we received your original message.
+The Electron renderer is sandboxed and context isolated, with privileged work
+owned by the main process. These controls reduce renderer risk but do not make
+an opened repository, OpenCode server, model provider, plugin, or tool trusted.
 
-## Handling of Security Reports
+Treat remote OpenCode server URLs and credentials as sensitive. Only connect to
+servers you trust, and review permission requests before allowing file, shell,
+network, or Git operations.
 
-We will acknowledge your report and investigate the issue. If the vulnerability
-is confirmed, we will work on a fix and release it as soon as possible. We ask
-that you give us a reasonable amount of time to fix the issue before publicly
-disclosing it.
+## Current distribution status
 
-We appreciate your efforts to responsibly disclose your findings, and will make
-every effort to acknowledge your contributions.
+Developer ID signing and Apple notarization are not currently offered. Local
+macOS builds can be ad-hoc signed or signed with a local development certificate;
+neither establishes Palot publisher identity or Apple notarization. Do not treat
+a locally produced app, ZIP file, or disk image as an official verified release.

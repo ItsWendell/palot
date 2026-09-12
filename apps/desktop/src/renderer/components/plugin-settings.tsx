@@ -1,0 +1,1 @@
+export { PluginSettings } from "./settings";

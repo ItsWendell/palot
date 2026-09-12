@@ -1,0 +1,236 @@
+name: Unsigned release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Candidate platform (Actions artifacts only; never publishes a release)
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - linux
+          - macos
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unsigned-release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.4.2
+  NODE_VERSION: 24
+
+jobs:
+  build-macos:
+    name: Build unsigned macOS artifact
+    if: inputs.platform == 'all' || inputs.platform == 'macos'
+    runs-on: macos-15
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Vite+ and Node.js
+        uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
+        with:
+          version-file: package.json
+          node-version: ${{ env.NODE_VERSION }}
+          run-install: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        id: install
+        run: |
+          mkdir -p .local/release-candidate
+          vp install --frozen-lockfile 2>&1 | tee .local/release-candidate/install.log
+
+      - name: Check candidate source
+        run: |
+          bun apps/desktop/scripts/check-public-docs.ts
+          bun run check 2>&1 | tee .local/release-candidate/check.log
+
+      - name: Audit dependency license inventory
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: bun apps/desktop/scripts/generate-dependency-licenses.ts --check 2>&1 | tee .local/release-candidate/licenses.log
+
+      - name: Package unsigned Apple Silicon candidate
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        # Build inside package.ts so the bundle gets the release channel/identity.
+        # Staging verifies the reviewed macOS source and signed runtime hashes.
+        # Future runtime upgrades must repeat that review, not bypass staging.
+        run: bun apps/desktop/scripts/package.ts stable --mac --arm64 2>&1 | tee .local/release-candidate/package.log
+
+      - name: Verify packaged application
+        run: |
+          bun apps/desktop/scripts/release-verification.ts stable \
+            ./apps/desktop/release/mac-arm64/Palot.app --smoke 2>&1 | tee .local/release-candidate/verify.log
+
+      - name: Check candidate artifact set
+        run: |
+          shopt -s nullglob
+          dmgs=(apps/desktop/release/*-mac-arm64.dmg)
+          zips=(apps/desktop/release/*-mac-arm64.zip)
+          x64=(apps/desktop/release/*-mac-x64.*)
+          test "${#dmgs[@]}" -eq 1
+          test "${#zips[@]}" -eq 1
+          test "${#x64[@]}" -eq 0
+
+      - name: Add unsigned artifact notice
+        run: |
+          cat > apps/desktop/release/UNSIGNED-README.txt <<'NOTICE'
+          UNSIGNED PALOT RELEASE CANDIDATE
+
+          These artifacts are automated test builds. The app is ad-hoc signed,
+          not Developer ID signed or notarized. These are not published releases
+          or qualified distributions. macOS security warnings are
+          expected. Review the source and workflow before running them.
+          Actions artifacts expire after 14 days; they are not durable public downloads.
+          NOTICE
+
+      - name: Record artifact warning
+        run: |
+          {
+            echo "## Unsigned release candidate"
+            echo
+            echo "This workflow only uploads an Actions artifact. It does not create or publish a GitHub Release."
+            echo "The macOS app is ad-hoc signed, not Developer ID signed or notarized."
+            echo "Artifacts expire after 14 days and are not durable public release downloads."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload unsigned candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: UNSIGNED-palot-macos-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/SHA256SUMS
+            apps/desktop/release/release-manifest.json
+            apps/desktop/release/*.cdx.json
+            apps/desktop/release/*.intoto.jsonl
+            apps/desktop/release/UNSIGNED-README.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload candidate failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-failure-macos-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .local/release-candidate/*.log
+            apps/desktop/release/builder-debug.yml
+            apps/desktop/resources/licenses/DEPENDENCY_LICENSES.md
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  build-linux:
+    name: Build unsigned Linux x64 directory archive
+    if: inputs.platform == 'all' || inputs.platform == 'linux'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Vite+ and Node.js
+        uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
+        with:
+          version-file: package.json
+          node-version: ${{ env.NODE_VERSION }}
+          run-install: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        id: install
+        run: |
+          mkdir -p .local/release-candidate
+          vp install --frozen-lockfile 2>&1 | tee .local/release-candidate/install.log
+
+      - name: Check candidate source
+        run: |
+          bun apps/desktop/scripts/check-public-docs.ts
+          bun run check 2>&1 | tee .local/release-candidate/check.log
+
+      - name: Audit dependency license inventory
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: bun apps/desktop/scripts/generate-dependency-licenses.ts --check 2>&1 | tee .local/release-candidate/licenses.log
+
+      - name: Package and verify Linux candidate
+        # Use the existing directory-package/runtime verifier. This is not an
+        # AppImage, deb, RPM, Arch publication, or packaged native smoke test.
+        run: |
+          bun apps/desktop/scripts/linux-package.ts build stable 2>&1 | tee .local/release-candidate/package.log
+          bun apps/desktop/scripts/linux-package.ts verify stable 2>&1 | tee .local/release-candidate/verify.log
+
+      - name: Archive candidate preserving executable modes and symlinks
+        run: |
+          candidate="apps/desktop/release/candidate-linux-x64"
+          mkdir -p "$candidate"
+          tar -czf "$candidate/palot-linux-x64.tar.gz" -C apps/desktop/release linux-unpacked
+          (cd "$candidate" && sha256sum palot-linux-x64.tar.gz > SHA256SUMS && sha256sum --check SHA256SUMS)
+          cat > "$candidate/UNSIGNED-README.txt" <<'NOTICE'
+          UNSIGNED PALOT LINUX X64 CANDIDATE
+
+          This is an automated directory-package archive, not a published release
+          or distro package. Extract it before running linux-unpacked/palot. The
+          archive preserves executable permissions and symlinks. SHA256SUMS checks
+          download integrity, not publisher identity or build provenance.
+          Native source smoke runs in CI separately; this job verifies the bundled
+          runtime and desktop identity, not packaged GUI behavior on every distro.
+          Actions artifacts expire after 14 days; they are not durable public downloads.
+          NOTICE
+          {
+            echo "## Unsigned Linux x64 candidate"
+            echo
+            echo "Directory archive with a SHA-256 checksum; not an AppImage or distro package."
+            echo "This workflow does not create or publish a GitHub Release."
+            echo "Artifacts expire after 14 days; packaged GUI behavior is not smoke-tested here."
+            echo "Source commit: $GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload unsigned candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: UNSIGNED-palot-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/desktop/release/candidate-linux-x64/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload candidate failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-failure-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .local/release-candidate/*.log
+            apps/desktop/release/builder-debug.yml
+            apps/desktop/resources/licenses/DEPENDENCY_LICENSES.md
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

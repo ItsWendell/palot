@@ -1,0 +1,83 @@
+{
+  "$schema": "https://react.doctor/schema/config.json",
+  "supplyChain": {
+    "enabled": false
+  },
+  "rules": {
+    "react-doctor/no-barrel-import": "off"
+  },
+  "ignore": {
+    "rules": [
+      "deslop/unused-dev-dependency",
+      "deslop/unused-export",
+      "react-doctor/async-await-in-loop",
+      "react-doctor/js-cache-property-access",
+      "react-doctor/js-combine-iterations",
+      "react-doctor/js-flatmap-filter",
+      "react-doctor/js-hoist-intl",
+      "react-doctor/js-index-maps",
+      "react-doctor/js-set-map-lookups",
+      "react-doctor/js-tosorted-immutable",
+      "react-doctor/no-giant-component",
+      "react-doctor/prefer-module-scope-pure-function",
+      "react-doctor/prefer-useReducer",
+      "react-doctor/rerender-lazy-ref-init",
+      "react-doctor/rerender-memo-with-default-value",
+      "react-doctor/server-sequential-independent-await",
+      "react-doctor/use-lazy-motion"
+    ],
+    "files": ["src/renderer/routeTree.gen.ts"],
+    "overrides": [
+      {
+        "files": [
+          "src/renderer/app.tsx",
+          "src/renderer/bootstrap.ts",
+          "src/renderer/main.tsx",
+          "src/renderer/components/appearance-sync.tsx",
+          "src/renderer/hooks/use-window-chrome.ts"
+        ],
+        "rules": ["deslop/unused-file"]
+      },
+      {
+        "files": ["src/renderer/components/ui/**"],
+        "rules": [
+          "deslop/unused-file",
+          "react-doctor/jsx-no-constructed-context-values",
+          "react-doctor/no-redundant-roles",
+          "react-doctor/no-transition-all",
+          "react-doctor/only-export-components",
+          "react-doctor/prefer-tag-over-role"
+        ]
+      },
+      {
+        "files": [
+          "src/renderer/components/scheduled/automation-editor.tsx",
+          "src/renderer/components/subagent-activity.tsx",
+          "src/renderer/components/tool-execution.tsx"
+        ],
+        "rules": ["react-doctor/only-export-components"]
+      },
+      {
+        "files": [
+          "src/renderer/components/settings.tsx",
+          "src/renderer/components/thread.tsx",
+          "src/renderer/components/tool-execution.tsx",
+          "src/renderer/components/ui/field.tsx"
+        ],
+        "rules": ["react-doctor/no-array-index-as-key"]
+      },
+      {
+        "files": ["src/renderer/components/read-image-preview.tsx"],
+        "rules": ["react-doctor/no-static-element-interactions"]
+      },
+      {
+        "files": ["src/renderer/components/thread.tsx"],
+        "rules": ["react-doctor/anchor-has-content"]
+      },
+      {
+        "files": ["src/renderer/components/workbench-tabs/changes-tab.tsx"],
+        "rules": ["react-doctor/prefer-tag-over-role"]
+      }
+    ]
+  }
+}

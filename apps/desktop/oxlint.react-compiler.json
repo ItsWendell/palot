@@ -1,0 +1,25 @@
+{
+  "jsPlugins": [
+    {
+      "name": "react-hooks-compiler",
+      "specifier": "eslint-plugin-react-hooks"
+    }
+  ],
+  "ignorePatterns": ["src/renderer/routeTree.gen.ts"],
+  "rules": {
+    "react-hooks-compiler/config": "warn",
+    "react-hooks-compiler/error-boundaries": "warn",
+    "react-hooks-compiler/gating": "warn",
+    "react-hooks-compiler/globals": "warn",
+    "react-hooks-compiler/immutability": "warn",
+    "react-hooks-compiler/incompatible-library": "warn",
+    "react-hooks-compiler/preserve-manual-memoization": "warn",
+    "react-hooks-compiler/purity": "warn",
+    "react-hooks-compiler/refs": "warn",
+    "react-hooks-compiler/set-state-in-effect": "warn",
+    "react-hooks-compiler/set-state-in-render": "warn",
+    "react-hooks-compiler/static-components": "warn",
+    "react-hooks-compiler/unsupported-syntax": "warn",
+    "react-hooks-compiler/use-memo": "warn"
+  }
+}

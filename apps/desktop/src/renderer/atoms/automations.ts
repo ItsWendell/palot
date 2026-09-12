@@ -1,54 +1,36 @@
-/**
- * Jotai atoms for automation state management.
- */
+import { atom } from "jotai";
+import type { AutomationSnapshot } from "../../shared";
 
-import { atom } from "jotai"
-import type { Automation, AutomationRun } from "../../preload/api"
-
-/** List of all automations. */
-export const automationsAtom = atom<Automation[]>([])
-
-/** List of automation runs (inbox items). */
-export const automationRunsAtom = atom<AutomationRun[]>([])
-
-/** Write-only atom to set automations from a fetch. */
-export const setAutomationsAtom = atom(null, (_get, set, automations: Automation[]) => {
-	set(automationsAtom, automations)
-})
-
-/** Write-only atom to set automation runs from a fetch. */
-export const setAutomationRunsAtom = atom(null, (_get, set, runs: AutomationRun[]) => {
-	set(automationRunsAtom, runs)
-})
-
-/** Derived: count of active (non-archived/non-paused) automations. */
-export const activeAutomationCountAtom = atom((get) => {
-	return get(automationsAtom).filter((a) => a.status === "active").length
-})
-
-/** Derived: count of pending review runs (for badge). */
-export const pendingRunCountAtom = atom((get) => {
-	return get(automationRunsAtom).filter(
-		(r) => r.status === "pending_review" || r.status === "running",
-	).length
-})
-
-/** Derived: count of unread runs (readAt is null AND status is pending_review). */
-export const unreadRunCountAtom = atom((get) => {
-	return get(automationRunsAtom).filter((r) => r.readAt === null && r.status === "pending_review")
-		.length
-})
-
-/** Write-only atom to optimistically mark a run as read locally. */
-export const markRunReadLocalAtom = atom(null, (get, set, runId: string) => {
-	const runs = get(automationRunsAtom)
-	const updated = runs.map((r) => (r.id === runId ? { ...r, readAt: Date.now() } : r))
-	set(automationRunsAtom, updated)
-})
-
-/** Write-only atom to optimistically archive a run locally. */
-export const archiveRunLocalAtom = atom(null, (get, set, runId: string) => {
-	const runs = get(automationRunsAtom)
-	const updated = runs.map((r) => (r.id === runId ? { ...r, status: "archived" as const } : r))
-	set(automationRunsAtom, updated)
-})
+export const automationSnapshotAtom = atom<AutomationSnapshot | null>(null);
+export const automationLoadingAtom = atom(false);
+export const automationErrorAtom = atom<string | null>(null);
+export const groupedScheduledSessionIDsAtom = atom((get) => {
+  const snapshot = get(automationSnapshotAtom);
+  if (!snapshot) return new Set<string>();
+  const standaloneIDs = new Set(
+    snapshot.automations
+      .filter((automation) => automation.destination.type === "standalone")
+      .map((automation) => automation.id),
+  );
+  return new Set(
+    snapshot.runs
+      .filter(
+        (run) =>
+          run.rootSessionID &&
+          standaloneIDs.has(run.automationID) &&
+          run.state !== "needs-attention",
+      )
+      .map((run) => run.rootSessionID as string),
+  );
+});
+export const automationUnreadCountAtom = atom((get) => {
+  const snapshot = get(automationSnapshotAtom);
+  return (
+    snapshot?.runs.filter(
+      (run) =>
+        run.readAt === null &&
+        run.archivedAt === null &&
+        ["succeeded", "failed", "interrupted", "unknown", "needs-attention"].includes(run.state),
+    ).length ?? 0
+  );
+});

@@ -1,318 +1,472 @@
-import { execSync } from "node:child_process"
-import fs from "node:fs"
-import path from "node:path"
-import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, Menu, session, shell } from "electron"
-import { initAutomations, shutdownAutomations } from "./automation"
-import { initCredentialStore } from "./credential-store"
-import { getOpaqueWindowsPref, registerIpcHandlers } from "./ipc-handlers"
-import { installLiquidGlass, resolveWindowChrome } from "./liquid-glass"
-import { createLogger } from "./logger"
-import { startMdnsScanner, stopMdnsScanner } from "./mdns-scanner"
-import { stopServer } from "./opencode-manager"
-import { initSettingsStore } from "./settings-store"
-import { startEnvResolution } from "./shell-env"
-import { createTray, destroyTray } from "./tray"
-import { initAutoUpdater, stopAutoUpdater } from "./updater"
+/** Palot 2 Electron main entry. */
 
-const log = createLogger("app")
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  powerMonitor,
+  screen,
+  session,
+  shell,
+} from "electron";
+import log from "electron-log/main";
+import {
+  APPEARANCE_STORED_ARGUMENT,
+  effectiveAppearanceTreatment,
+  REDUCED_TRANSPARENCY_ARGUMENT,
+  serializeAppearancePreferences,
+} from "../shared/appearance-contract";
+import { resolveBuildIdentity } from "../shared/build-identity";
+import { IPC_CHANNELS, type PalotOpenTarget } from "../shared/opencode-contract";
+import { registerIpcHandlers } from "./ipc-handlers";
+import { installLiquidGlass, nativeGlassOptions, resolveWindowChrome } from "./liquid-glass";
+import { openCodeRuntime } from "./opencode-runtime";
+import {
+  createSessionWindowScope,
+  type SessionWindowConnection,
+  type SessionWindowScope,
+} from "./opencode-native-scope";
+import { closePalotDatabase } from "./database/client";
+import { hydrateShellEnvironment } from "./shell-environment";
+import { automationService } from "./automations/service";
+import { desktopNavigation } from "./desktop-navigation";
+import { desktopNotificationService } from "./notification-service";
+import { appearanceService } from "./appearance-service";
+import { destroyTray, installTray } from "./tray";
+import { destroyOpenCodeAttentionIndex } from "./attention-index";
+import { restoreWindowState, saveWindowState, trackWindowState } from "./window-state";
+import { startupWindowPresentation } from "./window-startup";
+import { allowedExternalUrl } from "./external-url-policy";
+import {
+  cleanupStagedAttachments,
+  shutdownAttachmentStorage,
+  inspectPickedFiles,
+} from "./file-attachments";
+import { registerWindowRole } from "./ipc-security";
+import { initializeLogging } from "./logging";
+import { installDenyAllPermissionPolicy } from "./electron-permissions";
+import { showRecoveryWindow } from "./recovery-window";
+import { completePendingPalotReset } from "./data-recovery";
+import { createShowcaseBackdrop, resolveShowcaseConfiguration } from "./showcase-window";
+import { installNativeContextMenu } from "./native-context-menu";
+import { linuxDesktopDiagnostics } from "./linux-desktop";
+import { DESKTOP_HELP, parseDesktopLaunch } from "./desktop-launch";
+import { stat } from "node:fs/promises";
 
-// ESM equivalent for __dirname
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+const currentFile = fileURLToPath(import.meta.url);
+const currentDirectory = path.dirname(currentFile);
+const isDevelopment = !app.isPackaged;
+const diagnosticsRequested = process.argv.includes("--diagnostics");
+const helpRequested = process.argv.includes("--help");
+const rendererEntryUrl =
+  isDevelopment && process.env.ELECTRON_RENDERER_URL
+    ? new URL(process.env.ELECTRON_RENDERER_URL).href
+    : pathToFileURL(path.join(currentDirectory, "../renderer/index.html")).href;
+const developmentID = isDevelopment
+  ? (process.env.PALOT_DEV_INSTANCE_ID ?? path.basename(path.resolve(app.getAppPath(), "../..")))
+  : undefined;
+const buildIdentity = resolveBuildIdentity({
+  development: isDevelopment,
+  configuredChannel: __PALOT_BUILD_CHANNEL__,
+  developmentID,
+});
 
-// Start resolving the shell environment asynchronously. On macOS/Linux, Electron
-// GUI launches get a minimal launchd environment missing user PATH additions
-// (homebrew, nvm, bun, etc.). This spawns a login shell in the background --
-// window creation proceeds immediately without waiting. Operations that need the
-// full PATH (e.g., spawning opencode) call waitForEnv() before proceeding.
-startEnvResolution()
+if (isDevelopment) {
+  app.commandLine.appendSwitch(
+    "remote-debugging-port",
+    process.env.PALOT_REMOTE_DEBUGGING_PORT ?? "9223",
+  );
+}
+if (process.env.PALOT_E2E_USER_DATA) app.commandLine.appendSwitch("use-mock-keychain");
 
-// Minimal menu — required on macOS for Cmd+C/V/X/A to work in web contents.
-// A null menu kills native Edit shortcuts on macOS. This minimal template is
-// negligible overhead compared to the full default menu.
-const menuTemplate: Electron.MenuItemConstructorOptions[] = [
-	...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
-	{ role: "editMenu" as const },
-	{ role: "viewMenu" as const },
-	{ role: "windowMenu" as const },
-]
-Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
-
-// Collect Chromium feature flags — must be merged into a single --disable-features
-// switch because Electron's appendSwitch overwrites (not appends) duplicate keys.
-const disabledFeatures: string[] = []
-
-// Chromium networking: disable HTTPS upgrades for localhost connections.
-// The OpenCode server is plain HTTP/1.1 on 127.0.0.1. Chromium 134+ (Electron 40+)
-// can silently upgrade http:// to https://, which causes ERR_ALPN_NEGOTIATION_FAILED
-// when hitting a plain HTTP server. Disabling this feature prevents that.
-// Must be set before app.whenReady().
-disabledFeatures.push("HttpsUpgrades")
-app.commandLine.appendSwitch("allow-insecure-localhost")
-
-// Linux/Wayland: ensure GTK can find the GdkPixbuf loader modules and enable
-// native Wayland rendering. These must be set before app.whenReady() since GTK
-// initializes during that call.
+app.setName(buildIdentity.displayName);
+app.setAppUserModelId(buildIdentity.appId);
 if (process.platform === "linux") {
-	// GTK needs the GdkPixbuf loaders cache to decode PNG/SVG icons from the
-	// icon theme. Electron's bundled Chromium often can't locate the host system's
-	// loaders, causing "Could not load a pixbuf from icon theme" warnings and
-	// continuous GDK_IS_PIXBUF assertion failures — especially visible on Wayland
-	// where GTK renders client-side window decorations (close/minimize/maximize
-	// button icons are loaded from the theme on every frame).
-	if (!process.env.GDK_PIXBUF_MODULE_FILE) {
-		let loadersCachePath: string | undefined
+  app.setDesktopName(`${buildIdentity.appId}.desktop`);
+  app.commandLine.appendSwitch("class", buildIdentity.appId);
+}
+const temporaryUserData =
+  process.env.PALOT_E2E_USER_DATA ?? process.env.PALOT_RELEASE_SMOKE_USER_DATA;
+if (temporaryUserData) {
+  app.setPath("userData", temporaryUserData);
+} else if (buildIdentity.channel !== "stable") {
+  const userDataPath = path.join(app.getPath("appData"), buildIdentity.userDataName);
+  app.setPath("userData", userDataPath);
+}
+if (!diagnosticsRequested && !helpRequested) completePendingPalotReset(app.getPath("userData"));
+const logDirectory = process.env.PALOT_LOG_DIR;
+initializeLogging(isDevelopment, logDirectory);
+log.info("Palot diagnostics initialized", {
+  channel: buildIdentity.channel,
+  version: app.getVersion(),
+  logFile: log.transports.file.getFile().path,
+});
 
-		// Try pkg-config first — works across distros regardless of lib path layout
-		try {
-			loadersCachePath = execSync(
-				"pkg-config --variable gdk_pixbuf_cache_file gdk-pixbuf-2.0",
-				{ encoding: "utf-8", timeout: 1000, stdio: ["ignore", "pipe", "ignore"] },
-			).trim()
-		} catch {
-			// pkg-config not installed or gdk-pixbuf-2.0 not registered — try known paths
-		}
+const menu: Electron.MenuItemConstructorOptions[] = [
+  ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+  { role: "editMenu" },
+  { role: "viewMenu" },
+  { role: "windowMenu" },
+];
+let mainWindow: BrowserWindow | null = null;
+const workspaceWindows = new Set<BrowserWindow>();
+const windowTargets = new Map<BrowserWindow, PalotOpenTarget>();
+const sessionWindowScopes = new WeakMap<BrowserWindow, SessionWindowScope>();
+let startupFailureReported = false;
+let quitting = false;
 
-		if (!loadersCachePath || !fs.existsSync(loadersCachePath)) {
-			const candidates = [
-				"/usr/lib64/gdk-pixbuf-2.0/2.10.0/loaders.cache", // Fedora, RHEL, openSUSE
-				"/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache", // Debian, Ubuntu
-				"/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache", // Arch
-			]
-			loadersCachePath = candidates.find((p) => fs.existsSync(p))
-		}
-
-		if (loadersCachePath) {
-			process.env.GDK_PIXBUF_MODULE_FILE = loadersCachePath
-			log.info(`Set GDK_PIXBUF_MODULE_FILE=${loadersCachePath}`)
-		}
-	}
-
-	app.commandLine.appendSwitch("ozone-platform-hint", "auto")
-	app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations")
-	app.commandLine.appendSwitch("enable-wayland-ime")
-	app.commandLine.appendSwitch("font-render-hinting", "slight")
-
-	// Chromium's WaylandFractionalScaleV1 has a known bug where non-maximized
-	// windows render at 1x and the compositor upscales them, causing blurry text
-	// and UI (Chromium issue 40934705). Work around this by detecting the GNOME
-	// fractional scale factor via Mutter's D-Bus API and forcing it explicitly.
-	// This runs synchronously before app.whenReady() since command-line switches
-	// must be set early. Falls back gracefully if detection fails (non-GNOME, X11).
-	if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland") {
-		try {
-			const dbusOutput = execSync(
-				"gdbus call --session --dest org.gnome.Mutter.DisplayConfig " +
-					"--object-path /org/gnome/Mutter/DisplayConfig " +
-					"--method org.gnome.Mutter.DisplayConfig.GetCurrentState",
-				{ timeout: 2000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] },
-			)
-			// Logical monitors section contains: (x, y, scale, uint32 transform, bool primary, ...)
-			const match = dbusOutput.match(/\(\d+,\s*\d+,\s*([\d.]+),\s*uint32\s+\d+,\s*true/)
-			if (match) {
-				const scale = Number.parseFloat(match[1])
-				if (scale > 0 && scale !== Math.floor(scale)) {
-					// Fractional scale detected — disable the buggy Wayland fractional
-					// scale protocol and force the correct DPI scale factor directly.
-					disabledFeatures.push("WaylandFractionalScaleV1")
-					app.commandLine.appendSwitch("force-device-scale-factor", scale.toString())
-					log.info(`Wayland fractional scale detected (${scale}), forcing device scale factor`)
-				}
-			}
-		} catch {
-			// D-Bus call failed (not GNOME, not Wayland, or timeout) — ignore.
-			// Chromium's default Wayland scaling will be used.
-		}
-	}
+function reportStartupFailure(failure: unknown): void {
+  if (startupFailureReported || quitting) return;
+  startupFailureReported = true;
+  log.error("Palot startup boundary caught a failure", failure);
+  void app.whenReady().then(() => showRecoveryWindow(failure));
 }
 
-// Apply all collected disabled features as a single comma-separated switch.
-if (disabledFeatures.length > 0) {
-	app.commandLine.appendSwitch("disable-features", disabledFeatures.join(","))
+process.on("uncaughtException", reportStartupFailure);
+process.on("unhandledRejection", reportStartupFailure);
+
+async function createWindow(
+  sessionID?: string,
+  owner?: SessionWindowConnection,
+): Promise<BrowserWindow> {
+  const profileID = owner?.profileID;
+  owner?.runtimeStatus();
+  const isMac = process.platform === "darwin";
+  const startupPresentation = startupWindowPresentation(process.env);
+  const icon = resolveAppIcon();
+  const appearance = appearanceService().preferences();
+  const hasStoredAppearance = appearanceService().hasStoredPreferences();
+  const reducedTransparency = nativeTheme.prefersReducedTransparency;
+  appearanceService().applyMode(appearance);
+  const scheme =
+    appearance.source === "system" && appearance.omarchyTheme
+      ? appearance.omarchyTheme.mode
+      : appearance.source === "system" || appearance.mode === "system"
+        ? nativeTheme.shouldUseDarkColors
+          ? "dark"
+          : "light"
+        : appearance.mode;
+  const treatment = effectiveAppearanceTreatment(appearance, scheme);
+  const chrome = await resolveWindowChrome(
+    appearance.windowMaterial,
+    reducedTransparency,
+    treatment.native.backdrop,
+  );
+  const glassOptions = nativeGlassOptions(appearance, scheme);
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea;
+  const showcase = resolveShowcaseConfiguration(process.env, primaryWorkArea);
+  const showcaseBackdrop = showcase ? await createShowcaseBackdrop(showcase) : null;
+  const windowState = showcase
+    ? { bounds: showcase.window, maximized: false }
+    : restoreWindowState(
+        screen.getAllDisplays().map((display) => display.workArea),
+        primaryWorkArea,
+      );
+  const window = new BrowserWindow({
+    title: buildIdentity.displayName,
+    ...(windowState.bounds ?? { width: 1_440, height: 920 }),
+    // Tiling compositors can allocate less than 640px. A larger native minimum
+    // makes Chromium render a surface wider than the compositor's visible tile.
+    minWidth: showcase || process.platform === "linux" ? 0 : 640,
+    minHeight: showcase || process.platform === "linux" ? 0 : 480,
+    // Linux compositors may suppress server-side decorations. Own a close control.
+    ...(process.platform === "linux" ? { frame: false } : {}),
+    show: false,
+    autoHideMenuBar: process.platform === "linux",
+    focusable: process.env.PALOT_E2E_INACTIVE !== "1",
+    backgroundColor: appearanceService().backgroundColor(appearance, scheme, chrome.tier),
+    ...chrome.options,
+    ...(process.platform === "linux" &&
+    appearance.linuxBackgroundOpacity < 100 &&
+    !reducedTransparency
+      ? { transparent: true }
+      : {}),
+    icon: isMac ? undefined : icon,
+    webPreferences: {
+      preload: path.join(currentDirectory, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      scrollBounce: isMac,
+      spellcheck: true,
+      additionalArguments: [
+        `--palot-chrome-tier=${chrome.tier}`,
+        serializeAppearancePreferences(appearance),
+        ...(hasStoredAppearance ? [APPEARANCE_STORED_ARGUMENT] : []),
+        ...(reducedTransparency ? [REDUCED_TRANSPARENCY_ARGUMENT] : []),
+      ],
+    },
+  });
+  workspaceWindows.add(window);
+  if (owner) sessionWindowScopes.set(window, createSessionWindowScope(owner, openCodeRuntime));
+  if (!mainWindow) mainWindow = window;
+  if (sessionID)
+    windowTargets.set(window, { type: "session", sessionID, ...(profileID ? { profileID } : {}) });
+  window.on("focus", () => openCodeRuntime.recoverEventStream("focus"));
+  let rendererLoaded = false;
+  registerWindowRole(window, "main");
+  installNativeContextMenu(window);
+  if (showcase) {
+    window.webContents.once("did-finish-load", () => {
+      window.webContents.setZoomFactor(showcase.zoomFactor);
+    });
+  }
+  if (!showcase) trackWindowState(window);
+  if (windowState.maximized) window.maximize();
+
+  // Session windows are shown by their caller only after the owner is revalidated.
+  if (!sessionID && startupPresentation !== "hidden") {
+    window.once("ready-to-show", () => {
+      if (showcaseBackdrop && !showcaseBackdrop.isDestroyed()) showcaseBackdrop.showInactive();
+      if (showcase) {
+        window.show();
+        window.focus();
+      } else if (startupPresentation === "inactive") window.showInactive();
+      else window.show();
+    });
+  }
+  window.on("page-title-updated", (event, title) => {
+    event.preventDefault();
+    window.setTitle(
+      title && title !== "Palot"
+        ? `${title} — ${buildIdentity.displayName}`
+        : buildIdentity.displayName,
+    );
+  });
+  window.on("closed", () => {
+    if (showcaseBackdrop && !showcaseBackdrop.isDestroyed()) showcaseBackdrop.destroy();
+    workspaceWindows.delete(window);
+    windowTargets.delete(window);
+    if (mainWindow === window) mainWindow = workspaceWindows.values().next().value ?? null;
+  });
+  if (isDevelopment && process.env.PALOT_DEVTOOLS === "1") {
+    window.webContents.once("did-finish-load", () => {
+      window.webContents.openDevTools({ mode: "detach" });
+    });
+  }
+
+  if (chrome.tier === "liquid-glass") {
+    window.webContents.once("did-finish-load", () => {
+      void installLiquidGlass(window, glassOptions).then((tier) => {
+        if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.chromeTierChanged, tier);
+      });
+    });
+  }
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const externalUrl = allowedExternalUrl(url, isDevelopment);
+    if (externalUrl) void shell.openExternal(externalUrl);
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    const currentUrl = window.webContents.getURL();
+    if (url === currentUrl) return;
+    event.preventDefault();
+    const externalUrl = allowedExternalUrl(url, isDevelopment);
+    if (externalUrl) void shell.openExternal(externalUrl);
+  });
+  window.webContents.on("preload-error", (_event, preloadPath, error) => {
+    reportStartupFailure(new Error(`Palot preload failed at ${preloadPath}: ${error.message}`));
+  });
+  window.webContents.once("did-finish-load", () => {
+    rendererLoaded = true;
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    if (mainWindow === window) mainWindow = null;
+    reportStartupFailure(
+      new Error(
+        `Palot renderer stopped ${rendererLoaded ? "after launch" : "during startup"}: ${details.reason}`,
+      ),
+    );
+  });
+
+  try {
+    const entry = new URL(rendererEntryUrl);
+    // Route before the first render: the index route restores the last task and
+    // can otherwise win a race against the asynchronous takeOpenTarget IPC.
+    if (sessionID)
+      entry.hash = `/sessions/${encodeURIComponent(sessionID)}${profileID ? `?profileID=${encodeURIComponent(profileID)}` : ""}`;
+    owner?.runtimeStatus();
+    await window.loadURL(entry.href);
+    owner?.runtimeStatus();
+  } catch (error) {
+    // A rejected secondary load must not leave a hidden window keeping the app alive.
+    if (!window.isDestroyed()) window.destroy();
+    throw error;
+  }
+  return window;
 }
 
-const isDev = !app.isPackaged
-
-// Enable Chrome DevTools Protocol (CDP) in dev mode so external tools
-// (agent-browser, Playwright, etc.) can connect for visual testing.
-// Usage: `agent-browser connect 9222` or Playwright's `connectOverCDP`.
-if (isDev) {
-	app.commandLine.appendSwitch("remote-debugging-port", "9222")
+function resolveAppIcon(fileName = "icon.png"): Electron.NativeImage {
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "icons", buildIdentity.iconVariant, fileName)
+    : path.join(currentDirectory, "../../resources/icons", buildIdentity.iconVariant, fileName);
+  return nativeImage.createFromPath(iconPath);
 }
 
-// Use a separate identity for dev so dev and production can run side-by-side.
-// The single-instance lock and user-data directory are both keyed on app name,
-// so changing it here prevents the two from conflicting.
-if (isDev) {
-	app.setName("Palot Dev")
-	app.setPath("userData", path.join(app.getPath("appData"), "Palot Dev"))
+async function showMainWindow(): Promise<BrowserWindow> {
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : await createWindow();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+  return window;
 }
 
-async function createWindow(): Promise<BrowserWindow> {
-	const title = isDev ? "Palot (Dev)" : "Palot"
-
-	const isMac = process.platform === "darwin"
-
-	// Resolve window chrome tier: liquid glass > vibrancy > opaque
-	const isOpaque = getOpaqueWindowsPref()
-	const chrome = await resolveWindowChrome(isOpaque)
-
-	// Resolve the window icon for Linux/Windows. macOS uses the .app bundle icon.
-	// Linux: use 256x256 icon — GTK's GdkPixbuf can choke on the full 1024x1024
-	// icon on Wayland, causing GDK_IS_PIXBUF assertion failures.
-	const windowIcon = isMac
-		? undefined
-		: app.isPackaged
-			? path.join(process.resourcesPath, "icon.png")
-			: path.join(
-					__dirname,
-					process.platform === "linux"
-						? "../../resources/linux-icons/256x256.png"
-						: "../../resources/icon.png",
-				)
-
-	const win = new BrowserWindow({
-		title,
-		width: 1200,
-		height: 800,
-		// Transparent background for macOS glass/vibrancy tiers.
-		// On Linux/Windows (always opaque tier) use a solid background to prevent
-		// the window from being see-through while the renderer loads.
-		backgroundColor: isMac ? "#00000000" : "#000000",
-		// Don't show the window until the renderer has painted its first frame.
-		// Prevents a flash of transparent/empty content, especially on Wayland.
-		show: false,
-		// Three-tier window chrome — options from resolveWindowChrome()
-		...chrome.options,
-		// Window icon for Linux/Windows
-		...(windowIcon && { icon: windowIcon }),
-		webPreferences: {
-			preload: path.join(__dirname, "../preload/index.cjs"),
-			contextIsolation: true,
-			sandbox: true,
-			nodeIntegration: false,
-			spellcheck: false,
-			v8CacheOptions: "bypassHeatCheckAndEagerCompile",
-		},
-	})
-
-	// Show the window once the renderer has painted — avoids a flash of
-	// transparent/blank content while the page loads.
-	win.once("ready-to-show", () => {
-		win.show()
-	})
-
-	// Install liquid glass effect after window creation (tier 1 only)
-	if (chrome.tier === "liquid-glass") {
-		await installLiquidGlass(win, isOpaque)
-	}
-
-	// Notify the renderer which chrome tier is active so it can adapt CSS
-	win.webContents.once("did-finish-load", () => {
-		win.webContents.send("chrome-tier", chrome.tier)
-	})
-
-	// Open external links in default browser instead of new Electron windows
-	win.webContents.setWindowOpenHandler(({ url }) => {
-		shell.openExternal(url)
-		return { action: "deny" }
-	})
-
-	// In dev mode, ensure the window title always shows "(Dev)" suffix
-	if (isDev) {
-		win.on("page-title-updated", (event, pageTitle) => {
-			if (!pageTitle.includes("(Dev)")) {
-				event.preventDefault()
-				win.setTitle(`${pageTitle} (Dev)`)
-			}
-		})
-	}
-
-	// Workaround: transparent/vibrancy windows on macOS lose click interactivity
-	// after DevTools are toggled (Electron recomposites the window and marks
-	// transparent regions as click-through). Force detached mode and re-assert
-	// mouse events on every DevTools open/close cycle.
-	if (process.platform === "darwin") {
-		const fixClickThrough = () => {
-			win.setIgnoreMouseEvents(false)
-		}
-		win.webContents.on("devtools-opened", fixClickThrough)
-		win.webContents.on("devtools-closed", fixClickThrough)
-	}
-
-	// Dev: load from Vite dev server | Prod: load built files
-	if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-		win.loadURL(process.env.ELECTRON_RENDERER_URL)
-	} else {
-		win.loadFile(path.join(__dirname, "../renderer/index.html"))
-	}
-
-	return win
-}
-
-// Prevent multiple instances
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
-	app.quit()
+const hasSingleInstanceLock =
+  !diagnosticsRequested && !helpRequested && app.requestSingleInstanceLock();
+if (helpRequested) {
+  console.log(DESKTOP_HELP);
+  app.quit();
+} else if (diagnosticsRequested) {
+  void app.whenReady().then(async () => {
+    console.log(
+      JSON.stringify(
+        {
+          ...(await linuxDesktopDiagnostics()),
+          identity: buildIdentity,
+          versions: process.versions,
+          gpu: app.getGPUFeatureStatus(),
+          ozonePlatform: app.commandLine.getSwitchValue("ozone-platform") || "auto",
+          displays: screen
+            .getAllDisplays()
+            .map(({ size, scaleFactor, workArea }) => ({ size, scaleFactor, workArea })),
+        },
+        null,
+        2,
+      ),
+    );
+    app.quit();
+  });
+} else if (!hasSingleInstanceLock) {
+  app.quit();
 } else {
-	app.on("second-instance", () => {
-		const win = BrowserWindow.getAllWindows()[0]
-		if (win) {
-			if (win.isMinimized()) win.restore()
-			win.focus()
-		}
-	})
+  const handleLaunch = async (args: string[], cwd: string) => {
+    const target = parseDesktopLaunch(args, cwd) ?? { type: "open" as const };
+    if (target.type === "project" && !(await stat(target.directory)).isDirectory())
+      throw new Error("Project path must be a directory");
+    if (target.type === "project" && target.attachmentPaths?.length) {
+      const inspected = await inspectPickedFiles(target.attachmentPaths);
+      if (inspected.errors.length) throw new Error(inspected.errors.join("\n"));
+      desktopNavigation.request({
+        type: "project",
+        directory: target.directory,
+        files: inspected.files,
+      });
+    } else desktopNavigation.request(target);
+  };
+  app.on("second-instance", (_event, args, cwd) => {
+    void handleLaunch(args, cwd).catch((error) => log.warn("Desktop launch failed", error));
+  });
 
-	app.whenReady().then(() => {
-		// Bypass Chromium's Private Network Access checks for OpenCode server requests.
-		// Chromium (134+/Electron 40+) blocks renderer fetch() to private network addresses
-		// (127.0.0.1) with ERR_ALPN_NEGOTIATION_FAILED when the PNA preflight response
-		// doesn't include Access-Control-Allow-Private-Network. The OpenCode server (Bun/Hono)
-		// doesn't send this header. Instead of patching the server, we inject the header
-		// for all responses from the local server.
-		session.defaultSession.webRequest.onHeadersReceived(
-			{ urls: ["http://127.0.0.1:*/*"] },
-			(details, callback) => {
-				callback({
-					responseHeaders: {
-						...details.responseHeaders,
-						"Access-Control-Allow-Private-Network": ["true"],
-					},
-				})
-			},
-		)
-		log.info("Registered PNA header injection for 127.0.0.1 requests")
+  void app
+    .whenReady()
+    .then(async () => {
+      hydrateShellEnvironment();
+      await appearanceService().initializeDesktopAppearance();
+      powerMonitor.on("resume", () => openCodeRuntime.recoverEventStream("resume"));
+      installDenyAllPermissionPolicy(session.defaultSession);
+      await cleanupStagedAttachments();
+      app.setAboutPanelOptions({
+        applicationName: buildIdentity.displayName,
+        applicationVersion: app.getVersion(),
+        version: buildIdentity.label ?? undefined,
+      });
+      if (process.platform === "darwin" && !app.isPackaged) {
+        app.dock?.setIcon(resolveAppIcon("dock.png"));
+      }
+      Menu.setApplicationMenu(Menu.buildFromTemplate(menu));
+      desktopNotificationService().configure(buildIdentity.appId);
+      registerIpcHandlers({
+        expectedWindow: (event) => {
+          const window = BrowserWindow.fromWebContents(event.sender);
+          return window && workspaceWindows.has(window) ? window : null;
+        },
+        sessionWindowScope: (window) => sessionWindowScopes.get(window),
+        openSessionWindow: async (sessionID, owner) => {
+          const window = await createWindow(sessionID, owner);
+          if (process.env.PALOT_E2E_INACTIVE === "1") window.showInactive();
+          else {
+            window.show();
+            window.focus();
+          }
+        },
+        takeWindowTarget: (window) => {
+          const target = windowTargets.get(window);
+          windowTargets.delete(window);
+          return target ?? (window === mainWindow ? desktopNavigation.take() : null);
+        },
+        expectedUrl: rendererEntryUrl,
+        expectedRole: "main",
+        onStartupFailure: reportStartupFailure,
+      });
+      appearanceService().start();
+      const initialTarget = parseDesktopLaunch(process.argv, process.cwd());
+      if (initialTarget) await handleLaunch(process.argv, process.cwd());
+      desktopNavigation.setOpenTarget(async (target) => {
+        const window = await showMainWindow();
+        const send = () => {
+          if (!window.isDestroyed()) {
+            window.webContents.send(IPC_CHANNELS.openTargetRequested, target);
+          }
+        };
+        if (window.webContents.isLoading()) window.webContents.once("did-finish-load", send);
+        else send();
+      });
+      desktopNotificationService().start();
+      await installTray({
+        currentDirectory,
+        displayName: buildIdentity.displayName,
+        appID: buildIdentity.appId,
+        iconVariant: buildIdentity.iconVariant,
+      });
+      automationService().setOpenTarget(async (target) => {
+        const window = await showMainWindow();
+        const send = () => {
+          if (!window.isDestroyed()) {
+            window.webContents.send(IPC_CHANNELS.automationNotificationOpened, target);
+          }
+        };
+        if (window.webContents.isLoading()) window.webContents.once("did-finish-load", send);
+        else send();
+      });
+      await automationService().start();
+      await createWindow();
+      app.on("activate", () => {
+        void showMainWindow();
+      });
+    })
+    .catch(reportStartupFailure);
 
-		initSettingsStore()
-		initCredentialStore()
-		registerIpcHandlers()
-		initAutomations().catch(console.error)
-		startMdnsScanner().catch((err) => log.warn("mDNS scanner failed to start", err))
-		createWindow()
-		createTray(() => BrowserWindow.getAllWindows()[0])
-		initAutoUpdater().catch(console.error)
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
 
-		app.on("activate", () => {
-			if (BrowserWindow.getAllWindows().length === 0) createWindow()
-		})
-	})
-
-	// On macOS, closing all windows keeps the app alive (dock/tray). The server
-	// and background services (automations, mDNS) continue running so agents
-	// can finish their work. On other platforms, closing all windows quits.
-	app.on("window-all-closed", () => {
-		if (process.platform !== "darwin") app.quit()
-	})
-
-	// All cleanup happens here, triggered by Cmd+Q, Dock > Quit, app.quit(),
-	// or system-initiated quit (macOS logout SIGTERM). This is the single
-	// source of truth for teardown -- stopServer() etc. are idempotent.
-	app.on("before-quit", () => {
-		destroyTray()
-		shutdownAutomations()
-		stopMdnsScanner()
-		stopServer()
-		stopAutoUpdater()
-	})
+  let shutdownStarted = false;
+  // User-local Linux upgrades request the same orderly teardown as File → Quit.
+  if (process.platform === "linux") process.on("SIGTERM", () => app.quit());
+  app.on("before-quit", (event) => {
+    if (shutdownStarted) return;
+    event.preventDefault();
+    shutdownStarted = true;
+    quitting = true;
+    if (mainWindow && !mainWindow.isDestroyed() && process.env.PALOT_SHOWCASE !== "1") {
+      saveWindowState(mainWindow);
+    }
+    desktopNotificationService().shutdown();
+    appearanceService().shutdown();
+    const trayShutdown = destroyTray();
+    void automationService()
+      .shutdown()
+      .finally(async () => {
+        await trayShutdown;
+        destroyOpenCodeAttentionIndex();
+        await openCodeRuntime.shutdown();
+        closePalotDatabase();
+        await shutdownAttachmentStorage();
+        app.quit();
+      });
+  });
 }

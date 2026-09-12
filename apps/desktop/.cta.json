@@ -1,0 +1,17 @@
+{
+  "projectName": "palot-desktop",
+  "mode": "file-router",
+  "typescript": true,
+  "tailwind": true,
+  "packageManager": "bun",
+  "git": false,
+  "install": true,
+  "intent": false,
+  "addOnOptions": {},
+  "projectPreset": "blank",
+  "includeExamples": false,
+  "routerOnly": true,
+  "version": 1,
+  "framework": "react",
+  "chosenAddOns": []
+}

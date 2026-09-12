@@ -1,0 +1,992 @@
+{
+  "contractFingerprint": "f1dbfbf184cacc2b070c26b96e5b89f969034242bc14ecd4fe965a2230eaa44a",
+  "contractVersion": "2.0.2",
+  "events": {
+    "agent.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "64370e2c7d8e81ef951a4cd9c82cac46fb21ce0314a3fc9d2d67853bfbb2dbe0"
+    },
+    "catalog.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "767be806a2c4ea15ae578f5fa619b38a6e7db0ea6c1e6b0bb62513867f052e5e"
+    },
+    "command.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "d6ee935e45b511f67f8940f1859330e3e4c9c8e7763847b23ffa6db7dd9eaa52"
+    },
+    "config.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "f30d3fc6262d41f708e27395ec09484a2036fd57b6cf3acee1d2046a190d7589"
+    },
+    "credential.switched": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "39552433497374a552e55e86265f5595c53ea78ec53a0d3fc772ebca2ba5014a"
+    },
+    "credential.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "7ab07556d38153e0e26b334e2d5b9657ddcaa891e402f86fe02170412dd1f4a3"
+    },
+    "filesystem.changed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "ccbdf62d5b0bbe9fa7535bf4d4c806de87090e79e28789ad22756c716bf47b1d"
+    },
+    "form.cancelled": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "f15b0cd175e15d2a0908419fd7071636b41d15630a8dd8ba829a9ab0d70658be"
+    },
+    "form.created": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "3980eb44eee79612ff17f1ba2a82485a8358f9df3004e25402184b1347ed7adf"
+    },
+    "form.replied": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "40527ca36c6f86e43e25be946e217156ee6cfb22eec212f8b5a00c7b29fb3942"
+    },
+    "installation.update-available": {
+      "expectedProductionMention": false,
+      "note": "OpenCode installation updates are managed outside Palot desktop runtime lifecycle.",
+      "payloadFingerprint": "5a0156253f3434ebd8c059038378d3155b1e851e6208d841566dae77eee85575"
+    },
+    "installation.updated": {
+      "expectedProductionMention": false,
+      "note": "OpenCode installation updates are managed outside Palot desktop runtime lifecycle.",
+      "payloadFingerprint": "82b2b071731cb212767fa363f33e0092417652d1484efead922e1181285598cb"
+    },
+    "integration.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "4d07975e13f5db658d4160b311403077a072eb1b574907f893eb3b595742fb62"
+    },
+    "mcp.resources.changed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "5acf2ad0d5eba7424f7de178da64dc078e96dc3a2b9a9c2071ef40a3c1dc4234"
+    },
+    "mcp.status.changed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "2342cb1c2085aeae02701fc52ef19728f3f3b0fb9bef1a975321b75e8a92da87"
+    },
+    "models-dev.refreshed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "a41d83ec1e26754351f009360b5a71f2c27c6d436fb7f58005cde231a7804192"
+    },
+    "permission.asked": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "52cce5cae6297e2bf2bbbc49696f5b815fac96b464fba9441f589a4b3375c353"
+    },
+    "permission.replied": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "d2d25c8aacd5a9fcc5d576285f7e34cf4de431f20a4b561c29fc9e4a007c78d5"
+    },
+    "persistent-pty.added": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "c74ef3b53d747c7a3928dd73d69a2c8a853c3c54a832049e8a4cdc572f08ce28"
+    },
+    "persistent-pty.removed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "5beb61aee11529be4d53f8de452a2b291b8929be5910029047a0f83ab06982d3"
+    },
+    "plugin.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "8933c8e408086a9a97f7a07b982de4b7c3544b7951da0e24852ee2dcecdf3066"
+    },
+    "project.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "838d0dcddc6c142bd5ab5cf5ba077fdda66d902af75a260eb77b1397e8040483"
+    },
+    "pty.created": {
+      "expectedProductionMention": false,
+      "note": "Open Palot terminals reconcile through the ticketed PTY transport and explicit PTY queries.",
+      "payloadFingerprint": "ef1ade68774948e722dd7fd9a047f343170c7d5d6d3c42f62eb65c209ddd5853"
+    },
+    "pty.deleted": {
+      "expectedProductionMention": false,
+      "note": "Open Palot terminals reconcile through the ticketed PTY transport and explicit PTY queries.",
+      "payloadFingerprint": "d9085c015563c262ceeef3545bd998c7d6b9db80ec09f622e9fe4c6f88c2700a"
+    },
+    "pty.exited": {
+      "expectedProductionMention": false,
+      "note": "Open Palot terminals reconcile through the ticketed PTY transport and explicit PTY queries.",
+      "payloadFingerprint": "a7be1a11ea79c916f97344ea6b962f1ca2afe5e40fec02fd8e0c14dad537ccaa"
+    },
+    "pty.updated": {
+      "expectedProductionMention": false,
+      "note": "Open Palot terminals reconcile through the ticketed PTY transport and explicit PTY queries.",
+      "payloadFingerprint": "1ddedb600199339a7d5dd6ddef6a25e9523a7bc871ed0ecedcdfb54efadce548"
+    },
+    "reference.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "975d1b9ba080bf03423b0a1c3a239819c92740164174e3e12feada6868d72e2d"
+    },
+    "rpc.${string}": {
+      "expectedProductionMention": false,
+      "payloadFingerprint": "2de36dbf63d2d091d670199f04f6c842a5001212f1fe21c8d5aa7ccceb572a0d"
+    },
+    "server.connected": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "7925e5e7c3fd41e8c7917a7b183021c30f001b7f32818763b79d1b89d8540ec7"
+    },
+    "session.agent.selected": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "0d00503ccb291827f64590d5d7e91f03889540ac5e4c3a93a9a27666106dca51"
+    },
+    "session.compaction.delta": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "3229f8df8af88eaf84b19c5329b246a8e322ce40724a9c0d27d40ecb05319b1e"
+    },
+    "session.compaction.ended": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "97142d6e4f88c3a0b23dd4f4c552ef40c124746ff72bf595843818a3d124e2a3"
+    },
+    "session.compaction.failed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "8743135a1829c5bb6e7eb8d7cd5c5f959be2b4217df30ba09fda97d567608a5a"
+    },
+    "session.compaction.started": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "ce052af3eff75a1b31a8f1ddc08375ebaea704bed6d24858df6228a342483652"
+    },
+    "session.created": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "7708a4a8ef49e69046864095d542af3164fcca78a79cfcd9f89cca05987c2558"
+    },
+    "session.deleted": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "706b2b1bdb15afecd7945d81cf45244dbff3118b5c3adf2ceb240e1a4c382087"
+    },
+    "session.execution.failed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "69b0d2d793707cb5565619a58f626787acd3d35775bb5afae9ba2288f3bc60ff"
+    },
+    "session.execution.interrupted": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "f4dfea22f56640e5fafa7dba42c9ef3cef5a3830d52793fce9fec75b0f7a0e88"
+    },
+    "session.execution.started": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "7b05563809f665eac277a359626267cdcaba04fb800af6b1a6ecca4c537e9ed5"
+    },
+    "session.execution.succeeded": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "7b3b64e93b1fa1acc7a93e080c030af9d0cc1db073910f2a3a4bd92ed7eeb3d3"
+    },
+    "session.forked": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "63077a7f74b2855cde2ae62bf3a493abfcfad45e01f1ca00508c5ea4710e0ea8"
+    },
+    "session.idle": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "76d400c84271d97c04756ffc82007afa055fdc9510650ead532b77d810cfc274"
+    },
+    "session.inbox.cancelled": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "76bbdbc0b101766288b95e30d5c66328066f266f004d4e0a5c6012fadb931578"
+    },
+    "session.inbox.delivered": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "f574a8ecc706ac35960a80c63dd3824e59473bf0db657a9d4e6a0221fc5917d1"
+    },
+    "session.inbox.delivery.changed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "5ff755a2445fbebf6bd93e7bbff04db25eab0beb8f8e80ecfac3d54ada87adcc"
+    },
+    "session.inbox.enqueued": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "0f7382ffb2be172cc656dd33b0fa51373eaa038b9df36d76d98a0da3ecde4dba"
+    },
+    "session.instructions.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "a88d02d95d1ba27323841b50b4ba2b107d38fd799cc6654c19fb84bc857ba54b"
+    },
+    "session.model.selected": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "f40ffbe8a8b83c1ba442f8026be260b792593e1e434b93967606038e08514321"
+    },
+    "session.moved": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "45d1b2a1ded145d04673b8b8560ccedc4f8e0620cadff30fa888c5841caf676b"
+    },
+    "session.permissions.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "5171c3e01164367bec08849ec18a886420c9a6bc9c831c64dfa22f003ac84437"
+    },
+    "session.reasoning.delta": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "f95f6129e6097988ee3d0cc06cf67a87c4d7ab4d2b53091a879e471bf68720a1"
+    },
+    "session.reasoning.ended": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "4f86ef79bd8b61774b9311943cace562288cba1a84f9f30f6a73bccd1d4f090c"
+    },
+    "session.reasoning.started": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "6d55dc21416161c6337e9ab8636e2c46ab4b32b0789cbbca360c79138172d9df"
+    },
+    "session.renamed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "103cd2a347d6f696ac113c159e2dd5ddd8fc02a05e95cf52150fd7306824507b"
+    },
+    "session.retry.scheduled": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "1df3f84661f9767486b1e10fba68b262ef8eb8b57d6fcabde84f33024c5164ee"
+    },
+    "session.revert.cleared": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "e99affbbc59f4b2cf63c845f664477240533061ab42494b22017075ad22b5f0b"
+    },
+    "session.revert.committed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "a00b0c419ea3a2b9399464aa0ac40da9e4bb47512be7c6781b017828e337e630"
+    },
+    "session.revert.staged": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "49d7a008123dcf4c9b5b6955c9ecb3e11d5816069e0d4f70f33aa2c420511018"
+    },
+    "session.shell.ended": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "2a4edd2f2da3ffda96a6fff9f98ab5ec3f16cec57a47be5d570bca80d6f2dbc0"
+    },
+    "session.shell.started": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "08d001698ce29f225b99153914bfdb0c212ea22351d445aa6222045e956dcd2b"
+    },
+    "session.skill.activated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "0b4f1b6b7ff07fdf21be640e45e3127886e2a2ecc4ac7e50f9c03cc6628f18bf"
+    },
+    "session.status": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "40e1e66562088b5a3660d34d6959e4122d69d81d166cac5291873ea649875ab6"
+    },
+    "session.step.ended": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "4af284279a349a1332bd4f4cd3f6094705704c2b096b308b27f685ad60749e90"
+    },
+    "session.step.failed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "1c9d33d0b97d158e6b8e35aa14b7642234aaf1c31fba030418e006b6c6126f8f"
+    },
+    "session.step.started": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "6921cf7fce5d4041c39ba740e414244c1ae47a9f704722f953df566a911f4465"
+    },
+    "session.step.streamed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "155800283457fc142ac496c161c3ebf4d9b59548b8c2d89735092c6653a4db5e"
+    },
+    "session.synthetic": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "7c46940f4d9c9ebd81a419cc28dc4dfb2307f84e074f4326d0a5b0c03af2f055"
+    },
+    "session.text.delta": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "9172cd45aa5647552c0eaf7ef5ca69c4246628bb59d641cbadd8861fa5d05057"
+    },
+    "session.text.ended": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "120ef079f4ef9cf14cf0df75eca3d7a1990dfd27c4b08d75b604edabfefa7a95"
+    },
+    "session.text.started": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "2d5ca5abd24365e4bde780de1a33ced6a82a0eecf7a0957242b23c8d5471000d"
+    },
+    "session.tool.called": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "89f12de054f05cc8b3a338bd83d8dc7f856b20e3d311313cd069ead8f2b9262d"
+    },
+    "session.tool.failed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "ff343c9200d94fdc677d8743de25f46d1c1fad79eca3b4dffa9fea59c7c4e980"
+    },
+    "session.tool.input.delta": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "59623dba33a1ea0cf566ca00649b034932374157679a4095c0f5eca68dfb9b9a"
+    },
+    "session.tool.input.ended": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "538d4c1333359cdc813aea62237d46397fa11e1dc91653399426a2fc6e889e67"
+    },
+    "session.tool.input.started": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "8ea521ef88b27514dc928c8c467f9a5b1d1ff9924cba23fc5986936b8ff847ea"
+    },
+    "session.tool.progress": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "630fb999d7a83cd0a5c653a6f12cee3b9c9fa4fcc5c18693c45bab57d349b39f"
+    },
+    "session.tool.success": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "710a2c4bc083c4da42a34fd8f5795521b5090df27630cd135294f538bd8a47a7"
+    },
+    "session.usage.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "2d244aea024074e01abe178d8fbe3a691801d61191cf80df525fd3902b189c0a"
+    },
+    "session.viewed": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "fe283bab40a625f69cb9a3df8607030dffe4b4e9550ee4feaee0fab23a71ce1b"
+    },
+    "shell.created": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "e90f91cd00ba3d95418f0392542cc7efd67c0156fbae976e4e55511a563c9cd0"
+    },
+    "shell.deleted": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "23cd37535bcfc16fb3ffd7fcedf55c83ca925f0eb7d11b2132a73240fa16c9a0"
+    },
+    "shell.exited": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "b040db05914e17724c064b3355168d8b2f73cd707001d57889d64ace8131f8e9"
+    },
+    "skill.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "05b1cd5ce5e7a156eb6417859eaa50f6f8a8a0af49ca0fa29e53806bed6cf849"
+    },
+    "tui.command.execute": {
+      "expectedProductionMention": false,
+      "note": "TUI-only event has no Palot desktop product owner.",
+      "payloadFingerprint": "c6212d3ed582d78f2fbd434df43def2969ac7c04c0c234a5eb3ca3ec063a0308"
+    },
+    "tui.prompt.append": {
+      "expectedProductionMention": false,
+      "note": "TUI-only event has no Palot desktop product owner.",
+      "payloadFingerprint": "b1472314b799b5b9b1fc0b35e9a0ec4f3ac2e7e6f7a280b78918bc5ff5de1ebc"
+    },
+    "tui.session.select": {
+      "expectedProductionMention": false,
+      "note": "TUI-only event has no Palot desktop product owner.",
+      "payloadFingerprint": "7a384e19b9932fa5c086a015ba831c2eadc396c768c3b24570e463c8d1c6883e"
+    },
+    "tui.toast.show": {
+      "expectedProductionMention": false,
+      "note": "TUI-only event has no Palot desktop product owner.",
+      "payloadFingerprint": "fac80cf3f95689d8d89072b89b4b449d7fea5a0904e31f6f909df427d9a3c3b2"
+    },
+    "vcs.branch.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "45ab753a6897dcee162fd421aef614a5287d149030859b82fc6e6a924a21fdba"
+    },
+    "websearch.updated": {
+      "expectedProductionMention": true,
+      "note": "Invalidates the affected location's settings inventory when web-search providers change.",
+      "payloadFingerprint": "20be5d4877fef264590c5929a4cedb55e0bb11fa6090f777b713f9e4d5212233"
+    },
+    "worktree.resolved": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "044c409f67672a4a3f09a3b13f3c4a314c7eadc749f9c4051f8fab3513f2d61a"
+    },
+    "worktree.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "6732f1629c77b38ee87ad41d1c2b14c2e24566d0ba9632d281c6742b0f7f2638"
+    }
+  },
+  "operations": {
+    "server.experimental.persistentPty.connectToken": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "server.experimental.persistentPty.create": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "server.experimental.persistentPty.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "server.experimental.persistentPty.handoff": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Experimental terminal handoff is not exposed by Palot's current terminal controls."
+    },
+    "server.experimental.persistentPty.list": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": true,
+      "note": "Workbench tabs persist the exact session-owned PTY identity and reconcile lifecycle through targeted get calls and events; production does not need to enumerate terminals."
+    },
+    "server.experimental.persistentPty.read": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Palot renders the connected PTY stream; reading the agent-selected terminal's retained rows is a separate product capability."
+    },
+    "server.experimental.persistentPty.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "server.experimental.persistentPty.shutdown": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "The OpenCode service owns its shared persistent PTY daemon lifecycle; Palot removes individual terminals and must not shut down terminals owned by other clients."
+    },
+    "server.experimental.persistentPty.snapshot": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "server.experimental.persistentPty.update": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.agent.get": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Agent list already supplies the product catalog; no single-agent workflow needs another request."
+    },
+    "v2.agent.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.command.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.config.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.config.preferences": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Reviewed 2.0.2 addition: reads highest-precedence global shell/websearch preferences. No Palot product caller; absent from the inspected beta-19507 contract."
+    },
+    "v2.config.shells": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Reviewed 2.0.2 addition: lists shell path, name, and acceptability through the official Promise client. No Palot product caller; absent from the inspected beta-19507 contract."
+    },
+    "v2.config.updatePreferences": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Reviewed 2.0.2 addition: patches optional global shell/websearch preferences, with null clearing each field. No Palot product caller; absent from the inspected beta-19507 contract."
+    },
+    "v2.credential.activate": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.credential.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.credential.update": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.debug.location.evict": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "OpenCode debug operation is intentionally excluded from product UI."
+    },
+    "v2.debug.location.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Attention reconciliation enumerates loaded locations to discover pending requests without activating historical session locations; no standalone debug UI."
+    },
+    "v2.event.subscribe": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.experimental.integration.wellknown.add": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.experimental.migration.v1.status": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Legacy V1 migration status is not part of Palot 2 workflows."
+    },
+    "v2.form.request.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.fs.find": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.fs.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.fs.read": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.generate.text": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Standalone generation has no product owner; session workflows remain the durable path."
+    },
+    "v2.health.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.command.cancel": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.command.connect": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.command.status": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.connect.key": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.get": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Integration list already supplies the settings snapshot."
+    },
+    "v2.integration.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.oauth.cancel": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.oauth.complete": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.oauth.connect": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.integration.oauth.status": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.location.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.mcp.add": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.mcp.connect": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.mcp.disconnect": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.mcp.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.mcp.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.mcp.resource.catalog": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.message.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.model.default": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.model.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.permission.request.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.permission.saved.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.permission.saved.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.persistentPty.connect": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.plugin.awaitActivation": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.plugin.check": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.plugin.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.plugin.update": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.project.current": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Palot resolves projects from explicit locations rather than process-global current state."
+    },
+    "v2.project.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.project.update": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Project settings edit name, icon, startup command, and canonical checkout through the official update API."
+    },
+    "v2.provider.get": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Provider list already supplies the model catalog metadata Palot uses."
+    },
+    "v2.provider.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.pty.connect": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.pty.connect.token": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.pty.create": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.pty.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.pty.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.pty.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.pty.update": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.reference.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.rpc.call": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "No Palot feature currently consumes a plugin-defined RPC contract. Generic plugin execution is not added as part of the release migration."
+    },
+    "v2.server.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.active": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.background": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.command": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.compact": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.context": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.create": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.environment": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Session environment mutation is intentionally excluded until a scoped product workflow owns it."
+    },
+    "v2.session.export": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.fork": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.form.cancel": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.form.create": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Forms are agent-created blocking requests; Palot only renders and answers them."
+    },
+    "v2.session.form.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.form.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.form.reply": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.form.state": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Form events and request snapshots are the canonical product lifecycle."
+    },
+    "v2.session.generate": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Standalone session generation is intentionally excluded in favor of durable prompts."
+    },
+    "v2.session.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.import": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.inbox.cancel": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.inbox.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.inbox.queue": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.inbox.steer": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.instructions.entry.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.instructions.entry.put": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.instructions.entry.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.interrupt": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.log": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.message": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Transcript pagination and event reconciliation already supply message detail."
+    },
+    "v2.session.move": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.permission.create": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Permissions are agent-created blocking requests; Palot only renders and answers them."
+    },
+    "v2.session.permission.get": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Permission events and request snapshots are the canonical product lifecycle."
+    },
+    "v2.session.permission.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.permission.reply": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.permission.rules": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.prompt": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.rename": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.revert.clear": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.revert.commit": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.revert.stage": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.shell": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Raw session shell mutation is intentionally excluded; PTY and tool execution own shell UX."
+    },
+    "v2.session.skill": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Composer skill references cover user skill invocation without a separate mutation surface."
+    },
+    "v2.session.stats": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.switchAgent": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.switchModel": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.synthetic": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Synthetic message mutation is an internal automation primitive, not a user workflow."
+    },
+    "v2.session.view": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.session.wait": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.shell.create": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Raw shell lifecycle is intentionally excluded; PTY and agent tools own terminal execution."
+    },
+    "v2.shell.get": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": true,
+      "note": "Raw shell lifecycle is intentionally excluded; running-shell snapshots cover product state."
+    },
+    "v2.shell.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.shell.output": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": true,
+      "note": "Raw shell lifecycle is intentionally excluded; transcript and PTY streams own output."
+    },
+    "v2.shell.remove": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": true,
+      "note": "Raw shell lifecycle is intentionally excluded; agent/runtime ownership controls cleanup."
+    },
+    "v2.shell.timeout": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": true,
+      "note": "Raw shell lifecycle is intentionally excluded until a product timeout workflow exists."
+    },
+    "v2.skill.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.vcs.base": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Branch review uses the server's inferred base, with a location-scoped explicit ref when inference is unavailable or overridden."
+    },
+    "v2.vcs.branches": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.vcs.diff": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.vcs.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.vcs.status": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.websearch.providers": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.websearch.query": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Standalone web search has no product owner; agent tools remain the durable path."
+    },
+    "v2.workspace.create": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Logical workspace lifecycle is intentionally left to OpenCode and worktree APIs."
+    },
+    "v2.workspace.destroy": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Logical workspace lifecycle is intentionally left to OpenCode and worktree APIs."
+    },
+    "v2.worktree.create": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.worktree.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.worktree.refresh": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "v2.worktree.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    }
+  },
+  "schemaVersion": 2
+}

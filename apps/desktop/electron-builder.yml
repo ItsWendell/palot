@@ -1,89 +1,99 @@
-appId: com.palot.desktop
+appId: dev.palot.desktop
 productName: Palot
-copyright: Copyright (c) 2025 Palot Contributors
+copyright: Copyright (c) 2026 Palot contributors
+
 directories:
   buildResources: resources
   output: release
 
 files:
-  - "out/**/*"
-  # Native N-API addon for macOS liquid glass / vibrancy effects.
-  # Must be included because externalizeDepsPlugin keeps it external.
-  - "node_modules/electron-liquid-glass/**/*"
+  - out/**/*
+  - "!out/**/*.map"
+  - "!node_modules/**/*.map"
+  - package.json
+  - node_modules/electron-liquid-glass/**/*
+  - node_modules/node-gyp-build/**/*
+  - node_modules/objc-js/**/*
 
-# Bundle the CLI launcher script into the app package.
-# macOS: Contents/Resources/bin/palot
-# Linux: resources/bin/palot
-# Windows: resources/bin/palot.cmd
 extraResources:
-  - from: resources/bin
-    to: bin
+  - from: ../../LICENSE
+    to: licenses/LICENSE.palot.txt
+  - from: resources/icons
+    to: icons
     filter:
-      - "**/*"
-  # Tray icon assets — must be at the root of process.resourcesPath
-  # so tray.ts can find them via path.join(process.resourcesPath, "iconTemplate.png")
-  - from: resources/iconTemplate.png
-    to: iconTemplate.png
-  - from: resources/iconTemplate@2x.png
-    to: iconTemplate@2x.png
-  - from: resources/icon.png
-    to: icon.png
-  - from: resources/iconTray.png
-    to: iconTray.png
+      - "**/icon.png"
+      - "**/dock.png"
+      - tray/**
+  - from: drizzle
+    to: drizzle
+  - from: resources/licenses
+    to: licenses
 
-# Rebuild native modules for Electron's Node.js ABI during packaging.
-npmRebuild: true
-
+asar: true
+asarUnpack:
+  - node_modules/electron-liquid-glass/**/*
+  - node_modules/node-gyp-build/**/*
+  - node_modules/objc-js/**/*
+npmRebuild: false
 artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
-
-# Inject version from package.json into the built app
-extraMetadata:
-  main: ./out/main/index.js
+afterPack: scripts/after-pack.cjs
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: true
 
 mac:
-  icon: resources/icon-macos.png
+  icon: resources/icons/stable/icon.icns
+  identity: "-"
+  minimumSystemVersion: "13.0"
+  extraResources:
+    - from: resources/opencode/${arch}
+      to: opencode
   target:
-    - target: dmg
-      arch: [arm64, x64]
-    - target: zip
-      arch: [arm64, x64]
+    - dmg
+    - zip
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
-  # Notarization — uncomment when Apple credentials are configured
-  # notarize:
-  #   teamId: ${env.APPLE_TEAM_ID}
 
 win:
-  icon: resources/icon.ico
+  icon: resources/icons/stable/icon.ico
   target:
     - target: nsis
-      arch: [x64, arm64]
+      arch:
+        - x64
+        - arm64
 
 linux:
+  icon: resources/icons/stable
   executableName: palot
-  icon: resources/linux-icons
+  syncDesktopName: true
+  extraResources:
+    - from: resources/opencode/linux/${arch}
+      to: opencode
   target:
     - target: AppImage
-      arch: [x64]
+      arch:
+        - x64
     - target: deb
-      arch: [x64]
-    - target: rpm
-      arch: [x64]
+      arch:
+        - x64
   category: Development
-  maintainer: palot
   desktop:
     entry:
-      Name: Palot
-      Comment: AI-powered coding assistant
-      Categories: Development;IDE;
-      StartupWMClass: Palot
+      StartupWMClass: dev.palot.desktop
+      Keywords: "AI;Development;OpenCode;"
+    desktopActions:
+      NewTask:
+        Name: New Task
+        Exec: palot --new-task
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-
-publish:
-  provider: github
-  releaseType: draft

@@ -1,0 +1,36 @@
+{
+  "name": "@palot/orbits",
+  "version": "0.1.0",
+  "description": "Dotted thinking orb indicators for agent interfaces",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "bun run clean && tsc -p tsconfig.build.json",
+    "check-types": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "react": "^19.2.4",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  }
+}

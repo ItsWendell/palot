@@ -1,0 +1,4 @@
+interface:
+  display_name: "Palot Desktop Development"
+  short_description: "Operate Palot Electron builds and desktop channels"
+  default_prompt: "Use $palot-desktop-dev to build, restart, or package the Palot desktop app safely."

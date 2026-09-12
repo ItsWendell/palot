@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ItsWendell/palot/security/advisories/new
+    about: Report vulnerabilities and sensitive data exposure privately.
+  - name: Support guidance
+    url: https://github.com/ItsWendell/palot/blob/main/SUPPORT.md
+    about: Check where Palot, OpenCode, and provider problems should be reported.

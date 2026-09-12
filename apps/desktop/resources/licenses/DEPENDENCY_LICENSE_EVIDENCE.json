@@ -1,0 +1,93 @@
+[
+  {
+    "name": "@palot/desktop",
+    "version": "0.12.0",
+    "license": "MIT",
+    "workspace": "apps/desktop",
+    "file": "LICENSE",
+    "sha256": "d3a9ac2c968bf57e9979f7a91f27a16d67f2dc734b050c3171c3f0e9ede2113a",
+    "firstLine": 1,
+    "lastLine": 21,
+    "source": "Palot repository LICENSE; root package.json explicitly lists apps/desktop and both manifests declare MIT."
+  },
+  {
+    "name": "@react-grab/cli",
+    "version": "0.2.0",
+    "license": "MIT",
+    "file": "LICENSE",
+    "sha256": "3cb91aec78b7a54136b60a81055a3e1e5bac3c2d47d06dc866948129e4cd4f45",
+    "firstLine": 1,
+    "lastLine": 21,
+    "source": "https://registry.npmjs.org/@react-grab/cli/-/cli-0.2.0.tgz#package/LICENSE"
+  },
+  {
+    "name": "khroma",
+    "version": "2.1.0",
+    "license": "MIT",
+    "file": "license",
+    "sha256": "66b333b0f66759a0b710459e03f7029abe17f4358114a128d2c972e642961b49",
+    "firstLine": 1,
+    "lastLine": 21,
+    "source": "https://registry.npmjs.org/khroma/-/khroma-2.1.0.tgz#package/license"
+  },
+  {
+    "name": "esrecurse",
+    "version": "4.3.0",
+    "license": "BSD-2-Clause",
+    "file": "README.md",
+    "sha256": "a7007c78c9d9da690ef6cdb0e7a3427d05832edb00abd1f5a9882700d73be4ad",
+    "firstLine": 147,
+    "lastLine": 171,
+    "source": "https://registry.npmjs.org/esrecurse/-/esrecurse-4.3.0.tgz#package/README.md"
+  },
+  {
+    "name": "fastdom",
+    "version": "1.0.12",
+    "license": "MIT",
+    "file": "README.md",
+    "sha256": "cc5669ab6f7741bb061c8a7244addc8e3af1f84ec7d2445744b59d0169a87d11",
+    "firstLine": 211,
+    "lastLine": 221,
+    "source": "https://registry.npmjs.org/fastdom/-/fastdom-1.0.12.tgz#package/README.md"
+  },
+  {
+    "name": "imurmurhash",
+    "version": "0.1.4",
+    "license": "MIT",
+    "file": "README.md",
+    "sha256": "4491517f7deb68d0b2a3bb590e785e276a60f12448447a9650d0bd50161a101c",
+    "firstLine": 103,
+    "lastLine": 122,
+    "source": "https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz#package/README.md"
+  },
+  {
+    "name": "isarray",
+    "version": "1.0.0",
+    "license": "MIT",
+    "file": "README.md",
+    "sha256": "ff138e683771b187f3629c383db72ee7d632009010a36d08e18e8d2a34222ec7",
+    "firstLine": 38,
+    "lastLine": 60,
+    "source": "https://registry.npmjs.org/isarray/-/isarray-1.0.0.tgz#package/README.md"
+  },
+  {
+    "name": "lru_map",
+    "version": "0.4.1",
+    "license": "MIT",
+    "file": "README.md",
+    "sha256": "d444ac3606db5ac9790b4aa809172b9f7d88fe7a0093a1b01fd0abefb277dc05",
+    "firstLine": 194,
+    "lastLine": 214,
+    "source": "https://registry.npmjs.org/lru_map/-/lru_map-0.4.1.tgz#package/README.md"
+  },
+  {
+    "name": "strictdom",
+    "version": "1.0.1",
+    "license": "MIT",
+    "file": "README.md",
+    "sha256": "9280accadb9c4d0aa2de2b304da7f477eacb0823504964b71370eb7ab99c202d",
+    "firstLine": 99,
+    "lastLine": 109,
+    "source": "https://registry.npmjs.org/strictdom/-/strictdom-1.0.1.tgz#package/README.md"
+  }
+]

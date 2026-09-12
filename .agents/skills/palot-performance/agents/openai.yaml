@@ -1,0 +1,4 @@
+interface:
+  display_name: "Palot Performance"
+  short_description: "Profile Palot CPU, memory, React, frames, and GPU work"
+  default_prompt: "Use $palot-performance to measure Palot 2, identify the dominant cost, and verify a focused improvement."

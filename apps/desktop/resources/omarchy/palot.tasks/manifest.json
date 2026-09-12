@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "palot.tasks",
+  "name": "Palot tasks",
+  "version": "1.0.0",
+  "author": "Palot",
+  "license": "MIT",
+  "description": "Running tasks and requests awaiting attention in Palot.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "Palot tasks",
+    "category": "AI",
+    "allowMultiple": true,
+    "defaults": { "channel": "nightly", "executable": "palot-nightly" },
+    "schema": [
+      {
+        "key": "channel",
+        "type": "enum",
+        "label": "Channel",
+        "options": ["stable", "nightly"],
+        "defaultValue": "nightly"
+      },
+      {
+        "key": "executable",
+        "type": "string",
+        "label": "Palot executable",
+        "defaultValue": "palot-nightly"
+      }
+    ]
+  }
+}

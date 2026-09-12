@@ -1,0 +1,4 @@
+interface:
+  display_name: "Palot Desktop Testing"
+  short_description: "Verify Palot with isolated E2E or scoped native inspection"
+  default_prompt: "Use $test-palot-desktop to verify the affected behavior with the smallest matching isolated scenario. Use live inspection only when the task needs real-provider behavior or requests it; capture screenshots for visual QA."

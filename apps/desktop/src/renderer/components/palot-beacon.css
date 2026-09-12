@@ -1,0 +1,185 @@
+.palot-beacon .palot-beacon-lean {
+  transform-origin: 32px 32px;
+  transform: rotate(var(--beacon-lean, 0deg));
+  transition: transform 420ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.palot-beacon .palot-beacon-tracking {
+  transform: translate(var(--beacon-look-x, 0px), var(--beacon-look-y, 0px));
+  transition: transform 240ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.palot-beacon .palot-beacon-loop {
+  transform-origin: 32px 32px;
+}
+.palot-beacon .palot-beacon-core {
+  transform-origin: 36.5px 28px;
+}
+
+.palot-beacon[data-gesture="hello"] .palot-beacon-loop {
+  animation: palot-beacon-hello-loop 6.2s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.palot-beacon[data-gesture="hello"] .palot-beacon-gaze {
+  animation: palot-beacon-hello-gaze 6.2s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.palot-beacon[data-gesture="hello"] .palot-beacon-core {
+  animation: palot-beacon-hello-blink 6.2s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.palot-beacon[data-gesture="orbit"] .palot-beacon-loop {
+  transform-origin: 36.5px 28px;
+  animation: palot-beacon-orbit-loop 6s cubic-bezier(0.75, 0, 0.25, 1) both;
+}
+.palot-beacon[data-gesture="orbit"] .palot-beacon-core {
+  animation: palot-beacon-orbit-blink 6s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.palot-beacon[data-spinning="true"] > svg {
+  animation: palot-beacon-spin 550ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes palot-beacon-hello-loop {
+  0%,
+  8% {
+    transform: rotate(0);
+  }
+  20% {
+    transform: rotate(-12deg);
+  }
+  30% {
+    transform: rotate(9deg);
+  }
+  38% {
+    transform: rotate(-6deg);
+  }
+  46%,
+  60% {
+    transform: rotate(0);
+  }
+  70% {
+    transform: rotate(12deg);
+  }
+  80% {
+    transform: rotate(-8deg);
+  }
+  88% {
+    transform: rotate(3deg);
+  }
+  96%,
+  100% {
+    transform: rotate(0);
+  }
+}
+@keyframes palot-beacon-hello-gaze {
+  0%,
+  8% {
+    transform: translate(0, 0);
+  }
+  18%,
+  23% {
+    transform: translate(3px, -3px);
+  }
+  30%,
+  35% {
+    transform: translate(-3px, 1px);
+  }
+  44%,
+  60% {
+    transform: translate(0, 0);
+  }
+  68%,
+  73% {
+    transform: translate(3px, 2px);
+  }
+  80%,
+  84% {
+    transform: translate(-2px, -2px);
+  }
+  94%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+@keyframes palot-beacon-hello-blink {
+  0%,
+  20%,
+  24%,
+  28%,
+  65%,
+  69%,
+  75%,
+  79%,
+  100% {
+    transform: scaleY(1);
+  }
+  22%,
+  26%,
+  67%,
+  77% {
+    transform: scaleY(0.16);
+  }
+}
+@keyframes palot-beacon-orbit-loop {
+  0% {
+    transform: rotate(0) scale(1);
+  }
+  8% {
+    transform: rotate(0) scale(0.72);
+  }
+  50% {
+    transform: rotate(-180deg) scale(0.72);
+  }
+  92% {
+    transform: rotate(-360deg) scale(0.72);
+  }
+  100% {
+    transform: rotate(-360deg) scale(1);
+  }
+}
+@keyframes palot-beacon-orbit-blink {
+  0%,
+  14%,
+  18%,
+  47%,
+  51%,
+  80%,
+  84%,
+  100% {
+    transform: scaleY(1);
+  }
+  16%,
+  49%,
+  82% {
+    transform: scaleY(0.16);
+  }
+}
+@keyframes palot-beacon-spin {
+  0% {
+    transform: rotate(0) scale(1);
+  }
+  72% {
+    transform: rotate(-375deg) scale(1.18);
+  }
+  90% {
+    transform: rotate(-357deg) scale(1.03);
+  }
+  100% {
+    transform: rotate(-360deg) scale(1);
+  }
+}
+
+/* Both preference sources win immediately, including in-flight CSS transitions. */
+:root[data-reduced-motion="true"] .palot-beacon,
+:root[data-reduced-motion="true"] .palot-beacon *,
+.palot-beacon:disabled,
+.palot-beacon:disabled * {
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .palot-beacon,
+  .palot-beacon * {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}

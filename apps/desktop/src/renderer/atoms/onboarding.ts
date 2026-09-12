@@ -1,38 +1,22 @@
-/**
- * Onboarding state atoms.
- *
- * Tracks whether the first-run onboarding has been completed.
- * Persisted to localStorage so returning users skip onboarding.
- */
+import { persistedAtom } from "./persisted";
 
-import { atomWithStorage } from "jotai/utils"
+export const ONBOARDING_VERSION = 1;
 
-// ============================================================
-// Types
-// ============================================================
+export const onboardingCompletedProfilesAtom = persistedAtom({
+  key: "onboarding.completed-profiles",
+  initialValue: {} as Record<string, number>,
+  validate: (value): value is Record<string, number> => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    return Object.entries(value as Record<string, unknown>).every(
+      ([profileID, version]) =>
+        profileID.length > 0 &&
+        typeof version === "number" &&
+        Number.isInteger(version) &&
+        version > 0,
+    );
+  },
+});
 
-export interface OnboardingState {
-	completed: boolean
-	completedAt: string | null
-	skippedSteps: string[]
-	migrationPerformed: boolean
-	/** Which provider(s) were migrated from (e.g. ["claude-code", "cursor"]). */
-	migratedFrom: string[]
-	opencodeVersion: string | null
-	/** Number of AI providers connected during onboarding. */
-	providersConnected: number
+export function onboardingComplete(completed: Record<string, number>, profileID: string): boolean {
+  return (completed[profileID] ?? 0) >= ONBOARDING_VERSION;
 }
-
-// ============================================================
-// Atoms
-// ============================================================
-
-export const onboardingStateAtom = atomWithStorage<OnboardingState>("palot:onboarding", {
-	completed: false,
-	completedAt: null,
-	skippedSteps: [],
-	migrationPerformed: false,
-	migratedFrom: [],
-	opencodeVersion: null,
-	providersConnected: 0,
-})

@@ -1,0 +1,4 @@
+.agents/skills/
+apps/desktop/src/renderer/components/ui/
+apps/desktop/src/renderer/routeTree.gen.ts
+tools/oxlint/anti-slop/
