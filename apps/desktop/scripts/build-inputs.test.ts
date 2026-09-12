@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 function fixture() {
-  const repository = fs.mkdtempSync(path.join(os.tmpdir(), "palot-build-inputs-"));
+  const repository = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "palot-build-inputs-")));
   temporary.push(repository);
   const appRoot = path.join(repository, "apps/desktop");
   const source = path.join(appRoot, "src");
