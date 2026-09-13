@@ -203,7 +203,7 @@ describe("OpenCode release manager", () => {
   });
 
   it("uses only official binary feeds and exposes no URLs, paths or checksums", async () => {
-    const h = await harness();
+    const h = await harness({ version: SUPPORTED_OPENCODE_VERSION });
     const status = await h.manager.check();
     expect(h.fetcher).toHaveBeenCalledWith(
       "https://opencode.ai/update/api/latest/cli/opencode",
@@ -215,14 +215,14 @@ describe("OpenCode release manager", () => {
     );
     expect(status.offer).toEqual({
       channel: "stable",
-      version: "2.0.2",
+      version: SUPPORTED_OPENCODE_VERSION,
       tested: true,
       requiresConfirmation: false,
       size: h.archive.length,
     });
     expect(status.checkedAt).toBe(123456);
     status.offer!.version = "tampered";
-    expect(h.manager.status().offer!.version).toBe("2.0.2");
+    expect(h.manager.status().offer!.version).toBe(SUPPORTED_OPENCODE_VERSION);
     h.manager.setChannel("beta");
     h.version("2.0.1");
     expect((await h.manager.check()).offer).toMatchObject({

@@ -30,6 +30,7 @@ export default defineConfig({
   },
   test: {
     environment: "happy-dom",
+    setupFiles: ["./src/renderer/test-utils/happy-dom-setup.ts"],
     include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts", "test/**/*.test.{ts,tsx}"],
     clearMocks: true,
     restoreMocks: true,

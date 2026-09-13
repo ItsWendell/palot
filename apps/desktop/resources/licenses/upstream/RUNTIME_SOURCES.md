@@ -27,14 +27,14 @@ sections. Their presence here does not identify those test assets as shipped.
 `z2d-pixman.NOTICE.txt` additionally retains the complete radial-gradient
 file-level notice from z2d's `src/gradient.zig`, lines 565–589.
 
-## OpenCode 2.0.2 and Bun 1.4.2
+## OpenCode 2.0.3 and Bun 1.4.2
 
 The OpenCode executable is acquired separately from its official distributor,
 not included in Palot's desktop installers. These references identify the runtime
-used for Palot's integration checks.
+pinned for Palot's integration checks.
 
 - OpenCode publication source:
-  <https://github.com/anomalyco/opencode/tree/cf4f1fb45e2695d86a4ef8c20a3883f4ac79935a>
+  <https://github.com/anomalyco/opencode/tree/9c8a4ea4ffae6ab53be4b19a3e88ff966e882221>
 - Bun runtime source:
   <https://github.com/oven-sh/bun/tree/744846f844374847c902b5e7fd59b4342a51ef99>
 - Bun's pinned WebKit/JavaScriptCore source:

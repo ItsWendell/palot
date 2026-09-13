@@ -9,7 +9,7 @@ import * as schema from "./database/schema";
 import { palotDatabase } from "./database/client";
 
 export class SessionTriageStore {
-  constructor(private readonly database: NodeSQLiteDatabase<typeof schema>) {}
+  constructor(private readonly database: NodeSQLiteDatabase) {}
 
   load(profileID: string): SessionTriageSnapshot {
     const profile = this.database

@@ -17,12 +17,12 @@ describe("OpenCode service compatibility", () => {
     expect(parseOpenCodeVersionOutput("opencode v2.0.2\nerror")).toBeNull();
   });
   it("accepts the stable baseline and the contract-reviewed beta", () => {
-    expect(isSupportedOpenCodeVersion("2.0.2")).toBe(true);
+    expect(isSupportedOpenCodeVersion("2.0.3")).toBe(true);
     expect(isSupportedOpenCodeVersion("0.0.0-beta-19507")).toBe(true);
   });
 
   it("accepts stable V2 additions without pretending every release was tested", () => {
-    for (const version of ["2.0.0", "2.0.1", "2.0.3", "2.1.0", "2.99.123"]) {
+    for (const version of ["2.0.0", "2.0.1", "2.0.2", "2.1.0", "2.99.123"]) {
       expect(isSupportedOpenCodeVersion(version)).toBe(true);
       expect(shouldReuseOpenCodeService(version)).toBe(true);
       expect(isTestedOpenCodeVersion(version)).toBe(false);
@@ -67,7 +67,7 @@ describe("OpenCode service compatibility", () => {
   });
 
   it("describes the exact supported version", () => {
-    expect(supportedOpenCodeVersionLabel()).toBe("2.0.2");
+    expect(supportedOpenCodeVersionLabel()).toBe("2.0.3");
   });
 
   it("reuses stable and tested beta services without requiring consent", () => {

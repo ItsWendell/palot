@@ -1,6 +1,8 @@
 /**
  * React renderer adapted from @tanstack/markdown 0.0.13 src/react.ts.
  * https://github.com/TanStack/markdown/blob/720e8c2db5973a3401914a8b96d9fd05c30d6fc5/src/react.ts
+ * Incorporates list, footnote, inline component, and fence metadata fixes from 0.0.15:
+ * https://github.com/TanStack/markdown/blob/6936a0106d2c8759d51f15aa8ad98f7363817bbb/src/react.ts
  * SPDX-License-Identifier: MIT
  */
 
@@ -8,6 +10,7 @@ import {
   type BlockNode,
   type ComponentNode,
   type FootnoteItemNode,
+  type InlineComponentNode,
   type InlineNode,
   type ListItemNode,
   type MarkdownDocument,
@@ -224,7 +227,9 @@ function renderBlockReact(
         tag,
         {
           key,
-          ...(node.ordered && node.start && node.start !== 1 ? { start: node.start } : {}),
+          ...(node.ordered && node.start !== undefined && node.start !== 1
+            ? { start: node.start }
+            : {}),
         },
         node.items.map((item, index) => {
           const itemAnimation = animationPlan?.listItems.get(item);
@@ -358,6 +363,8 @@ function renderInlineReact(
       return h(options, "em", { key }, renderInlines(node.children, options, animationPlan));
     case "strike":
       return h(options, "del", { key }, renderInlines(node.children, options, animationPlan));
+    case "inlineComponent":
+      return renderComponentReact(node, options, key, animationPlan);
     case "footnoteReference":
       const referenceID = scopedMarkdownID(
         options,
@@ -495,6 +502,7 @@ function renderCodeBlockReact(
     ? {
         dangerouslySetInnerHTML: {
           __html: highlighter(node.value, lang, {
+            ...(node.meta && { meta: node.meta }),
             ...(node.highlightLines && { highlightLines: node.highlightLines }),
             ...(options.codeLineNumbers !== undefined && {
               lineNumbers: options.codeLineNumbers,
@@ -509,7 +517,7 @@ function renderCodeBlockReact(
     {
       className: `tm-code${options.codeLineNumbers ? " tm-code--line-numbers" : ""}`,
       "data-lang": lang,
-      ...(node.meta ? { "data-code-meta": node.meta } : {}),
+      ...(node.meta ? { "data-meta": node.meta, "data-code-meta": node.meta } : {}),
       ...(node.highlightLines
         ? { "data-code-highlight-lines": node.highlightLines.join(",") }
         : {}),
@@ -570,6 +578,7 @@ function inlineText(nodes: InlineNode[]): string {
         case "strong":
         case "emphasis":
         case "strike":
+        case "inlineComponent":
           return inlineText(node.children);
         default:
           return "";
@@ -702,9 +711,7 @@ function renderFootnoteItemReact(
   const lastIndex = item.children.length - 1;
   const backrefs = renderFootnoteBackrefsReact(item, options);
 
-  if (lastIndex < 0) return [h(options, "p", { key: "backref-wrapper" }, backrefs.slice(1))];
-
-  return item.children.map((child, index) => {
+  const result = item.children.map((child, index) => {
     if (index === lastIndex && child.type === "paragraph") {
       return h(
         options,
@@ -716,6 +723,10 @@ function renderFootnoteItemReact(
     }
     return renderBlockReact(child, options, `${index}`, animationPlan);
   });
+  if (item.children[lastIndex]?.type !== "paragraph") {
+    result.push(h(options, "p", { key: "backref-wrapper" }, backrefs.slice(1)));
+  }
+  return result;
 }
 
 function renderFootnoteBackrefsReact(
@@ -762,12 +773,12 @@ function h(
 }
 
 function renderComponentReact(
-  node: ComponentNode,
+  node: ComponentNode | InlineComponentNode,
   options: MarkdownReactOptions,
   key?: string,
   animationPlan?: StreamingAnimationPlan,
 ): ReactElement {
-  const tag = node.tagName ?? "md-comment-component";
+  const tag = node.tagName ?? (node.type === "inlineComponent" ? "span" : "md-comment-component");
   const props: Record<string, string> = { ...node.properties };
   if (!node.tagName) {
     props["data-component"] = node.name;
@@ -777,9 +788,11 @@ function renderComponentReact(
     options,
     tag,
     { key, ...props },
-    node.children.map((child, index) =>
-      renderBlockReact(child, options, `${key}:${index}`, animationPlan),
-    ),
+    node.type === "inlineComponent"
+      ? renderInlines(node.children, options, animationPlan)
+      : node.children.map((child, index) =>
+          renderBlockReact(child, options, `${key}:${index}`, animationPlan),
+        ),
   );
 }
 
@@ -1044,6 +1057,7 @@ function collectInlineWords(
       case "emphasis":
       case "strike":
       case "link":
+      case "inlineComponent":
         collectInlineWords(node.children, collection, listItem);
         break;
       case "inlineCode":

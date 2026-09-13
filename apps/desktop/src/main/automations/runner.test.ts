@@ -9,7 +9,6 @@ import { drizzle } from "drizzle-orm/node-sqlite";
 import { migrate } from "drizzle-orm/node-sqlite/migrator";
 import { describe, expect, it, vi } from "vitest";
 import type { AutomationDefinition } from "../../shared";
-import * as schema from "../database/schema";
 import { AutomationRepository } from "./repository";
 import {
   AutomationRunner,
@@ -23,7 +22,7 @@ describe("automation worktree location", () => {
     "uses server-selected directories and location-scoped Git %s",
     async (mode) => {
       const sqlite = new DatabaseSync(":memory:");
-      const database = drizzle({ client: sqlite, schema });
+      const database = drizzle({ client: sqlite });
       migrate(database, { migrationsFolder: path.resolve("drizzle") });
       const repository = new AutomationRepository(database);
       const definition = fixture("/project");
@@ -193,7 +192,7 @@ describe("AutomationRunner admission", () => {
   it("marks uncertain admission unknown without retrying the prompt", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "palot-runner-"));
     const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     const repository = new AutomationRepository(database);
     const definition = fixture(directory);
@@ -260,7 +259,7 @@ describe("AutomationRunner admission", () => {
 
   it("leaves session-targeted runs on transcript continuity", async () => {
     const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     const repository = new AutomationRepository(database);
     const standalone = fixture("/project");
@@ -315,7 +314,7 @@ describe("AutomationRunner admission", () => {
   it("auto-approves only the standalone automation memory directory", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "palot-runner-"));
     const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     const repository = new AutomationRepository(database);
     const definition = fixture(directory);
@@ -395,7 +394,7 @@ describe("AutomationRunner admission", () => {
 
   it("treats beta question forms as question attention", () => {
     const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     const repository = new AutomationRepository(database);
     const definition = fixture("/project");
@@ -442,7 +441,7 @@ describe("AutomationRunner admission", () => {
 
   it("records authoritative live execution timestamps", () => {
     const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     const repository = new AutomationRepository(database);
     const definition = fixture("/project");
@@ -478,7 +477,7 @@ describe("AutomationRunner admission", () => {
 
   it("ignores live execution events before the automation prompt is admitted", () => {
     const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     const repository = new AutomationRepository(database);
     const definition = fixture("/project");
@@ -518,7 +517,7 @@ describe("AutomationRunner worktrees", () => {
 
   function setup() {
     const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     const repository = new AutomationRepository(database);
     const definition: AutomationDefinition = {

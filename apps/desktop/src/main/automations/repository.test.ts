@@ -6,7 +6,6 @@ import { drizzle } from "drizzle-orm/node-sqlite";
 import { migrate } from "drizzle-orm/node-sqlite/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AutomationDefinition } from "../../shared";
-import * as schema from "../database/schema";
 import { AutomationRepository } from "./repository";
 
 describe("AutomationRepository", () => {
@@ -15,7 +14,7 @@ describe("AutomationRepository", () => {
 
   beforeEach(() => {
     sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     repository = new AutomationRepository(database);
   });

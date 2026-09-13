@@ -28,6 +28,7 @@ import { composerSelectionMemoryScenario } from "./composer-selection-memory-sce
 import { composerPermissionsScenario } from "./composer-permissions-scenario.ts";
 import { composerContextScenario } from "./composer-context-scenario.ts";
 import { themePresetsScenario } from "./theme-presets-scenario.ts";
+import { markdownRichScenario } from "./markdown-rich-scenario.ts";
 import { assertCommandPaletteMaterial } from "./appearance-accessibility.ts";
 import { linuxDesktopScenario } from "./linux-desktop-scenario.ts";
 import { compactWindowsScenario } from "./compact-windows-scenario.ts";
@@ -162,6 +163,7 @@ interface ScenarioContext {
 export const scenarios = {
   "settings-source-updates": sourceUpdatesScenario,
   "theme-presets": themePresetsScenario,
+  "markdown-rich": markdownRichScenario,
   "composer-context": composerContextScenario,
   "beacon-motion": beaconMotionScenario,
   "startup-attention": startupAttentionScenario,

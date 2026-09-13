@@ -32,8 +32,8 @@
     "test:e2e": "bun run --cwd apps/desktop test:e2e",
     "test:e2e:list": "bun run --cwd apps/desktop test:e2e:list",
     "showcase": "bun run --cwd apps/desktop showcase",
-    "perf:doctor": "vp dlx react-doctor@0.9.12 apps/desktop --scope changed --include-untracked --blocking none --no-score --no-supply-chain",
-    "perf:doctor:full": "vp dlx react-doctor@0.9.12 apps/desktop --scope full --blocking none --no-score --no-supply-chain",
+    "perf:doctor": "vp dlx react-doctor@0.9.14 apps/desktop --scope changed --include-untracked --blocking none --no-score --no-supply-chain",
+    "perf:doctor:full": "vp dlx react-doctor@0.9.14 apps/desktop --scope full --blocking none --no-score --no-supply-chain",
     "perf:react-check": "vp exec -- oxlint apps/desktop/src/renderer -c apps/desktop/oxlint.react-compiler.json",
     "perf:compiler": "vp run --filter @palot/desktop build:renderer:compiler",
     "perf:compiler:annotation": "vp run --filter @palot/desktop build:renderer:compiler:annotation",
@@ -69,7 +69,7 @@
     "clean": "vp run --filter @palot/desktop clean"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.81.0",
+    "@oxlint/plugins": "1.82.0",
     "vite-plus": "0.3.1"
   },
   "overrides": {
@@ -77,7 +77,7 @@
     "@shikijs/themes": "4.4.3",
     "@shikijs/transformers": "4.4.3",
     "@shikijs/types": "4.4.3",
-    "katex": "0.18.6",
+    "katex": "0.18.7",
     "shiki": "4.4.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1"
   },

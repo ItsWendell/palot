@@ -22,7 +22,7 @@ explicitly signed with a local certificate.
 
 Palot supports stable OpenCode **2.x**, starting at 2.0.0, without a patch-version
 override. The generated client and isolated release-smoke runtime remain pinned to
-2.0.2 for repeatable checks. The previously tested beta `0.0.0-beta-19507` is also accepted.
+2.0.3 for repeatable checks. The previously tested beta `0.0.0-beta-19507` is also accepted.
 Other recognized V2 beta versions require explicit consent; V1, unknown majors
 and malformed versions are refused. Palot's own Stable/Nightly channel does not
 change this policy.
@@ -33,8 +33,12 @@ The published 2.0.0 client, protocol and schema have the same code and contracts
 as beta19507, apart from package version/dependency pins. The 2.0.2 review found
 three additive config operations and an additional typed filesystem 404 error,
 with no changes to existing event contracts. The new config operations are not
-yet used by Palot. Gate a future feature on verified API availability rather than
-blocking the whole connection or assuming every Beta has extra features.
+yet used by Palot. The 2.0.3 contract adds `session.diff` and projected `idle`
+messages that mark completed, failed or interrupted turns. Palot retains those
+markers in hydrated history without displaying extra transcript rows; it does not
+yet use the turn-diff operation. Existing event contracts are unchanged. Gate a
+future feature on verified API availability rather than blocking the whole
+connection or assuming every Beta has extra features.
 
 ## Preferred release and local startup
 

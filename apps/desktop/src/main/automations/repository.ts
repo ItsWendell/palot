@@ -20,7 +20,7 @@ const NONTERMINAL_STATES: AutomationRunState[] = [
   "settling",
 ];
 
-type Database = NodeSQLiteDatabase<typeof schema>;
+type Database = NodeSQLiteDatabase;
 type RunPatch = Partial<{
   state: AutomationRunState;
   rootSessionID: string | null;

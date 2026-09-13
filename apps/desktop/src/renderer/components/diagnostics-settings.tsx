@@ -613,11 +613,13 @@ function HistoryLineChart({
         strokeWidth: 1.5,
       }),
     ],
-    x: { scale: scalePoint, axis: false },
-    y: {
-      scale: scaleLinear().domain([0, normalized ? 1 : maximum]),
-      grid: true,
-      axis: false,
+    scales: {
+      x: { scale: scalePoint, axis: false },
+      y: {
+        scale: scaleLinear().domain([0, normalized ? 1 : maximum]),
+        grid: true,
+        axis: false,
+      },
     },
     color: {
       domain: series.map(({ label }) => label),

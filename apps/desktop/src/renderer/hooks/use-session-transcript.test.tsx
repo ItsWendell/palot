@@ -8,6 +8,7 @@ import type { PalotMessage, PalotSession } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
 import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
+import { createSessionTranscriptProjector } from "../lib/turn-projection";
 import { palot } from "../services/palot";
 import {
   getTranscriptMessages,
@@ -92,6 +93,46 @@ function seedTranscriptData(
 }
 
 describe("session transcript queries", () => {
+  it.each(["succeeded", "failed", "interrupted"] as const)(
+    "hydrates %s idle markers without changing visible transcript rows",
+    (outcome) => {
+      const first = [rawMessage("user-first", 1, "First"), rawMessage("answer-first", 2, "Done")];
+      const next = [rawMessage("user-next", 5, "Next"), rawMessage("answer-next", 6, "Ready")];
+      const idle: SessionMessageInfo = {
+        id: "idle",
+        type: "idle",
+        time: { created: 4 },
+        outcome,
+      };
+      const messages = transcriptMessages({
+        pages: [page(next, "older"), page([...first, idle], null)],
+        pageParams: [null, "older"],
+      });
+
+      expect(messages.map((message) => message.id)).toEqual([
+        "user-first",
+        "answer-first",
+        "idle",
+        "user-next",
+        "answer-next",
+      ]);
+      expect(messages[2]?.data).toEqual(idle);
+
+      const projection = createSessionTranscriptProjector().project({ messages });
+      const withoutMarkers = createSessionTranscriptProjector().project({
+        messages: projectTranscriptMessages([...first, ...next]),
+      });
+      expect(projection.rows.map((row) => row.id)).toEqual([
+        "user-first",
+        "answer-first",
+        "user-next",
+        "answer-next",
+      ]);
+      expect(projection.presentationRows).toEqual(withoutMarkers.presentationRows);
+      expect(projection.prompts).toEqual(withoutMarkers.prompts);
+    },
+  );
+
   it("preserves completed message parts when a sibling text part streams", () => {
     const tool = {
       type: "tool" as const,

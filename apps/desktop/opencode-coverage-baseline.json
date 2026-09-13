@@ -1,6 +1,6 @@
 {
-  "contractFingerprint": "f1dbfbf184cacc2b070c26b96e5b89f969034242bc14ecd4fe965a2230eaa44a",
-  "contractVersion": "2.0.2",
+  "contractFingerprint": "ce6a35d53b5b328b6fe47198eace91afdda68b3dbcc536754391751fd129ef3e",
+  "contractVersion": "2.0.3",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
@@ -715,6 +715,11 @@
     "v2.session.create": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "v2.session.diff": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Reviewed 2.0.3 addition: structured diffs for a user-message turn or range, with optional context. Deferred; Palot has no product caller. Future adoption needs an availability gate because stable 2.0.0 remains supported."
     },
     "v2.session.environment": {
       "disposition": "intentional-omit",

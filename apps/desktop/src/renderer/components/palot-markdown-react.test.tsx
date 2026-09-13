@@ -1,10 +1,15 @@
 import { render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { renderMarkdownReact } from "@tanstack/markdown/react";
-import { parseMarkdown } from "@tanstack/markdown";
-import { StrictMode } from "react";
+import {
+  type BlockNode,
+  type InlineComponentNode,
+  type MarkdownDocument,
+  parseMarkdown,
+} from "@tanstack/markdown";
+import { type ComponentProps, StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { PalotMarkdown } from "./palot-markdown-react";
+import { PalotMarkdown, useMarkdownBlockStreaming } from "./palot-markdown-react";
 
 const OPTIONS = {
   allowHtml: false,
@@ -41,6 +46,202 @@ describe("PalotMarkdown", () => {
     expect(palot).toBe(upstream);
   });
 
+  it.each([0, 1, 3])("preserves an ordered list starting at %i", (start) => {
+    const source = `${start}. First\n${start + 1}. Second`;
+    const view = render(<PalotMarkdown {...OPTIONS}>{source}</PalotMarkdown>);
+
+    expect(view.container.querySelector("ol")?.start).toBe(start);
+    expect(view.container.innerHTML).toBe(
+      renderToStaticMarkup(<>{renderMarkdownReact(source, OPTIONS)}</>),
+    );
+  });
+
+  it.each<{ name: string; children: BlockNode[] }>([
+    { name: "empty", children: [] },
+    { name: "code-ending", children: [{ type: "code", value: "example" }] },
+    {
+      name: "quote-ending",
+      children: [
+        {
+          type: "blockquote",
+          children: [{ type: "paragraph", children: [{ type: "text", value: "Note" }] }],
+        },
+      ],
+    },
+    {
+      name: "paragraph-ending",
+      children: [{ type: "paragraph", children: [{ type: "text", value: "Note" }] }],
+    },
+  ])("retains every backreference in a $name footnote", ({ children }) => {
+    const document: MarkdownDocument = {
+      type: "root",
+      children: [
+        { type: "footnotes", items: [{ id: "note", number: 1, referenceCount: 2, children }] },
+      ],
+    };
+    const view = render(<PalotMarkdown {...OPTIONS}>{document}</PalotMarkdown>);
+
+    expect(view.container.innerHTML).toBe(
+      renderToStaticMarkup(<>{renderMarkdownReact(document, OPTIONS)}</>),
+    );
+    view.rerender(
+      <PalotMarkdown {...OPTIONS} idPrefix="message">
+        {document}
+      </PalotMarkdown>,
+    );
+    const backrefs = view.container.querySelectorAll(
+      "li > p:last-child > a[data-footnote-backref]",
+    );
+    expect(Array.from(backrefs, (link) => link.getAttribute("href"))).toEqual([
+      "#message-user-content-fnref-note",
+      "#message-user-content-fnref-note-2",
+    ]);
+    expect(backrefs[1]?.getAttribute("aria-label")).toBe("Back to reference 1-2");
+    expect(view.container.querySelector("li > p:last-child")?.textContent?.endsWith("↩ ↩")).toBe(
+      true,
+    );
+  });
+
+  it.each([undefined, "mention"])(
+    "renders nested inline components through the %s component mapping",
+    (tagName) => {
+      const inline: InlineComponentNode = {
+        type: "inlineComponent",
+        name: "mention",
+        attributes: { user: "alice" },
+        properties: { title: "Profile" },
+        tagName,
+        children: [
+          {
+            type: "strong",
+            children: [
+              {
+                type: "inlineComponent",
+                name: "label",
+                attributes: {},
+                children: [{ type: "text", value: "Alice" }],
+              },
+            ],
+          },
+        ],
+      };
+      const document: MarkdownDocument = {
+        type: "root",
+        children: [{ type: "paragraph", children: [inline] }],
+      };
+      function Mention(props: ComponentProps<"span">) {
+        return <mark {...props} />;
+      }
+      const components = { [tagName ?? "span"]: Mention };
+      const view = render(
+        <PalotMarkdown {...OPTIONS} components={components}>
+          {document}
+        </PalotMarkdown>,
+      );
+
+      expect(view.container.innerHTML).toBe(
+        renderToStaticMarkup(<>{renderMarkdownReact(document, { ...OPTIONS, components })}</>),
+      );
+      const mention = view.container.querySelector("p > mark");
+      expect(mention?.textContent).toBe("Alice");
+      expect(mention?.getAttribute("title")).toBe("Profile");
+      expect(mention?.getAttribute("data-component")).toBe(tagName ? null : "mention");
+      expect(mention?.getAttribute("data-attributes")).toBe(tagName ? null : '{"user":"alice"}');
+    },
+  );
+
+  it("copies and animates nested inline component text in tables", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(0);
+    const documentFor = (value: string): MarkdownDocument => ({
+      type: "root",
+      children: [
+        {
+          type: "table",
+          align: [undefined],
+          header: [{ type: "tableCell", children: [{ type: "text", value: "Name" }] }],
+          rows: [
+            [
+              {
+                type: "tableCell",
+                children: [
+                  {
+                    type: "inlineComponent",
+                    name: "mention",
+                    attributes: {},
+                    children: [{ type: "strong", children: [{ type: "text", value }] }],
+                  },
+                ],
+              },
+            ],
+          ],
+        },
+      ],
+    });
+    function Table(props: ComponentProps<"table">) {
+      return <table {...props} />;
+    }
+    const components = { table: Table };
+    const view = render(
+      <PalotMarkdown streaming {...OPTIONS} components={components}>
+        {documentFor("Alice")}
+      </PalotMarkdown>,
+    );
+    expect(view.container.querySelector("td [data-markdown-stream-word]")?.textContent).toBe(
+      "Alice",
+    );
+
+    now.mockReturnValue(400);
+    view.rerender(
+      <PalotMarkdown streaming {...OPTIONS} components={components}>
+        {documentFor("Alice Smith")}
+      </PalotMarkdown>,
+    );
+    expect(
+      Array.from(
+        view.container.querySelectorAll("[data-markdown-stream-word]"),
+        (word) => word.textContent,
+      ),
+    ).toEqual(["Smith"]);
+    expect(
+      JSON.parse(view.container.querySelector("table")!.getAttribute("data-table-copy")!),
+    ).toEqual({
+      tsv: "Name\nAlice Smith",
+      csv: "Name\nAlice Smith",
+      markdown: "| Name        |\n| ----------- |\n| Alice Smith |",
+    });
+    now.mockRestore();
+  });
+
+  it("forwards fence metadata to the highlighter and custom pre without losing Palot metadata", () => {
+    const meta = 'title="example.ts" {1}';
+    const source = `\`\`\`ts ${meta}\nconst value = 1;\n\`\`\``;
+    const highlighter = vi.fn(() => '<span class="token">highlighted</span>');
+    function Pre(props: ComponentProps<"pre">) {
+      return <pre {...props} data-custom-pre="" />;
+    }
+    const view = render(
+      <PalotMarkdown
+        {...OPTIONS}
+        codeLineNumbers
+        highlighter={highlighter}
+        components={{ pre: Pre }}
+      >
+        {source}
+      </PalotMarkdown>,
+    );
+
+    expect(highlighter).toHaveBeenCalledWith("const value = 1;", "ts", {
+      meta,
+      highlightLines: [1],
+      lineNumbers: true,
+    });
+    const pre = view.container.querySelector("pre[data-custom-pre]");
+    expect(pre?.getAttribute("data-meta")).toBe(meta);
+    expect(pre?.getAttribute("data-code-meta")).toBe(meta);
+    expect(pre?.getAttribute("data-code-highlight-lines")).toBe("1");
+    expect(pre?.querySelector("code .token")?.textContent).toBe("highlighted");
+  });
+
   it("animates new words across every live block", () => {
     const view = render(
       <PalotMarkdown streaming {...OPTIONS}>
@@ -51,6 +252,47 @@ describe("PalotMarkdown", () => {
 
     expect(paragraphs[0]?.querySelectorAll("[data-markdown-stream-word]")).toHaveLength(4);
     expect(paragraphs[1]?.querySelectorAll("[data-markdown-stream-word]")).toHaveLength(4);
+  });
+
+  it("keeps custom code content and streaming context through an unfinished fence", () => {
+    function Code(props: ComponentProps<"code">) {
+      const streaming = useMarkdownBlockStreaming();
+      return <code {...props} data-custom-code="" data-streaming={streaming} />;
+    }
+    const components = { code: Code };
+    const source = "```ts file=example.ts\nconst value =";
+    const view = render(
+      <PalotMarkdown streaming {...OPTIONS} components={components}>
+        {source}
+      </PalotMarkdown>,
+    );
+    expect(view.container.querySelector("code[data-custom-code]")?.textContent).toBe(
+      "const value =",
+    );
+    expect(view.container.querySelector("code")?.getAttribute("data-streaming")).toBe("true");
+
+    view.rerender(
+      <PalotMarkdown streaming {...OPTIONS} components={components}>
+        {`${source} 1;\nconsole.log(value);`}
+      </PalotMarkdown>,
+    );
+    expect(view.container.querySelector("code[data-custom-code]")?.textContent).toBe(
+      "const value = 1;\nconsole.log(value);",
+    );
+    expect(view.container.querySelector("pre")?.getAttribute("data-code-meta")).toBe(
+      "file=example.ts",
+    );
+
+    view.rerender(
+      <PalotMarkdown {...OPTIONS} components={components}>
+        {`${source} 1;\nconsole.log(value);\n\`\`\``}
+      </PalotMarkdown>,
+    );
+    expect(view.container.querySelector("code[data-custom-code]")?.textContent).toBe(
+      "const value = 1;\nconsole.log(value);",
+    );
+    expect(view.container.querySelector("code")?.getAttribute("data-streaming")).toBe("false");
+    expect(view.container.querySelector("[data-markdown-stream-code]")).toBeNull();
   });
 
   it("renders whitespace-only live input without looping", () => {

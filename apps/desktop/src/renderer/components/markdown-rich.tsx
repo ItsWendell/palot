@@ -82,6 +82,8 @@ export function MermaidDiagram({ code }: { code: string }) {
           mermaid.initialize({
             securityLevel: "strict",
             startOnLoad: false,
+            layout: "dagre",
+            look: "classic",
             theme: "base",
             themeVariables: mermaidThemeVariables(appearance.uiFontFamily),
           });

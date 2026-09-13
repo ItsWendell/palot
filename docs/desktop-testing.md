@@ -111,6 +111,11 @@ between checkout and worktree modes without creating a session or calling a mode
 selection and native persistence in both color modes, with screenshots. It is a UI
 integration check, not a performance measurement.
 
+`markdown-rich --visible --keep` imports isolated settled messages without model
+calls. It checks Mermaid flowchart/sequence SVG rendering, light/dark regeneration,
+malformed-source fallback and preview dismissal. Inspect the retained diagram
+screenshots before claiming visual verification.
+
 For transcript history and responsive navigation:
 
 - `bun run test:e2e -- transcript-prepend-restoration --visible --keep` checks

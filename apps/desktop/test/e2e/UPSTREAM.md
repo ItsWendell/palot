@@ -26,3 +26,8 @@ Palot's Node adapter cancels delayed SSE writes on disconnect or shutdown and aw
 The `0.0.0-beta-19381` upgrade leaves the adapter unchanged. Published client, protocol, and schema code is identical to `19365`; the isolated native `smoke` scenario passed against the exact `19381` runtime.
 
 The `0.0.0-beta-19425` upgrade also leaves the adapter unchanged. Isolated native `transcript-rail` and `compaction-pending-steer` scenarios passed against the exact runtime. They verify filtered prompt pagination without fetching transcript history, selection of unloaded prompts, and compaction request usage alongside pending-steer retention and continuation.
+
+The stable `2.0.3` upgrade leaves the adapter unchanged. Linux packaged `smoke`,
+`composer-draft-switch`, `markdown-rich`, and visible `diagnostics` scenarios passed
+against an isolated exact `2.0.3` runtime. The runtime was supplied externally;
+the package does not bundle it, and these checks did not replace the shared service.

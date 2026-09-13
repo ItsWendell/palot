@@ -40,8 +40,10 @@ export function UsageActivityChart({
         strokeWidth: 2,
       }),
     ],
-    x: { scale: scalePoint, axis: false },
-    y: { scale: scaleLinear().domain([0, maximum]), axis: false, grid: true },
+    scales: {
+      x: { scale: scalePoint, axis: false },
+      y: { scale: scaleLinear().domain([0, maximum]), axis: false, grid: true },
+    },
     color: { domain: ["Steps"], range: ["var(--info)"] },
     margin: { top: 10, right: 8, bottom: 10, left: 8 },
     theme: chartTheme,

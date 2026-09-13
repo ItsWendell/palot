@@ -59,7 +59,7 @@
   "devDependencies": {
     "prebuildify": "^6.0.1",
     "rimraf": "^6.1.3",
-    "tsdown": "^0.22.14"
+    "tsdown": "0.23.0"
   },
   "optionalDependencies": {
     "node-gyp-build": "^4"

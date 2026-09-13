@@ -5,7 +5,6 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { migrate } from "drizzle-orm/node-sqlite/migrator";
-import * as schema from "./database/schema";
 import { SessionTriageStore } from "./session-triage-store";
 
 describe("SessionTriageStore", () => {
@@ -14,7 +13,7 @@ describe("SessionTriageStore", () => {
 
   beforeEach(() => {
     sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite, schema });
+    const database = drizzle({ client: sqlite });
     migrate(database, { migrationsFolder: path.resolve("drizzle") });
     store = new SessionTriageStore(database);
   });

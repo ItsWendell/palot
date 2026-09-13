@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { openPalotDatabase } from "./client";
+import { triageProfiles } from "./schema";
 
 const roots: string[] = [];
 
@@ -32,6 +33,31 @@ describe("Palot database startup", () => {
     writeFileSync(databasePath, "not a sqlite database");
 
     expect(() => openPalotDatabase(databasePath, path.resolve("drizzle"))).toThrow();
+  });
+
+  it("preserves persisted records when reopening an already migrated database", async () => {
+    const databasePath = await temporaryDatabasePath();
+    const migrations = path.resolve("drizzle");
+    const record = {
+      profileID: "existing-profile",
+      bootstrapUpdatedAt: 123,
+      bootstrapSessionID: "existing-session",
+      createdAt: 100,
+      updatedAt: 123,
+    };
+    const database = openPalotDatabase(databasePath, migrations);
+    try {
+      database.insert(triageProfiles).values(record).run();
+    } finally {
+      database.$client.close();
+    }
+
+    const reopened = openPalotDatabase(databasePath, migrations);
+    try {
+      expect(reopened.select().from(triageProfiles).all()).toEqual([record]);
+    } finally {
+      reopened.$client.close();
+    }
   });
 
   it("closes SQLite when migration loading fails", async () => {

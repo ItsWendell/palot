@@ -1,8 +1,32 @@
 [
   {
+    "repository": "drizzle-team/drizzle-orm",
+    "commit": "748058e837d9c4247330e3d45580cbdae52bffda",
+    "release": "npm provenance identifies GitHub Actions run 28294298823, beta branch; source and published manifests both declare 1.0.0-rc.4.",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "drizzle-orm.LICENSE.txt",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ],
+    "packages": [
+      {
+        "name": "drizzle-orm",
+        "version": "1.0.0-rc.4",
+        "license": "Apache-2.0",
+        "sourceManifest": "drizzle-orm/package.json",
+        "sourceManifestSha256": "a9230edccbaf6e31fbae910ff378c8200685ba5fd9e2a9d133f59cf33e138ac6",
+        "archive": "https://registry.npmjs.org/drizzle-orm/-/drizzle-orm-1.0.0-rc.4.tgz",
+        "integrity": "sha512-BT+pf+qoiYHqltoA88Jmf6ilGMXPlpfE0hEJKc2adRtMCAl25Swk/t5gXcWxZNAwdtf3F5gCd2FpeOyP/pT0Hw==",
+        "manifestSha256": "e31432c0ad6975d2b937cf579aa60f5d8a98f00dab81f4742e788c7369f866aa"
+      }
+    ]
+  },
+  {
     "repository": "anomalyco/opencode",
-    "commit": "cf4f1fb45e2695d86a4ef8c20a3883f4ac79935a",
-    "release": "GitHub publish run 34680612424, v2 branch, run_number 19527, attempt 1; version/publish logs record 2.0.2; source version 2.0.1 rewritten by script/publish.ts.",
+    "commit": "9c8a4ea4ffae6ab53be4b19a3e88ff966e882221",
+    "release": "GitHub publish run 34724917068, v2 branch, run_number 19541, attempt 1; version/publish logs record 2.0.3; source version 2.0.2 rewritten by script/publish.ts.",
     "files": [
       {
         "source": "LICENSE",
@@ -13,33 +37,33 @@
     "packages": [
       {
         "name": "@opencode/client",
-        "version": "2.0.2",
+        "version": "2.0.3",
         "license": "MIT",
         "sourceManifest": "packages/client/package.json",
-        "sourceManifestSha256": "fbf936d41f950bc3426d300e5b4aae45474e21f447f815ab508689d87f780925",
-        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.0.2.tgz",
-        "integrity": "sha512-w8rrSsxY9qnuFrsQAHdLDE6mrEqUKQeo7fNsw2i/tFtimgspT53/8/3ckEVRuRUM5k6v68KiU2deG0W2gEIVDQ==",
-        "manifestSha256": "17dcc8cb34b8226ab142721846dc7ee9672aac69eafc8c4421f0fe6af30f2702"
+        "sourceManifestSha256": "abca85178c43b6fb4dc050634f10364818d953c02e2ceabeaf7ab554e5110189",
+        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.0.3.tgz",
+        "integrity": "sha512-b+LcpMI131fXnGqf+O+9Y33H4XmwAkQibfYvtpEOROftkTpkcMj3R7WW/wGl2VTBNTZECAk2Yd+TACTzzAwk0A==",
+        "manifestSha256": "5f37689cd75e59d98f0c093ca686160f858774649b4a88533da10d5523d487f4"
       },
       {
         "name": "@opencode/protocol",
-        "version": "2.0.2",
+        "version": "2.0.3",
         "license": "MIT",
         "sourceManifest": "packages/protocol/package.json",
-        "sourceManifestSha256": "f04d06f89118da7e93b00614d61e50cc52a276a54ed20379bdb5404122b3aa60",
-        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.2.tgz",
-        "integrity": "sha512-FxTxdHPNz46NkG8ZBB2S60QzXbZDlVEyZ6KeYTt2G7hcWB5JlMYBh8jeqHlsLbquKinvMKA2iuEsA1NaccN+YQ==",
-        "manifestSha256": "7e4d49375a8a4461aa5cb940ae465d4f10e82c02b10ad2fe5edf8a40dd956664"
+        "sourceManifestSha256": "cdd8b9a477192a1763fe90f66e38876aa87a94612b563e0fded8f5b3c43001cd",
+        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.3.tgz",
+        "integrity": "sha512-DNHbkLDTuAyMsmVdnjuKulcfoDbllW2dxt4W19r2aJEYvswJpEO9168CSK6Sjbx1FOh/B9yL7SQgoDRMd4K5Vw==",
+        "manifestSha256": "76e870aa3877458481a356720ea2ba14b1b381496008215177c808c222acc85c"
       },
       {
         "name": "@opencode/schema",
-        "version": "2.0.2",
+        "version": "2.0.3",
         "license": "MIT",
         "sourceManifest": "packages/schema/package.json",
-        "sourceManifestSha256": "c0939e43d96bbc44f1a90b7a42d1c52b0864a4d5744107b3fedfd2d7c2dfd669",
-        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.2.tgz",
-        "integrity": "sha512-jF23H41j6zM2Az1pYLD6NFfzpoQ79CX0AxRkfNxTZFbPfjGGc+EPSOzVQP/r4Y/5bkSSqVga0Vn7MyoP8QhwDQ==",
-        "manifestSha256": "949bcfbc20b4dce85d3a3c6ded6bc8cd76e6d3bf894ceb60d6e779fa4da99bec"
+        "sourceManifestSha256": "aa8e95cfbd82b46dd065fa722ea5acb97edf6e3bd452b42aa19d5596726b8aad",
+        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.3.tgz",
+        "integrity": "sha512-thPeBbqw4+SkZ/0LOuqfahSRGuWogRa/wwfIVyiQYsoE0vzLx8XUpHQ+FSUWkdz6llDtP0+ZsyBqXUMpXmPgbg==",
+        "manifestSha256": "8095036cb791c86bb02dbd5aef3e78643c33c3dc902ca318164436a9fdd77c3a"
       }
     ]
   },

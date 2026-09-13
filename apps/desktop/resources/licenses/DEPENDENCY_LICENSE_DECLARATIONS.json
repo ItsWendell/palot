@@ -1,18 +1,18 @@
 [
   {
     "name": "@tanstack/markdown",
-    "version": "0.0.13",
+    "version": "0.0.15",
     "license": "MIT",
-    "manifestSha256": "2885c8a041b10b4746cdc54d366937315311c0472ee8e3cd1c704fd9f2df500e",
-    "archive": "https://registry.npmjs.org/@tanstack/markdown/-/markdown-0.0.13.tgz",
-    "integrity": "sha512-ZSQP2ulBvlPzdpZeRheBJnaELo7e4ET/D/XrfgweHyqhhLMN5vUJJAUl7ufSRd7GlfO/vwdzjKPh0E0JwqJkDA==",
+    "manifestSha256": "181eed138c3a9b8ea035646a2431d80ea0d287d1a689a2603f4dd71f2d7be684",
+    "archive": "https://registry.npmjs.org/@tanstack/markdown/-/markdown-0.0.15.tgz",
+    "integrity": "sha512-8hZFgCxGzYcBogffndvOm/prhdDt8nATQ4jzd9b0ziU0j4ofW/5guC1sknO2JyBNSXPgeLrrdXlJA8sbb1zw8w==",
     "source": {
       "repository": "TanStack/markdown",
-      "commit": "720e8c2db5973a3401914a8b96d9fd05c30d6fc5",
+      "commit": "6936a0106d2c8759d51f15aa8ad98f7363817bbb",
       "manifest": "package.json",
-      "manifestSha256": "ec2c6fda4898a7af57faa54f8c0df437c6c939b4c761992afb08339c6b8e8664",
+      "manifestSha256": "8b534a182e7c947d0c5d3f9281c75d794d0987b7fec3d83b1562e31623a3abdb",
       "name": "@tanstack/markdown",
-      "version": "0.0.13",
+      "version": "0.0.15",
       "license": "MIT"
     },
     "standard": {

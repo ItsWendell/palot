@@ -49,8 +49,15 @@ version 0.0.13.
 The adapted source identifies immutable revision
 [`720e8c2db5973a3401914a8b96d9fd05c30d6fc5`](https://github.com/TanStack/markdown/blob/720e8c2db5973a3401914a8b96d9fd05c30d6fc5/src/react.ts).
 Its [package manifest](https://github.com/TanStack/markdown/blob/720e8c2db5973a3401914a8b96d9fd05c30d6fc5/package.json)
-declares MIT and version 0.0.13. The standard terms of that declared license are
-reproduced below.
+declares MIT and version 0.0.13.
+
+The adapter also incorporates list, footnote, inline component, and fence metadata
+fixes from version 0.0.15, revision
+[`6936a0106d2c8759d51f15aa8ad98f7363817bbb`](https://github.com/TanStack/markdown/blob/6936a0106d2c8759d51f15aa8ad98f7363817bbb/src/react.ts).
+That revision's [package manifest](https://github.com/TanStack/markdown/blob/6936a0106d2c8759d51f15aa8ad98f7363817bbb/package.json)
+also declares MIT. The published 0.0.15 package omits a license file;
+`DEPENDENCY_LICENSE_DECLARATIONS.json` records the verified package and source
+manifests. The standard terms of the declared license are reproduced below.
 
 MIT License
 

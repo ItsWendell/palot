@@ -568,6 +568,6 @@ async function switchTask(page: Page, sessionID: string, title: string): Promise
   await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
   await page.getByRole("combobox", { name: "Search tasks and commands" }).fill(title);
   await page.getByRole("option", { name: new RegExp(title) }).click();
-  await expect.poll(() => new URL(page.url()).hash).toBe(`#/sessions/${sessionID}`);
+  await expect.poll(() => new URL(page.url()).hash.split("?")[0]).toBe(`#/sessions/${sessionID}`);
   await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeVisible();
 }

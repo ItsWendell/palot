@@ -5,9 +5,8 @@ import { app } from "electron";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { migrate } from "drizzle-orm/node-sqlite/migrator";
 import { backupDatabaseBeforeMigration } from "../data-recovery";
-import * as schema from "./schema";
 
-let database: ReturnType<typeof drizzle<typeof schema>> | null = null;
+let database: ReturnType<typeof drizzle> | null = null;
 
 export function palotDatabase() {
   if (database) return database;
@@ -22,7 +21,7 @@ export function openPalotDatabase(databasePath: string, migrationsFolder: string
   const sqlite = new DatabaseSync(databasePath, { timeout: 5_000 });
   sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
   try {
-    const next = drizzle({ client: sqlite, schema });
+    const next = drizzle({ client: sqlite });
     migrate(next, { migrationsFolder });
     return next;
   } catch (error) {
