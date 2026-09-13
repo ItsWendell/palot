@@ -1,3 +1,5 @@
+![Palot, an independent desktop client for OpenCode 2](docs/assets/palot-banner.svg)
+
 # Palot
 
 Palot is an independent desktop client for OpenCode 2 on Linux and macOS. It is not

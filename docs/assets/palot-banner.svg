@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400" viewBox="0 0 1600 400" role="img" aria-labelledby="title description">
+  <title id="title">Palot</title>
+  <desc id="description">An independent desktop client for OpenCode 2. The Palot P mark looks around and blinks.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1">
+      <stop stop-color="#11151c" />
+      <stop offset="1" stop-color="#02050a" />
+    </linearGradient>
+    <linearGradient id="horizon">
+      <stop stop-color="#3f35e6" />
+      <stop offset="0.4" stop-color="#6fd6ff" />
+      <stop offset="0.75" stop-color="#f0c6ef" />
+      <stop offset="1" stop-color="#fff6ef" />
+    </linearGradient>
+  </defs>
+  <style>
+    /* Beacon B1 artwork and hello gesture, adapted from palot-mark.tsx and palot-beacon.css.
+       CSS only: this also animates when GitHub embeds the SVG as an image.
+       Keep the banner still apart from the mark so it doesn't compete with the README. */
+    .loop { transform-origin: 32px 32px; }
+    .eye { transform-origin: 36.5px 28px; }
+    @media (prefers-reduced-motion: no-preference) {
+      .loop { animation: hello 10s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+      .gaze { animation: look 10s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+      .eye { animation: blink 10s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+    }
+    @keyframes hello {
+      0%, 5% { transform: rotate(0deg); }
+      12% { transform: rotate(-12deg); }
+      18% { transform: rotate(9deg); }
+      23% { transform: rotate(-6deg); }
+      28%, 36% { transform: rotate(0deg); }
+      42% { transform: rotate(12deg); }
+      48% { transform: rotate(-8deg); }
+      53% { transform: rotate(3deg); }
+      58%, 100% { transform: rotate(0deg); }
+    }
+    @keyframes look {
+      0%, 5% { transform: translate(0, 0); }
+      11%, 14% { transform: translate(3px, -3px); }
+      18%, 21% { transform: translate(-3px, 1px); }
+      27%, 36% { transform: translate(0, 0); }
+      41%, 44% { transform: translate(3px, 2px); }
+      48%, 51% { transform: translate(-2px, -2px); }
+      57%, 100% { transform: translate(0, 0); }
+    }
+    @keyframes blink {
+      0%, 12%, 14.4%, 16.8%, 39%, 41.4%, 45%, 47.4%, 100% { transform: scaleY(1); }
+      13.2%, 15.6%, 40.2%, 46.2% { transform: scaleY(0.16); }
+    }
+  </style>
+  <rect width="1600" height="400" fill="url(#background)" />
+  <g transform="translate(84 96) scale(3.2)" fill="#fffdf9">
+    <g class="loop">
+      <path d="M17 53V29C17 17 26 9 38 9C50 9 56 17 56 28C56 39 49 45 38 45H35.5" fill="none" stroke="#fffdf9" stroke-linecap="round" stroke-linejoin="round" stroke-width="10" />
+    </g>
+    <g class="gaze">
+      <circle class="eye" cx="36.5" cy="28" r="5.25" />
+    </g>
+  </g>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="352" y="217" fill="#fffdf9" font-size="100" font-weight="650" letter-spacing="-4">Palot</text>
+    <text x="356" y="278" fill="#a7b0c0" font-size="30">An independent desktop client for OpenCode 2.</text>
+  </g>
+  <rect y="392" width="1600" height="8" fill="url(#horizon)" />
+</svg>
