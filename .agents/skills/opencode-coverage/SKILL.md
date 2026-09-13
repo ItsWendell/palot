@@ -1,6 +1,6 @@
 ---
 name: opencode-coverage
-description: Audit Palot's OpenCode 2 operation and event coverage, analyzer or baseline regressions, published contract-surface deltas, or reviewed baseline updates. Ordinary event-handler fixes do not need this audit. Use opencode-v2 for release selection and runtime version alignment.
+description: Audit Palot's OpenCode 2 operation and event coverage, analyzer or baseline regressions, published contract-surface deltas, or reviewed baseline updates. Ordinary event-handler fixes do not need this audit. Use opencode-runtime for release selection and runtime version alignment.
 ---
 
 # OpenCode coverage
@@ -59,7 +59,7 @@ State evidence for the label. A production reference alone does not prove `workf
 
 ## Review new upstream work
 
-Treat the exact published packages as authoritative. `beta` is Palot's normal update target. `dev` means the published npm V2 `dev` tag and is forward-looking evidence, not the OpenCode repository's `dev` branch. Source-only work is a watch item until a V2 publish contains it. Load `opencode-v2` before comparing channels or recommending an update.
+Treat the exact published packages as authoritative. Stable is Palot's default update target; use Beta when requested. A published npm channel is not the OpenCode repository branch of the same name. Source-only work is a watch item until a supported publish contains it. Load `opencode-runtime` before comparing channels or recommending an update.
 
 Prioritize findings in this order:
 

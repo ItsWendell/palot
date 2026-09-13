@@ -1,7 +1,7 @@
 ---
-description: Compare Palot's OpenCode 2 pin with the published beta, read-only
+description: Compare Palot's OpenCode baseline with published Stable/Beta releases, read-only
 ---
 
-Load `opencode-v2` and follow its **Read-only comparison** workflow.
+Load `opencode-runtime` and follow its **Read-only comparison** workflow.
 
 Optional focus: $ARGUMENTS
