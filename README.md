@@ -13,25 +13,53 @@ and managing local OpenCode connections.
 
 ## Status
 
-**0.12.0 — Palot v2** is a ground-up rebuild for OpenCode v2 and a breaking
+**Palot v2**, introduced in 0.12.0, is a ground-up rebuild for OpenCode v2 and a breaking
 upgrade from Palot 0.11.x. “Palot v2” names the rebuild; the application follows
 the `0.x` SemVer release sequence. OpenCode has its own independent version.
 
-Palot is open-source pre-release software under active development. Install from
-source; there is no supported public binary release yet. Linux has a user-local
-Nightly installer and a local Arch package recipe. Ubuntu requires the guide's
-per-app sandbox profile. Fedora native Wayland has a known presentation issue;
-the guide includes an XWayland diagnostic fallback. macOS supports local ad-hoc
-and development-certificate signing, not Apple Developer ID signing or
-notarization. See the installation guide's platform matrix for tested systems
-and qualification limits.
+Palot is open-source pre-release software under active development. The 0.12.1
+release line adds Linux x64 and macOS Apple Silicon desktop packages. macOS
+downloads are ad-hoc signed, not Apple Developer ID signed or notarized. Updates
+are manual. See the installation guide's [platform matrix](docs/installation.md#platform-status)
+for tested systems and limits.
 
 Expect incomplete features, breaking changes, and release paths that have not
 been qualified on clean supported machines. Startup recovery exists, but it is
 still pre-release and should not be the only protection for important work.
 
-Earlier Palot release downloads and tags do not install this source snapshot.
-Use the source installation instructions below.
+The 0.12.0 release is source-only. Earlier 0.11.x downloads install the previous
+application, not Palot v2.
+
+## Install
+
+Download a matching desktop asset and `SHA256SUMS` from
+**[Releases](https://github.com/ItsWendell/palot/releases)**. Verify the file with
+`sha256sum <file>` on Linux or `shasum -a 256 <file>` on macOS before installing.
+If a release has no desktop assets, use the source instructions below.
+
+| System                        | Package    | Install                                                       |
+| ----------------------------- | ---------- | ------------------------------------------------------------- |
+| Arch / other glibc Linux, x64 | AppImage   | `chmod +x ./<file>.AppImage`, then `./<file>.AppImage --show` |
+| Fedora 43, x64                | RPM        | `sudo dnf install ./<file>.rpm`                               |
+| Ubuntu 24.04, x64             | DEB        | `sudo apt install ./<file>.deb`                               |
+| macOS, Apple Silicon          | DMG or ZIP | Copy `Palot.app` into Applications                            |
+
+Linux also has a portable tar archive. Never run Palot as root or disable its
+sandbox. Downloads don't require Bun or Node; Palot prefers your installed
+OpenCode and offers an explicit official download if you need one.
+
+On macOS, approve the verified app in **System Settings → Privacy & Security →
+Open Anyway** if prompted. Optional local self-signing, after installing Command
+Line Tools with `xcode-select --install`:
+
+```sh
+codesign --force --timestamp=none --sign - /Applications/Palot.app
+codesign --verify --deep --strict /Applications/Palot.app
+```
+
+This isn't Apple notarization and may still require per-app approval. See the
+[installation guide](docs/installation.md#desktop-release-packages) for package
+verification, dependencies, signing, updates and removal.
 
 ## Local service lifecycle
 
@@ -63,7 +91,7 @@ self-signing without weakening Gatekeeper.
 | Platform       | Start here                                                                                                                                     |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Arch / Omarchy | [Pacman prerequisites and user-local or local package installation](docs/installation.md#arch-linux--omarchy-rolling-x86_64)                   |
-| Fedora 43      | [DNF prerequisites and Wayland qualification notes](docs/installation.md#fedora-43-workstation-x86_64)                                         |
+| Fedora 43      | [DNF prerequisites and desktop setup](docs/installation.md#fedora-43-workstation-x86_64)                                                       |
 | Ubuntu 24.04   | [APT prerequisites and per-app sandbox setup](docs/installation.md#ubuntu-2404-lts-desktop-amd64)                                              |
 | macOS          | `xcode-select --install`, then [native prerequisites and self-signing](docs/installation.md#macos-local-self-signing-and-nightly-installation) |
 

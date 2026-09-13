@@ -1,19 +1,93 @@
-# Install Palot from source
+# Install Palot
 
-Palot is pre-release software. There are no supported public binary downloads,
-automatic updates, RPM packages, or Developer-ID-signed/notarized macOS releases.
+Palot is pre-release software. Use a desktop asset from a current
+[GitHub release](https://github.com/ItsWendell/palot/releases), when available, or
+build from source below. The 0.12.0 release is source-only; older 0.11.x installers
+are the previous application, not Palot v2. Updates are manual. macOS packages
+are ad-hoc signed, not Developer ID signed or notarized.
+
+## Desktop release packages
+
+These instructions apply to Palot v2 releases that list desktop installers under
+**Assets**. Download the matching file and that release's `SHA256SUMS`. Verify its
+SHA-256 before running it: use `sha256sum <file>` on Linux or
+`shasum -a 256 <file>` on macOS and compare the result with `SHA256SUMS`.
+GitHub CLI can also verify the build attestation:
+
+```sh
+gh attestation verify <downloaded-file> --repo ItsWendell/palot
+```
+
+| System                         | Asset                        | Install or launch                                                                             |
+| ------------------------------ | ---------------------------- | --------------------------------------------------------------------------------------------- |
+| Ubuntu 24.04, x64              | `*-linux-amd64.deb`          | `sudo apt install ./<downloaded-file>.deb`                                                    |
+| Fedora 43, x64                 | `*-linux-x86_64.rpm`         | `sudo dnf install ./<downloaded-file>.rpm`                                                    |
+| Arch / other glibc Linux, x64  | `*-linux-x86_64.AppImage`    | `chmod +x ./<downloaded-file>.AppImage`, then `./<downloaded-file>.AppImage --show`           |
+| Linux, x64, portable directory | `*-linux-x64.tar.gz`         | Extract into its own directory, then run `./palot --show` (Nightly: `./palot-nightly --show`) |
+| macOS, Apple Silicon           | `*-mac-arm64.dmg` or `*.zip` | Open/extract it, then copy `Palot.app` into Applications                                      |
+
+Replace the placeholder with the exact downloaded filename. Don't install both
+DEB and RPM versions of the same channel. Nightly uses the separate
+`palot-nightly` package and `Palot Nightly.app` identity.
+
+DEB/RPM installation resolves desktop dependencies and installs menu integration.
+The DEB also installs a per-app sandbox profile where Ubuntu requires one.
+Prefer it over the portable formats on Ubuntu 24.04. AppImage may require your
+distribution's FUSE compatibility package; the tar archive does not require FUSE.
+Portable formats still need the Electron desktop libraries listed for your
+distribution below. Never run Palot as root or add `--no-sandbox`.
+
+### macOS first launch and local self-signing
+
+These downloads do not have Apple's Developer ID trust or notarization. After
+verifying the download and copying the app to Applications, macOS may require
+**System Settings → Privacy & Security → Open Anyway** for that specific app.
+
+If you want to apply your own local ad-hoc signature, run this in Terminal after
+installing Apple's Command Line Tools with `xcode-select --install`:
+
+```sh
+app='/Applications/Palot.app' # Use Palot Nightly.app for Nightly
+codesign --force --timestamp=none --sign - "$app"
+codesign --verify --deep --strict "$app"
+```
+
+This re-signs the app itself and preserves the existing nested-code signatures.
+It does not notarize the app or turn it into a Developer ID release; macOS may
+still require the per-app approval above. Do not disable Gatekeeper globally or
+remove quarantine attributes as a substitute for verifying a download.
+For a persistent local certificate and source builds, use the
+[local signing setup](#macos-local-self-signing-and-nightly-installation) below.
+
+### OpenCode and updates
+
+Desktop downloads do not require Bun, Node or a source checkout to run. They use
+your installed OpenCode, or let you explicitly download a verified fallback from
+opencode.ai in **OpenCode release settings**. Starting or restarting the shared
+service is a separate confirmation. See [runtime management](opencode-runtime.md).
+
+To update, quit that Palot channel and install the newer package using the same
+method. To remove DEB/RPM installations, use `sudo apt remove palot` or
+`sudo dnf remove palot` (`palot-nightly` for Nightly). Package removal leaves your
+user data intact. On macOS, quit the app and move only its application bundle to
+Trash. Portable installations can be removed by deleting their extracted app
+directory. Do not delete OpenCode configuration or session data to uninstall Palot.
+
+## Building from source
+
+The remaining sections cover native build prerequisites and local installers.
 Build on the machine where you intend to use it, as your normal user.
 
 ## Platform status
 
-| Platform                                 | Available path                                    | Verification status                                                                                                                                                                                                                                              |
-| ---------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Arch Linux / Omarchy, x86_64             | User-local Nightly; generated local pacman recipe | Linux directory build and bundled-runtime smoke tested on Omarchy 4.0.0.alpha / Wayland. Arch recipe built; clean dependency installation and pacman upgrade/removal not qualified.                                                                              |
-| Fedora 43, x86_64                        | User-local Nightly or development                 | Cloud-base + GNOME VM bootstrap, packaged native smoke/UI, same-source replacement and removal tested with SELinux enforcing. Native Wayland click stability remains unresolved; XWayland startup passed. No Workstation-ISO, physical-GPU or RPM qualification. |
-| Ubuntu 24.04 LTS, amd64                  | User-local Nightly or development                 | Build, packaged native smoke/UI, update and removal tested on a 24.04.5 cloud-base VM with Ubuntu GNOME/X11 added, using the per-app sandbox profile below. Not a desktop-ISO or physical-GPU qualification; deb/AppImage remain experimental.                   |
-| macOS 13 Ventura or later, Apple Silicon | Development; local Nightly build and installer    | Runtime, ad-hoc and locally certificate-signed package smoke, native integration and installer replacement tested on macOS 26.6.2. Signing succeeded in local Terminal, not SSH. Older macOS versions and data migrations remain unqualified.                    |
-| macOS 13 or later, Intel                 | Development; local packaging target exists        | npm integrity, architecture, and signed-runtime hashes verified statically. Intel package execution and end-to-end installation are unverified; do not use Rosetta smoke on Apple Silicon.                                                                       |
-| Linux ARM64                              | Directory/runtime packaging target exists         | Runtime manifests exist; execution still requires ARM64 hardware verification.                                                                                                                                                                                   |
+| Platform                                 | Available path                                                      | Verification scope                                                                                                                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Arch Linux / Omarchy, x86_64             | AppImage, portable archive, user-local Nightly; local pacman recipe | Native packaged smoke and runtime acquisition on Omarchy / Wayland. Pacman dependency installation, upgrade and removal are not qualified.                                                            |
+| Fedora 43, x86_64                        | RPM, portable formats, user-local Nightly                           | RPM native smoke on a Cloud Base + GNOME / Wayland VM with SELinux enforcing. This is not a Workstation-ISO or physical-GPU qualification.                                                            |
+| Ubuntu 24.04 LTS, amd64                  | DEB (recommended), portable formats, user-local Nightly             | Actual DEB install, isolated native smoke and uninstall on Ubuntu 24.04 CI. Earlier source installation and native UI checks used a Cloud Base + GNOME/X11 VM.                                        |
+| macOS 13 Ventura or later, Apple Silicon | DMG, ZIP, source builds                                             | ZIP-extracted native smoke and DMG verification on macOS 15 CI; native runtime acquisition and local installation checks on macOS 26.6.2. Older macOS versions and data migrations are not qualified. |
+| macOS 13 or later, Intel                 | Source packaging target only                                        | No release asset or native execution qualification. Rosetta smoke on Apple Silicon is not an Intel hardware check.                                                                                    |
+| Linux ARM64                              | Source directory packaging target only                              | No release asset or native execution qualification.                                                                                                                                                   |
 
 Windows and musl-based Linux distributions are not covered by this guide. A
 working graphical desktop session is required; a headless SSH shell is not enough.
@@ -54,18 +128,11 @@ install `curl-minimal` with DNF. Do not replace an existing curl package just fo
 Palot. These are ordinary RPM-based Workstation instructions, not Silverblue or
 another image-based Fedora setup.
 
-The commands were exercised on Fedora 43 Cloud Base with GNOME added, not a clean
-Workstation ISO. In that software-rendered VM, native Wayland presentation was
-unreliable; the documented `palot-nightly --ozone-platform=x11` diagnostic
-fallback completed first-run startup through XWayland. This is not evidence that
-all Fedora Wayland desktops are affected, nor a reason to disable the sandbox or
-SELinux.
-
-A follow-up found stalled animation-frame delivery, clicks and renderer captures
-despite responsive timers and stable DOM geometry. The same Palot package passed
-under XWayland, and minimal sandboxed Electron controls passed under Wayland.
-The native presentation integration remains unqualified; this has not been
-established as a generic VM limitation or a fixed Palot issue.
+These prerequisites and native RPM smoke were exercised on Fedora 43 Cloud Base
+with GNOME added, not a clean Workstation ISO. If presentation stalls under Wayland,
+`palot --ozone-platform=x11` (Nightly: `palot-nightly --ozone-platform=x11`) is a
+diagnostic fallback when XWayland is available. Do not disable the sandbox or
+SELinux to work around a display problem.
 
 ### Ubuntu 24.04 LTS Desktop (amd64)
 
@@ -103,7 +170,7 @@ If the tools are already installed, skip the install command. Git, curl, archive
 utilities, and Apple's `codesign`/`security` tools must be available. Native module
 rebuilds also need Python 3 (`python3 --version`); install it from
 [python.org](https://www.python.org/downloads/macos/) if missing. The optional local
-signing setup needs OpenSSL 3; see the blocked packaging section below. A paid
+signing setup needs OpenSSL 3; see the local signing section below. A paid
 Apple Developer membership is not needed for development or local self-signing.
 
 ## 2. Clone and bootstrap the toolchain
@@ -187,10 +254,10 @@ From the repository root:
 bun run install:nightly:linux
 ```
 
-This builds a host-architecture directory package, stages and verifies the exact
-OpenCode runtime, closes the previously installed Nightly, replaces it, and
-launches the new app. No globally installed OpenCode CLI is needed for packaged
-startup. Installation does not itself restart the shared OpenCode service.
+This builds and verifies a host-architecture directory package, closes the
+previously installed Nightly, replaces it, and launches the new app. OpenCode is
+acquired separately through your existing installation or the explicit setup
+download. Installation does not itself restart the shared OpenCode service.
 
 Installed files:
 
@@ -214,8 +281,8 @@ bun run package:verify:linux
 
 The result is `apps/desktop/release/linux-unpacked` on x64, or
 `apps/desktop/release/linux-arm64-unpacked` on ARM64. Fedora and Ubuntu use this
-same directory-based installer; do not assume there is a maintained RPM or deb
-repository. AppImage/deb entries in the builder configuration are experimental.
+same directory-based installer. Release DEB/RPM files are separate downloads;
+there is no maintained APT or DNF package repository.
 
 ### Arch: optional pacman-owned installation
 
@@ -237,7 +304,7 @@ menu or with `palot-nightly --show`.
 
 ### Linux/macOS: development app
 
-Development uses an external OpenCode CLI rather than the packaged runtime. Read
+Development requires an external OpenCode CLI. Read
 the exact required version from the desktop manifest to avoid stale instructions:
 
 ```sh
@@ -258,9 +325,10 @@ bun run dev:focus
 
 Ensure Bun's global executable directory (normally `~/.bun/bin`) is on PATH.
 Do not use `vp --global` to install OpenCode: a Vite+ shim can shadow the real CLI.
-The CLI, client, protocol, schema, and service must agree exactly; do not use
-`latest` or a moving beta tag. Installing a CLI does not restart an already
-running service.
+Use this exact CLI for reproducible development and default E2E runs rather than
+`latest` or a moving beta tag. Palot can connect to compatible stable 2.x services;
+an unreviewed beta requires consent. Installing a CLI does not restart an already
+running service. See the [runtime contract](opencode-runtime.md).
 
 `dev:focus` opens the app in the foreground. `dev:visible` opens it without taking
 focus; `dev` starts hidden. Stop your own supervisor with Ctrl-C. These modes have
@@ -268,25 +336,15 @@ worktree-local Palot state but share OpenCode configuration, auth, and sessions.
 
 ### macOS: local self-signing and Nightly installation
 
-The beta19507 arm64 and x64-baseline runtime hashes are aligned and verified.
-Apple Silicon ad-hoc package smoke has been tested with isolated data on
-macOS 26.6.2. Local-certificate signing, replacement of an existing Nightly, and
-isolated smoke of the installed app also passed through local Terminal on that
-machine. The macOS 13 floor, Intel execution, and data migrations remain separate checks.
 The macOS build generates both Liquid Glass wrapper formats, and package
 verification loads their ESM and CommonJS exports before launching the app.
 
-Local-certificate signing is a separate prerequisite. During SSH verification an
-existing `Palot Local Development` identity was visible, but `codesign` returned
-`errSecInternalComponent` and the keychain reported “User interaction is not
-allowed.” A logged-in GUI desktop alone does not establish key access from SSH.
+Local-certificate signing requires access to the signing key. Over SSH, `codesign`
+may return `errSecInternalComponent` or “User interaction is not allowed.” A
+logged-in GUI desktop alone does not establish key access from SSH.
 Use an interactive session with the appropriate unlocked login keychain and
 approve macOS's normal key-access prompt if required; do not reset the identity,
 change key ACLs broadly, or pass a login password in shell arguments to bypass it.
-The same existing identity subsequently signed and installed Nightly successfully
-from local Terminal. Strict installed-signature verification and isolated runtime,
-preload, renderer and Liquid Glass smoke all passed. No keychain reset or broad
-access-control changes were needed.
 
 Review the installer’s effects below before choosing the local flow:
 
