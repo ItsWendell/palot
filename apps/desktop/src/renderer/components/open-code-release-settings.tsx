@@ -139,7 +139,7 @@ export function OpenCodeReleaseSettings({
   return (
     <SettingsSection
       title="OpenCode release"
-      description="Choose the shared update channel and prepare an optional Palot fallback, separately from app updates."
+      description="Choose the update channel and download an optional OpenCode fallback directly from opencode.ai, separately from app updates."
     >
       <SettingsGroup>
         <div className="@container/release min-w-0 space-y-4 p-4">
@@ -195,8 +195,12 @@ export function OpenCodeReleaseSettings({
                 <div className="min-w-0">
                   <dt className="text-meta text-muted-foreground">Prepared Palot runtime</dt>
                   <dd className="mt-1 wrap-anywhere">
-                    {status.preparedVersion ?? status.bundledVersion}
-                    {status.preparedVersion ? " (downloaded)" : " (bundled)"}
+                    {status.preparedVersion ?? status.bundledVersion ?? "Not downloaded"}
+                    {status.preparedVersion
+                      ? " (downloaded)"
+                      : status.bundledVersion
+                        ? " (bundled)"
+                        : ""}
                   </dd>
                 </div>
               </dl>
@@ -224,11 +228,15 @@ export function OpenCodeReleaseSettings({
                     void run(
                       "reset",
                       () => palot.resetOpenCodeRelease(),
-                      `Bundled OpenCode ${status.bundledVersion} is the Palot fallback again. The installed CLI and existing service are unchanged.`,
+                      status.bundledVersion
+                        ? `Bundled OpenCode ${status.bundledVersion} is the Palot fallback again. The installed CLI and existing service are unchanged.`
+                        : "No downloaded runtime is selected. The installed CLI and existing service are unchanged.",
                     )
                   }
                 >
-                  Reset to bundled {status.bundledVersion}
+                  {status.bundledVersion
+                    ? `Reset to bundled ${status.bundledVersion}`
+                    : "Reset prepared runtime"}
                 </Button>
               </div>
               {status.offer ? (
@@ -302,8 +310,8 @@ export function OpenCodeReleaseSettings({
               This {consent?.channel === "beta" ? "Beta" : "Stable"} release has not been tested
               with Palot. The current API has no feature manifest, so compatibility is not
               guaranteed and some features may fail. Downloading prepares it for a later confirmed
-              start or restart; it does not change the running service. You can reset to the bundled
-              runtime to roll back.
+              start or restart; it does not change the running service. To change versions later,
+              choose an installed runtime or check the Stable channel and prepare that release.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

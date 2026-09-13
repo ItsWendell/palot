@@ -1,13 +1,51 @@
 // @vitest-environment node
 
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { bundledOpenCodeRuntime, verifyBundledOpenCodeBinary } from "./opencode-runtime-release";
+import {
+  bundledOpenCodeRuntime,
+  readExternalOpenCodeRuntimePolicy,
+  verifyBundledOpenCodeBinary,
+} from "./opencode-runtime-release";
 import { SUPPORTED_OPENCODE_VERSION } from "./opencode-version";
 
 describe("bundled OpenCode runtime release", () => {
+  it("distinguishes intentional bundle absence from missing or malformed policy", async () => {
+    const directory = await mkdtemp("/tmp/opencode/runtime-policy-");
+    const file = path.join(directory, "policy.json");
+    try {
+      expect(readExternalOpenCodeRuntimePolicy(directory)).toBeNull();
+      for (const content of [
+        "{",
+        "null",
+        "[]",
+        '{"schemaVersion":1}',
+        '{"schemaVersion":2,"bundled":false}',
+        '{"schemaVersion":1,"bundled":true}',
+        '{"schemaVersion":1,"bundled":false,"extra":true}',
+      ]) {
+        await writeFile(file, content);
+        expect(() => readExternalOpenCodeRuntimePolicy(directory)).toThrow();
+      }
+      await writeFile(file, '{"schemaVersion":1,"bundled":false}');
+      expect(readExternalOpenCodeRuntimePolicy(directory)).toEqual({
+        schemaVersion: 1,
+        bundled: false,
+      });
+      for (const resource of ["manifest.json", "opencode2", "opencode"]) {
+        await writeFile(path.join(directory, resource), "stale runtime");
+        expect(() => readExternalOpenCodeRuntimePolicy(directory)).toThrow("must not ship");
+        await rm(path.join(directory, resource));
+      }
+      await rm(file);
+      await symlink(path.join(directory, "missing"), file);
+      expect(() => readExternalOpenCodeRuntimePolicy(directory)).toThrow("policy file");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it.each([
     ["darwin", "arm64"],
     ["darwin", "x64"],

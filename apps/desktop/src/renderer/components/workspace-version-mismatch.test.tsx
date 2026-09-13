@@ -50,7 +50,7 @@ describe("Workspace version mismatch", () => {
     expect(screen.getByRole("button", { name: "Continue with existing service" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Use selected runtime" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Use selected runtime" }));
-    expect(screen.getByText(/prepared next-start runtime/)).toBeTruthy();
+    expect(screen.getByText(/Your installed OpenCode is preferred by default/)).toBeTruthy();
     expect(screen.getByText(/may interrupt other OpenCode clients/)).toBeTruthy();
     expect(run).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));

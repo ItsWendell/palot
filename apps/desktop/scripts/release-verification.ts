@@ -16,10 +16,14 @@ import {
 } from "../src/shared/build-identity";
 import { resolveMacPackageTarget } from "./mac-package";
 import { resolveReleaseBuildInfo, verifyPackagedReleaseVersion } from "./release-build-info";
-import { verifyBundledOpenCodeBinary } from "../src/main/opencode-runtime-release";
+import {
+  parseOpenCodeVersionOutput,
+  SUPPORTED_OPENCODE_VERSION,
+} from "../src/main/opencode-version";
 import { verifyLiquidGlassExports } from "./native-module-exports";
 import { availableLoopbackPort, withReleaseSmokeService } from "./release-smoke-service";
 import { verifyPackagedDependencyNotices } from "./packaged-dependency-licenses";
+import { verifyExternalRuntimePackage } from "./packaged-opencode-policy";
 
 const execFileAsync = promisify(execFile);
 
@@ -212,10 +216,7 @@ export async function verifyMacRelease(input: {
       `Packaged app contains Mach-O files without ${input.expectedArchitecture}: ${unexpectedMachO.join(", ")}.`,
     );
   }
-  const runtime = await verifyBundledOpenCodeBinary({
-    directory: runtimeDirectory,
-    architecture: input.expectedArchitecture === "x86_64" ? "x64" : "arm64",
-  });
+  await verifyExternalRuntimePackage(path.join(contents, "Resources"));
 
   const unexpectedFuses = unexpectedFuseEntries(await getCurrentFuseWire(executable));
   if (unexpectedFuses.length > 0) {
@@ -279,10 +280,21 @@ export async function verifyMacRelease(input: {
     if (!notices.includes(marker)) throw new Error(`Packaged notices are missing ${marker}.`);
   }
   if (input.smoke) {
+    const binary = process.env.OPENCODE_BIN;
+    if (!binary || !path.isAbsolute(binary)) {
+      throw new Error("Set OPENCODE_BIN to an absolute path for the isolated release smoke.");
+    }
+    const { stdout } = await execFileAsync(binary, ["--version"], { timeout: 15_000 });
+    const version = parseOpenCodeVersionOutput(stdout);
+    if (version !== SUPPORTED_OPENCODE_VERSION) {
+      throw new Error(
+        `Release smoke requires OpenCode ${SUPPORTED_OPENCODE_VERSION}, got ${version}.`,
+      );
+    }
     await withReleaseSmokeService(
       {
-        binary: runtime.path,
-        version: runtime.version,
+        binary,
+        version,
         evidenceRoot: path.resolve(
           path.dirname(fileURLToPath(import.meta.url)),
           "../../../.local/release-smoke",
@@ -293,13 +305,7 @@ export async function verifyMacRelease(input: {
           baseUrl: endpoint.url,
           headers: Service.headers(endpoint),
         }).health.get();
-        await smokeMacRelease(
-          executable,
-          home,
-          environment,
-          { version: runtime.version, pid: health.pid },
-          signal,
-        );
+        await smokeMacRelease(executable, home, environment, { version, pid: health.pid }, signal);
       },
     );
   }

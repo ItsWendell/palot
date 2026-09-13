@@ -487,10 +487,11 @@ describe("OpenCodeRuntimeLifecycle local startup failures", () => {
     runtime.stop();
   });
 
-  it("reports a missing runtime without attempting service startup", async () => {
-    const ensureService = vi.fn();
+  it("requires a new confirmed start after setup resolves a missing runtime", async () => {
+    const ensureService = vi.fn().mockResolvedValue(managedEndpoint);
+    const discoverBinary = vi.fn().mockResolvedValue(null);
     const runtime = localRuntime({
-      discoverBinary: vi.fn().mockResolvedValue(null),
+      discoverBinary,
       ensureService,
     });
 
@@ -498,7 +499,21 @@ describe("OpenCodeRuntimeLifecycle local startup failures", () => {
       "A supported OpenCode 2 binary was not found",
     );
     expect(ensureService).not.toHaveBeenCalled();
-    expect(runtime.status()).toMatchObject({ phase: "error", connected: false });
+    expect(runtime.status()).toMatchObject({
+      phase: "error",
+      connected: false,
+      canStartLocalService: true,
+      error: expect.stringContaining("download an official runtime in connection settings"),
+    });
+    discoverBinary.mockResolvedValue({
+      path: "/prepared/opencode2",
+      version: SUPPORTED_OPENCODE_VERSION,
+    });
+    expect(ensureService).not.toHaveBeenCalled();
+    await runtime.connect({ startLocalService: true });
+    expect(ensureService).toHaveBeenCalledOnce();
+    expect(runtime.status().connected).toBe(true);
+    runtime.stop();
   });
 
   it.each([

@@ -344,8 +344,10 @@ and can recover an unresponsive shared service. Restarting or replacing a versio
 is a separate confirmed action and can interrupt active work in other clients.
 Finish important turns first. Closing Palot leaves that service running.
 
-Packaged apps use a bundled, verified runtime for explicit local startup; they do
-not download executable code on first launch. Development uses the exact external
+Packaged apps prefer your installed OpenCode and do not bundle an executable or
+download one on first launch. If needed, open **OpenCode release settings**, check
+the Stable channel and explicitly download a verified fallback from opencode.ai.
+Then separately confirm **Start OpenCode**. Development uses the exact external
 CLI above. Remote/SSH profiles do not silently fall back to local startup. See the
 [runtime contract](opencode-runtime.md) for details.
 

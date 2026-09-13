@@ -146,6 +146,7 @@ async function harness(
     saved = structuredClone(value);
   });
   const deps: OpenCodeReleaseDependencies = {
+    bundledVersion: () => SUPPORTED_OPENCODE_VERSION,
     cacheDirectory: directory,
     platform,
     arch,
@@ -175,6 +176,15 @@ async function harness(
 }
 
 describe("OpenCode release manager", () => {
+  it("reports no bundled runtime before download and after reset without acquiring anything", async () => {
+    const h = await harness();
+    h.deps.bundledVersion = () => null;
+    expect(h.manager.status()).toMatchObject({ bundledVersion: null, preparedVersion: null });
+    expect(h.manager.reset()).toMatchObject({ bundledVersion: null, preparedVersion: null });
+    expect(await h.manager.discoverPreparedBinary()).toBeNull();
+    expect(h.fetcher).not.toHaveBeenCalled();
+    expect(h.verifyVersion).not.toHaveBeenCalled();
+  });
   it("defaults to stable without network, store creation, runtime execution or service side effects", async () => {
     const h = await harness();
     expect(h.manager.status()).toEqual({

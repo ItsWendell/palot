@@ -63,6 +63,41 @@ afterEach(() => {
 });
 
 describe("OpenCodeReleaseSettings", () => {
+  it("prepares and resets a fallback without claiming a bundle exists or starting a service", async () => {
+    const user = userEvent.setup();
+    const external = { ...initial, bundledVersion: null };
+    const available: OpenCodeReleaseStatus = {
+      ...external,
+      checkedAt: 1000,
+      offer: {
+        channel: "stable",
+        version: "2.0.2",
+        tested: true,
+        requiresConfirmation: false,
+        size: 1024,
+      },
+    };
+    vi.mocked(palot.openCodeReleaseStatus).mockResolvedValue(external);
+    vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue(available);
+    vi.mocked(palot.prepareOpenCodeRelease).mockResolvedValue({
+      ...available,
+      preparedVersion: "2.0.2",
+    });
+    vi.mocked(palot.resetOpenCodeRelease).mockResolvedValue(external);
+    render(<OpenCodeReleaseSettings />);
+    expect(await screen.findByText("Not downloaded")).toBeTruthy();
+    expect(screen.queryByText(/\(bundled\)/)).toBeNull();
+    expect(palot.checkOpenCodeRelease).not.toHaveBeenCalled();
+    expect(palot.prepareOpenCodeRelease).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Check for release" }));
+    await user.click(await screen.findByRole("button", { name: "Download Palot fallback 2.0.2" }));
+    expect(await screen.findByText("2.0.2 (downloaded)")).toBeTruthy();
+    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.2" });
+    await user.click(screen.getByRole("button", { name: "Reset prepared runtime" }));
+    expect(await screen.findByText("Not downloaded")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Reset to bundled/ })).toBeNull();
+  });
+
   it.each([
     ["stable", "Stable"],
     ["beta", "Beta"],

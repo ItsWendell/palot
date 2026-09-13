@@ -29,6 +29,10 @@ file-level notice from z2d's `src/gradient.zig`, lines 565–589.
 
 ## OpenCode 2.0.2 and Bun 1.4.2
 
+The OpenCode executable is acquired separately from its official distributor,
+not included in Palot's desktop installers. These references identify the runtime
+used for Palot's integration checks.
+
 - OpenCode publication source:
   <https://github.com/anomalyco/opencode/tree/cf4f1fb45e2695d86a4ef8c20a3883f4ac79935a>
 - Bun runtime source:

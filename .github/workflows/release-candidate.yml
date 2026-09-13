@@ -62,17 +62,20 @@ jobs:
           bun apps/desktop/scripts/check-public-docs.ts
           bun run check 2>&1 | tee .local/release-candidate/check.log
 
-      - name: Audit dependency license inventory
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: bun apps/desktop/scripts/generate-dependency-licenses.ts --check 2>&1 | tee .local/release-candidate/licenses.log
-
       - name: Package unsigned Apple Silicon candidate
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         # Build inside package.ts so the bundle gets the release channel/identity.
-        # Staging verifies the reviewed macOS source and signed runtime hashes.
-        # Future runtime upgrades must repeat that review, not bypass staging.
+        # afterPack checks the actual build/archive dependency notices and runtime policy.
         run: bun apps/desktop/scripts/package.ts stable --mac --arm64 2>&1 | tee .local/release-candidate/package.log
+
+      - name: Install exact external OpenCode for isolated smoke
+        run: |
+          version=$(bun -p 'require("./apps/desktop/package.json").devDependencies["@opencode/client"]')
+          bun add --global --trust "@opencode/cli@$version"
+          binary=$(command -v opencode2)
+          test -n "$binary"
+          echo "OPENCODE_BIN=$binary" >> "$GITHUB_ENV"
 
       - name: Verify packaged application
         run: |
@@ -177,10 +180,6 @@ jobs:
           bun apps/desktop/scripts/check-public-docs.ts
           bun run check 2>&1 | tee .local/release-candidate/check.log
 
-      - name: Audit dependency license inventory
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: bun apps/desktop/scripts/generate-dependency-licenses.ts --check 2>&1 | tee .local/release-candidate/licenses.log
-
       - name: Package and verify Linux candidate
         # Use the existing directory-package/runtime verifier. This is not an
         # AppImage, deb, RPM, Arch publication, or packaged native smoke test.
@@ -201,8 +200,8 @@ jobs:
           or distro package. Extract it before running linux-unpacked/palot. The
           archive preserves executable permissions and symlinks. SHA256SUMS checks
           download integrity, not publisher identity or build provenance.
-          Native source smoke runs in CI separately; this job verifies the bundled
-          runtime and desktop identity, not packaged GUI behavior on every distro.
+          Native source smoke runs in CI separately; this job verifies external
+          runtime policy and desktop identity, not packaged GUI behavior on every distro.
           Actions artifacts expire after 14 days; they are not durable public downloads.
           NOTICE
           {

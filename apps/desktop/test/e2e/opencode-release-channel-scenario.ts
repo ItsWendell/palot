@@ -96,7 +96,7 @@ export const openCodeReleaseChannelScenario: Scenario = {
       .locator("xpath=ancestor::section[1]");
     const channel = release.getByRole("combobox", { name: "Preferred channel", exact: true });
     const check = release.getByRole("button", { name: "Check for release", exact: true });
-    const reset = release.getByRole("button", { name: /^Reset to bundled / });
+    const reset = release.getByRole("button", { name: /^Reset (to bundled |prepared runtime$)/ });
     const actual = release.locator("dl > div").filter({
       has: page.getByText("Currently running service version", { exact: true }),
     });
@@ -117,9 +117,11 @@ export const openCodeReleaseChannelScenario: Scenario = {
       checkedAt: null,
       offer: null,
     });
-    expect(initial.bundledVersion).toBeTruthy();
+    const preparedLabel = initial.bundledVersion
+      ? `${initial.bundledVersion} (bundled)`
+      : "Not downloaded";
     await expect(actual.locator("dd")).toHaveText(original.version);
-    await expect(prepared.locator("dd")).toHaveText(`${initial.bundledVersion} (bundled)`);
+    await expect(prepared.locator("dd")).toHaveText(preparedLabel);
     await expect(reset).toBeDisabled();
     await expect(check).toBeEnabled();
 
@@ -135,7 +137,7 @@ export const openCodeReleaseChannelScenario: Scenario = {
       await expect(installedVersion.locator("dd")).toHaveText(fixture!.version);
       await expect(installedPath.locator("dd")).toHaveText(fixture!.path);
       await expect(actual.locator("dd")).toHaveText(original.version);
-      await expect(prepared.locator("dd")).toHaveText(`${initial.bundledVersion} (bundled)`);
+      await expect(prepared.locator("dd")).toHaveText(preparedLabel);
       expect(await status()).toEqual(initial);
       await unchangedService();
     }
@@ -198,7 +200,7 @@ export const openCodeReleaseChannelScenario: Scenario = {
         .toMatchObject({ release: { channel: value, prepared: null } });
       await unchangedService();
       await expect(actual.locator("dd")).toHaveText(original.version);
-      await expect(prepared.locator("dd")).toHaveText(`${initial.bundledVersion} (bundled)`);
+      await expect(prepared.locator("dd")).toHaveText(preparedLabel);
     }
 
     await tabTo(page, channel);

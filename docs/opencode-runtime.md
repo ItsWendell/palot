@@ -1,39 +1,28 @@
-# OpenCode Runtime Packaging
+# OpenCode runtime management
 
-Palot Linux and macOS packages bundle the exact OpenCode 2 runtime that matches
-the pinned client and protocol contract. Packaging downloads the official
-architecture-specific npm artifact and checks its version and pinned source
-SHA-256 before staging it. Linux uses `resources/opencode`; macOS uses
-`Contents/Resources/opencode` and additionally verifies the Mach-O architecture.
-The macOS runtime retains its upstream Developer ID signature and hardened runtime.
-Outer application signing excludes only that exact runtime path, so its packaged
-SHA-256 stays identical to the verified npm executable. Palot's own app remains
-ad-hoc signed unless explicitly signed with a local certificate.
+Palot's desktop installers do not bundle the OpenCode executable. Existing local
+installations are preferred, and Palot can connect to a running service without
+having its own runtime. A first-time user can install OpenCode using the
+[official instructions](https://opencode.ai/v2/docs#install), or explicitly download
+an app-private fallback directly from OpenCode's official release feed.
 
-The current 2.0.2 Linux and macOS arm64 and x64-baseline archives were checked
-against npm integrity metadata before extraction. Isolated `--version` execution
-passed on Linux x64, native macOS arm64, and macOS x64 through Rosetta. The arm64
-runtime retained its exact bytes and valid signature through application signing
-and ZIP extraction. Linux arm64 remains statically checked only. These results
-don't qualify a native Intel installation or every supported macOS version.
+In the disconnected screen, open **OpenCode release settings**, choose Stable or
+Beta, then **Check for release** and download the offered runtime. Close setup and
+use the separate **Start OpenCode** confirmation. Nothing is downloaded on startup,
+and downloading does not start or replace the shared service. First-time download
+requires internet access; a previously verified prepared runtime works offline.
 
-Historically, beta19507 Apple Silicon runtime execution, native integration, and
-isolated package smoke passed on macOS 26.6.2. That result does not qualify the
-current release, an Intel installation, or every macOS version back to the
-declared macOS 13 floor. Future updates must verify the new runtime's exact bytes,
-signature and hardened-runtime flag before changing the pins.
-
-`bun run package:mac` stages the current host architecture. Passing an explicit Electron Builder
-architecture stages only that target. The first qualified release target is Apple Silicon.
-`bun run package:nightly:linux` stages and verifies the Linux host architecture.
-Packaging uses `--publish never` and fails before creating a release if an artifact is absent or differs from the pinned contract in
-`apps/desktop/src/main/opencode-runtime-release.ts`.
+Every package carries `opencode/policy.json` declaring this external-runtime
+contract. Package verification rejects unexpected runtime executables or manifests
+in that directory. A missing or corrupt policy is a packaging error, not permission
+to silently acquire an executable. Palot's macOS app remains ad-hoc signed unless
+explicitly signed with a local certificate.
 
 ## Compatibility
 
 Palot supports stable OpenCode **2.x**, starting at 2.0.0, without a patch-version
-override. The bundled runtime and generated client remain pinned to 2.0.2 for
-reproducible builds. The previously tested beta `0.0.0-beta-19507` is also accepted.
+override. The generated client and isolated release-smoke runtime remain pinned to
+2.0.2 for repeatable checks. The previously tested beta `0.0.0-beta-19507` is also accepted.
 Other recognized V2 beta versions require explicit consent; V1, unknown majors
 and malformed versions are refused. Palot's own Stable/Nightly channel does not
 change this policy.
@@ -52,7 +41,7 @@ blocking the whole connection or assuming every Beta has extra features.
 Existing registered services are always discovered first. For an explicitly
 confirmed local start/restart, **Installed OpenCode** is the default preference:
 Palot uses the selected compatible user installation before its app-owned
-fallback. Choosing **Palot runtime** explicitly opts into the prepared/bundled
+fallback. Choosing **Palot runtime** explicitly opts into the prepared download
 path. Service version and installed executable version can differ after an
 executable update; neither is inferred from the other.
 
@@ -87,12 +76,13 @@ Preparing a release verifies its official URL, archive size and SHA-256 before
 extracting and checking the executable. Downloads stay in Palot-owned application
 data, never a global executable directory. Unreviewed beta execution needs an
 explicit confirmation scoped to that version and Palot's client baseline.
-An offline or failed check does not replace the prepared runtime. **Use bundled
-runtime** restores the bundled next-start selection without restarting anything.
+An offline or failed check does not replace the prepared runtime. **Reset prepared
+runtime** clears the next-start selection without restarting anything or changing
+an installed CLI. Check and prepare another offered release to select it later.
 
-On an explicit **Start OpenCode** action, Palot verifies the selected cached
-runtime or the bundled manifest, executable permission, SHA-256, architecture,
-and `opencode2 --version` before asking the official `Service.ensure` contract to
+On an explicit **Start OpenCode** action, Palot checks the selected installed
+executable, or re-verifies the prepared download's hash and version, before asking
+the official `Service.ensure` contract to
 start it. Restart verifies the selected binary before stopping a working service.
 Opening Palot only discovers an existing service; it does not silently start,
 downgrade or replace one. Startup also preserves a healthy service that appears
@@ -101,8 +91,10 @@ during discovery rather than treating a race as replacement authorization.
 The shared service can be used by other OpenCode clients. Applying a prepared
 runtime requires a separately confirmed start/restart that may interrupt their
 work. Remote HTTP servers remain owned by their operator. Managed SSH retains
-its exact authentication/runtime contract and does not use the local release
-selection. `OPENCODE_BIN` remains an explicit development/recovery installation
+its exact authentication/runtime contract: it needs an installed or prepared
+OpenCode matching Palot's pinned client version. It never silently downloads a
+different version. If the offered release has moved on, install that exact CLI
+version separately for SSH. `OPENCODE_BIN` remains an explicit development/recovery installation
 candidate; it never grants permission to update or restart the task-host service.
 
 Continuing with an unreviewed service records approval for the connection profile,

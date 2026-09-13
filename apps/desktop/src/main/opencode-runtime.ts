@@ -23,10 +23,7 @@ import { OpenCodeEventBatcher } from "./event-batcher";
 import { notifyEventObservers } from "./event-observers";
 import { EventReplayGuard } from "./event-replay-guard";
 import { openCodeLog } from "./opencode-observability";
-import {
-  OpenCodeRuntimeLifecycle,
-  discoverBundledOpenCodeBinary,
-} from "./opencode-runtime-lifecycle";
+import { OpenCodeRuntimeLifecycle } from "./opencode-runtime-lifecycle";
 import { getOpenCodeReleaseManager } from "./opencode-release-manager";
 import { getOpenCodeInstallations } from "./opencode-local-installations";
 import type { SshConnector } from "./ssh/interaction";
@@ -90,10 +87,6 @@ export class OpenCodeRuntime {
     );
     lifecycle = new OpenCodeRuntimeLifecycle({
       profile,
-      discoverLocalBinary: async () =>
-        (await getOpenCodeInstallations().discoverPreferredBinary()) ??
-        (await getOpenCodeReleaseManager().discoverPreparedBinary()) ??
-        discoverBundledOpenCodeBinary(),
       headers:
         profile.kind === "remote" ? this.credentials.headers(profile.credentialID) : undefined,
       allowVersionMismatch,

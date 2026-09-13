@@ -118,7 +118,7 @@ describe("OpenCodeInstallationSettings", () => {
   });
 
   it.each([false, true])(
-    "shows bundled fallback and manual instructions for missing or unsupported installations (%s)",
+    "offers explicit setup for missing or unsupported installations (%s)",
     async (unsupported) => {
       vi.mocked(palot.inspectOpenCodeInstallations).mockResolvedValue({
         ...initial,
@@ -127,7 +127,9 @@ describe("OpenCodeInstallationSettings", () => {
       vi.mocked(palot.openCodeReleaseStatus).mockResolvedValue(offered);
       const user = userEvent.setup();
       render(<OpenCodeInstallationSettings />);
-      expect(await screen.findByText(/bundled Palot runtime is already available/)).toBeTruthy();
+      expect(
+        await screen.findByText(/download a fallback in OpenCode release settings/),
+      ).toBeTruthy();
       expect(
         screen
           .getByRole("link", { name: "Official OpenCode installation instructions" })

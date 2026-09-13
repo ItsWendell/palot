@@ -1,13 +1,6 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { access } from "node:fs/promises";
-import { homedir } from "node:os";
-import path from "node:path";
-import { promisify } from "node:util";
 import { OpenCode, type OpenCodeClient, type OpenCodeEvent } from "@opencode/client";
 import { Service, type Endpoint, type StopOptions } from "@opencode/client/service";
-import { app } from "electron";
 import { actionableErrorMessage, errorDiagnostic } from "../shared/diagnostics";
 import type {
   OpenCodeConnectInput,
@@ -21,19 +14,19 @@ import {
   SUPPORTED_OPENCODE_VERSION,
   canContinueOpenCodeVersionMismatch,
   isSupportedOpenCodeVersion,
-  parseOpenCodeVersionOutput,
   shouldReuseOpenCodeService,
   supportedOpenCodeVersionLabel,
 } from "./opencode-version";
 import { observedOpenCodeFetch, openCodeLog } from "./opencode-observability";
-import { verifyBundledOpenCodeBinary } from "./opencode-runtime-release";
+import { discoverSelectedOpenCodeBinary } from "./opencode-runtime-selection";
+export { discoverBundledOpenCodeBinary } from "./opencode-runtime-selection";
 import type { SshConnection } from "./ssh/transport";
 import type { SshConnector } from "./ssh/interaction";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETAINED_ENDPOINT_TIMEOUT_MS = 5_000;
 const LOCAL_SERVICE_UNAVAILABLE =
-  "No reachable local OpenCode service was found. Retry the connection, or start OpenCode explicitly.";
+  "No reachable local OpenCode service was found. Retry the connection, or start OpenCode explicitly. If no CLI is installed, install OpenCode 2 or download an official runtime in connection settings first.";
 const RECONNECTING_ERROR =
   "OpenCode is reconnecting. Retry once the service is available, or start it explicitly.";
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -41,7 +34,6 @@ const STREAM_YIELD_MS = 8;
 // The service sends a keepalive every 15 seconds, including when no events are emitted.
 const STREAM_IDLE_TIMEOUT_MS = 45_000;
 const STREAM_FOREGROUND_SILENCE_MS = 20_000;
-const execFileAsync = promisify(execFile);
 
 type Binary = { path: string; version: string };
 
@@ -61,13 +53,13 @@ export interface OpenCodeRuntimeLifecycleAdapter {
     headers?: Record<string, string>,
     rejectRedirects?: boolean,
   ): OpenCodeClient;
-  discoverBinary(): Promise<Binary | null>;
+  discoverBinary(input?: { exactVersion?: string }): Promise<Binary | null>;
   wait(milliseconds: number, signal: AbortSignal): Promise<void>;
   now(): number;
 }
 
 interface OpenCodeRuntimeLifecycleOptions {
-  /** Local launch selection only. SSH keeps the exact bundled authentication contract. */
+  /** Local launch selection only. SSH keeps the exact CLI authentication contract. */
   discoverLocalBinary?(): Promise<Binary | null>;
   profile?: OpenCodeProfile;
   headers?: Record<string, string>;
@@ -103,85 +95,6 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-function externalExecutableCandidates(): string[] {
-  if (process.env.OPENCODE_BIN) return [process.env.OPENCODE_BIN];
-  const pathDirectories = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
-  const opencode2FromPath = pathDirectories.map((directory) => path.join(directory, "opencode2"));
-  const opencodeFromPath = pathDirectories.map((directory) => path.join(directory, "opencode"));
-  return [
-    path.join(homedir(), ".opencode", "bin", "opencode2"),
-    path.join(homedir(), ".local", "bin", "opencode2"),
-    path.join(homedir(), ".bun", "bin", "opencode2"),
-    "/opt/homebrew/bin/opencode2",
-    "/usr/local/bin/opencode2",
-    ...opencode2FromPath,
-    path.join(homedir(), ".opencode", "bin", "opencode"),
-    path.join(homedir(), ".local", "bin", "opencode"),
-    path.join(homedir(), ".bun", "bin", "opencode"),
-    "/opt/homebrew/bin/opencode",
-    "/usr/local/bin/opencode",
-    ...opencodeFromPath,
-  ];
-}
-
-async function binaryVersion(candidate: string): Promise<string | null> {
-  try {
-    const { stdout, stderr } = await execFileAsync(candidate, ["--version"], {
-      timeout: 5_000,
-      maxBuffer: 64 * 1_024,
-    });
-    return parseOpenCodeVersionOutput(`${stdout}\n${stderr}`);
-  } catch {
-    return null;
-  }
-}
-
-/** After local source selection, never re-enter PATH/OPENCODE_BIN discovery. */
-export async function discoverBundledOpenCodeBinary(): Promise<Binary> {
-  try {
-    return await verifyBundledOpenCodeBinary({
-      directory: path.join(process.resourcesPath, "opencode"),
-    });
-  } catch (error) {
-    throw new Error(
-      `Bundled OpenCode runtime verification failed: ${errorMessage(error)}. Prepare a Palot runtime in connection settings, reinstall Palot, or choose Installed OpenCode.`,
-    );
-  }
-}
-
-async function discoverBinary(): Promise<Binary | null> {
-  let bundledError: unknown;
-  if (!process.env.OPENCODE_BIN) {
-    try {
-      return await verifyBundledOpenCodeBinary({
-        directory: path.join(process.resourcesPath, "opencode"),
-      });
-    } catch (error) {
-      bundledError = error;
-    }
-  }
-  if (bundledError && app.isPackaged) {
-    throw new Error(
-      `Bundled OpenCode runtime verification failed: ${errorMessage(bundledError)}. Reinstall Palot, or set OPENCODE_BIN to an explicitly trusted ${supportedOpenCodeVersionLabel()} executable.`,
-    );
-  }
-  for (const candidate of new Set(externalExecutableCandidates())) {
-    try {
-      await access(candidate, constants.X_OK);
-      const version = await binaryVersion(candidate);
-      if (version && isSupportedOpenCodeVersion(version)) return { path: candidate, version };
-    } catch {
-      continue;
-    }
-  }
-  if (bundledError) {
-    throw new Error(
-      `Bundled OpenCode runtime verification failed: ${errorMessage(bundledError)}. Reinstall Palot, or install ${supportedOpenCodeVersionLabel()} and set OPENCODE_BIN to that executable.`,
-    );
-  }
-  return null;
-}
-
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -212,7 +125,7 @@ export const openCodeRuntimeLifecycleAdapter: OpenCodeRuntimeLifecycleAdapter = 
         globalThis.fetch(input, rejectRedirects ? { ...init, redirect: "error" } : init),
       ),
     }),
-  discoverBinary,
+  discoverBinary: discoverSelectedOpenCodeBinary,
   wait,
   now: Date.now,
 };
@@ -474,9 +387,11 @@ export class OpenCodeRuntimeLifecycle {
       await this.closeSsh();
       if (!this.sshConnector)
         throw new Error("Connect to this SSH server from a Palot window first");
-      const binary = await this.adapter.discoverBinary();
+      const binary = await this.adapter.discoverBinary({ exactVersion: this.contractVersion });
       if (!binary || binary.version !== this.contractVersion)
-        throw new Error("A matching local OpenCode runtime is required for SSH authentication");
+        throw new Error(
+          `SSH authentication requires OpenCode ${this.contractVersion}. Install a matching CLI or explicitly download and select the matching official runtime in connection settings.`,
+        );
       this.connectionAbort.signal.throwIfAborted();
       this.sshConnection = await this.sshConnector({
         config: profile.ssh,
@@ -578,9 +493,16 @@ export class OpenCodeRuntimeLifecycle {
       signal.throwIfAborted();
       if (!binary) {
         const error = new Error(
-          `A supported OpenCode 2 binary was not found. Install ${supportedOpenCodeVersionLabel()} or set OPENCODE_BIN to its executable.`,
+          `A supported OpenCode 2 binary was not found. Install ${supportedOpenCodeVersionLabel()}, set OPENCODE_BIN to its executable, or download an official runtime in connection settings.`,
         );
-        this.setStatus("error", { connected: false, binaryPath: null, error: error.message });
+        this.setStatus("error", {
+          connected: false,
+          // Keep the confirmed action available after setup prepares a runtime.
+          // Preparation does not reconnect or refresh lifecycle state itself.
+          canStartLocalService: true,
+          binaryPath: null,
+          error: error.message,
+        });
         throw error;
       }
       binaryPath = binary.path;

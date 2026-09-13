@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { createGunzip, createInflateRaw } from "node:zlib";
 import { app } from "electron";
 import Store from "electron-store";
+import { readExternalOpenCodeRuntimePolicy } from "./opencode-runtime-release";
 import type {
   OpenCodeReleaseChannel,
   OpenCodeReleaseOffer,
@@ -43,6 +44,7 @@ interface Preferences {
 }
 
 export interface OpenCodeReleaseDependencies {
+  bundledVersion(): string | null;
   preferences: { read(): unknown; write(value: Preferences): void };
   cacheDirectory: string;
   platform: string;
@@ -164,6 +166,10 @@ function defaults(): OpenCodeReleaseDependencies {
   const directory = app.getPath("userData");
   const store = new Store<{ release: Preferences }>({ name: "opencode-release", cwd: directory });
   return {
+    bundledVersion: () =>
+      readExternalOpenCodeRuntimePolicy(path.join(process.resourcesPath, "opencode"))
+        ? null
+        : SUPPORTED_OPENCODE_VERSION,
     preferences: {
       read: () => store.get("release"),
       write: (value) => store.set("release", value),
@@ -205,7 +211,7 @@ export class OpenCodeReleaseManager {
   status(): OpenCodeReleaseStatus {
     return {
       channel: this.preferences.channel,
-      bundledVersion: SUPPORTED_OPENCODE_VERSION,
+      bundledVersion: this.deps.bundledVersion(),
       preparedVersion: this.preferences.prepared?.version ?? null,
       checkedAt: this.checkedAt,
       offer: publicOffer(this.offer),
@@ -370,14 +376,14 @@ export class OpenCodeReleaseManager {
     if (!prepared) return null;
     if (prepared.platform !== this.deps.platform || prepared.arch !== this.deps.arch)
       throw new Error(
-        "Prepared OpenCode runtime is for another architecture. Prepare it again or select the bundled runtime.",
+        "Prepared OpenCode runtime is for another architecture. Download it again or choose Installed OpenCode.",
       );
     if (
       !isSupportedOpenCodeVersion(prepared.version) &&
       !this.acceptsPreparedVersion(prepared.version)
     )
       throw new Error(
-        "Prepared beta consent expired after the Palot update. Check and approve that release again, or select the bundled runtime.",
+        "Prepared beta consent expired after the Palot update. Check and approve that release again, or choose Installed OpenCode.",
       );
     const binary = this.binaryPath(prepared);
     try {

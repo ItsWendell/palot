@@ -349,7 +349,9 @@ export class OpenCodeInstallations {
     return this.status();
   }
 
-  async discoverPreferredBinary(): Promise<{ path: string; version: string } | null> {
+  async discoverPreferredBinary(input?: {
+    exactVersion?: string;
+  }): Promise<{ path: string; version: string } | null> {
     this.assertIdle();
     if (this.preferences.preference === "palot") return null;
     if (!this.inspected || this.inspecting) await this.inspect();
@@ -362,7 +364,8 @@ export class OpenCodeInstallations {
         ? this.known(this.preferences.selectedID)
         : this.snapshots.find(
             ({ installation }) =>
-              installation.compatible || this.accepted(installation.id, installation.version),
+              (installation.compatible || this.accepted(installation.id, installation.version)) &&
+              (!input?.exactVersion || installation.version === input.exactVersion),
           );
     if (!snapshot) {
       if (override) throw new Error("OPENCODE_BIN changed. Inspect local installations again.");

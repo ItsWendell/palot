@@ -46,8 +46,9 @@ An existing user-installed OpenCode runtime is preferred for explicit local
 startup. Connection settings let you choose an installation, check the Stable or
 Beta channel, and explicitly update it using OpenCode's npm, Bun, pnpm, Yarn or
 curl upgrade support. Updating the executable does not restart the service.
-The bundled runtime and optional verified Palot-owned downloads are fallbacks,
-not replacements for a global installation. A service started by Palot is still
+Desktop installers do not bundle OpenCode. If you don't have it installed, setup
+can explicitly download a verified fallback directly from opencode.ai into
+Palot's application data, without changing your global installation. A service started by Palot is still
 shared with other OpenCode clients; closing Palot leaves it running.
 Remote and SSH profiles do not fall back to local startup. Automatic shared-service
 startup and a separate isolated managed profile are not currently offered.
@@ -84,8 +85,7 @@ bun run install:nightly:mac
 bun run dev:focus
 ```
 
-Source builds require Bun `1.4.2`, Node.js `24` or later, and Vite+. Packaged apps
-include a pinned OpenCode fallback; stable OpenCode **2.x** and the reviewed beta
+Source builds require Bun `1.4.2`, Node.js `24` or later, and Vite+. Stable OpenCode **2.x** and the reviewed beta
 are supported as external services. Unreviewed betas require explicit consent.
 `bun run dev` starts hidden; `bun run dev:visible` shows the window without taking
 focus. Windows is not a qualified installation target.

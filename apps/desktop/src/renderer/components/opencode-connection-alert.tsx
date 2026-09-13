@@ -61,8 +61,9 @@ export function SharedOpenCodeAction({
                 : "Replace shared OpenCode?"}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This uses the prepared next-start runtime from OpenCode release settings, or the bundled
-            runtime if none is prepared. The selected runtime may be untested.{" "}
+            This uses the runtime selected in local OpenCode settings. Your installed OpenCode is
+            preferred by default; an explicitly downloaded Palot runtime is the fallback. The
+            selected runtime may be untested.{" "}
             {action === "start"
               ? "This may restart an unresponsive shared service and interrupt other OpenCode clients and their running tasks."
               : "This will restart the shared service and may interrupt other OpenCode clients and their running tasks."}

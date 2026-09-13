@@ -72,6 +72,43 @@ function harness(
 }
 
 describe("local OpenCode installations", () => {
+  it("finds an exact installed SSH runtime without changing the user's local selection", async () => {
+    const h = harness({
+      versions: { "/new/opencode": "2.1.0", "/matching/opencode": "2.0.2" },
+    });
+    expect(await h.manager.discoverPreferredBinary({ exactVersion: "2.0.2" })).toEqual({
+      path: "/matching/opencode",
+      version: "2.0.2",
+    });
+    expect(await h.manager.discoverPreferredBinary()).toEqual({
+      path: "/new/opencode",
+      version: "2.1.0",
+    });
+    expect(h.saved()).toBeUndefined();
+    expect(await h.manager.discoverPreferredBinary({ exactVersion: "2.0.1" })).toBeNull();
+    h.manager.setPreference("palot");
+    expect(await h.manager.discoverPreferredBinary({ exactVersion: "2.0.2" })).toBeNull();
+  });
+
+  it("does not bypass explicit installed selection or OPENCODE_BIN for an exact SSH request", async () => {
+    const h = harness({
+      override: "/custom/opencode",
+      versions: { "/custom/opencode": "2.1.0", "/matching/opencode": "2.0.2" },
+    });
+    expect(await h.manager.discoverPreferredBinary({ exactVersion: "2.0.2" })).toEqual({
+      path: "/custom/opencode",
+      version: "2.1.0",
+    });
+    // The runtime selector rejects this mismatch instead of silently substituting another CLI.
+    const selected = harness({
+      versions: { "/custom/opencode": "2.1.0", "/matching/opencode": "2.0.2" },
+    });
+    selected.manager.select((await selected.manager.inspect()).installations[0]!.id);
+    expect(await selected.manager.discoverPreferredBinary({ exactVersion: "2.0.2" })).toEqual({
+      path: "/custom/opencode",
+      version: "2.1.0",
+    });
+  });
   it("does not execute on construction, cached status, or preference changes", () => {
     const h = harness();
     expect(h.manager.status()).toMatchObject({ preference: "installed", installations: [] });

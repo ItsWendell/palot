@@ -113,6 +113,13 @@ jobs:
             test "$(uname -m)" = arm64
             bun apps/desktop/scripts/package.ts "$PALOT_BUILD_CHANNEL" --mac --arm64
           fi 2>&1 | tee .local/desktop-release/package.log
+      - name: Install exact external OpenCode for isolated smoke
+        run: |
+          version=$(bun -p 'require("./apps/desktop/package.json").devDependencies["@opencode/client"]')
+          bun add --global --trust "@opencode/cli@$version"
+          binary=$(command -v opencode2)
+          test -n "$binary"
+          echo "OPENCODE_BIN=$binary" >> "$GITHUB_ENV"
       - name: Verify macOS package and isolated renderer
         if: runner.os == 'macOS'
         run: |
@@ -151,7 +158,6 @@ jobs:
           trap cleanup EXIT
           sudo apt-get install -y ./apps/desktop/release/*.deb
           test -x "/opt/$product/$package"
-          export OPENCODE_BIN="/opt/$product/resources/opencode/opencode2"
           # Non-root, real installed executable; no --no-sandbox or global policy changes.
           dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' \
             bun run test:e2e -- smoke --executable "/opt/$product/$package"
@@ -259,7 +265,8 @@ jobs:
 
           - Linux: AppImage, Debian/Ubuntu DEB, Fedora RPM, and portable tar.gz.
           - macOS: DMG and ZIP. Ad-hoc signed, **not Developer ID signed or notarized**.
-          - Install and signing instructions: https://github.com/ItsWendell/palot#installation
+          - Install and signing instructions: https://github.com/ItsWendell/palot/blob/main/docs/installation.md
+          - OpenCode is installed separately. Use an existing local installation or explicitly download a verified fallback during setup.
           - Verify downloads with SHA256SUMS; GitHub build attestations are available with `gh attestation verify`.
           - Updates are manual. No legacy Palot 0.11 auto-update feeds are published.
           - Intel Mac, Linux ARM64, and Windows packages are not included.

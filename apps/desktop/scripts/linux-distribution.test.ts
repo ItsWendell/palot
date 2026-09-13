@@ -8,8 +8,10 @@ import {
   linuxArtifactFormat,
   linuxDistributionIdentity,
   linuxInstallSmokePlan,
+  verifyInstalledLinuxDesktopEntry,
   verifyLinuxArtifact,
   verifyLinuxPackageMetadata,
+  verifyLinuxRpmDirectoryOwnership,
 } from "./linux-distribution";
 
 const temporary: string[] = [];
@@ -59,6 +61,132 @@ describe("Linux distribution identities", () => {
   it("rejects unpacked directories and evidence files as artifacts", () => {
     expect(() => linuxArtifactFormat("linux-unpacked")).toThrow("Unsupported");
     expect(() => linuxArtifactFormat("release-manifest.json")).toThrow("Unsupported");
+  });
+});
+
+describe("installed desktop entry validation", () => {
+  function desktop(channel: "stable" | "nightly") {
+    const identity = linuxDistributionIdentity(channel);
+    return `[Desktop Entry]
+Name=${identity.productName}
+Exec="${identity.installDirectory}/${identity.executable}" %U
+StartupWMClass=${identity.appId}
+Actions=NewTask;
+
+[Desktop Action NewTask]
+Name=New Task
+Exec=${identity.executable} --new-task
+`;
+  }
+
+  it.each(["stable", "nightly"] as const)("accepts the %s desktop action", (channel) => {
+    expect(() => verifyInstalledLinuxDesktopEntry(desktop(channel), channel)).not.toThrow();
+  });
+
+  it("rejects the undeclared action shipped in the candidate RPM", () => {
+    expect(() =>
+      verifyInstalledLinuxDesktopEntry(
+        desktop("nightly").replace("Actions=NewTask;\n", ""),
+        "nightly",
+      ),
+    ).toThrow("must declare Actions=NewTask;");
+  });
+
+  it("does not accept an action declaration in the wrong group", () => {
+    const entry = desktop("nightly").replace("Actions=NewTask;\n", "") + "Actions=NewTask;\n";
+    expect(() => verifyInstalledLinuxDesktopEntry(entry, "nightly")).toThrow(
+      "must declare Actions",
+    );
+  });
+
+  it("rejects a declared action without its command", () => {
+    const entry = desktop("nightly").replace("Exec=palot-nightly --new-task", "");
+    expect(() => verifyInstalledLinuxDesktopEntry(entry, "nightly")).toThrow(
+      "NewTask desktop action",
+    );
+  });
+
+  it("rejects a cross-channel action even when the main entry is correct", () => {
+    const entry = desktop("nightly").replace(
+      "Exec=palot-nightly --new-task",
+      "Exec=palot --new-task",
+    );
+    expect(() => verifyInstalledLinuxDesktopEntry(entry, "nightly")).toThrow(
+      "NewTask desktop action",
+    );
+  });
+
+  it("rejects a cross-channel main executable despite a correct action", () => {
+    const entry = desktop("nightly").replace(
+      'Exec="/opt/Palot Nightly/palot-nightly"',
+      'Exec="/opt/Palot/palot"',
+    );
+    expect(() => verifyInstalledLinuxDesktopEntry(entry, "nightly")).toThrow(
+      "wrong channel identity",
+    );
+  });
+
+  it("rejects a sandbox bypass", () => {
+    const entry = desktop("nightly").replace(" %U", " --no-sandbox %U");
+    expect(() => verifyInstalledLinuxDesktopEntry(entry, "nightly")).toThrow(
+      "disables Chromium sandboxing",
+    );
+  });
+});
+
+describe("RPM directory ownership", () => {
+  function metadata(channel: "stable" | "nightly") {
+    const { installDirectory, executable } = linuxDistributionIdentity(channel);
+    return [
+      `drwxr-xr-x\t${installDirectory}`,
+      `-rwxr-xr-x\t${installDirectory}/${executable}`,
+      `drwxr-xr-x\t${installDirectory}/resources`,
+      `-rw-r--r--\t${installDirectory}/resources/app.asar`,
+    ].join("\n");
+  }
+
+  it.each(["stable", "nightly"] as const)("accepts complete %s directory ownership", (channel) => {
+    expect(() => verifyLinuxRpmDirectoryOwnership(metadata(channel), channel)).not.toThrow();
+  });
+
+  it("rejects a file-only RPM manifest that would leave directories behind", () => {
+    const files = metadata("nightly")
+      .split("\n")
+      .filter((line) => !line.startsWith("d"))
+      .join("\n");
+    expect(() => verifyLinuxRpmDirectoryOwnership(files, "nightly")).toThrow(
+      "RPM must own its application directory: /opt/Palot Nightly",
+    );
+  });
+
+  it("requires intermediate directory ownership, not only the install root", () => {
+    const files = metadata("nightly").replace("drwxr-xr-x\t/opt/Palot Nightly/resources\n", "");
+    expect(() => verifyLinuxRpmDirectoryOwnership(files, "nightly")).toThrow(
+      "RPM must own its application directory: /opt/Palot Nightly/resources",
+    );
+  });
+
+  it("requires parent ownership for an empty nested directory too", () => {
+    const files = `${metadata("nightly")}\ndrwxr-xr-x\t/opt/Palot Nightly/cache/empty`;
+    expect(() => verifyLinuxRpmDirectoryOwnership(files, "nightly")).toThrow(
+      "RPM must own its application directory: /opt/Palot Nightly/cache",
+    );
+  });
+
+  it("does not accept a symlink in place of an owned directory", () => {
+    const files = metadata("nightly").replace(
+      "drwxr-xr-x\t/opt/Palot Nightly/resources",
+      "lrwxrwxrwx\t/opt/Palot Nightly/resources",
+    );
+    expect(() => verifyLinuxRpmDirectoryOwnership(files, "nightly")).toThrow(
+      "must own its application directory",
+    );
+  });
+
+  it("rejects ownership of the other channel's app tree", () => {
+    expect(() =>
+      verifyLinuxRpmDirectoryOwnership(`${metadata("nightly")}\n${metadata("stable")}`, "nightly"),
+    ).toThrow("must not own the other channel's installation");
   });
 });
 

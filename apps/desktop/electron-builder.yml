@@ -28,6 +28,8 @@ extraResources:
     to: drizzle
   - from: resources/licenses
     to: licenses
+  - from: resources/opencode-policy.json
+    to: opencode/policy.json
 
 asar: true
 asarUnpack:
@@ -51,19 +53,12 @@ mac:
   icon: resources/icons/stable/icon.icns
   identity: "-"
   minimumSystemVersion: "13.0"
-  extraResources:
-    - from: resources/opencode/${arch}
-      to: opencode
   target:
     - dmg
     - zip
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
-  # Staging verifies the pinned upstream Developer ID signature. Preserve its bytes:
-  # ad-hoc re-signing produces different executable hashes across macOS versions.
-  signIgnore:
-    - /Contents/Resources/opencode/opencode2$
 
 win:
   icon: resources/icons/stable/icon.ico
@@ -81,9 +76,6 @@ linux:
   # Keep electron-builder's per-executable AppArmor profile and install/remove hooks.
   # They allow user namespaces on Ubuntu 24+ without disabling Chromium's sandbox.
   syncDesktopName: true
-  extraResources:
-    - from: resources/opencode/linux/${arch}
-      to: opencode
   target:
     - target: AppImage
       arch:
@@ -101,11 +93,16 @@ linux:
   desktop:
     entry:
       StartupWMClass: dev.palot.desktop
+      Actions: NewTask;
       Keywords: "AI;Development;OpenCode;"
     desktopActions:
       NewTask:
         Name: New Task
         Exec: palot --new-task
+
+rpm:
+  fpm:
+    - --rpm-auto-add-directories
 
 nsis:
   oneClick: false

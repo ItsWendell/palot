@@ -8,6 +8,7 @@ import { generateDependencyLicenses } from "./generate-dependency-licenses";
 import { provenancedPackageRoots, readValidatedBuildInputs } from "./build-inputs";
 import reviewedEvidence from "../resources/licenses/DEPENDENCY_LICENSE_EVIDENCE.json";
 import { verifyRuntimeNoticeInputs } from "./runtime-notice-inputs";
+import { verifyExternalRuntimePackage } from "./packaged-opencode-policy";
 import type { PalotReleaseBuildInfo } from "../src/shared/release-build-info";
 // The pinned builder exports this at runtime but strips its internal declaration.
 // Reuse its exact transformation rather than maintaining a second metadata policy.
@@ -175,15 +176,7 @@ export async function writePackagedDependencyNotices(
     }))
       runtimeNotices.add(notice);
   }
-  const runtime = JSON.parse(
-    await readFile(path.join(resources, "opencode", "manifest.json"), "utf8"),
-  );
-  for (const notice of await verifyRuntimeNoticeInputs({
-    artifactId: `opencode-${process.platform}-${runtime.architecture}`,
-    artifactPath: path.join(resources, "opencode", "opencode2"),
-    licenseDirectory,
-  }))
-    runtimeNotices.add(notice);
+  await verifyExternalRuntimePackage(resources);
   const scratchRoot = path.resolve(appRoot, "../../.local/packaged-notices");
   await mkdir(scratchRoot, { recursive: true });
   const scratch = await mkdtemp(path.join(scratchRoot, "capture-"));
@@ -243,14 +236,7 @@ export async function verifyPackagedDependencyNotices(
   const report = await readFile(path.join(licenses, "DEPENDENCY_LICENSES.md"));
   if (createHash("sha256").update(report).digest("hex") !== inventory.reportSha256)
     throw new Error("Packaged dependency notices changed.");
-  const runtime = JSON.parse(
-    await readFile(path.join(resources, "opencode", "manifest.json"), "utf8"),
-  );
-  await verifyRuntimeNoticeInputs({
-    artifactId: `opencode-${process.platform}-${runtime.architecture}`,
-    artifactPath: path.join(resources, "opencode", "opencode2"),
-    licenseDirectory: licenses,
-  });
+  await verifyExternalRuntimePackage(resources);
   const asar = path.join(resources, "app.asar");
   uncache(asar);
   const wasm = listPackage(asar, { isPack: false }).filter((name) => name.endsWith(".wasm"));

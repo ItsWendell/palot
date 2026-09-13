@@ -78,7 +78,7 @@ export async function generateDependencyLicenses(
     `# Dependency licenses\n\n${scope}\n\nLicense and notice text comes from package-root LICENSE, LICENCE, COPYING, and NOTICE files, supplemented by version-bound texts verified against recorded hashes. Declared metadata and source-text licenses are listed separately.\n\n## Inventory status: ${issues.length ? "INCOMPLETE" : "COMPLETE"}\n\n${entries.length} physical packages inventoried; ${issues.length} inventory issues.\n\n### Diagnostics\n\n${diagnostics}\n\n${sections.join("\n")}\n`,
   );
   if (issues.length) {
-    const message = `Dependency license inventory has ${issues.length} inventory issues; see ${output}`;
+    const message = `Dependency license inventory has ${issues.length} inventory issues; see ${output}\n${diagnostics}`;
     if (options.check) throw new Error(message);
     console.warn(message);
   }

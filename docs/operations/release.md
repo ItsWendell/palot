@@ -90,7 +90,7 @@ bun apps/desktop/scripts/linux-distribution.ts verify nightly \
 
 # Native Apple Silicon.
 bun apps/desktop/scripts/package.ts nightly --mac --arm64
-bun apps/desktop/scripts/release-verification.ts nightly \
+OPENCODE_BIN="$(command -v opencode2)" bun apps/desktop/scripts/release-verification.ts nightly \
   'apps/desktop/release/mac-arm64/Palot Nightly.app' --smoke
 ```
 
@@ -108,7 +108,10 @@ generated inside the app before signing and checked again from the final archive
 
 Packaging performs its own build with the correct identity. Do not substitute a
 development build with `--skip-build`. Mac smoke requires a logged-in GUI session
-and matching architecture; it starts only an isolated bundled OpenCode service.
+and matching architecture. Set `OPENCODE_BIN` to the exact tested client version;
+it starts only an isolated service with that external executable. Public packages
+contain an external-runtime policy, not an OpenCode executable. Hosted smoke
+installs the exact official CLI independently from the app being tested.
 Failed smoke evidence remains under `.local/`; it never replaces the user service.
 
 ## Signing and download verification

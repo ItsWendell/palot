@@ -141,7 +141,7 @@ export function OpenCodeInstallationSettings({
   return (
     <SettingsSection
       title="Local OpenCode runtime"
-      description="Prefer your installed OpenCode. Palot's bundled runtime is available as a fallback."
+      description="Use your installed OpenCode, or explicitly download a separate runtime for Palot."
     >
       <SettingsGroup>
         <div className="min-w-0 space-y-4 p-4">
@@ -248,9 +248,9 @@ export function OpenCodeInstallationSettings({
                   {selected
                     ? "No compatible selected installation is available."
                     : "No installed OpenCode was found."}{" "}
-                  The bundled Palot runtime is already available as a fallback. Palot will not
-                  install OpenCode globally automatically. To install or repair OpenCode manually,
-                  follow the official installation instructions, then refresh installations.
+                  Install OpenCode using the official instructions, then refresh installations, or
+                  download a fallback in OpenCode release settings below. Palot does not install
+                  OpenCode globally automatically.
                 </p>
               ) : null}
               {status.error ? (

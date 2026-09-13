@@ -9,7 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { extractFile, listPackage } from "@electron/asar";
-import { verifyBundledOpenCodeBinary } from "../src/main/opencode-runtime-release";
+import { verifyExternalRuntimePackage } from "./packaged-opencode-policy";
 import { resolveBuildIdentity } from "../src/shared/build-identity";
 import { resolveReleaseBuildInfo } from "./release-build-info";
 import { verifyPackagedBuildIdentity } from "./release-verification";
@@ -45,6 +45,74 @@ export function verifyLinuxPackageMetadata(
   const expected = linuxDistributionIdentity(channel);
   if (metadata.name !== expected.packageName || metadata.palotBuild?.channel !== channel) {
     throw new Error(`Packaged identity must be ${expected.packageName} (${channel}).`);
+  }
+}
+
+export function verifyInstalledLinuxDesktopEntry(desktop: string, channel: Channel) {
+  const identity = linuxDistributionIdentity(channel);
+  const groups = new Map<string, Map<string, string>>();
+  let group: Map<string, string> | undefined;
+  for (const line of desktop.split(/\r?\n/)) {
+    const section = line.match(/^\[([^\]]+)\]$/);
+    if (section) {
+      group = new Map();
+      groups.set(section[1]!, group);
+    } else {
+      const entry = line.match(/^([^#=]+)=(.*)$/);
+      if (entry) group?.set(entry[1]!, entry[2]!);
+    }
+  }
+  const main = groups.get("Desktop Entry");
+  const command = main?.get("Exec")?.match(/^(?:"([^"]+)"|(\S+))(?:\s|$)/);
+  if (
+    main?.get("StartupWMClass") !== identity.appId ||
+    (command?.[1] ?? command?.[2]) !== `${identity.installDirectory}/${identity.executable}`
+  ) {
+    throw new Error("Installed desktop entry has the wrong channel identity.");
+  }
+  if (desktop.includes("--no-sandbox") || desktop.includes("--disable-setuid-sandbox")) {
+    throw new Error("Desktop entry disables Chromium sandboxing.");
+  }
+  if (!main?.get("Actions")?.split(";").includes("NewTask")) {
+    throw new Error("Installed desktop entry must declare Actions=NewTask;.");
+  }
+  if (groups.get("Desktop Action NewTask")?.get("Exec") !== `${identity.executable} --new-task`) {
+    throw new Error("Installed NewTask desktop action has the wrong channel command.");
+  }
+}
+
+/** Query format: [%{FILEMODES:perms}\t%{FILENAMES}\n]. Files alone do not give
+ * RPM ownership of their parent directories, so uninstall would leave them behind.
+ */
+export function verifyLinuxRpmDirectoryOwnership(metadata: string, channel: Channel) {
+  const identity = linuxDistributionIdentity(channel);
+  const entries = new Map(
+    metadata
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const separator = line.indexOf("\t");
+        if (separator < 0) throw new Error("Invalid RPM file ownership metadata.");
+        return [line.slice(separator + 1), line.slice(0, separator)] as const;
+      }),
+  );
+  const required = new Set([identity.installDirectory]);
+  const other = linuxDistributionIdentity(channel === "stable" ? "nightly" : "stable");
+  for (const [entry, mode] of entries) {
+    if (entry === other.installDirectory || entry.startsWith(`${other.installDirectory}/`)) {
+      throw new Error(`RPM must not own the other channel's installation: ${entry}`);
+    }
+    if (!entry.startsWith(`${identity.installDirectory}/`)) continue;
+    let directory = mode.startsWith("d") ? entry : path.posix.dirname(entry);
+    while (directory.startsWith(`${identity.installDirectory}/`)) {
+      required.add(directory);
+      directory = path.posix.dirname(directory);
+    }
+  }
+  for (const directory of required) {
+    if (!entries.get(directory)?.startsWith("d")) {
+      throw new Error(`RPM must own its application directory: ${directory}`);
+    }
   }
 }
 
@@ -98,6 +166,12 @@ export async function verifyLinuxArtifact(artifact: string, channel: Channel, ve
           `Distribution package name is ${packageName}, expected ${identity.packageName}.`,
         );
       }
+      if (format === "rpm") {
+        verifyLinuxRpmDirectoryOwnership(
+          await run("rpm", ["-qp", "--queryformat", "[%{FILEMODES:perms}\t%{FILENAMES}\n]", file]),
+          channel,
+        );
+      }
       await run(
         format === "deb" ? "dpkg-deb" : "bsdtar",
         format === "deb" ? ["--extract", file, temporary] : ["-xf", file, "-C", temporary],
@@ -115,15 +189,7 @@ export async function verifyLinuxArtifact(artifact: string, channel: Channel, ve
         path.join(temporary, "usr/share/applications", identity.desktopName),
         "utf8",
       );
-      if (
-        !desktop.includes(`StartupWMClass=${identity.appId}`) ||
-        !desktop.includes(identity.executable)
-      ) {
-        throw new Error("Installed desktop entry has the wrong channel identity.");
-      }
-      if (desktop.includes("--no-sandbox") || desktop.includes("--disable-setuid-sandbox")) {
-        throw new Error("Desktop entry disables Chromium sandboxing.");
-      }
+      verifyInstalledLinuxDesktopEntry(desktop, channel);
     } else {
       if (format === "AppImage") await run(file, ["--appimage-extract"], temporary);
       else await run("tar", ["-xzf", file, "-C", temporary]);
@@ -149,8 +215,7 @@ export async function verifyLinuxArtifact(artifact: string, channel: Channel, ve
       const build = verifyPackagedBuildIdentity(metadata, channel);
       await verifyPackagedDependencyNotices(path.join(app, "resources"), build);
     }
-    // Same pinned binary/manifest/hash/version contract as linux-package.ts.
-    await verifyBundledOpenCodeBinary({ directory: path.join(app, "resources/opencode") });
+    await verifyExternalRuntimePackage(path.join(app, "resources"));
     const desktop = await readFile(path.join(app, "resources", identity.desktopName), "utf8");
     if (
       !desktop.includes(`Exec=${identity.executable} --show`) ||

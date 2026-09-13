@@ -52,6 +52,42 @@ function fixture(version = SUPPORTED_OPENCODE_VERSION) {
 }
 
 describe("SSH lifecycle", () => {
+  it("passes the exact verified prepared executable to SSH without changing local services", async () => {
+    const { runtime, adapter, connector } = fixture();
+    vi.mocked(adapter.discoverBinary).mockResolvedValue({
+      path: "/private/verified-download/opencode",
+      version: SUPPORTED_OPENCODE_VERSION,
+    });
+    await runtime.connect({}, connector);
+    expect(adapter.discoverBinary).toHaveBeenCalledWith({
+      exactVersion: SUPPORTED_OPENCODE_VERSION,
+    });
+    expect(connector).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binaryPath: "/private/verified-download/opencode",
+        version: SUPPORTED_OPENCODE_VERSION,
+      }),
+    );
+    expect(adapter.ensureService).not.toHaveBeenCalled();
+    expect(adapter.stopService).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it.each([null, { path: "/installed/opencode", version: "2.1.0" }])(
+    "refuses absent or nonexact authentication runtimes before opening SSH",
+    async (binary) => {
+      const { runtime, adapter, connector } = fixture();
+      vi.mocked(adapter.discoverBinary).mockResolvedValue(binary);
+      await expect(runtime.connect({}, connector)).rejects.toThrow(
+        "SSH authentication requires OpenCode",
+      );
+      expect(connector).not.toHaveBeenCalled();
+      expect(adapter.discoverService).not.toHaveBeenCalled();
+      expect(adapter.ensureService).not.toHaveBeenCalled();
+      expect(adapter.stopService).not.toHaveBeenCalled();
+      await runtime.stop();
+    },
+  );
   it("lets reconnect observers use the ready client without waiting on themselves", async () => {
     const { runtime, adapter, connector, onReconnect } = fixture();
     onReconnect.mockImplementation(async (client) => {

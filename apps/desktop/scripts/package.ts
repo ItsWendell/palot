@@ -14,7 +14,6 @@ import {
   generateUnsignedReleaseMetadata,
   removePreviousUnsignedReleaseArtifacts,
 } from "./unsigned-release-metadata";
-import { stageOpenCodeRuntime } from "./stage-opencode-runtime";
 import { packageBuildConfig } from "./package-build-config";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,30 +47,9 @@ const requestedPlatform = builderArguments.some((argument) =>
     (platform) => argument === platform || argument.startsWith(`${platform}=`),
   ),
 );
-const buildingMac =
-  builderArguments.some((argument) => argument === "--mac" || argument.startsWith("--mac=")) ||
-  (!requestedPlatform && process.platform === "darwin");
 const buildingLinux =
   builderArguments.some((argument) => argument === "--linux" || argument.startsWith("--linux=")) ||
   (!requestedPlatform && process.platform === "linux");
-if (buildingMac || buildingLinux) {
-  const requestedArchitectures = (["arm64", "x64"] as const).filter((architecture) =>
-    builderArguments.includes(`--${architecture}`),
-  );
-  const hostArchitecture = process.arch === "arm64" || process.arch === "x64" ? process.arch : null;
-  const architectures =
-    requestedArchitectures.length > 0
-      ? requestedArchitectures
-      : hostArchitecture
-        ? [hostArchitecture]
-        : [];
-  if (architectures.length === 0) {
-    throw new Error(`Unsupported macOS packaging architecture: ${process.arch}`);
-  }
-  for (const architecture of architectures) {
-    await stageOpenCodeRuntime(architecture, buildingLinux ? "linux" : "darwin");
-  }
-}
 if (!skipBuild) await run(process.execPath, ["run", "scripts/build.ts"], environment);
 
 if (!directoryOnly) {

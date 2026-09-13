@@ -1,12 +1,43 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { SUPPORTED_OPENCODE_VERSION } from "./opencode-version";
+import type { ExternalOpenCodeRuntimePolicy } from "../shared/opencode-release-contract";
 
 const execFileAsync = promisify(execFile);
+
+/** Missing policy means the bundle is still required, not intentionally absent. */
+export function readExternalOpenCodeRuntimePolicy(
+  directory: string,
+): ExternalOpenCodeRuntimePolicy | null {
+  const file = path.join(directory, "policy.json");
+  let info;
+  try {
+    info = lstatSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (!info.isFile() || info.size > 1024) throw new Error("Invalid OpenCode runtime policy file.");
+  const policy: unknown = JSON.parse(readFileSync(file, "utf8"));
+  if (
+    !policy ||
+    typeof policy !== "object" ||
+    Array.isArray(policy) ||
+    Object.keys(policy).length !== 2 ||
+    !("schemaVersion" in policy) ||
+    policy.schemaVersion !== 1 ||
+    !("bundled" in policy) ||
+    policy.bundled !== false
+  )
+    throw new Error("Invalid OpenCode runtime policy: expected schemaVersion 1 and bundled false.");
+  if (readdirSync(directory).some((entry) => entry !== "policy.json"))
+    throw new Error("Bundle-free OpenCode policy must not ship a runtime or manifest.");
+  return { schemaVersion: 1, bundled: false };
+}
 
 export type BundledOpenCodeArchitecture = "arm64" | "x64";
 

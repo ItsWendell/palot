@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveBuildIdentity } from "../src/shared/build-identity";
-import { verifyBundledOpenCodeBinary } from "../src/main/opencode-runtime-release";
+import { verifyExternalRuntimePackage } from "./packaged-opencode-policy";
 import { launchLinuxInstallation, stopLinuxInstallation } from "./linux-install-lifecycle";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,7 +44,7 @@ if (action !== "verify" && !flags.includes("--skip-build"))
     "--dir",
     `--${process.arch}`,
   ]);
-await verifyBundledOpenCodeBinary({ directory: path.join(output, "resources/opencode") });
+await verifyExternalRuntimePackage(path.join(output, "resources"));
 await access(path.join(output, executable));
 const desktopName = `${identity.appId}.desktop`;
 const desktop = await readFile(path.join(output, "resources", desktopName), "utf8");
