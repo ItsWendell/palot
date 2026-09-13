@@ -66,6 +66,25 @@ and narrow/wide light/dark layouts. It checks that the isolated service retains
 the same PID/version throughout. It does not contact update feeds or download
 executables; downloader validation is a separate integration check.
 
+`opencode-runtime-acquisition` is an opt-in network check for public packages that
+do not bundle OpenCode. It uses the isolated service and dummy LLM without model
+calls. Native settings controls check the official Stable feed, download a
+compatible stable 2.x fallback, verify the main-owned prepared selection and reload
+hydration, then reset the selection. Service PID/version must stay unchanged.
+It refuses unverified offers rather than bypassing consent. The manager verifies
+the archive checksum and executable version; the scenario allows 180 seconds for
+the bounded 120-second archive fetch plus extraction and verification.
+
+```sh
+PALOT_E2E_ALLOW_RUNTIME_DOWNLOAD=1 bun run test:e2e -- opencode-runtime-acquisition \
+  --executable /absolute/path/to/packaged-palot --keep
+```
+
+Without the explicit opt-in it fails before starting the isolated service. The
+download stays in the run's private app cache, never the host CLI installation.
+`--keep` retains that cache and `opencode-runtime-acquisition.json`; ordinary
+successful cleanup removes them. This does not test starting the downloaded service.
+
 `subagent-requests` creates a real parent → child → grandchild tool chain against
 the isolated service. It answers the grandchild's question from the parent,
 checks simultaneous child question/permission ownership, reload hydration and

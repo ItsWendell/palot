@@ -36,6 +36,7 @@ import { sshConnectionScenario } from "./ssh-connection-scenario.ts";
 import { remoteTerminalScenario } from "./remote-terminal-scenario.ts";
 import { sharedServiceScenario } from "./shared-service-scenario.ts";
 import { openCodeReleaseChannelScenario } from "./opencode-release-channel-scenario.ts";
+import { openCodeRuntimeAcquisitionScenario } from "./opencode-runtime-acquisition-scenario.ts";
 import { startupAttentionScenario } from "./startup-attention-scenario.ts";
 import { multiConnectionScenario } from "./multi-connection-scenario.ts";
 import {
@@ -167,6 +168,7 @@ export const scenarios = {
   "multi-connection": multiConnectionScenario,
   "shared-service": sharedServiceScenario,
   "opencode-release-channel": openCodeReleaseChannelScenario,
+  "opencode-runtime-acquisition": openCodeRuntimeAcquisitionScenario,
   "linux-desktop": linuxDesktopScenario,
   "compact-windows": compactWindowsScenario,
   "session-window-drag": sessionWindowDragScenario,
