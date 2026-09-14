@@ -52,7 +52,7 @@ describe("OpenCode model catalog queries", () => {
 
     await waitFor(() => expect(result.getByText("loaded")).toBeTruthy());
     expect(listModels).toHaveBeenCalledOnce();
-    expect(listModels).toHaveBeenCalledWith(location, expect.any(AbortSignal));
+    expect(listModels).toHaveBeenCalledWith(location, expect.any(AbortSignal), "connection-1");
   });
 
   it("aborts the service read when the last observer unmounts", async () => {

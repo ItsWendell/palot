@@ -189,208 +189,241 @@ describe("persistedMessageOutcome", () => {
 });
 
 describe("AutomationRunner admission", () => {
-  it("marks uncertain admission unknown without retrying the prompt", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "palot-runner-"));
-    const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite });
-    migrate(database, { migrationsFolder: path.resolve("drizzle") });
-    const repository = new AutomationRepository(database);
-    const definition = fixture(directory);
-    repository.synchronizeDefinition(definition, 1, 1_000);
-    const run = repository.createRun({
-      id: "run-unknown",
-      definition,
-      definitionVersion: 1,
-      trigger: "manual",
-      scheduledFor: 1_000,
-      occurrenceKey: "automation-1:manual:run-unknown",
-    });
-    expect(run).not.toBeNull();
+  it.each([true, false])(
+    "marks uncertain admission unknown without retrying or exposing desktop memory remotely (local=%s)",
+    async (localPathActions) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "palot-runner-"));
+      const sqlite = new DatabaseSync(":memory:");
+      const database = drizzle({ client: sqlite });
+      migrate(database, { migrationsFolder: path.resolve("drizzle") });
+      const repository = new AutomationRepository(database);
+      const definition = fixture(directory);
+      repository.synchronizeDefinition(definition, 1, 1_000);
+      const run = repository.createRun({
+        id: "run-unknown",
+        definition,
+        definitionVersion: 1,
+        trigger: "manual",
+        scheduledFor: 1_000,
+        occurrenceKey: "automation-1:manual:run-unknown",
+      });
+      expect(run).not.toBeNull();
 
-    const prompt = vi.fn().mockRejectedValue(new Error("request timed out"));
-    const emptyMessages = () =>
-      Promise.resolve({ data: [], cursor: { previous: null, next: null } });
-    const client = {
-      agent: { list: vi.fn().mockResolvedValue({ data: [] }) },
-      model: { list: vi.fn().mockResolvedValue({ data: [] }) },
-      skill: { list: vi.fn().mockResolvedValue({ data: [] }) },
-      message: { list: vi.fn(emptyMessages) },
-      session: {
-        create: vi.fn().mockResolvedValue({ id: "session-1" }),
-        get: vi.fn().mockRejectedValue(new Error("not found")),
-        list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
-        prompt,
-        instructions: { entry: { put: vi.fn().mockResolvedValue(undefined) } },
-        inbox: { list: vi.fn().mockResolvedValue([]) },
-        log: async function* () {},
-      },
-    } as unknown as OpenCodeClient;
-    const runner = new AutomationRunner({
-      client: async () => client,
-      repository,
-      memory: memoryStore(),
-      onChanged: vi.fn(),
-      onFinished: vi.fn(),
-      onAttention: vi.fn(),
-    });
-
-    await runner.execute("run-unknown");
-
-    expect(prompt).toHaveBeenCalledTimes(1);
-    expect(client.session.instructions.entry.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionID: "session-1",
-        key: "palot.automation",
-        value: expect.stringContaining("Automation memory: /automations/automation-1/memory.md"),
-      }),
-      expect.anything(),
-    );
-    expect(prompt).toHaveBeenCalledWith(
-      expect.objectContaining({ text: definition.action.prompt }),
-      expect.anything(),
-    );
-    expect(repository.run("run-unknown")).toMatchObject({
-      state: "unknown",
-      error: { code: "admission_unknown" },
-    });
-    expect(repository.automation(definition.id)?.activeRunID).toBeNull();
-    sqlite.close();
-  });
-
-  it("leaves session-targeted runs on transcript continuity", async () => {
-    const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite });
-    migrate(database, { migrationsFolder: path.resolve("drizzle") });
-    const repository = new AutomationRepository(database);
-    const standalone = fixture("/project");
-    const definition: AutomationDefinition = {
-      ...standalone,
-      destination: { type: "session", sessionID: "session-1" },
-    };
-    repository.synchronizeDefinition(definition, 1, 1_000);
-    repository.createRun({
-      id: "run-session",
-      definition,
-      definitionVersion: 1,
-      trigger: "manual",
-      scheduledFor: 1_000,
-      occurrenceKey: "automation-1:manual:run-session",
-    });
-    const prompt = vi.fn().mockRejectedValue(new Error("request timed out"));
-    const putInstruction = vi.fn().mockResolvedValue(undefined);
-    const client = {
-      permission: { list: vi.fn().mockResolvedValue([]) },
-      form: { list: vi.fn().mockResolvedValue([]) },
-      message: {
-        list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
-      },
-      session: {
-        get: vi.fn().mockResolvedValue({ id: "session-1", time: { created: 1, updated: 1 } }),
-        prompt,
-        instructions: { entry: { put: putInstruction } },
-        inbox: { list: vi.fn().mockResolvedValue([]) },
-        log: async function* () {},
-      },
-    } as unknown as OpenCodeClient;
-    const runner = new AutomationRunner({
-      client: async () => client,
-      repository,
-      memory: memoryStore(),
-      onChanged: vi.fn(),
-      onFinished: vi.fn(),
-      onAttention: vi.fn(),
-    });
-
-    await runner.execute("run-session");
-
-    expect(putInstruction).not.toHaveBeenCalled();
-    expect(prompt).toHaveBeenCalledWith(
-      expect.objectContaining({ text: definition.action.prompt, delivery: "queue" }),
-      expect.anything(),
-    );
-    sqlite.close();
-  });
-
-  it("auto-approves only the standalone automation memory directory", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "palot-runner-"));
-    const sqlite = new DatabaseSync(":memory:");
-    const database = drizzle({ client: sqlite });
-    migrate(database, { migrationsFolder: path.resolve("drizzle") });
-    const repository = new AutomationRepository(database);
-    const definition = fixture(directory);
-    repository.synchronizeDefinition(definition, 1, 1_000);
-    repository.createRun({
-      id: "run-memory-permission",
-      definition,
-      definitionVersion: 1,
-      trigger: "manual",
-      scheduledFor: 1_000,
-      occurrenceKey: "automation-1:manual:run-memory-permission",
-    });
-    const reply = vi.fn().mockResolvedValue(undefined);
-    const prompt = vi.fn().mockResolvedValue({ id: "inbox-1", delivery: "steer" });
-    const client = {
-      agent: { list: vi.fn().mockResolvedValue({ data: [] }) },
-      model: { list: vi.fn().mockResolvedValue({ data: [] }) },
-      skill: { list: vi.fn().mockResolvedValue({ data: [] }) },
-      permission: { list: vi.fn().mockResolvedValue([]), reply },
-      form: { list: vi.fn().mockResolvedValue([]) },
-      message: {
-        list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
-      },
-      session: {
-        create: vi.fn().mockResolvedValue({ id: "session-1" }),
-        get: vi.fn().mockRejectedValue(new Error("not found")),
-        list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
-        prompt,
-        wait: vi.fn(
-          (_input, options: { signal: AbortSignal }) =>
-            new Promise<void>((_resolve, reject) => {
-              options.signal.addEventListener("abort", () => reject(options.signal.reason), {
-                once: true,
-              });
-            }),
-        ),
-        instructions: { entry: { put: vi.fn().mockResolvedValue(undefined) } },
-        inbox: { list: vi.fn().mockResolvedValue([]) },
-        log: async function* () {},
-      },
-    } as unknown as OpenCodeClient;
-    const runner = new AutomationRunner({
-      client: async () => client,
-      repository,
-      memory: memoryStore(),
-      onChanged: vi.fn(),
-      onFinished: vi.fn(),
-      onAttention: vi.fn(),
-    });
-
-    const execution = runner.execute("run-memory-permission");
-    await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
-    runner.onEvent({
-      type: "permission.asked",
-      data: {
-        id: "permission-1",
-        sessionID: "session-1",
-        action: "external_directory",
-        resources: ["/automations/automation-1/*"],
-      },
-    } as Parameters<AutomationRunner["onEvent"]>[0]);
-
-    await vi.waitFor(() =>
-      expect(reply).toHaveBeenCalledWith(
-        {
-          sessionID: "session-1",
-          requestID: "permission-1",
-          reply: "once",
+      const prompt = vi.fn().mockRejectedValue(new Error("request timed out"));
+      const emptyMessages = () =>
+        Promise.resolve({ data: [], cursor: { previous: null, next: null } });
+      const client = {
+        agent: { list: vi.fn().mockResolvedValue({ data: [] }) },
+        model: { list: vi.fn().mockResolvedValue({ data: [] }) },
+        skill: { list: vi.fn().mockResolvedValue({ data: [] }) },
+        message: { list: vi.fn(emptyMessages) },
+        session: {
+          create: vi.fn().mockResolvedValue({ id: "session-1" }),
+          get: vi.fn().mockRejectedValue(new Error("not found")),
+          list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
+          prompt,
+          instructions: { entry: { put: vi.fn().mockResolvedValue(undefined) } },
+          inbox: { list: vi.fn().mockResolvedValue([]) },
+          log: async function* () {},
         },
+      } as unknown as OpenCodeClient;
+      const memory = memoryStore();
+      const runner = new AutomationRunner({
+        client: async () => client,
+        repository,
+        memory,
+        capabilities: () => ({ localPathActions, worktreeCreate: true }),
+        onChanged: vi.fn(),
+        onFinished: vi.fn(),
+        onAttention: vi.fn(),
+      });
+
+      await runner.execute("run-unknown");
+
+      expect(prompt).toHaveBeenCalledTimes(1);
+      expect(client.session.instructions.entry.put).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionID: "session-1",
+          key: "palot.automation",
+          value: expect.stringContaining(
+            localPathActions
+              ? "Automation memory: /automations/automation-1/memory.md"
+              : "Persistent cross-run file memory is unavailable on this server.",
+          ),
+        }),
         expect.anything(),
-      ),
-    );
-    await runner.shutdown();
-    await execution;
-    sqlite.close();
-  });
+      );
+      if (localPathActions) expect(memory.ensure).toHaveBeenCalledWith(definition.id);
+      else {
+        expect(memory.ensure).not.toHaveBeenCalled();
+        const instruction = vi.mocked(client.session.instructions.entry.put).mock.calls[0]![0]
+          .value;
+        expect(instruction).not.toContain("/automations/");
+        expect(instruction).not.toContain("Read it first");
+      }
+      expect(prompt).toHaveBeenCalledWith(
+        expect.objectContaining({ text: definition.action.prompt }),
+        expect.anything(),
+      );
+      expect(repository.run("run-unknown")).toMatchObject({
+        state: "unknown",
+        error: { code: "admission_unknown" },
+      });
+      expect(repository.automation(definition.id)?.activeRunID).toBeNull();
+      sqlite.close();
+    },
+  );
+
+  it.each([true, false])(
+    "leaves session-targeted runs on native transcript continuity (local=%s)",
+    async (localPathActions) => {
+      const sqlite = new DatabaseSync(":memory:");
+      const database = drizzle({ client: sqlite });
+      migrate(database, { migrationsFolder: path.resolve("drizzle") });
+      const repository = new AutomationRepository(database);
+      const standalone = fixture("/project");
+      const definition: AutomationDefinition = {
+        ...standalone,
+        destination: { type: "session", sessionID: "session-1" },
+      };
+      repository.synchronizeDefinition(definition, 1, 1_000);
+      repository.createRun({
+        id: "run-session",
+        definition,
+        definitionVersion: 1,
+        trigger: "manual",
+        scheduledFor: 1_000,
+        occurrenceKey: "automation-1:manual:run-session",
+      });
+      const prompt = vi.fn().mockRejectedValue(new Error("request timed out"));
+      const putInstruction = vi.fn().mockResolvedValue(undefined);
+      const client = {
+        permission: { list: vi.fn().mockResolvedValue([]) },
+        form: { list: vi.fn().mockResolvedValue([]) },
+        message: {
+          list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
+        },
+        session: {
+          get: vi.fn().mockResolvedValue({ id: "session-1", time: { created: 1, updated: 1 } }),
+          prompt,
+          instructions: { entry: { put: putInstruction } },
+          inbox: { list: vi.fn().mockResolvedValue([]) },
+          log: async function* () {},
+        },
+      } as unknown as OpenCodeClient;
+      const runner = new AutomationRunner({
+        client: async () => client,
+        repository,
+        memory: memoryStore(),
+        capabilities: () => ({ localPathActions, worktreeCreate: true }),
+        onChanged: vi.fn(),
+        onFinished: vi.fn(),
+        onAttention: vi.fn(),
+      });
+
+      await runner.execute("run-session");
+
+      expect(putInstruction).not.toHaveBeenCalled();
+      expect(prompt).toHaveBeenCalledWith(
+        expect.objectContaining({ text: definition.action.prompt, delivery: "queue" }),
+        expect.anything(),
+      );
+      sqlite.close();
+    },
+  );
+
+  it.each([true, false])(
+    "auto-approves the desktop automation memory directory only on its own filesystem (local=%s)",
+    async (localPathActions) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "palot-runner-"));
+      const sqlite = new DatabaseSync(":memory:");
+      const database = drizzle({ client: sqlite });
+      migrate(database, { migrationsFolder: path.resolve("drizzle") });
+      const repository = new AutomationRepository(database);
+      const definition = fixture(directory);
+      repository.synchronizeDefinition(definition, 1, 1_000);
+      repository.createRun({
+        id: "run-memory-permission",
+        definition,
+        definitionVersion: 1,
+        trigger: "manual",
+        scheduledFor: 1_000,
+        occurrenceKey: "automation-1:manual:run-memory-permission",
+      });
+      const reply = vi.fn().mockResolvedValue(undefined);
+      const prompt = vi.fn().mockResolvedValue({ id: "inbox-1", delivery: "steer" });
+      const client = {
+        agent: { list: vi.fn().mockResolvedValue({ data: [] }) },
+        model: { list: vi.fn().mockResolvedValue({ data: [] }) },
+        skill: { list: vi.fn().mockResolvedValue({ data: [] }) },
+        permission: { list: vi.fn().mockResolvedValue([]), reply },
+        form: { list: vi.fn().mockResolvedValue([]) },
+        message: {
+          list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
+        },
+        session: {
+          create: vi.fn().mockResolvedValue({ id: "session-1" }),
+          get: vi.fn().mockRejectedValue(new Error("not found")),
+          list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
+          prompt,
+          wait: vi.fn(
+            (_input, options: { signal: AbortSignal }) =>
+              new Promise<void>((_resolve, reject) => {
+                options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+                  once: true,
+                });
+              }),
+          ),
+          instructions: { entry: { put: vi.fn().mockResolvedValue(undefined) } },
+          inbox: { list: vi.fn().mockResolvedValue([]) },
+          log: async function* () {},
+        },
+      } as unknown as OpenCodeClient;
+      const runner = new AutomationRunner({
+        client: async () => client,
+        repository,
+        memory: memoryStore(),
+        capabilities: () => ({ localPathActions, worktreeCreate: true }),
+        onChanged: vi.fn(),
+        onFinished: vi.fn(),
+        onAttention: vi.fn(),
+      });
+
+      const execution = runner.execute("run-memory-permission");
+      await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
+      runner.onEvent({
+        type: "permission.asked",
+        data: {
+          id: "permission-1",
+          sessionID: "session-1",
+          action: "external_directory",
+          resources: ["/automations/automation-1/*"],
+        },
+      } as Parameters<AutomationRunner["onEvent"]>[0]);
+
+      if (localPathActions)
+        await vi.waitFor(() =>
+          expect(reply).toHaveBeenCalledWith(
+            {
+              sessionID: "session-1",
+              requestID: "permission-1",
+              reply: "once",
+            },
+            expect.anything(),
+          ),
+        );
+      else {
+        expect(reply).not.toHaveBeenCalled();
+        expect(repository.run("run-memory-permission")?.attention).toMatchObject({
+          type: "permission",
+          requestID: "permission-1",
+        });
+      }
+      await runner.shutdown();
+      await execution;
+      sqlite.close();
+    },
+  );
 
   it("treats beta question forms as question attention", () => {
     const sqlite = new DatabaseSync(":memory:");

@@ -91,8 +91,9 @@ export function InboxCardSurface({
         )}
       >
         <div className="flex min-w-0 items-center gap-2 text-meta text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate font-medium text-sidebar-foreground/70">
-            {item.projectName}
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 font-medium text-sidebar-foreground/70">
+            {connectionBadge}
+            <span className="truncate">{item.projectName}</span>
           </span>
           {visualState === "running" ? (
             <WorkingStatus startedAt={item.runningSince} />
@@ -117,7 +118,6 @@ export function InboxCardSurface({
         {titleEditor ?? (
           <div className="mt-1 flex min-w-0 items-center gap-1.5 text-compact font-normal text-sidebar-foreground/90 transition-colors group-hover/inbox-card:text-sidebar-foreground/95">
             <span className="min-w-0 flex-1 truncate">{item.session.title ?? "Untitled task"}</span>
-            {connectionBadge}
           </div>
         )}
         <div

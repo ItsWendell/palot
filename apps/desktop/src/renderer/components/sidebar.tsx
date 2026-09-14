@@ -63,14 +63,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "./ui/context-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
+import { AddProjectDialog } from "./add-project-dialog";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
 import { SessionContextMenu } from "./session-context-menu";
 import { useSessionWindowDrag } from "../hooks/use-session-window-drag";
@@ -139,8 +132,7 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
   const setAttentionTarget = useSetAtom(attentionTargetAtom);
   const dispatchTriage = useSetAtom(dispatchSessionTriageAtom);
   const [showAllAttention, setShowAllAttention] = useState(false);
-  const [remotePathOpen, setRemotePathOpen] = useState(false);
-  const [remotePath, setRemotePath] = useState("");
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<{
     originID: string | null;
     targetID: string;
@@ -242,36 +234,8 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
     });
   }
 
-  async function addFolder() {
-    if (runtime?.capabilities?.localPathActions === false) {
-      setRemotePathOpen(true);
-      return;
-    }
-    const directory = await palot.pickDirectory();
-    if (!directory) return;
-    const session = await palot.createSession(directory, undefined, runtime?.connectionID);
-    if (!session) return;
-    cacheSession(session);
-    void openSession(session.id, { profileID: runtime?.profileID });
-  }
-
-  async function addRemotePath() {
-    const directory = remotePath.trim();
-    if (!directory) return;
-    if (!isAbsoluteServerPath(directory)) {
-      showErrorToast("Could not open server path", new Error("Enter an absolute server path"));
-      return;
-    }
-    try {
-      const session = await palot.createSession(directory, undefined, runtime?.connectionID);
-      if (!session) return;
-      cacheSession(session);
-      setRemotePath("");
-      setRemotePathOpen(false);
-      await openSession(session.id, { profileID: runtime?.profileID });
-    } catch (error) {
-      showErrorToast("Could not open server path", error);
-    }
+  function addFolder() {
+    setAddProjectOpen(true);
   }
 
   async function importTask(location?: PalotSession["location"]) {
@@ -721,43 +685,14 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
           </SidebarGroup>
         </Collapsible>
       </SidebarContent>
-      <Dialog open={remotePathOpen} onOpenChange={setRemotePathOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Open server path</DialogTitle>
-            <DialogDescription>
-              Enter an absolute path on the machine running this OpenCode server.
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            autoFocus
-            value={remotePath}
-            onChange={(event) => setRemotePath(event.target.value)}
-            placeholder="/srv/projects/example"
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void addRemotePath();
-            }}
-          />
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setRemotePathOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={!remotePath.trim()}
-              onClick={() => void addRemotePath()}
-            >
-              Open path
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {addProjectOpen && (
+        <AddProjectDialog
+          initialProfileID={runtime?.profileID}
+          onClose={() => setAddProjectOpen(false)}
+        />
+      )}
     </>
   );
-}
-
-function isAbsoluteServerPath(value: string): boolean {
-  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
 }
 
 const SessionRow = memo(function SessionRow({

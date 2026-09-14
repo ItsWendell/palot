@@ -37,6 +37,57 @@ function connectedStore() {
 }
 
 describe("OpenCode settings queries", () => {
+  it("loads and checks an independent settings owner without changing the selected runtime", async () => {
+    const store = connectedStore();
+    const selected = store.get(runtimeAtom)!;
+    const owner = { ...selected, connectionID: "settings-server", profileID: "settings-profile" };
+    const load = vi.spyOn(palot, "loadSettings").mockResolvedValue({
+      location: { directory: "/repo" },
+      configSources: [],
+      catalog: { models: [], defaultModel: null, providers: [], errors: [] },
+      agents: [],
+      integrations: [],
+      mcpServers: [],
+      mcpResources: [],
+      mcpResourceTemplates: [],
+      savedPermissions: [],
+      plugins: [],
+      skills: [],
+      commands: [],
+      references: [],
+      websearchProviders: [],
+      errors: [],
+    });
+    const check = vi.spyOn(palot, "checkPlugins").mockResolvedValue([]);
+    const queryClient = createRendererQueryClient();
+    const input = { directory: "/repo", projectID: "project-1" };
+    const { result, rerender } = renderHook(
+      ({ runtime }) => ({
+        settings: useSettingsSnapshot({ ...input, capabilities: ["plugins"] }, true, runtime),
+        check: useCheckPlugins(input, runtime),
+      }),
+      {
+        initialProps: { runtime: owner },
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <Provider store={store}>{children}</Provider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+    await waitFor(() => expect(result.current.settings.data).toBeDefined());
+    expect(load).toHaveBeenCalledWith(
+      { ...input, capabilities: ["plugins"], connectionID: owner.connectionID },
+      expect.any(AbortSignal),
+    );
+    await act(() => result.current.check());
+    expect(check).toHaveBeenCalledWith({ ...input, connectionID: owner.connectionID });
+    expect(store.get(runtimeAtom)).toBe(selected);
+    rerender({ runtime: { ...owner, connected: false } });
+    await expect(result.current.check()).rejects.toThrow("settings server is disconnected");
+    expect(check).toHaveBeenCalledOnce();
+  });
+
   it.each([
     { inventory: "updated", eventRead: "completed" },
     { inventory: "removed", eventRead: "completed" },

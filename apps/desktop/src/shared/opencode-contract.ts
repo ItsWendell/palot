@@ -5,6 +5,7 @@
  */
 
 import type { OpenCodeReleaseChannel, OpenCodeReleaseStatus } from "./opencode-release-contract";
+import type { OpenCodeLoginStatus, OpenCodeLoginUpdateInput } from "./opencode-login-contract";
 import type {
   OpenCodeInstallationStatus,
   OpenCodeInstallationUpgradeInput,
@@ -342,6 +343,8 @@ export type SettingsCapability =
   | "websearchProviders";
 
 export interface SettingsLocationInput extends ListModelsInput {
+  /** Captured settings owner. Independent settings views must always supply it. */
+  connectionID?: string;
   projectID: string;
   capabilities?: SettingsCapability[];
 }
@@ -1124,6 +1127,8 @@ export const IPC_CHANNELS = {
   openCodeRuntimePreference: "palot:opencode:runtime-preference",
   openCodeInstallationSelect: "palot:opencode:installation-select",
   openCodeInstallationUpgrade: "palot:opencode:installation-upgrade",
+  openCodeLoginStatus: "palot:opencode:login-status",
+  openCodeLoginUpdate: "palot:opencode:login-update",
   runtimeList: "palot:opencode:runtime-list",
   profileConnect: "palot:opencode:profile-connect",
   profileDisconnect: "palot:opencode:profile-disconnect",
@@ -1239,6 +1244,8 @@ export interface PalotApi {
     input: OpenCodeInstallationUpgradeInput,
   ): Promise<OpenCodeInstallationStatus>;
   connectOpenCode(input?: OpenCodeConnectInput): Promise<OpenCodeRuntimeStatus>;
+  getOpenCodeLoginStatus(): Promise<OpenCodeLoginStatus>;
+  updateOpenCodeLogin(input: OpenCodeLoginUpdateInput): Promise<OpenCodeLoginStatus>;
   listOpenCodeRuntimes(): Promise<OpenCodeRuntimeStatus[]>;
   connectOpenCodeProfile(profileID: string): Promise<OpenCodeRuntimeStatus>;
   disconnectOpenCodeProfile(profileID: string): Promise<void>;

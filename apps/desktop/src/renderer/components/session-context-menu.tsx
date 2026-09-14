@@ -25,6 +25,7 @@ import { showErrorToast } from "../lib/toast-error";
 import { palot } from "../services/palot";
 import { useSessionFork } from "../hooks/use-session-fork";
 import { SessionForkHistoryDialog } from "./session-history-dialog";
+import { SessionCopyDialog } from "./session-copy-dialog";
 import { useCacheSession } from "../hooks/use-session-catalog";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { removeSession as removeCatalogSession } from "../lib/session-catalog-query";
@@ -144,6 +145,7 @@ export function SessionContextMenu({
   ]);
   return (
     <>
+      {transfer.serverCopyDialog}
       <ContextMenu>
         <ContextMenuTrigger render={trigger} />
         <ContextMenuContent>
@@ -277,58 +279,61 @@ export function SessionExportMenu({
   const connectionID = useAtomValue(runtimeAtom)?.connectionID;
   const transfer = useSessionTransfer(session);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="window-no-drag shrink-0"
-            aria-label="Task actions"
-          />
-        }
-      >
-        <MoreHorizontal aria-hidden="true" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64 max-w-(--available-width)">
-        <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => void openSessionWindow(session.id, connectionID)}>
-            <PanelsTopLeft aria-hidden="true" />
-            Open in new window
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        {historyActions ? (
-          <>
-            <DropdownMenuGroup>
-              <DropdownMenuItem
-                disabled={historyActions.loadingOlder}
-                onClick={historyActions.previousTurn}
-              >
-                <ArrowUp aria-hidden="true" />
-                Previous user turn
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={historyActions.nextTurn}>
-                <ArrowDown aria-hidden="true" />
-                Next user turn
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={historyActions.openTimeline}>
-                <History aria-hidden="true" />
-                Prompt timeline
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={historyActions.forkFromPrompt}>
-                <GitFork aria-hidden="true" />
-                Fork from prompt…
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-          </>
-        ) : null}
-        <DropdownMenuGroup>
-          <SessionTransferItems transfer={transfer} dropdown />
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      {transfer.serverCopyDialog}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="window-no-drag shrink-0"
+              aria-label="Task actions"
+            />
+          }
+        >
+          <MoreHorizontal aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64 max-w-(--available-width)">
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={() => void openSessionWindow(session.id, connectionID)}>
+              <PanelsTopLeft aria-hidden="true" />
+              Open in new window
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          {historyActions ? (
+            <>
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  disabled={historyActions.loadingOlder}
+                  onClick={historyActions.previousTurn}
+                >
+                  <ArrowUp aria-hidden="true" />
+                  Previous user turn
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={historyActions.nextTurn}>
+                  <ArrowDown aria-hidden="true" />
+                  Next user turn
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={historyActions.openTimeline}>
+                  <History aria-hidden="true" />
+                  Prompt timeline
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={historyActions.forkFromPrompt}>
+                  <GitFork aria-hidden="true" />
+                  Fork from prompt…
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
+          <DropdownMenuGroup>
+            <SessionTransferItems transfer={transfer} dropdown />
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
 
@@ -347,6 +352,10 @@ function useSessionTransfer(
   const unavailable = disabled || (owner !== undefined && !ownerAvailable(owner));
   const cacheSession = useCacheSession(runtime);
   const [transferring, setTransferring] = useState<"copy" | "export" | "import" | null>(null);
+  const [serverCopy, setServerCopy] = useState<{
+    session: PalotSession;
+    source: OpenCodeRuntimeStatus;
+  } | null>(null);
   const exportSession = useCallback(async () => {
     if (unavailable || transferring) return;
     setTransferring("export");
@@ -393,7 +402,23 @@ function useSessionTransfer(
       setTransferring(null);
     }
   }, [session.id, transferring, runtime?.connectionID, unavailable]);
-  return { transferring, unavailable, exportSession, copySession, importSession };
+  return {
+    transferring,
+    unavailable,
+    exportSession,
+    copySession,
+    importSession,
+    openServerCopy: () => {
+      if (runtime?.connected) setServerCopy({ session, source: runtime });
+    },
+    serverCopyDialog: serverCopy ? (
+      <SessionCopyDialog
+        session={serverCopy.session}
+        source={serverCopy.source}
+        onClose={() => setServerCopy(null)}
+      />
+    ) : null,
+  };
 }
 
 function SessionTransferItems({
@@ -414,6 +439,10 @@ function SessionTransferItems({
       <Item disabled={unavailable || Boolean(transferring)} onClick={() => void copySession()}>
         {transferring === "copy" ? <LoaderCircle className="animate-spin" /> : <ClipboardCopy />}
         Copy conversation as Markdown
+      </Item>
+      <Item disabled={unavailable || Boolean(transferring)} onClick={transfer.openServerCopy}>
+        <PanelsTopLeft />
+        Copy task to server…
       </Item>
       {!dropdown ? (
         <Item disabled={unavailable || Boolean(transferring)} onClick={() => void importSession()}>

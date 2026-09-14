@@ -8,10 +8,14 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PalotFormField, PalotIntegration, PalotIntegrationMethod } from "../../shared";
-import { runtimeAtom } from "../atoms/workspace";
+import type {
+  OpenCodeRuntimeStatus,
+  PalotFormField,
+  PalotIntegration,
+  PalotIntegrationMethod,
+} from "../../shared";
+import { useSettingsOwner } from "../hooks/use-settings-owner";
 import {
   defaultFormAnswers,
   formFieldVisible,
@@ -45,12 +49,14 @@ export function ProviderConnectionDialog({
   location,
   onOpenChange,
   onComplete,
+  owner,
 }: {
   integration: PalotIntegration | null;
   projectID: string;
   location: LocationRef;
   onOpenChange(open: boolean): void;
   onComplete(): Promise<void>;
+  owner?: OpenCodeRuntimeStatus | null;
 }) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -61,7 +67,8 @@ export function ProviderConnectionDialog({
   const [attempt, setAttempt] = useState<IntegrationConnectionAttempt | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const workflow = useMemo(() => new IntegrationConnectionWorkflow(palot), []);
-  const runtime = useAtomValue(runtimeAtom);
+  const selectedRuntime = useSettingsOwner();
+  const runtime = owner === undefined ? selectedRuntime : owner;
   const runtimeConnectionID = runtime?.connectionID ?? null;
   const previousConnectionID = useRef(runtimeConnectionID);
   const supportedMethods = integration?.methods.filter((item) => item.type !== "env") ?? [];
@@ -97,12 +104,13 @@ export function ProviderConnectionDialog({
   };
 
   async function submit(input: { key: string; label: string; answer: Record<string, FormValue> }) {
-    if (!integration || !method) return;
+    if (!integration || !method || !runtime?.connected) return;
     await workflow.start(
       {
         integration,
         method,
         ...input,
+        connectionID: runtime.connectionID,
         projectID,
         directory: location.directory,
         ...(location.workspaceID ? { workspaceID: location.workspaceID } : {}),

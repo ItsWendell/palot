@@ -282,8 +282,12 @@ export async function listSessionInputs(
   );
 }
 
-export async function listDiffs(input: ListDiffsInput, requestSignal?: AbortSignal) {
-  const response = await openCodeClient().vcs.diff(
+export async function listDiffs(
+  input: ListDiffsInput,
+  requestSignal?: AbortSignal,
+  connectionID?: string,
+) {
+  const response = await openCodeClient(connectionID).vcs.diff(
     {
       location: location(input),
       mode: input.mode,
@@ -298,8 +302,9 @@ export async function listDiffs(input: ListDiffsInput, requestSignal?: AbortSign
 export async function listModels(
   input: ListModelsInput,
   requestSignal?: AbortSignal,
+  connectionID?: string,
 ): Promise<PalotModelCatalog> {
-  const client = openCodeClient();
+  const client = openCodeClient(connectionID);
   const request = { location: location(input) };
   const combinedSignal = openCodeRequestSignal(requestSignal);
   const [models, defaultModel, providers] = await Promise.allSettled([
@@ -353,8 +358,12 @@ export async function listModels(
   };
 }
 
-export async function loadComposerCatalog(input: ListModelsInput, requestSignal?: AbortSignal) {
-  const client = openCodeClient();
+export async function loadComposerCatalog(
+  input: ListModelsInput,
+  requestSignal?: AbortSignal,
+  connectionID?: string,
+) {
+  const client = openCodeClient(connectionID);
   const request = { location: location(input) };
   const combinedSignal = openCodeRequestSignal(requestSignal);
   const [commands, skills] = await Promise.allSettled([
@@ -380,8 +389,9 @@ export async function loadComposerCatalog(input: ListModelsInput, requestSignal?
 export async function findWorkspaceFiles(
   input: FindWorkspaceFilesInput,
   requestSignal?: AbortSignal,
+  connectionID?: string,
 ) {
-  const response = await openCodeClient().file.find(
+  const response = await openCodeClient(connectionID).file.find(
     { location: location(input), query: input.query, type: "file", limit: input.limit ?? 20 },
     { signal: openCodeRequestSignal(requestSignal) },
   );
@@ -394,8 +404,9 @@ export async function findWorkspaceFiles(
 export async function readWorkspaceFile(
   input: { directory: string; workspaceID?: string; path: string },
   requestSignal?: AbortSignal,
+  connectionID?: string,
 ) {
-  return openCodeClient().file.read(
+  return openCodeClient(connectionID).file.read(
     { location: location(input), path: input.path },
     { signal: openCodeRequestSignal(requestSignal) },
   );
@@ -404,8 +415,9 @@ export async function readWorkspaceFile(
 export async function listWorkspaceDirectory(
   input: { directory: string; workspaceID?: string; path?: string },
   requestSignal?: AbortSignal,
+  connectionID?: string,
 ) {
-  const response = await openCodeClient().file.list(
+  const response = await openCodeClient(connectionID).file.list(
     {
       location: location(input),
       ...(input.path ? { path: input.path } : {}),

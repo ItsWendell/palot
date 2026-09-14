@@ -18,7 +18,7 @@ import type { PalotIntegration, PalotSession, SettingsLocationInput } from "../.
 import {
   ONBOARDING_VERSION,
   onboardingComplete,
-  onboardingCompletedProfilesAtom,
+  onboardingCompletedVersionAtom,
 } from "../atoms/onboarding";
 import { newTaskProjectIDAtom, runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { PalotBeacon } from "../components/palot-beacon";
@@ -64,7 +64,7 @@ function WelcomeRoute() {
   const cacheSession = useCacheSession();
   const selectedSessionID = useAtomValue(selectedSessionIDAtom);
   const newTaskProjectID = useAtomValue(newTaskProjectIDAtom);
-  const [completed, setCompleted] = useAtom(onboardingCompletedProfilesAtom);
+  const [completed, setCompleted] = useAtom(onboardingCompletedVersionAtom);
   const { openNewTask, openSession } = usePalotNavigation();
   const [step, setStep] = useState<Step>("welcome");
   const [target, setTarget] = useState<Target | null>(null);
@@ -76,7 +76,7 @@ function WelcomeRoute() {
   const [showAllProviders, setShowAllProviders] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const visible = useMemo(() => orderProjects(projects, sessions), [projects, sessions]);
-  const replay = Boolean(runtime && onboardingComplete(completed, runtime.profileID));
+  const replay = onboardingComplete(completed);
   const returning = projects.length > 0 || sessions.length > 0;
   const settingsInput: SettingsLocationInput | null = target
     ? {
@@ -160,8 +160,7 @@ function WelcomeRoute() {
   }
 
   function markComplete() {
-    if (!runtime) return;
-    setCompleted((current) => ({ ...current, [runtime.profileID]: ONBOARDING_VERSION }));
+    setCompleted(ONBOARDING_VERSION);
   }
 
   async function completeAndNavigate(navigate: () => Promise<void>, fade = false) {

@@ -54,6 +54,7 @@ import { completePendingPalotReset } from "./data-recovery";
 import { createShowcaseBackdrop, resolveShowcaseConfiguration } from "./showcase-window";
 import { installNativeContextMenu } from "./native-context-menu";
 import { linuxDesktopDiagnostics } from "./linux-desktop";
+import { configureSecureStorage } from "./secure-storage";
 import { DESKTOP_HELP, parseDesktopLaunch } from "./desktop-launch";
 import { stat } from "node:fs/promises";
 
@@ -82,6 +83,7 @@ if (isDevelopment) {
   );
 }
 if (process.env.PALOT_E2E_USER_DATA) app.commandLine.appendSwitch("use-mock-keychain");
+configureSecureStorage(app.commandLine);
 
 app.setName(buildIdentity.displayName);
 app.setAppUserModelId(buildIdentity.appId);

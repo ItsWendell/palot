@@ -6,7 +6,7 @@ import {
   sessionCatalogReadyAtom,
   sessionTriageSnapshotAtom,
 } from "../atoms/inbox";
-import { includedProfileIDsAtom } from "../atoms/connections";
+import { disabledProfileIDsAtom } from "../atoms/connections";
 import {
   inspectorOpenSessionIDsAtom,
   newTaskProjectIDAtom,
@@ -40,15 +40,29 @@ export function focusConnection(
     signal?.throwIfAborted();
     const previous = store.get(runtimeAtom);
     if (previous?.profileID === profileID && !pendingFocusSync.has(store)) {
-      setFocusedOpenCodeRuntime(previous);
-      return previous;
+      const runtime = store.get(disabledProfileIDsAtom).includes(profileID)
+        ? { ...previous, connected: false, phase: "stopped" as const }
+        : previous;
+      setFocusedOpenCodeRuntime(runtime);
+      store.set(runtimeAtom, runtime);
+      return runtime;
     }
     let runtime: OpenCodeRuntimeStatus;
     let switched = false;
     pendingFocusSync.add(store);
     try {
-      runtime = await palot.switchOpenCodeProfile(profileID);
-      switched = true;
+      if (store.get(disabledProfileIDsAtom).includes(profileID)) {
+        const cached = connectionOverview(queryClient)
+          .getSnapshot()
+          .find((entry) => entry.profile.id === profileID)?.runtime;
+        const retained = cached ?? (await palot.runtimeStatus());
+        if (retained.profileID !== profileID)
+          throw new Error("This server is disabled. Enable it to load its tasks.");
+        runtime = { ...retained, connected: false, phase: "stopped" };
+      } else {
+        runtime = await palot.switchOpenCodeProfile(profileID);
+        switched = true;
+      }
     } catch (error) {
       const cached = connectionOverview(queryClient)
         .getSnapshot()
@@ -85,9 +99,6 @@ export function focusConnection(
     store.set(sessionCatalogReadyAtom, false);
     store.set(attentionSyncStateAtom, "syncing");
     store.set(sessionTriageSnapshotAtom, null);
-    store.set(includedProfileIDsAtom, (ids) =>
-      ids.includes(profileID) ? ids : [...ids, profileID],
-    );
     void connectionOverview(queryClient)
       .refreshRegistry()
       .catch(() => undefined);

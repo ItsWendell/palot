@@ -13,7 +13,7 @@ export function workspaceFileQueryOptions(
 ) {
   return queryOptions({
     queryKey: openCodeKeys.file(connectionID, location, path),
-    queryFn: ({ signal }) => palot.readWorkspaceFile({ ...location, path }, signal),
+    queryFn: ({ signal }) => palot.readWorkspaceFile({ ...location, path }, signal, connectionID),
     enabled: Boolean(location.directory && path),
     staleTime: 0,
     refetchOnMount: false,
@@ -23,10 +23,10 @@ export function workspaceFileQueryOptions(
   });
 }
 
-export function useWorkspaceFile(location: LocationRef, path: string) {
+export function useWorkspaceFile(location: LocationRef, path: string, enabled = true) {
   const runtime = useAtomValue(runtimeAtom);
   return useQuery({
     ...workspaceFileQueryOptions(runtime?.connectionID ?? "disconnected", location, path),
-    enabled: canFetchOpenCode(runtime) && Boolean(location.directory && path),
+    enabled: enabled && canFetchOpenCode(runtime) && Boolean(location.directory && path),
   });
 }

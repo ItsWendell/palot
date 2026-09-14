@@ -2,7 +2,7 @@ import { createStore } from "jotai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotMessage } from "../../shared";
 import { attentionTargetAtom } from "../atoms/attention";
-import { includedProfileIDsAtom } from "../atoms/connections";
+import { discoveredProfileIDsAtom, includedProfileIDsAtom } from "../atoms/connections";
 import { composerStateAtomFamily } from "../atoms/composer-state";
 import { composerDraftAtomFamily, flushComposerDrafts } from "../atoms/ui";
 import {
@@ -110,6 +110,41 @@ afterEach(() => {
 });
 
 describe("focusConnection", () => {
+  it("restores a disabled current server route without reconnecting or needing cached tasks", async () => {
+    const { store, queryClient, origin } = fixture();
+    store.set(runtimeAtom, null);
+    store.set(discoveredProfileIDsAtom, [origin.profileID]);
+    store.set(includedProfileIDsAtom, []);
+    vi.spyOn(palot, "runtimeStatus").mockResolvedValue(origin);
+    const switchProfile = vi.spyOn(palot, "switchOpenCodeProfile");
+    await expect(focusConnection(queryClient, store, origin.profileID)).resolves.toMatchObject({
+      profileID: origin.profileID,
+      connected: false,
+      phase: "stopped",
+    });
+    expect(switchProfile).not.toHaveBeenCalled();
+    expect(store.get(includedProfileIDsAtom)).toEqual([]);
+  });
+
+  it("keeps the selected task and drafts offline when its server is disabled", async () => {
+    const { store, queryClient, origin, messages, draftAtom, draft } = fixture();
+    store.set(discoveredProfileIDsAtom, [origin.profileID]);
+    store.set(includedProfileIDsAtom, []);
+    const switchProfile = vi.spyOn(palot, "switchOpenCodeProfile");
+    await focusConnection(queryClient, store, origin.profileID);
+    await focusConnection(queryClient, store, origin.profileID);
+    expect(switchProfile).not.toHaveBeenCalled();
+    expect(store.get(runtimeAtom)).toMatchObject({
+      profileID: origin.profileID,
+      connected: false,
+      phase: "stopped",
+    });
+    expect(store.get(includedProfileIDsAtom)).toEqual([]);
+    expect(store.get(selectedSessionIDAtom)).toBe("same-session");
+    expect(store.get(messagesAtom)).toBe(messages);
+    expect(store.get(draftAtom)).toEqual(draft);
+  });
+
   it("reconciles main on a queued return to the renderer profile after an in-flight abort", async () => {
     const { store, queryClient, origin, messages } = fixture();
     const pending = Promise.withResolvers<OpenCodeRuntimeStatus>();

@@ -97,8 +97,46 @@ function lifecycle(input: {
       onStatus: vi.fn(),
     }),
     ensureService,
+    adapter,
   };
 }
+
+describe("login service lifecycle routing", () => {
+  it("keeps normal connections read-only and routes explicit restart through the OS manager", async () => {
+    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.2" });
+    adapter.controlLoginService = vi.fn().mockResolvedValue(managedEndpoint);
+    await runtime.connect();
+    expect(adapter.controlLoginService).not.toHaveBeenCalled();
+    await runtime.restartLocalService();
+    expect(adapter.controlLoginService).toHaveBeenCalledWith("restart", expect.any(Object));
+    expect(adapter.stopService).not.toHaveBeenCalled();
+    expect(adapter.ensureService).not.toHaveBeenCalled();
+    expect(runtime.status()).toMatchObject({ connected: true, pid: 84 });
+    await runtime.stop();
+  });
+
+  it("uses the OS manager for confirmed startup but never as recovery", async () => {
+    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.2" });
+    vi.mocked(adapter.discoverService).mockResolvedValue(undefined);
+    adapter.controlLoginService = vi.fn().mockResolvedValue(managedEndpoint);
+    await expect(runtime.connect()).rejects.toThrow("No reachable local");
+    expect(adapter.controlLoginService).not.toHaveBeenCalled();
+    await runtime.connect({ startLocalService: true });
+    expect(adapter.controlLoginService).toHaveBeenCalledWith("start", expect.any(Object));
+    expect(adapter.ensureService).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("does not bypass a manager conflict with an SDK stop or spawn", async () => {
+    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.2" });
+    adapter.controlLoginService = vi.fn().mockRejectedValue(new Error("Different login binary"));
+    await runtime.connect();
+    await expect(runtime.restartLocalService()).rejects.toThrow("Different login binary");
+    expect(adapter.stopService).not.toHaveBeenCalled();
+    expect(adapter.ensureService).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+});
 
 describe("OpenCodeRuntimeLifecycle version mismatch", () => {
   it.each(["2.0.0", "2.0.1", "2.1.0"])(

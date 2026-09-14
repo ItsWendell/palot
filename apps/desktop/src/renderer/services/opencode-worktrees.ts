@@ -6,8 +6,9 @@ import { openCodeRequestSignal } from "./opencode-request";
 export async function refreshWorktrees(
   sourceDirectory: string,
   requestSignal?: AbortSignal,
+  connectionID?: string,
 ): Promise<void> {
-  await openCodeClient().worktree.refresh(
+  await openCodeClient(connectionID).worktree.refresh(
     { location: { directory: sourceDirectory } },
     { signal: openCodeRequestSignal(requestSignal) },
   );
@@ -52,8 +53,9 @@ export async function removeWorktree(
   sourceDirectory: string,
   directory: string,
   force = false,
+  connectionID?: string,
 ): Promise<void> {
-  await openCodeClient().worktree.remove(
+  await openCodeClient(connectionID).worktree.remove(
     { location: { directory: sourceDirectory }, directory, force },
     { signal: openCodeRequestSignal() },
   );

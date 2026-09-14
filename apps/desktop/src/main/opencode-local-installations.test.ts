@@ -72,6 +72,34 @@ function harness(
 }
 
 describe("local OpenCode installations", () => {
+  it("revalidates login startup consent and retains the package-manager launcher", async () => {
+    const h = harness({ aliases: { "/home/alice/bin/opencode": "/usr/bin/opencode" } });
+    const installation = (await h.manager.inspect()).installations[0]!;
+    expect(await h.manager.loginBinary(installation.id, installation.version)).toEqual({
+      path: "/home/alice/bin/opencode",
+      version: "2.0.2",
+    });
+    expect(h.saved()).toBeUndefined();
+    h.versions["/usr/bin/opencode"] = "2.0.3";
+    await expect(h.manager.loginBinary(installation.id, "2.0.2")).rejects.toThrow("changed");
+    await expect(h.manager.loginBinary(installation.id, "2.0.3")).rejects.toThrow("changed");
+    await expect(h.manager.loginBinary("/arbitrary/executable", "2.0.2")).rejects.toThrow(
+      "no longer available",
+    );
+  });
+
+  it("rejects unapproved beta and retargeted launchers for login startup", async () => {
+    const h = harness({ versions: { "/beta/opencode": "0.0.0-beta-99999" } });
+    const beta = (await h.manager.inspect()).installations[0]!;
+    await expect(h.manager.loginBinary(beta.id, beta.version)).rejects.toThrow("incompatible");
+    const moved = harness({ aliases: { "/bin/opencode": "/usr/bin/opencode" } });
+    const installation = (await moved.manager.inspect()).installations[0]!;
+    moved.aliases["/bin/opencode"] = "/palot/resources/opencode";
+    await expect(moved.manager.loginBinary(installation.id, installation.version)).rejects.toThrow(
+      "changed",
+    );
+  });
+
   it("finds an exact installed SSH runtime without changing the user's local selection", async () => {
     const h = harness({
       versions: { "/new/opencode": "2.1.0", "/matching/opencode": "2.0.2" },

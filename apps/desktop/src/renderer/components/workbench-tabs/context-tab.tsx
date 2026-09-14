@@ -38,7 +38,13 @@ const BREAKDOWN = [
   { key: "cacheWrite", label: "Cache write", color: "bg-destructive" },
 ] as const;
 
-export function ContextTab({ tab }: { tab: Extract<WorkbenchTab, { kind: "context" }> }) {
+export function ContextTab({
+  tab,
+  active = true,
+}: {
+  tab: Extract<WorkbenchTab, { kind: "context" }>;
+  active?: boolean;
+}) {
   const session = useCatalogSession(tab.resource.sessionID);
 
   if (!session) {
@@ -54,10 +60,10 @@ export function ContextTab({ tab }: { tab: Extract<WorkbenchTab, { kind: "contex
     );
   }
 
-  return <SessionContext session={session} />;
+  return <SessionContext session={session} active={active} />;
 }
 
-function SessionContext({ session }: { session: PalotSession }) {
+function SessionContext({ session, active }: { session: PalotSession; active: boolean }) {
   const [expandedMessageIDs, setExpandedMessageIDs] = useState<string[]>([]);
   const [activeContextOpen, setActiveContextOpen] = useState(false);
   const [diagnosticSections, setDiagnosticSections] = useState<string[]>([]);
@@ -66,7 +72,7 @@ function SessionContext({ session }: { session: PalotSession }) {
   const runtime = useAtomValue(runtimeAtom);
   const queryClient = useQueryClient();
   const transcript = useSessionTranscript(session);
-  const modelCatalog = useModelCatalog(session.location);
+  const modelCatalog = useModelCatalog(session.location, active);
   const models = modelCatalog.data?.models ?? [];
   const providers = modelCatalog.data?.providers ?? [];
   const messages = transcript.messages;
@@ -79,8 +85,8 @@ function SessionContext({ session }: { session: PalotSession }) {
   );
   const activeContext = useQuery({
     queryKey: activeContextKey,
-    queryFn: () => palot.loadSessionContext(session.id),
-    enabled: runtime?.connected === true && activeContextOpen,
+    queryFn: ({ signal }) => palot.loadSessionContext(session.id, runtime?.connectionID, signal),
+    enabled: runtime?.connected === true && active && activeContextOpen,
     staleTime: 30_000,
   });
   const instructionEntries = useQuery({
@@ -88,8 +94,9 @@ function SessionContext({ session }: { session: PalotSession }) {
       runtime?.connectionID ?? "disconnected",
       session.id,
     ),
-    queryFn: () => palot.listSessionInstructionEntries(session.id),
-    enabled: runtime?.connected === true,
+    queryFn: ({ signal }) =>
+      palot.listSessionInstructionEntries(session.id, runtime?.connectionID, signal),
+    enabled: runtime?.connected === true && active,
     staleTime: 30_000,
   });
   const counts = useMemo(
@@ -146,8 +153,13 @@ function SessionContext({ session }: { session: PalotSession }) {
       if (removingInstruction) return;
       setRemovingInstruction(key);
       try {
-        await palot.removeSessionInstructionEntry(session.id, key);
-        await instructionEntries.refetch();
+        await palot.removeSessionInstructionEntry(session.id, key, runtime?.connectionID);
+        await queryClient.invalidateQueries({
+          queryKey: openCodeKeys.sessionInstructionEntries(
+            runtime?.connectionID ?? "disconnected",
+            session.id,
+          ),
+        });
         await queryClient.invalidateQueries({ queryKey: activeContextKey });
       } catch (error) {
         showErrorToast("Could not remove instruction entry", error);
@@ -155,7 +167,7 @@ function SessionContext({ session }: { session: PalotSession }) {
         setRemovingInstruction(null);
       }
     },
-    [activeContextKey, instructionEntries, queryClient, removingInstruction, session.id],
+    [activeContextKey, queryClient, removingInstruction, session.id, runtime?.connectionID],
   );
 
   useEffect(() => {

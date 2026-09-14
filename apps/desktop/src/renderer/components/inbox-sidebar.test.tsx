@@ -19,6 +19,14 @@ const navigation = vi.hoisted(() => ({
   openSession: vi.fn(),
   preloadSession: vi.fn(),
 }));
+const overview = vi.hoisted(() => ({
+  connections: [] as {
+    profile: { id: string; name: string; kind: string };
+    runtime: OpenCodeRuntimeStatus;
+  }[],
+  includedProfileIDs: [] as string[],
+}));
+vi.mock("../hooks/use-connection-overview", () => ({ useConnectionOverview: () => overview }));
 
 vi.mock("../hooks/use-navigation", () => ({
   usePalotNavigation: () => navigation,
@@ -51,6 +59,8 @@ function markUnread(
 }
 
 beforeEach(() => {
+  overview.connections = [];
+  overview.includedProfileIDs = [];
   window.localStorage.clear();
   Element.prototype.getAnimations = vi.fn(() => []);
   Object.defineProperty(window, "palot", {
@@ -80,8 +90,8 @@ describe("InboxSidebarContent", () => {
       connectionID: "connection-original",
       profileID: "profile-original",
       contractVersion: "test",
-      phase: "stopped",
-      connected: false,
+      phase: "connected",
+      connected: true,
       binaryPath: null,
       version: null,
       pid: null,
@@ -91,6 +101,10 @@ describe("InboxSidebarContent", () => {
       versionMismatch: null,
     };
     store.set(runtimeAtom, runtime);
+    overview.connections = [
+      { profile: { id: runtime.profileID, name: "Original", kind: "local" }, runtime },
+    ];
+    overview.includedProfileIDs = [runtime.profileID];
     let finishPick: (directory: string) => void = () => undefined;
     const pick = vi.spyOn(palot, "pickDirectory").mockImplementation(
       () =>
@@ -107,6 +121,7 @@ describe("InboxSidebarContent", () => {
       store,
     );
     fireEvent.click(screen.getByRole("button", { name: "Add project folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose local folder…" }));
     expect(pick).toHaveBeenCalledWith("connection-original");
     store.set(runtimeAtom, {
       ...runtime,
@@ -114,6 +129,12 @@ describe("InboxSidebarContent", () => {
       profileID: "profile-other",
     });
     finishPick("/original/folder");
+    await waitFor(() =>
+      expect((screen.getByLabelText("Folder path") as HTMLInputElement).value).toBe(
+        "/original/folder",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
     await waitFor(() =>
       expect(create).toHaveBeenCalledWith("/original/folder", undefined, "connection-original"),
     );

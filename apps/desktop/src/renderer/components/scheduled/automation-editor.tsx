@@ -13,6 +13,8 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAtomValue } from "jotai";
+import { runtimeAtom } from "../../atoms/workspace";
 import type {
   AutomationDraft,
   AutomationRecord,
@@ -79,6 +81,7 @@ export function AutomationEditor({
   onAction,
   onRunAction,
 }: AutomationEditorProps) {
+  const runtime = useAtomValue(runtimeAtom);
   const [draft, setDraft] = useState(initialDraft);
   const [frequency, setFrequency] = useState<Frequency>(() => frequencyFor(initialDraft.trigger));
   const [date, setDate] = useState(() => triggerDate(initialDraft.trigger));
@@ -556,6 +559,12 @@ export function AutomationEditor({
                     ? "This run can modify the checkout you are using."
                     : "This run uses the selected existing worktree."}
             </p>
+            {standaloneDestination && runtime?.capabilities?.localPathActions === false ? (
+              <p className="mt-1">
+                Standalone runs on this server do not share a memory file. Use an existing task for
+                transcript continuity.
+              </p>
+            ) : null}
             <p className="mt-1">
               {selectedAgent
                 ? `${selectedAgent.permissions.filter((rule) => rule.effect === "ask").length} agent permission rules ask before continuing. `

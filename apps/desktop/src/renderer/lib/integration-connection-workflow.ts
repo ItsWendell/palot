@@ -89,6 +89,7 @@ export class IntegrationConnectionWorkflow {
     callbacks.setAttempt(null);
     callbacks.setBusy(true);
     const common = {
+      connectionID: input.connectionID,
       integrationID: input.integration.id,
       projectID: input.projectID,
       directory: input.directory,
@@ -96,6 +97,7 @@ export class IntegrationConnectionWorkflow {
       ...(input.label.trim() ? { label: input.label.trim() } : {}),
     };
     const attemptInput = {
+      connectionID: input.connectionID,
       integrationID: input.integration.id,
       projectID: input.projectID,
       directory: input.directory,

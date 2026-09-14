@@ -89,7 +89,7 @@ function mapPlugin(plugin: PluginInfo): PalotPlugin {
 }
 
 export async function checkPlugins(input: SettingsLocationInput): Promise<PalotPlugin[]> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   const response = await client.plugin.check(locationRequest(input), { signal: requestSignal() });
   return response.data.map(mapPlugin);
 }
@@ -97,7 +97,7 @@ export async function checkPlugins(input: SettingsLocationInput): Promise<PalotP
 export async function updatePlugins(
   input: SettingsLocationInput & { targets: string[] },
 ): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await client.plugin.update(
     { ...locationRequest(input), targets: input.targets },
     { signal: requestSignal() },
@@ -348,7 +348,7 @@ export async function loadSettings(
   input: SettingsLocationInput,
   outerSignal?: AbortSignal,
 ): Promise<PalotSettingsSnapshot> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   const request = locationRequest(input);
   const requested = new Set(input.capabilities ?? ALL_SETTINGS_CAPABILITIES);
   let activation: Promise<void> | undefined;
@@ -370,7 +370,7 @@ export async function loadSettings(
   };
   const results = await Promise.all([
     settle("config", (signal) => client.config.get(request, { signal })),
-    settle("catalog", (signal) => listModels(input, signal)),
+    settle("catalog", (signal) => listModels(input, signal, input.connectionID)),
     settle("agents", (signal) => client.agent.list(request, { signal })),
     settle("integrations", (signal) => client.integration.list(request, { signal })),
     settle("mcp", (signal) => client.mcp.list(request, { signal })),
@@ -587,7 +587,7 @@ export async function updatePlugin(
 }
 
 export async function addWellknownIntegration(input: AddWellknownIntegrationInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await client.integration.wellknown.add(
     { url: input.url, location: settingsLocation(input) },
@@ -596,7 +596,7 @@ export async function addWellknownIntegration(input: AddWellknownIntegrationInpu
 }
 
 export async function addMcpServer(input: AddMcpServerInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   validateMcpConfig(input.config);
   await resolveSettingsLocation(client, input);
   await client.mcp.add(
@@ -622,7 +622,7 @@ export function validateMcpConfig(config: AddMcpServerInput["config"]): void {
 }
 
 export async function removeMcpServer(input: McpServerInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await client.mcp.remove(
     { server: input.server, location: settingsLocation(input) },
@@ -631,7 +631,7 @@ export async function removeMcpServer(input: McpServerInput): Promise<void> {
 }
 
 export async function connectMcpServer(input: McpServerInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await client.mcp.connect(
     { server: input.server, location: settingsLocation(input) },
@@ -640,7 +640,7 @@ export async function connectMcpServer(input: McpServerInput): Promise<void> {
 }
 
 export async function disconnectMcpServer(input: McpServerInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await client.mcp.disconnect(
     { server: input.server, location: settingsLocation(input) },
@@ -649,7 +649,7 @@ export async function disconnectMcpServer(input: McpServerInput): Promise<void> 
 }
 
 export async function removeSavedPermission(input: RemoveSavedPermissionInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   const location = await resolveSettingsLocation(client, input);
   const saved = await client.permission.saved.list(
     { projectID: location.project.id },
@@ -662,7 +662,7 @@ export async function removeSavedPermission(input: RemoveSavedPermissionInput): 
 }
 
 export async function connectIntegrationKey(input: ConnectIntegrationKeyInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await client.integration.connect.key(
     {
@@ -679,7 +679,7 @@ export async function connectIntegrationKey(input: ConnectIntegrationKeyInput): 
 export async function connectIntegrationOAuth(
   input: ConnectIntegrationOAuthInput,
 ): Promise<PalotIntegrationOAuthAttempt> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   const response = await client.integration.oauth.connect(
     {
@@ -704,7 +704,7 @@ export async function connectIntegrationOAuth(
 export async function integrationOAuthStatus(
   input: IntegrationAttemptInput,
 ): Promise<PalotIntegrationAttemptStatus> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   const response = await client.integration.oauth.status(
     {
@@ -720,7 +720,7 @@ export async function integrationOAuthStatus(
 export async function completeIntegrationOAuth(
   input: CompleteIntegrationOAuthInput,
 ): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await client.integration.oauth.complete(
     {
@@ -734,7 +734,7 @@ export async function completeIntegrationOAuth(
 }
 
 export async function cancelIntegrationOAuth(input: IntegrationAttemptInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await client.integration.oauth.cancel(
     {
@@ -749,7 +749,7 @@ export async function cancelIntegrationOAuth(input: IntegrationAttemptInput): Pr
 export async function connectIntegrationCommand(
   input: ConnectIntegrationCommandInput,
 ): Promise<PalotIntegrationCommandAttempt> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   const integrations = await client.integration.list(locationRequest(input), {
     signal: requestSignal(),
@@ -788,7 +788,7 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 export async function integrationCommandStatus(
   input: IntegrationAttemptInput,
 ): Promise<PalotIntegrationAttemptStatus> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   const response = await client.integration.command.status(
     {
@@ -802,7 +802,7 @@ export async function integrationCommandStatus(
 }
 
 export async function cancelIntegrationCommand(input: IntegrationAttemptInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await client.integration.command.cancel(
     {
@@ -815,7 +815,7 @@ export async function cancelIntegrationCommand(input: IntegrationAttemptInput): 
 }
 
 export async function updateCredential(input: UpdateCredentialInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await assertCredential(client, input);
   await client.credential.update(
@@ -829,7 +829,7 @@ export async function updateCredential(input: UpdateCredentialInput): Promise<vo
 }
 
 export async function activateCredential(input: ActivateCredentialInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await assertCredential(client, input);
   await client.credential.activate(
@@ -839,7 +839,7 @@ export async function activateCredential(input: ActivateCredentialInput): Promis
 }
 
 export async function removeCredential(input: RemoveCredentialInput): Promise<void> {
-  const client = openCodeClient();
+  const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await assertCredential(client, input);
   await client.credential.remove(

@@ -22,6 +22,6 @@ export async function openNewWorkbenchTerminal(
     options,
   );
   if (result?.ok) return result;
-  await palot.removePty(location, pty.id, pty.transport).catch(() => undefined);
+  await palot.removePty(location, pty.id, pty.transport, connectionID).catch(() => undefined);
   throw new Error("Close a workbench tab before opening another terminal");
 }

@@ -14,7 +14,7 @@ import {
   Search,
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useStore } from "jotai";
 import type { AutomationDraft, AutomationRecord, AutomationRun } from "../../../shared";
 import { runtimeAtom } from "../../atoms/workspace";
 import { useAutomations } from "../../hooks/use-automations";
@@ -88,6 +88,12 @@ const SUGGESTIONS: Array<{
 ];
 
 export function ScheduledPage() {
+  const profileID = useAtomValue(runtimeAtom)?.profileID;
+  return <ScheduledProfilePage key={profileID} />;
+}
+
+function ScheduledProfilePage() {
+  const store = useStore();
   const search = useSearch({ from: "/_workspace/scheduled" });
   const navigate = useNavigate();
   const { openSession } = usePalotNavigation();
@@ -191,14 +197,15 @@ export function ScheduledPage() {
   }, [dispatch, selectedRun?.id, selectedRun?.readAt]);
 
   function closeDetail() {
+    if (store.get(runtimeAtom)?.profileID !== runtime?.profileID) return;
     setSuggestedDraft(null);
-    void navigate({ to: "/scheduled", search: {}, replace: true });
+    void navigate({ to: "/scheduled", search: { profileID: runtime?.profileID }, replace: true });
   }
 
   function createTask(initial?: AutomationDraft) {
     setSuggestedDraft(initial ?? null);
     setCreateEditorVersion((current) => current + 1);
-    void navigate({ to: "/scheduled", search: { mode: "create" } });
+    void navigate({ to: "/scheduled", search: { mode: "create", profileID: runtime?.profileID } });
   }
 
   async function save(draftValue: AutomationDraft) {
@@ -211,10 +218,11 @@ export function ScheduledPage() {
       const before = new Set(automations.map((automation) => automation.id));
       const value = await dispatch({ type: "create", draft: draftValue });
       const created = value.automations.find((automation) => !before.has(automation.id));
+      if (store.get(runtimeAtom)?.profileID !== value.profileID) return;
       setSuggestedDraft(null);
       void navigate({
         to: "/scheduled",
-        search: created ? { automationID: created.id } : {},
+        search: { profileID: value.profileID, ...(created ? { automationID: created.id } : {}) },
         replace: true,
       });
     } finally {
@@ -258,6 +266,7 @@ export function ScheduledPage() {
       const target = automationRunOpenTarget(run);
       if (target.type === "request") {
         void openSession(target.sessionID, {
+          profileID: run.profileID,
           focus: "request",
           requestID: target.requestID,
           requestType: target.requestType,
@@ -265,12 +274,12 @@ export function ScheduledPage() {
         return;
       }
       if (target.type === "session") {
-        void openSession(target.sessionID);
+        void openSession(target.sessionID, { profileID: run.profileID });
         return;
       }
       void navigate({
         to: "/scheduled",
-        search: { automationID: run.automationID, runID: run.id },
+        search: { automationID: run.automationID, runID: run.id, profileID: run.profileID },
         replace: true,
       });
       return;

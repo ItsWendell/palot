@@ -30,6 +30,7 @@ export function locationDiffsQueryOptions(
           ...(context !== null ? { context } : {}),
         },
         signal,
+        connectionID,
       ),
     staleTime: 0,
     refetchOnMount: false,

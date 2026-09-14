@@ -72,6 +72,107 @@ afterEach(() => {
 });
 
 describe("TerminalTab", () => {
+  it("discards a delayed old-owner snapshot rather than caching or attaching it on another connection", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connected: true,
+      profileID: "profile-1",
+      connectionID: "owner",
+    } as never);
+    let resolve!: (value: Awaited<ReturnType<typeof palot.snapshotPty>>) => void;
+    const snapshot = vi
+      .spyOn(palot, "snapshotPty")
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done;
+          }),
+      )
+      .mockResolvedValue({ buffer: "fresh output", cursor: 2, cols: 80, rows: 24 });
+    const connect = vi.spyOn(palot, "connectPty").mockResolvedValue("attachment");
+    vi.spyOn(palot, "startPty").mockResolvedValue();
+    vi.spyOn(palot, "resizePty").mockResolvedValue();
+    vi.spyOn(palot, "disconnectPty").mockResolvedValue();
+    vi.spyOn(palot, "subscribe").mockReturnValue(() => {});
+    vi.spyOn(palot, "onPtyEvent").mockReturnValue(() => {});
+    render(
+      <Provider store={store}>
+        <TerminalTab tab={{ ...tab, resource: { ...tab.resource, ptyID: "delayed-snapshot" } }} />
+      </Provider>,
+    );
+    await waitFor(() => expect(snapshot).toHaveBeenCalledWith("delayed-snapshot", "owner"));
+    act(() =>
+      store.set(runtimeAtom, {
+        connected: true,
+        profileID: "other-profile",
+        connectionID: "other",
+      } as never),
+    );
+    await act(async () => resolve({ buffer: "stale output", cursor: 1, cols: 80, rows: 24 }));
+    expect(connect).not.toHaveBeenCalled();
+    act(() =>
+      store.set(runtimeAtom, {
+        connected: true,
+        profileID: "profile-1",
+        connectionID: "replacement",
+      } as never),
+    );
+    await waitFor(() => expect(palot.startPty).toHaveBeenCalledWith("attachment"));
+    expect(snapshot).toHaveBeenLastCalledWith("delayed-snapshot", "replacement");
+    expect(connect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ptyID: "delayed-snapshot" }),
+      "replacement",
+    );
+    expect(ghostty.writes).toContain("fresh output");
+    expect(ghostty.writes).not.toContain("stale output");
+  });
+
+  it("detaches a late attachment from the original server without starting or removing it", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connected: true,
+      profileID: "profile-1",
+      connectionID: "owner",
+    } as never);
+    let resolve!: (value: string) => void;
+    const connect = vi.spyOn(palot, "connectPty").mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const start = vi.spyOn(palot, "startPty").mockResolvedValue();
+    const detach = vi.spyOn(palot, "disconnectPty").mockResolvedValue();
+    const remove = vi.spyOn(palot, "removePty").mockResolvedValue();
+    vi.spyOn(palot, "resizePty").mockResolvedValue();
+    render(
+      <Provider store={store}>
+        <TerminalTab
+          tab={{
+            ...tab,
+            resource: { ...tab.resource, ptyID: "delayed-attach", transport: "legacy" },
+          }}
+        />
+      </Provider>,
+    );
+    await waitFor(() =>
+      expect(connect).toHaveBeenCalledWith(
+        expect.objectContaining({ ptyID: "delayed-attach" }),
+        "owner",
+      ),
+    );
+    act(() =>
+      store.set(runtimeAtom, {
+        connected: true,
+        profileID: "other-profile",
+        connectionID: "other",
+      } as never),
+    );
+    await act(async () => resolve("old-owner-attachment"));
+    expect(detach).toHaveBeenCalledWith("old-owner-attachment");
+    expect(start).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
   it("retries a failed remote attachment without creating or ending its terminal", async () => {
     const store = createStore();
     store.set(runtimeAtom, {

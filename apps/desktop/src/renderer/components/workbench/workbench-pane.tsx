@@ -425,10 +425,11 @@ function WorkbenchTabContent({
   scope: WorkbenchScope;
   active: boolean;
 }) {
-  if (tab.kind === "context") return <ContextTab tab={tab} />;
-  if (tab.kind === "changes") return <ChangesTab tab={tab} pane={pane} scope={scope} />;
-  if (tab.kind === "file") return <FileTab tab={tab} />;
-  if (tab.kind === "file-diff") return <FileDiffTab tab={tab} />;
+  if (tab.kind === "context") return <ContextTab tab={tab} active={active} />;
+  if (tab.kind === "changes")
+    return <ChangesTab tab={tab} pane={pane} scope={scope} active={active} />;
+  if (tab.kind === "file") return <FileTab tab={tab} active={active} />;
+  if (tab.kind === "file-diff") return <FileDiffTab tab={tab} active={active} />;
   if (tab.kind === "command") return <CommandTab tab={tab} active={active} />;
   return <TerminalTab tab={tab} />;
 }

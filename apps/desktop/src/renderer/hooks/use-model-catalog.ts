@@ -23,7 +23,7 @@ export function modelCatalogQueryKey(connectionID: string, location: LocationRef
 function modelCatalogQueryOptions(connectionID: string, location: LocationRef, enabled = true) {
   return queryOptions({
     queryKey: modelCatalogQueryKey(connectionID, location),
-    queryFn: ({ signal }) => palot.listModels(location, signal),
+    queryFn: ({ signal }) => palot.listModels(location, signal, connectionID),
     enabled: enabled && Boolean(location.directory),
     staleTime: Number.POSITIVE_INFINITY,
     refetchOnMount: false,

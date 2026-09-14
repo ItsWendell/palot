@@ -1,6 +1,6 @@
 {
   "name": "palot-2",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "private": true,
   "license": "MIT",
   "workspaces": [
@@ -32,6 +32,7 @@
     "test:e2e": "bun run --cwd apps/desktop test:e2e",
     "test:e2e:list": "bun run --cwd apps/desktop test:e2e:list",
     "showcase": "bun run --cwd apps/desktop showcase",
+    "demo": "bun run --cwd apps/desktop demo",
     "perf:doctor": "vp dlx react-doctor@0.9.14 apps/desktop --scope changed --include-untracked --blocking none --no-score --no-supply-chain",
     "perf:doctor:full": "vp dlx react-doctor@0.9.14 apps/desktop --scope full --blocking none --no-score --no-supply-chain",
     "perf:react-check": "vp exec -- oxlint apps/desktop/src/renderer -c apps/desktop/oxlint.react-compiler.json",

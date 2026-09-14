@@ -46,3 +46,7 @@ export function applyModelPreference(
     return model && (includeHidden || !hidden.has(key)) ? [model] : [];
   });
 }
+/** Project IDs are local to their OpenCode server. */
+export function modelProjectPreferenceKey(profileID: string, projectID: string): string {
+  return JSON.stringify([profileID, projectID]);
+}

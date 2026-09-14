@@ -1,4 +1,4 @@
-import { keepPreviousData, queryOptions, useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 import type { SessionStatsInput } from "@opencode/client";
 import { useAtomValue } from "jotai";
 import { runtimeAtom } from "../atoms/workspace";
@@ -23,7 +23,7 @@ export function sessionStatsQueryOptions(
 ) {
   return queryOptions({
     queryKey: openCodeKeys.sessionStats(connectionID, input),
-    queryFn: ({ signal }) => palot.sessionStats(input, signal),
+    queryFn: ({ signal }) => palot.sessionStats(input, signal, connectionID),
     enabled,
     staleTime: SESSION_STATS_STALE_TIME,
     gcTime: SESSION_STATS_GC_TIME,
@@ -32,7 +32,8 @@ export function sessionStatsQueryOptions(
     refetchOnReconnect: false,
     refetchInterval: false,
     retry: false,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) =>
+      query?.queryKey[1] === connectionID ? previous : undefined,
   });
 }
 

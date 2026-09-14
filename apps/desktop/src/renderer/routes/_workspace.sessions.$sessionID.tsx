@@ -5,21 +5,20 @@ import { attentionTargetAtom } from "../atoms/attention";
 import { newTaskProjectIDAtom, runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { SessionRoutePending } from "../components/session-route-pending";
 import { Thread } from "../components/thread";
-import {
-  cacheSession,
-  sessionCatalogInfo,
-  sessionQueryOptions,
-} from "../lib/session-catalog-query";
+import { cacheSession, sessionQueryOptions } from "../lib/session-catalog-query";
+import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { validateSessionSearch } from "../lib/route-search";
 import { useAcknowledgeSessionView } from "../hooks/use-session-info";
+import { sessionTranscriptQueryOptions, transcriptQueryKey } from "../hooks/use-session-transcript";
 import { palot } from "../services/palot";
 import { registerOpenCodeRuntime } from "../services/opencode-client";
+import { mapSession } from "../services/opencode-mappers";
 
 export const Route = createFileRoute("/_workspace/sessions/$sessionID")({
   validateSearch: validateSessionSearch,
   preloadStaleTime: 0,
   loaderDeps: ({ search }) => ({ profileID: search.profileID }),
-  loader: async ({ context, params, deps }) => {
+  loader: async ({ context, params, deps, preload }) => {
     let runtime = context.store.get(runtimeAtom);
     if (deps.profileID && runtime?.profileID !== deps.profileID) {
       // Preloading another connection must never change focus or fall back to this server.
@@ -35,21 +34,31 @@ export const Route = createFileRoute("/_workspace/sessions/$sessionID")({
     if (!runtime?.connected && !palot.isPreview()) return;
     if (runtime) registerOpenCodeRuntime(runtime);
     const connectionID = runtime?.connectionID ?? "disconnected";
-    if (
-      sessionCatalogInfo(context.queryClient, connectionID).some(
-        (session) => session.id === params.sessionID,
-      )
-    ) {
-      return;
+    const cached = openCodeReconciler(context.queryClient).session(connectionID, params.sessionID);
+    if (cached) {
+      const transcript = context.queryClient.getQueryState(
+        transcriptQueryKey(connectionID, params.sessionID),
+      );
+      // Leave warm navigation and metadata-only preloads on their existing fast path.
+      if (preload || transcript?.data !== undefined) return;
     }
-    if (connectionID !== "disconnected" && !palot.isPreview()) {
+    let session = cached ? mapSession(cached) : null;
+    if (!session && connectionID !== "disconnected" && !palot.isPreview()) {
       await context.queryClient.fetchQuery(
         sessionQueryOptions(context.queryClient, connectionID, params.sessionID),
       );
-      return;
+      const info = openCodeReconciler(context.queryClient).session(connectionID, params.sessionID);
+      session = info ? mapSession(info) : null;
+    } else if (!session) {
+      session = await palot.getSession(params.sessionID).catch(() => null);
+      if (session) cacheSession(context.queryClient, connectionID, session);
     }
-    const session = await palot.getSession(params.sessionID).catch(() => null);
-    if (session) cacheSession(context.queryClient, connectionID, session);
+    // Start hydration before mounting, but never load transcripts for hover preloads.
+    if (session && !preload) {
+      void context.queryClient.prefetchInfiniteQuery(
+        sessionTranscriptQueryOptions(context.queryClient, session, runtime),
+      );
+    }
   },
   pendingComponent: SessionRoutePending,
   component: SessionRoute,

@@ -51,7 +51,11 @@ describe("composer discovery queries", () => {
     );
     await waitFor(() => expect(result.getByText("loaded")).toBeTruthy());
     expect(load).toHaveBeenCalledTimes(1);
-    expect(load).toHaveBeenCalledWith({ directory: "/repo" }, expect.any(AbortSignal));
+    expect(load).toHaveBeenCalledWith(
+      { directory: "/repo" },
+      expect.any(AbortSignal),
+      "connection-1",
+    );
   });
 
   it("aborts an obsolete workspace file search", async () => {

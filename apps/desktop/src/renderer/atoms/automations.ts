@@ -1,9 +1,19 @@
 import { atom } from "jotai";
 import type { AutomationSnapshot } from "../../shared";
+import { runtimeAtom } from "./workspace";
 
-export const automationSnapshotAtom = atom<AutomationSnapshot | null>(null);
-export const automationLoadingAtom = atom(false);
-export const automationErrorAtom = atom<string | null>(null);
+export const automationSnapshotsAtom = atom<Record<string, AutomationSnapshot>>({});
+export const automationLoadingByProfileAtom = atom<Record<string, boolean>>({});
+export const automationErrorsByProfileAtom = atom<Record<string, string | null>>({});
+export const automationSnapshotAtom = atom(
+  (get) => get(automationSnapshotsAtom)[get(runtimeAtom)?.profileID ?? ""] ?? null,
+);
+export const automationLoadingAtom = atom(
+  (get) => get(automationLoadingByProfileAtom)[get(runtimeAtom)?.profileID ?? ""] ?? false,
+);
+export const automationErrorAtom = atom(
+  (get) => get(automationErrorsByProfileAtom)[get(runtimeAtom)?.profileID ?? ""] ?? null,
+);
 export const groupedScheduledSessionIDsAtom = atom((get) => {
   const snapshot = get(automationSnapshotAtom);
   if (!snapshot) return new Set<string>();

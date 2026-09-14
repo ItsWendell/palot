@@ -127,6 +127,7 @@ import { isAppearanceFontAvailable } from "../lib/font-loading";
 import {
   applyModelPreference,
   modelPreferenceKey,
+  modelProjectPreferenceKey,
   reconcileModelPreference,
   reconcileModelOrder,
   type ModelPickerPreference,
@@ -145,11 +146,9 @@ import { projectForSession, projectLocation, orderProjects } from "../lib/view-m
 import { palotBuild } from "../lib/build";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useCheckPlugins, useSettingsSnapshot } from "../hooks/use-settings-snapshot";
-import {
-  useProjectCatalog,
-  useSelectedSession,
-  useSessionCatalog,
-} from "../hooks/use-session-catalog";
+import { useSelectedSession } from "../hooks/use-session-catalog";
+import { SettingsOwnerContext, useSettingsOwner } from "../hooks/use-settings-owner";
+import { useSettingsServer } from "../hooks/use-settings-server";
 import { palot } from "../services/palot";
 import { BuildBadge, PalotMark } from "./branding";
 import { ProviderConnectionDialog } from "./provider-connection-dialog";
@@ -301,18 +300,34 @@ export function Settings({
 }) {
   const { closeSettings, openSettings } = usePalotNavigation();
   const queryClient = useQueryClient();
-  const runtime = useAtomValue(runtimeAtom);
-  const allProjects = useProjectCatalog();
-  const sessions = useSessionCatalog();
-  const projects = useMemo(() => orderProjects(allProjects, sessions), [allProjects, sessions]);
-  const session = useSelectedSession();
+  const serverScoped = [
+    "project",
+    "models",
+    "providers",
+    "tools",
+    "agents",
+    "permissions",
+    "config",
+  ].includes(category);
+  const server = useSettingsServer(serverScoped);
+  const runtime = server.runtime;
+  const allProjects = server.projects;
+  const selectedSession = useSelectedSession();
+  const selectedRuntime = useAtomValue(runtimeAtom);
+  const [entryTask] = useState(() => ({
+    session: selectedSession,
+    profileID: selectedRuntime?.profileID,
+  }));
+  const session = entryTask.profileID === server.profileID ? entryTask.session : null;
+  const projects = orderProjects(allProjects, session ? [session] : []);
+  const [projectChoice, setProjectChoice] = useState<string | null>(routeProjectID ?? null);
   const sessionProject = session ? projectForSession(allProjects, session) : undefined;
   const initialProject =
     sessionProject ??
-    projects.find((project) => project.id === routeProjectID) ??
+    projects.find((project) => project.id === projectChoice) ??
     projects[0] ??
     null;
-  const projectID = routeProjectID ?? initialProject?.id ?? "";
+  const projectID = projectChoice ?? initialProject?.id ?? "";
   const project = projects.find((item) => item.id === projectID) ?? initialProject;
   const settingsLocation =
     project && session && sessionProject?.id === project.id
@@ -324,13 +339,14 @@ export function Settings({
   const settingsInput =
     capabilities && project && settingsLocation
       ? {
+          connectionID: runtime?.connectionID,
           projectID: project.id,
           directory: settingsLocation.directory,
           capabilities,
           ...(settingsLocation.workspaceID ? { workspaceID: settingsLocation.workspaceID } : {}),
         }
       : null;
-  const settings = useSettingsSnapshot(settingsInput);
+  const settings = useSettingsSnapshot(settingsInput, serverScoped && server.available, runtime);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -349,6 +365,13 @@ export function Settings({
   }, [closeSettings]);
 
   async function refresh() {
+    if (!serverScoped || !server.available) return;
+    if (!project || server.projectError) {
+      await queryClient.invalidateQueries({
+        queryKey: openCodeKeys.projects(runtime!.connectionID),
+      });
+      return;
+    }
     if (category === "project" && project) {
       await queryClient.invalidateQueries({
         queryKey: projectDetailsKey(runtime?.connectionID ?? "disconnected", project.id),
@@ -483,33 +506,68 @@ export function Settings({
         </div>
       </aside>
       <section className="palot-main-surface @container/settings-page relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-        <header className="palot-main-surface-header window-drag flex h-(--shell-header-height) shrink-0 items-center border-b border-sidebar-border bg-background px-5">
+        <header className="palot-main-surface-header window-drag flex h-(--shell-header-height) shrink-0 items-center gap-2 border-b border-sidebar-border bg-background px-5 pr-(--window-controls-width)">
           <div className="flex min-w-0 items-center gap-2 pl-1">
             <span className="text-sm font-semibold">Settings</span>
             <span className="text-muted-foreground/45">/</span>
             <span className="truncate text-xs text-muted-foreground">{activeCopy.title}</span>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            {projects.length > 1 ? (
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            {serverScoped ? (
+              <Select
+                value={server.profileID}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  server.setProfileID(value);
+                  setProjectChoice(null);
+                }}
+              >
+                <SelectTrigger
+                  aria-label="Configure server"
+                  className="window-no-drag w-auto min-w-28 max-w-52"
+                >
+                  <SelectValue className="min-w-0 truncate" placeholder="Configure server">
+                    {server.profiles.find((profile) => profile.id === server.profileID)?.name ??
+                      runtime?.profileID ??
+                      "Choose server"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {server.profiles.length === 0 && server.profileID ? (
+                    <SelectItem value={server.profileID}>
+                      {runtime?.profileID ?? server.profileID}
+                    </SelectItem>
+                  ) : null}
+                  {server.profiles.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            {serverScoped && projects.length > 1 ? (
               <ProjectSelect
                 projects={projects}
                 value={project?.id ?? null}
-                onValueChange={(value) => value && void openSettings(category, value, true)}
+                onValueChange={(value) => value && setProjectChoice(value)}
                 ariaLabel="Settings project"
                 align="end"
                 variant="settings"
               />
             ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Refresh settings"
-              disabled={loading || !project}
-              onClick={() => void refresh()}
-            >
-              <RefreshCw className={loading ? "animate-spin" : undefined} aria-hidden="true" />
-            </Button>
+            {serverScoped ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Refresh settings"
+                disabled={loading || server.projectsPending || !server.available}
+                onClick={() => void refresh()}
+              >
+                <RefreshCw className={loading ? "animate-spin" : undefined} aria-hidden="true" />
+              </Button>
+            ) : null}
           </div>
         </header>
         <ScrollArea className="min-h-0 flex-1">
@@ -525,6 +583,19 @@ export function Settings({
                 {activeCopy.description}
               </p>
             </div>
+            {serverScoped ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                {server.status}
+                {server.available
+                  ? " · Changes apply only to this server. Your open task stays on its server."
+                  : " · Settings are read-only. Enable and connect this server in Connections to make changes."}
+              </p>
+            ) : null}
+            {serverScoped && server.projectError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {server.projectError.message}
+              </p>
+            ) : null}
             {visibleSnapshot?.errors.length ? (
               <div className="rounded-xl border border-warning/25 bg-warning/5 p-4 text-compact">
                 <div className="flex items-center gap-2 font-medium text-warning">
@@ -569,21 +640,48 @@ export function Settings({
             ].includes(category) ? (
               <SettingsSection title="No project selected" icon={FolderGit2}>
                 <p className="px-4 text-sm text-muted-foreground">
-                  Add a project before configuring project-scoped OpenCode settings.
+                  {server.projectsPending
+                    ? "Loading this server's projects…"
+                    : "Add a project on this server before configuring project-scoped OpenCode settings."}
                 </p>
               </SettingsSection>
             ) : (
-              <SettingsContent
-                category={category}
-                project={project}
-                location={settingsLocation}
-                snapshot={visibleSnapshot}
-                loading={loading}
-                pendingCapabilities={settings.pendingCapabilities}
-                capabilityStates={capabilityStates}
-                refresh={refresh}
-                connectionTab={connectionTab}
-              />
+              <SettingsOwnerContext.Provider value={runtime}>
+                <fieldset
+                  disabled={serverScoped && !server.available}
+                  aria-disabled={serverScoped && !server.available}
+                  onClickCapture={(event) => {
+                    if (serverScoped && !server.available) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }
+                  }}
+                  onKeyDownCapture={(event) => {
+                    if (serverScoped && !server.available && ["Enter", " "].includes(event.key)) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }
+                  }}
+                  className="min-w-0 space-y-8"
+                >
+                  <SettingsContent
+                    key={
+                      serverScoped
+                        ? `${runtime?.connectionID ?? server.profileID}:${project?.id}:${settingsLocation?.directory}:${settingsLocation?.workspaceID ?? ""}:${server.available}`
+                        : category
+                    }
+                    category={category}
+                    project={project}
+                    location={settingsLocation}
+                    snapshot={visibleSnapshot}
+                    loading={loading}
+                    pendingCapabilities={settings.pendingCapabilities}
+                    capabilityStates={capabilityStates}
+                    refresh={refresh}
+                    connectionTab={connectionTab}
+                  />
+                </fieldset>
+              </SettingsOwnerContext.Provider>
             )}
           </div>
         </ScrollArea>
@@ -2191,12 +2289,14 @@ export function ModelSettings({
   snapshot: PalotSettingsSnapshot | null;
 }) {
   const [defaults, setDefaults] = useAtom(defaultModelsAtom);
+  const owner = useSettingsOwner();
+  const preferenceScope = modelProjectPreferenceKey(owner?.profileID ?? "disconnected", project.id);
   const [preferences, setPreferences] = useAtom(modelPickerPreferencesAtom);
   const [query, setQuery] = useState("");
   const [activeModelKey, setActiveModelKey] = useState<string | null>(null);
-  const selected = defaults[project.id] ?? null;
+  const selected = defaults[preferenceScope] ?? null;
   const models = snapshot?.catalog.models ?? [];
-  const preference = reconcileModelPreference(models, preferences[project.id]);
+  const preference = reconcileModelPreference(models, preferences[preferenceScope]);
   const orderedModels = applyModelPreference(models, preference, true);
   const hidden = new Set(preference?.hidden ?? []);
   const visibleModels = orderedModels.filter((model) => !hidden.has(modelPreferenceKey(model)));
@@ -2223,7 +2323,7 @@ export function ModelSettings({
     : null;
 
   function updatePreference(next: ModelPickerPreference) {
-    setPreferences((current) => ({ ...current, [project.id]: next }));
+    setPreferences((current) => ({ ...current, [preferenceScope]: next }));
   }
 
   function setModelEnabled(model: PalotModel, enabled: boolean) {
@@ -2242,9 +2342,9 @@ export function ModelSettings({
         snapshot.catalog.defaultModel.providerID === model.providerID;
       if (hidesSelected || hidesOpenCodeDefault) {
         setDefaults((current) => {
-          if (fallback) return { ...current, [project.id]: modelRef(fallback) };
+          if (fallback) return { ...current, [preferenceScope]: modelRef(fallback) };
           const next = { ...current };
-          delete next[project.id];
+          delete next[preferenceScope];
           return next;
         });
       }
@@ -2259,7 +2359,7 @@ export function ModelSettings({
     if (!enabled && selected) {
       setDefaults((current) => {
         const next = { ...current };
-        delete next[project.id];
+        delete next[preferenceScope];
         return next;
       });
     }
@@ -2314,12 +2414,12 @@ export function ModelSettings({
                   const key = String(value);
                   if (key === "opencode-default") {
                     const next = { ...defaults };
-                    delete next[project.id];
+                    delete next[preferenceScope];
                     setDefaults(next);
                     return;
                   }
                   const model = models.find((item) => `${item.providerID}/${item.id}` === key);
-                  if (model) setDefaults({ ...defaults, [project.id]: modelRef(model) });
+                  if (model) setDefaults({ ...defaults, [preferenceScope]: modelRef(model) });
                 }}
               >
                 <SelectTrigger className="w-full @lg/settings:w-64" aria-label="Default model">
@@ -2354,7 +2454,7 @@ export function ModelSettings({
                     const variant = String(value);
                     setDefaults({
                       ...defaults,
-                      [project.id]: modelRef(
+                      [preferenceScope]: modelRef(
                         selectedModel,
                         variant === "model-default" ? undefined : variant,
                       ),
@@ -2671,6 +2771,7 @@ function ProviderSettings({
   snapshot: PalotSettingsSnapshot | null;
   refresh(): Promise<void>;
 }) {
+  const owner = useSettingsOwner();
   const [dialog, setDialog] = useState<PalotIntegration | null>(null);
   const [wellknownOpen, setWellknownOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -2720,6 +2821,7 @@ function ProviderSettings({
     setActivatingCredentialID(connection.id);
     try {
       await palot.activateCredential({
+        connectionID: owner?.connectionID,
         credentialID: connection.id,
         projectID: project.id,
         directory: location.directory,
@@ -2741,6 +2843,7 @@ function ProviderSettings({
     setRemovingCredentialID(credentialID);
     try {
       await palot.removeCredential({
+        connectionID: owner?.connectionID,
         credentialID,
         projectID: project.id,
         directory: location.directory,
@@ -2875,7 +2978,7 @@ function ProviderSettings({
       </SettingsSection>
 
       <ProviderConnectionDialog
-        key={dialog?.id ?? "closed"}
+        key={`connect:${dialog?.id ?? "closed"}`}
         integration={dialog}
         projectID={project.id}
         location={location}
@@ -2890,7 +2993,7 @@ function ProviderSettings({
         onComplete={refresh}
       />
       <CredentialLabelDialog
-        key={rename?.credentialID ?? "closed"}
+        key={`rename:${rename?.credentialID ?? "closed"}`}
         credential={rename}
         project={project}
         location={location}
@@ -3127,12 +3230,14 @@ function WellknownIntegrationDialog({
   onOpenChange(open: boolean): void;
   onComplete(): Promise<void>;
 }) {
+  const owner = useSettingsOwner();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   async function submit() {
     setBusy(true);
     try {
       await palot.addWellknownIntegration({
+        connectionID: owner?.connectionID,
         url: url.trim(),
         projectID: project.id,
         directory: location.directory,
@@ -3194,6 +3299,7 @@ function CredentialLabelDialog({
   onOpenChange(open: boolean): void;
   onComplete(): Promise<void>;
 }) {
+  const owner = useSettingsOwner();
   const [label, setLabel] = useState(() => credential?.label ?? "");
   const [busy, setBusy] = useState(false);
   async function submit() {
@@ -3201,6 +3307,7 @@ function CredentialLabelDialog({
     setBusy(true);
     try {
       await palot.updateCredential({
+        connectionID: owner?.connectionID,
         credentialID: credential.credentialID,
         label: label.trim(),
         projectID: project.id,
@@ -3528,6 +3635,7 @@ export function PluginSettings({
   state?: InventoryLoadState;
   refresh(): Promise<void>;
 }) {
+  const owner = useSettingsOwner();
   const [busy, setBusy] = useState<string | null>(null);
   const [showBuiltins, setShowBuiltins] = useState(false);
   const builtinCount = plugins.filter((plugin) => plugin.source.type === "builtin").length;
@@ -3550,11 +3658,12 @@ export function PluginSettings({
     busy !== null ||
     plugins.some((plugin) => plugin.source.type === "package" && plugin.source.updating);
   const input = {
+    connectionID: owner?.connectionID,
     projectID: project.id,
     directory: location.directory,
     ...(location.workspaceID ? { workspaceID: location.workspaceID } : {}),
   };
-  const checkPlugins = useCheckPlugins(input);
+  const checkPlugins = useCheckPlugins(input, owner);
   async function check() {
     if (operationPending) return;
     setBusy("check");
@@ -3733,8 +3842,10 @@ function McpServerRow({
   server: PalotMcpServer;
   refresh(): Promise<void>;
 }) {
+  const owner = useSettingsOwner();
   const [busy, setBusy] = useState(false);
   const input = {
+    connectionID: owner?.connectionID,
     server: server.name,
     projectID: project.id,
     directory: location.directory,
@@ -3805,6 +3916,7 @@ function AddMcpDialog({
   onOpenChange(open: boolean): void;
   onComplete(): Promise<void>;
 }) {
+  const owner = useSettingsOwner();
   const [type, setType] = useState<"remote" | "local">("remote");
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
@@ -3864,6 +3976,7 @@ function AddMcpDialog({
         };
       }
       await palot.addMcpServer({
+        connectionID: owner?.connectionID,
         server: name.trim(),
         projectID: project.id,
         directory: location.directory,
@@ -4147,6 +4260,7 @@ function PermissionSettings({
   capabilityStates: Partial<Record<SettingsCapability, InventoryLoadState>>;
   refresh(): Promise<void>;
 }) {
+  const owner = useSettingsOwner();
   const permissions = snapshot?.savedPermissions ?? [];
   const location = snapshot?.location;
   return (
@@ -4191,6 +4305,7 @@ function PermissionSettings({
                 onClick={() =>
                   void palot
                     .removeSavedPermission({
+                      connectionID: owner?.connectionID,
                       id: permission.id,
                       projectID: permission.projectID,
                       directory: location?.directory ?? "",

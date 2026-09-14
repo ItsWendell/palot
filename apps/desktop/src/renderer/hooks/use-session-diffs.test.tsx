@@ -51,6 +51,7 @@ describe("session diff queries", () => {
     expect(listDiffs).toHaveBeenCalledWith(
       { directory: "/repo", workspaceID: "worktree", mode: "working", context: 3 },
       expect.any(AbortSignal),
+      "connection-1",
     );
   });
 });

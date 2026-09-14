@@ -16,6 +16,8 @@ import { openCodeRuntime } from "./opencode-runtime";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const SCAN_CONCURRENCY = 4;
+const MIN_RECONCILE_INTERVAL_MS = 1_000;
+const MISSING_SESSION_RETRY_MS = 30_000;
 
 type AttentionRequest =
   | { type: "permission"; value: PermissionRequest }
@@ -43,6 +45,10 @@ export class OpenCodeAttentionIndex {
   #stream: { ready: Promise<boolean>; controller: AbortController } | undefined;
   #reconciliation: Promise<boolean> | undefined;
   #disposed = false;
+  #nextReconcileAt = 0;
+  #retryDelay = 5_000;
+  #lastComplete = false;
+  readonly #missingSessions = new Map<string, number>();
 
   constructor(private readonly runtime: AttentionRuntime = openCodeRuntime) {
     this.#unsubscribeReconnect = runtime.onReconnect(() => this.reset());
@@ -77,6 +83,10 @@ export class OpenCodeAttentionIndex {
     this.#stream = undefined;
     this.#reconciliation = undefined;
     this.#locationScans.clear();
+    this.#nextReconcileAt = 0;
+    this.#retryDelay = 5_000;
+    this.#lastComplete = false;
+    this.#missingSessions.clear();
     this.#revision += 1;
     if (notify) this.#emit();
   }
@@ -90,14 +100,34 @@ export class OpenCodeAttentionIndex {
     this.#ensureGeneration(generation);
     const epoch = this.#epoch;
     for (const session of input.sessions) {
-      if (!this.#deletedSessions.has(session.id)) this.#sessions.set(session.id, session);
+      if (
+        !this.#deletedSessions.has(session.id) &&
+        session.updatedAt >= (this.#sessions.get(session.id)?.updatedAt ?? 0)
+      ) {
+        this.#sessions.set(session.id, session);
+        this.#missingSessions.delete(session.id);
+      }
     }
     if (!this.#reconciliation) {
       // Capture before discovery: replies received while enumerating must win over lists.
       const revision = this.#revision;
+      const reconcile = Date.now() >= this.#nextReconcileAt;
       const operation = this.runtime
-        .withClient((client) => this.#reconcile(client, epoch, revision))
-        .catch(() => false);
+        .withClient(async (client) =>
+          reconcile
+            ? this.#reconcile(client, epoch, revision)
+            : (await this.#hydrateRequestLineage(client, epoch)) && this.#lastComplete,
+        )
+        .catch(() => false)
+        .then((complete) => {
+          if (reconcile && epoch === this.#epoch) {
+            this.#lastComplete = complete;
+            this.#nextReconcileAt =
+              Date.now() + (complete ? MIN_RECONCILE_INTERVAL_MS : this.#retryDelay);
+            this.#retryDelay = complete ? 5_000 : Math.min(this.#retryDelay * 2, 30_000);
+          }
+          return complete;
+        });
       this.#reconciliation = operation;
       void operation.finally(() => {
         if (this.#reconciliation === operation) this.#reconciliation = undefined;
@@ -298,9 +328,16 @@ export class OpenCodeAttentionIndex {
         if (epoch !== this.#epoch) return undefined;
         const cached = this.#sessions.get(sessionID);
         if (cached) return cached;
+        if ((this.#missingSessions.get(sessionID) ?? 0) > Date.now()) {
+          complete = false;
+          return undefined;
+        }
+        this.#missingSessions.delete(sessionID);
         try {
           return mapSession(await client.session.get({ sessionID }, { signal: this.#signal() }));
         } catch {
+          if (epoch === this.#epoch)
+            this.#missingSessions.set(sessionID, Date.now() + MISSING_SESSION_RETRY_MS);
           complete = false;
           return undefined;
         }
@@ -352,6 +389,7 @@ export class OpenCodeAttentionIndex {
       changed = this.#deleteRequest("form", event.data.sessionID, event.data.id);
     } else if (event.type === "session.deleted") {
       this.#deletedSessions.add(event.data.sessionID);
+      this.#missingSessions.delete(event.data.sessionID);
       changed = this.#sessions.delete(event.data.sessionID);
       for (const [key, request] of this.#requests) {
         if (request.value.sessionID !== event.data.sessionID) continue;
@@ -369,6 +407,8 @@ export class OpenCodeAttentionIndex {
     location?: LocationRef,
   ): void {
     if (this.#deletedSessions.has(value.sessionID)) return;
+    // An authoritative request is new evidence even during a discovery cooldown.
+    this.#missingSessions.delete(value.sessionID);
     const key = requestKey(type, value.sessionID, value.id);
     if (location) {
       const id = locationKey(location);

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import type { FormInfo, PermissionRequest } from "@opencode/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PalotSession } from "../../shared";
+import type { OpenCodeRuntimeStatus, PalotSession } from "../../shared";
 import { attentionTargetAtom } from "../atoms/attention";
 import { attentionSeenIDsAtom, sidebarSectionsAtom } from "../atoms/attention";
 import { sessionTriageSnapshotAtom } from "../atoms/inbox";
@@ -18,6 +18,14 @@ import { palot } from "../services/palot";
 
 let showAttentionNotification: ReturnType<typeof vi.fn>;
 let dispatchSessionTriage: ReturnType<typeof vi.fn>;
+const overview = vi.hoisted(() => ({
+  connections: [] as {
+    profile: { id: string; name: string; kind: string };
+    runtime: OpenCodeRuntimeStatus;
+  }[],
+  includedProfileIDs: [] as string[],
+}));
+vi.mock("../hooks/use-connection-overview", () => ({ useConnectionOverview: () => overview }));
 
 const session: PalotSession = {
   id: "session-1",
@@ -59,6 +67,8 @@ function markUnread(
 }
 
 beforeEach(() => {
+  overview.connections = [];
+  overview.includedProfileIDs = [];
   window.localStorage.clear();
   Element.prototype.getAnimations = vi.fn(() => []);
   showAttentionNotification = vi.fn();
@@ -92,8 +102,8 @@ describe("ProjectSidebarContent attention", () => {
         connectionID: "origin",
         profileID: "origin-profile",
         contractVersion: "test",
-        phase: "error",
-        connected: false,
+        phase: "connected",
+        connected: true,
         binaryPath: null,
         version: null,
         pid: null,
@@ -113,6 +123,17 @@ describe("ProjectSidebarContent attention", () => {
           pairing: "none",
         },
       });
+      overview.connections = [
+        {
+          profile: {
+            id: "origin-profile",
+            name: "Original",
+            kind: action === "remote" ? "remote" : "local",
+          },
+          runtime: store.get(runtimeAtom)!,
+        },
+      ];
+      overview.includedProfileIDs = ["origin-profile"];
       const directory = Promise.withResolvers<string | null>();
       const created = Promise.withResolvers<PalotSession | null>();
       vi.spyOn(palot, "pickDirectory").mockReturnValue(directory.promise);
@@ -134,11 +155,11 @@ describe("ProjectSidebarContent attention", () => {
       } else {
         fireEvent.click(screen.getByRole("button", { name: "Add project folder" }));
         if (action === "remote") {
-          fireEvent.change(await screen.findByPlaceholderText("/srv/projects/example"), {
+          fireEvent.change(screen.getByLabelText("Folder path"), {
             target: { value: "/repo" },
           });
-          fireEvent.click(screen.getByRole("button", { name: "Open path" }));
-        }
+          fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+        } else fireEvent.click(screen.getByRole("button", { name: "Choose local folder…" }));
       }
       act(() =>
         store.set(runtimeAtom, {
@@ -147,7 +168,10 @@ describe("ProjectSidebarContent attention", () => {
           profileID: "other-profile",
         }),
       );
-      if (action === "folder") await act(async () => directory.resolve("/repo"));
+      if (action === "folder") {
+        await act(async () => directory.resolve("/repo"));
+        fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+      }
       if (action !== "import") expect(create).toHaveBeenCalledWith("/repo", undefined, "origin");
       await act(async () => created.resolve(session));
 

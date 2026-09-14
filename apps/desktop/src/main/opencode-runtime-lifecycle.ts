@@ -19,6 +19,7 @@ import {
 } from "./opencode-version";
 import { observedOpenCodeFetch, openCodeLog } from "./opencode-observability";
 import { discoverSelectedOpenCodeBinary } from "./opencode-runtime-selection";
+import { controlOpenCodeLoginService } from "./opencode-login-runtime";
 export { discoverBundledOpenCodeBinary } from "./opencode-runtime-selection";
 import type { SshConnection } from "./ssh/transport";
 import type { SshConnector } from "./ssh/interaction";
@@ -48,6 +49,7 @@ export interface OpenCodeRuntimeLifecycleAdapter {
     onStart(): void;
   }): Promise<Endpoint>;
   stopService(options?: StopOptions): Promise<void>;
+  controlLoginService?(action: "start" | "restart", binary: Binary): Promise<Endpoint | null>;
   makeClient(
     endpoint: Endpoint,
     headers?: Record<string, string>,
@@ -117,6 +119,7 @@ export const openCodeRuntimeLifecycleAdapter: OpenCodeRuntimeLifecycleAdapter = 
   discoverService: () => Service.discover(),
   ensureService: (input) => Service.ensure(input),
   stopService: (options) => Service.stop(options),
+  controlLoginService: controlOpenCodeLoginService,
   makeClient: (endpoint, headers, rejectRedirects = false) =>
     OpenCode.make({
       baseUrl: endpoint.url,
@@ -324,7 +327,9 @@ export class OpenCodeRuntimeLifecycle {
     this.stopped = false;
     this.setStatus("reconnecting", { connected: false, error: null });
     try {
-      await this.adapter.stopService({ pty: "handoff" });
+      const managedEndpoint = await this.adapter.controlLoginService?.("restart", binary);
+      if (managedEndpoint) this.endpointValue = managedEndpoint;
+      else await this.adapter.stopService({ pty: "handoff" });
       this.connectionAbort.signal.throwIfAborted();
       await this.establish({ startLocalService: true, binary });
       this.startEventStream();
@@ -511,15 +516,20 @@ export class OpenCodeRuntimeLifecycle {
       const configuredPort = process.env.PALOT_OPENCODE_SERVICE_PORT?.trim() || undefined;
       // Keep persistent proxies valid; fail on a port conflict instead of silently moving.
       const servicePort = configuredPort ?? "4096";
-      endpoint = await this.adapter.ensureService({
-        command: [binaryPath, "serve", "--service", `--port=${servicePort}`],
-        // Explicit start/recovery must not replace a healthy version that appeared
-        // since discovery. Only explicit version replacement requests an exact version.
-        version: input.versionMismatch === "replace" ? binary.version : () => true,
-        onStart: () => {
-          managed = true;
-        },
-      });
+      endpoint =
+        (await this.adapter.controlLoginService?.(
+          input.versionMismatch === "replace" ? "restart" : "start",
+          binary,
+        )) ??
+        (await this.adapter.ensureService({
+          command: [binaryPath, "serve", "--service", `--port=${servicePort}`],
+          // Explicit start/recovery must not replace a healthy version that appeared
+          // since discovery. Only explicit version replacement requests an exact version.
+          version: input.versionMismatch === "replace" ? binary.version : () => true,
+          onStart: () => {
+            managed = true;
+          },
+        }));
     }
     if (this.stopped) throw new Error("OpenCode runtime stopped while connecting");
 

@@ -72,6 +72,8 @@ const api: PalotApi = {
   resetOpenCodeRelease: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeReleaseReset),
   inspectOpenCodeInstallations: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeInstallationsInspect),
   openCodeInstallationStatus: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeInstallationStatus),
+  getOpenCodeLoginStatus: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeLoginStatus),
+  updateOpenCodeLogin: (input) => ipcRenderer.invoke(IPC_CHANNELS.openCodeLoginUpdate, input),
   setOpenCodeRuntimePreference: (preference) =>
     ipcRenderer.invoke(IPC_CHANNELS.openCodeRuntimePreference, preference),
   selectOpenCodeInstallation: (id) =>

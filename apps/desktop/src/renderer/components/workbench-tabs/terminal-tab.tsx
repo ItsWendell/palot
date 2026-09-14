@@ -196,7 +196,12 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
           connectionID = null;
           unsubscribe();
           void palot
-            .getPty(tab.resource.location, tab.resource.ptyID, tab.resource.transport)
+            .getPty(
+              tab.resource.location,
+              tab.resource.ptyID,
+              tab.resource.transport,
+              runtimeConnectionID,
+            )
             .then((pty) => {
               if (disposed) return;
               if (pty.status === "exited") {
@@ -241,12 +246,14 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
       let snapshot = snapshots.get(snapshotKey);
       if (!snapshot && tab.resource.transport === "persistent") {
         let missing = false;
-        const remote = await palot.snapshotPty(tab.resource.ptyID).catch((error) => {
-          if (ptyNotFound(error)) {
-            missing = true;
-          }
-          return null;
-        });
+        const remote = await palot
+          .snapshotPty(tab.resource.ptyID, runtimeConnectionID)
+          .catch((error) => {
+            if (ptyNotFound(error)) {
+              missing = true;
+            }
+            return null;
+          });
         if (disposed) return;
         if (remote) {
           snapshot = {
@@ -312,19 +319,31 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
             void palot.writePty({ connectionID, data: "", cols, rows, control: true });
             return;
           }
-          void palot.resizePty(tab.resource.location, tab.resource.ptyID, tab.resource.transport, {
-            cols,
-            rows,
-          });
+          void palot.resizePty(
+            tab.resource.location,
+            tab.resource.ptyID,
+            tab.resource.transport,
+            {
+              cols,
+              rows,
+            },
+            runtimeConnectionID,
+          );
         }, 100);
       });
       cleanups.push(() => resizeSubscription.dispose());
       if (!readOnly) {
         term.focus();
-        await palot.resizePty(tab.resource.location, tab.resource.ptyID, tab.resource.transport, {
-          cols: term.cols,
-          rows: term.rows,
-        });
+        await palot.resizePty(
+          tab.resource.location,
+          tab.resource.ptyID,
+          tab.resource.transport,
+          {
+            cols: term.cols,
+            rows: term.rows,
+          },
+          runtimeConnectionID,
+        );
       }
       await connect();
     };
@@ -403,7 +422,12 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
                 return;
               setEnding(true);
               void palot
-                .removePty(tab.resource.location, tab.resource.ptyID, tab.resource.transport)
+                .removePty(
+                  tab.resource.location,
+                  tab.resource.ptyID,
+                  tab.resource.transport,
+                  runtime?.connectionID,
+                )
                 .then(() => setStatus("exited"))
                 .catch((error: unknown) => {
                   setErrorMessage(

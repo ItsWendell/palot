@@ -129,6 +129,7 @@ describe("UsagePage", () => {
     expect(sessionStats).toHaveBeenCalledWith(
       expect.objectContaining({ tools: "detail", project: "project-1" }),
       expect.any(AbortSignal),
+      "connection",
     );
     expect(sessionStats).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -139,6 +140,7 @@ describe("UsagePage", () => {
         project: "project-1",
       }),
       expect.any(AbortSignal),
+      "connection",
     );
 
     await userEvent.click(screen.getByRole("button", { name: "7 days" }));

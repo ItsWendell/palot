@@ -16,6 +16,7 @@ import { runtimeAtom } from "../atoms/workspace";
 import { useSettingsSnapshot } from "../hooks/use-settings-snapshot";
 import { openCodeInvalidationKeys } from "../lib/opencode-query-events";
 import { openCodeKeys } from "../lib/opencode-query";
+import { modelProjectPreferenceKey } from "../lib/model-preferences";
 import { createRendererQueryClient } from "../lib/query-client";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { checkPlugins, loadSettings } from "../services/opencode-settings";
@@ -34,6 +35,26 @@ const location = {
   directory: "/repo",
   project: { id: project.id, directory: "/repo", canonical: "/repo" },
 };
+
+function connectedSettingsStore() {
+  const store = createStore();
+  store.set(runtimeAtom, {
+    connectionID: "connection-1",
+    profileID: "local-default",
+    phase: "connected",
+    connected: true,
+    contractVersion: "2.0.3",
+    version: "2.0.3",
+    binaryPath: null,
+    pid: null,
+    managed: false,
+    lastConnectedAt: 1,
+    error: null,
+    versionMismatch: null,
+  });
+  return store;
+}
+const preferenceScope = modelProjectPreferenceKey("local-default", project.id);
 
 afterEach(() => {
   cleanup();
@@ -85,7 +106,7 @@ describe("Settings inventory", () => {
     const queryClient = createRendererQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
-        <Provider store={createStore()}>
+        <Provider store={connectedSettingsStore()}>
           <ToolSettings
             project={project}
             location={location}
@@ -532,9 +553,9 @@ describe("Settings inventory", () => {
         websearchProviders: [],
         errors: [],
       };
-      const store = createStore();
+      const store = connectedSettingsStore();
       store.set(modelPickerPreferencesAtom, {
-        [project.id]: {
+        [preferenceScope]: {
           hidden: ["openai/reasoner"],
           order: ["openai/reasoner"],
         },
@@ -569,16 +590,16 @@ describe("Settings inventory", () => {
       const user = userEvent.setup();
       await user.click(control);
       await waitFor(() => expect(control.getAttribute("aria-checked")).toBe("false"));
-      expect(store.get(modelPickerPreferencesAtom)[project.id]?.hidden).toEqual([
+      expect(store.get(modelPickerPreferencesAtom)[preferenceScope]?.hidden).toEqual([
         "openai/reasoner",
         "anthropic/other",
       ]);
       await user.click(screen.getByRole("button", { name: "Deselect all" }));
-      expect(store.get(modelPickerPreferencesAtom)[project.id]?.hidden).toEqual(
+      expect(store.get(modelPickerPreferencesAtom)[preferenceScope]?.hidden).toEqual(
         expect.arrayContaining(["openai/reasoner", "anthropic/other", "company-openai/reasoner"]),
       );
       await user.click(screen.getByRole("button", { name: "Select all" }));
-      expect(store.get(modelPickerPreferencesAtom)[project.id]?.hidden).toEqual([
+      expect(store.get(modelPickerPreferencesAtom)[preferenceScope]?.hidden).toEqual([
         "openai/reasoner",
       ]);
       view.rerender(

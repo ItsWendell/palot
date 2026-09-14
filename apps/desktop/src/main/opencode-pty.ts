@@ -12,6 +12,7 @@ import { IPC_CHANNELS } from "../shared";
 interface PtyRuntime {
   withClient<T>(operation: (client: OpenCodeClient, remote: boolean) => Promise<T>): Promise<T>;
   requestConnection(): Promise<{ endpoint: { url: string } }>;
+  onDispose?(observer: () => void): () => void;
 }
 
 const defaultRuntime: PtyRuntime = {
@@ -46,23 +47,25 @@ export async function createSessionPty(
         transport: "legacy",
       };
     };
-    // Remote hosts choose their own shell and environment, never this Mac's defaults.
-    if (remote) return createServerTerminal();
     try {
-      const shell =
-        process.platform === "win32"
-          ? process.env.COMSPEC || "cmd.exe"
-          : process.env.SHELL || "/bin/sh";
       const pty = await client.experimental.persistentPty.create({
         sessionID: input.sessionID,
-        command: shell,
-        args: process.platform === "win32" ? [] : ["-l"],
         cwd: input.location.directory,
         title: "Terminal",
-        env: {
-          TERM: process.env.TERM || "xterm-256color",
-          COLORTERM: process.env.COLORTERM || "truecolor",
-        },
+        // Omitting command lets OpenCode select the remote host's shell.
+        ...(remote
+          ? { args: [], env: {} }
+          : {
+              command:
+                process.platform === "win32"
+                  ? process.env.COMSPEC || "cmd.exe"
+                  : process.env.SHELL || "/bin/sh",
+              args: process.platform === "win32" ? [] : ["-l"],
+              env: {
+                TERM: process.env.TERM || "xterm-256color",
+                COLORTERM: process.env.COLORTERM || "truecolor",
+              },
+            }),
       });
       return { id: pty.id, title: pty.title, status: pty.status, transport: "persistent" };
     } catch (error) {
@@ -137,6 +140,7 @@ function persistentPtyUnavailable(error: unknown): boolean {
 }
 
 interface PtyConnection {
+  unsubscribeDisposal?: () => void;
   readOnly: boolean;
   ownerID: number;
   url: string;
@@ -175,18 +179,33 @@ export class PtyTransport {
     if (active >= MAX_CONNECTIONS_PER_RENDERER) {
       throw new Error("Too many terminal connections are open");
     }
-    const target = await this.prepare(input, runtime);
-    if (generation !== this.generation)
-      throw new Error("OpenCode profile changed while connecting terminal");
-    if (sender.isDestroyed()) throw new Error("Terminal renderer is unavailable");
-    const connectionID = randomUUID();
+    let disposed = false;
+    let connectionID: string | undefined;
+    const unsubscribeDisposal = runtime?.onDispose?.(() => {
+      disposed = true;
+      if (connectionID) this.disconnect(sender, connectionID);
+    });
+    let target: Awaited<ReturnType<typeof preparePtyConnection>>;
+    try {
+      target = await this.prepare(input, runtime);
+      if (disposed) throw new Error("OpenCode connection was disposed while connecting terminal");
+      if (generation !== this.generation)
+        throw new Error("OpenCode profile changed while connecting terminal");
+      if (sender.isDestroyed()) throw new Error("Terminal renderer is unavailable");
+    } catch (error) {
+      unsubscribeDisposal?.();
+      throw error;
+    }
+    connectionID = randomUUID();
+    const id = connectionID;
     const connection: PtyConnection = {
+      unsubscribeDisposal,
       readOnly: input.readOnly === true,
       ownerID: sender.id,
       url: target.url,
       expiresAt: target.expiresAt,
       socket: null,
-      startTimer: setTimeout(() => this.expire(connectionID), this.startTimeoutMs),
+      startTimer: setTimeout(() => this.expire(id), this.startTimeoutMs),
       transport: input.transport,
       cursor: Math.max(0, input.cursor),
       decoder: new TextDecoder(),
@@ -200,6 +219,7 @@ export class PtyTransport {
     if (connection.socket) return;
     if (connection.expiresAt <= Date.now()) {
       this.connections.delete(connectionID);
+      connection.unsubscribeDisposal?.();
       clearTimeout(connection.startTimer);
       throw new Error("Terminal connection token expired");
     }
@@ -231,6 +251,7 @@ export class PtyTransport {
     socket.addEventListener("close", (event) => {
       if (!active()) return;
       this.connections.delete(connectionID);
+      connection.unsubscribeDisposal?.();
       this.send(sender, { connectionID, type: "close", code: event.code });
     });
   }
@@ -259,6 +280,7 @@ export class PtyTransport {
     const connection = this.connections.get(connectionID);
     if (!connection || connection.ownerID !== sender.id) return;
     this.connections.delete(connectionID);
+    connection.unsubscribeDisposal?.();
     clearTimeout(connection.startTimer);
     connection.socket?.close(1000);
   }
@@ -266,6 +288,7 @@ export class PtyTransport {
   closeAll(): void {
     this.generation += 1;
     for (const connection of this.connections.values()) {
+      connection.unsubscribeDisposal?.();
       clearTimeout(connection.startTimer);
       connection.socket?.close(1001, "OpenCode profile changed");
     }
@@ -287,6 +310,7 @@ export class PtyTransport {
       for (const [connectionID, connection] of this.connections) {
         if (connection.ownerID !== sender.id) continue;
         this.connections.delete(connectionID);
+        connection.unsubscribeDisposal?.();
         clearTimeout(connection.startTimer);
         connection.socket?.close(1000);
       }
@@ -297,6 +321,7 @@ export class PtyTransport {
     const connection = this.connections.get(connectionID);
     if (!connection || connection.socket) return;
     this.connections.delete(connectionID);
+    connection.unsubscribeDisposal?.();
   }
 
   private send(sender: WebContents, event: PtyTransportEvent): void {

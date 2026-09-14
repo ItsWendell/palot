@@ -53,7 +53,6 @@ import { useSessionInbox } from "../hooks/use-session-inbox";
 import { useSessionTitleEditor } from "../hooks/use-session-title-editor";
 import {
   useProjectCatalog,
-  useCacheSession,
   useRootSessionPagination,
   useSessionCatalog,
 } from "../hooks/use-session-catalog";
@@ -63,7 +62,6 @@ import { cn } from "../lib/cn";
 import { ScrollArea } from "./ui/scroll-area";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
 import { openCodeKeys } from "../lib/opencode-query";
-import { showErrorToast } from "../lib/toast-error";
 import {
   formatSnoozeMenuTime,
   formatSnoozeWakeTime,
@@ -79,7 +77,7 @@ import { formatRelativeTime, orderProjects, sessionActivityAt } from "../lib/vie
 import type { OpenCodeVcsInfo } from "../services/opencode-vcs";
 import { listRootSessionInfo } from "../services/opencode-catalog";
 import { mapSession } from "../services/opencode-mappers";
-import { palot } from "../services/palot";
+import { AddProjectDialog } from "./add-project-dialog";
 import { ProjectPickerContent } from "./project-picker";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -104,14 +102,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -447,14 +437,7 @@ export function InboxToolbar({
   additionalFilterCount?: number;
   onClearFilters?(): void;
 }) {
-  const { openSession } = usePalotNavigation();
-  const cacheSession = useCacheSession();
-  const [remotePathOpen, setRemotePathOpen] = useState(false);
-  const [remotePath, setRemotePath] = useState("");
-  const [remoteProjectOwner, setRemoteProjectOwner] = useState<{
-    runtime: typeof runtime;
-    cacheSession: typeof cacheSession;
-  } | null>(null);
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
   const activeCount =
     Number(Boolean(filters.projectID)) + filters.states.length + additionalFilterCount;
   const selectedProject = projects.find((project) => project.id === filters.projectID);
@@ -465,44 +448,6 @@ export function InboxToolbar({
         ? [...current.states, state]
         : current.states.filter((candidate) => candidate !== state),
     }));
-
-  const addProject = async () => {
-    if (runtime?.capabilities?.localPathActions === false) {
-      setRemoteProjectOwner({ runtime, cacheSession });
-      setRemotePathOpen(true);
-      return;
-    }
-    const connectionID = runtime?.connectionID;
-    const profileID = runtime?.profileID;
-    const directory = await palot.pickDirectory(connectionID);
-    if (!directory) return;
-    const session = await palot.createSession(directory, undefined, connectionID);
-    if (!session) return;
-    cacheSession(session);
-    await openSession(session.id, { profileID });
-  };
-
-  const addRemoteProject = async () => {
-    const directory = remotePath.trim();
-    if (!directory) return;
-    if (!isAbsoluteServerPath(directory)) {
-      showErrorToast("Could not open server path", new Error("Enter an absolute server path"));
-      return;
-    }
-    try {
-      const owner = remoteProjectOwner ?? { runtime, cacheSession };
-      const connectionID = owner.runtime?.connectionID;
-      const profileID = owner.runtime?.profileID;
-      const session = await palot.createSession(directory, undefined, connectionID);
-      if (!session) return;
-      owner.cacheSession(session);
-      setRemotePath("");
-      setRemotePathOpen(false);
-      await openSession(session.id, { profileID });
-    } catch (error) {
-      showErrorToast("Could not open server path", error);
-    }
-  };
 
   return (
     <>
@@ -671,7 +616,7 @@ export function InboxToolbar({
                   size="icon"
                   className="text-sidebar-secondary hover:bg-(--palot-sidebar-hover) hover:text-sidebar-foreground"
                   aria-label="Add project folder"
-                  onClick={() => void addProject()}
+                  onClick={() => setAddProjectOpen(true)}
                 />
               }
             >
@@ -725,43 +670,14 @@ export function InboxToolbar({
           </DropdownMenu>
         </div>
       </div>
-      <Dialog open={remotePathOpen} onOpenChange={setRemotePathOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Open server path</DialogTitle>
-            <DialogDescription>
-              Enter an absolute path on the machine running this OpenCode server.
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            autoFocus
-            value={remotePath}
-            onChange={(event) => setRemotePath(event.target.value)}
-            placeholder="/srv/projects/example"
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void addRemoteProject();
-            }}
-          />
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setRemotePathOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={!remotePath.trim()}
-              onClick={() => void addRemoteProject()}
-            >
-              Open path
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {addProjectOpen && (
+        <AddProjectDialog
+          initialProfileID={runtime?.profileID}
+          onClose={() => setAddProjectOpen(false)}
+        />
+      )}
     </>
   );
-}
-
-function isAbsoluteServerPath(value: string): boolean {
-  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
 }
 
 function InboxViewToggle({

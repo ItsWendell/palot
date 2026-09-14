@@ -87,7 +87,6 @@ import {
   promptFiles,
   readWorkspaceFile as readOpenCodeWorkspaceFile,
   sendPrompt as sendOpenCodePrompt,
-  sessionLocation,
 } from "./opencode-resources";
 import {
   activateCredential as activateOpenCodeCredential,
@@ -555,6 +554,20 @@ export const palot = {
     return api.openCodeInstallationStatus();
   },
 
+  async getOpenCodeLoginStatus() {
+    const api = getApi();
+    if (!api) throw new Error("Login startup is available in the desktop app");
+    return api.getOpenCodeLoginStatus();
+  },
+
+  async updateOpenCodeLogin(
+    input: import("../../shared/opencode-login-contract").OpenCodeLoginUpdateInput,
+  ) {
+    const api = getApi();
+    if (!api) throw new Error("Login startup is available in the desktop app");
+    return api.updateOpenCodeLogin(input);
+  },
+
   async setOpenCodeRuntimePreference(
     preference: import("../../shared/opencode-installation-contract").OpenCodeRuntimePreference,
   ) {
@@ -950,9 +963,9 @@ export const palot = {
     return listOpenCodeRunningShells(location, requestSignal);
   },
 
-  async listPtys(location: LocationRef): Promise<PalotPty[]> {
+  async listPtys(location: LocationRef, connectionID?: string): Promise<PalotPty[]> {
     if (!apiAvailable()) return [];
-    return listOpenCodePtys(location);
+    return listOpenCodePtys(location, connectionID);
   },
 
   async createPty(
@@ -968,14 +981,15 @@ export const palot = {
     location: LocationRef,
     ptyID: string,
     transport: PalotPtyTransport,
+    connectionID?: string,
   ): Promise<PalotPty> {
     if (!apiAvailable()) throw new Error("Terminal is unavailable in preview mode");
-    return getOpenCodePty(location, ptyID, transport);
+    return getOpenCodePty(location, ptyID, transport, connectionID);
   },
 
-  async snapshotPty(ptyID: string) {
+  async snapshotPty(ptyID: string, connectionID?: string) {
     if (!apiAvailable()) return null;
-    return snapshotOpenCodePty(ptyID);
+    return snapshotOpenCodePty(ptyID, connectionID);
   },
 
   async resizePty(
@@ -983,16 +997,18 @@ export const palot = {
     ptyID: string,
     transport: PalotPtyTransport,
     size: { cols: number; rows: number },
+    connectionID?: string,
   ): Promise<void> {
-    if (apiAvailable()) await resizeOpenCodePty(location, ptyID, transport, size);
+    if (apiAvailable()) await resizeOpenCodePty(location, ptyID, transport, size, connectionID);
   },
 
   async removePty(
     location: LocationRef,
     ptyID: string,
     transport: PalotPtyTransport,
+    connectionID?: string,
   ): Promise<void> {
-    if (apiAvailable()) await removeOpenCodePty(location, ptyID, transport);
+    if (apiAvailable()) await removeOpenCodePty(location, ptyID, transport, connectionID);
   },
 
   async connectPty(
@@ -1154,8 +1170,10 @@ export const palot = {
     _projectID: string,
     sourceDirectory: string,
     requestSignal?: AbortSignal,
+    connectionID?: string,
   ) {
-    if (apiAvailable()) await refreshOpenCodeWorktrees(sourceDirectory, requestSignal);
+    if (apiAvailable())
+      await refreshOpenCodeWorktrees(sourceDirectory, requestSignal, connectionID);
   },
 
   async listProjectDirectories(
@@ -1188,9 +1206,11 @@ export const palot = {
     sourceDirectory: string,
     directory: string,
     force = false,
+    connectionID?: string,
   ) {
     if (directory === sourceDirectory) throw new Error("The main checkout cannot be removed");
-    if (apiAvailable()) await removeOpenCodeWorktree(sourceDirectory, directory, force);
+    if (apiAvailable())
+      await removeOpenCodeWorktree(sourceDirectory, directory, force, connectionID);
   },
 
   async sendComposerPrompt(input: Parameters<typeof sendOpenCodePrompt>[0]) {
@@ -1198,10 +1218,14 @@ export const palot = {
     return sendOpenCodePrompt(input);
   },
 
-  async runCommand(input: RunCommandInput) {
+  async runCommand(input: RunCommandInput, connectionID?: string) {
     if (!apiAvailable()) return undefined;
-    const location = input.fileReferences?.length ? await sessionLocation(input.sessionID) : null;
-    await openCodeClient().session.command(
+    const client = openCodeClient(connectionID);
+    const signal = openCodeRequestSignal();
+    const location = input.fileReferences?.length
+      ? (await client.session.get({ sessionID: input.sessionID }, { signal })).location
+      : null;
+    await client.session.command(
       {
         sessionID: input.sessionID,
         command: input.command,
@@ -1220,13 +1244,14 @@ export const palot = {
           : {}),
         ...(input.delivery ? { delivery: input.delivery } : {}),
       },
-      { signal: openCodeRequestSignal() },
+      { signal },
     );
   },
 
   async loadComposerCatalog(
     input: ListModelsInput,
     requestSignal?: AbortSignal,
+    connectionID?: string,
   ): Promise<PalotComposerCatalog> {
     if (!apiAvailable()) {
       return {
@@ -1235,12 +1260,13 @@ export const palot = {
         errors: [],
       };
     }
-    return loadOpenCodeComposerCatalog(input, requestSignal);
+    return loadOpenCodeComposerCatalog(input, requestSignal, connectionID);
   },
 
   async findWorkspaceFiles(
     input: FindWorkspaceFilesInput,
     requestSignal?: AbortSignal,
+    connectionID?: string,
   ): Promise<FileSystemEntry[]> {
     if (!apiAvailable()) {
       const query = input.query.toLowerCase();
@@ -1253,35 +1279,38 @@ export const palot = {
         .slice(0, input.limit ?? 20)
         .map((path) => ({ path, type: "file" as const }));
     }
-    return findOpenCodeWorkspaceFiles(input, requestSignal);
+    return findOpenCodeWorkspaceFiles(input, requestSignal, connectionID);
   },
 
   async readWorkspaceFile(
     input: LocationRef & { path: string },
     requestSignal?: AbortSignal,
+    connectionID?: string,
   ): Promise<Uint8Array> {
     if (!apiAvailable()) {
       return new TextEncoder().encode(`Preview file: ${input.path}\n`);
     }
-    return readOpenCodeWorkspaceFile(input, requestSignal);
+    return readOpenCodeWorkspaceFile(input, requestSignal, connectionID);
   },
 
   async listWorkspaceDirectory(
     input: LocationRef & { path?: string },
     requestSignal?: AbortSignal,
+    connectionID?: string,
   ): Promise<FileSystemEntry[]> {
     if (!apiAvailable()) return [];
-    return listOpenCodeWorkspaceDirectory(input, requestSignal);
+    return listOpenCodeWorkspaceDirectory(input, requestSignal, connectionID);
   },
 
-  async listDiffs(input: ListDiffsInput, requestSignal?: AbortSignal) {
+  async listDiffs(input: ListDiffsInput, requestSignal?: AbortSignal, connectionID?: string) {
     if (!apiAvailable()) return previewDiffs;
-    return listOpenCodeDiffs(input, requestSignal);
+    return listOpenCodeDiffs(input, requestSignal, connectionID);
   },
 
   async listModels(
     input: ListModelsInput,
     requestSignal?: AbortSignal,
+    connectionID?: string,
   ): Promise<PalotModelCatalog> {
     if (!apiAvailable()) {
       const defaultModel: PalotModel = {
@@ -1314,11 +1343,11 @@ export const palot = {
         errors: [],
       };
     }
-    return listOpenCodeModels(input, requestSignal);
+    return listOpenCodeModels(input, requestSignal, connectionID);
   },
 
   async loadSettings(
-    input: { projectID: string; directory: string; workspaceID?: string },
+    input: Parameters<typeof loadOpenCodeSettings>[0],
     requestSignal?: AbortSignal,
   ) {
     if (!apiAvailable()) {
@@ -1429,27 +1458,40 @@ export const palot = {
     if (apiAvailable()) await openCodeClient(connectionID).session.remove({ sessionID });
   },
 
-  async sessionStats(input: SessionStatsInput, requestSignal?: AbortSignal) {
+  async sessionStats(input: SessionStatsInput, requestSignal?: AbortSignal, connectionID?: string) {
     if (!apiAvailable()) return null;
-    return openCodeClient().session.stats(input, { signal: openCodeRequestSignal(requestSignal) });
+    return openCodeClient(connectionID).session.stats(input, {
+      signal: openCodeRequestSignal(requestSignal),
+    });
   },
 
-  async loadSessionContext(sessionID: string) {
+  async loadSessionContext(sessionID: string, connectionID?: string, requestSignal?: AbortSignal) {
     if (!apiAvailable()) return [];
-    return openCodeClient().session.context({ sessionID }, { signal: openCodeRequestSignal() });
-  },
-
-  async listSessionInstructionEntries(sessionID: string) {
-    if (!apiAvailable()) return [];
-    return openCodeClient().session.instructions.entry.list(
+    return openCodeClient(connectionID).session.context(
       { sessionID },
-      { signal: openCodeRequestSignal() },
+      { signal: openCodeRequestSignal(requestSignal) },
     );
   },
 
-  async removeSessionInstructionEntry(sessionID: string, key: string): Promise<void> {
+  async listSessionInstructionEntries(
+    sessionID: string,
+    connectionID?: string,
+    requestSignal?: AbortSignal,
+  ) {
+    if (!apiAvailable()) return [];
+    return openCodeClient(connectionID).session.instructions.entry.list(
+      { sessionID },
+      { signal: openCodeRequestSignal(requestSignal) },
+    );
+  },
+
+  async removeSessionInstructionEntry(
+    sessionID: string,
+    key: string,
+    connectionID?: string,
+  ): Promise<void> {
     if (apiAvailable()) {
-      await openCodeClient().session.instructions.entry.remove(
+      await openCodeClient(connectionID).session.instructions.entry.remove(
         { sessionID, key },
         { signal: openCodeRequestSignal() },
       );
@@ -1465,7 +1507,7 @@ export const palot = {
     const api = getApi();
     if (!api) throw new Error("Palot bridge is unavailable");
     const transfer = await openCodeClient(connectionID).session.export(
-      { sessionID, sanitize: true },
+      { sessionID, sanitize: false },
       { signal: openCodeRequestSignal() },
     );
     const standalone = {
@@ -1483,7 +1525,7 @@ export const palot = {
     const api = getApi();
     if (!api) throw new Error("Palot bridge is unavailable");
     const transfer = await openCodeClient(connectionID).session.export(
-      { sessionID, sanitize: true },
+      { sessionID, sanitize: false },
       { signal: openCodeRequestSignal() },
     );
     await api.writeClipboardText(sessionTransferToMarkdown(transfer));

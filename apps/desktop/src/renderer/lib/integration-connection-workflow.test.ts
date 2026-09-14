@@ -31,7 +31,7 @@ const integration: PalotIntegration = {
   methods: [oauth, command, key],
   connections: [],
 };
-const location = { projectID: "project", directory: "/project" };
+const location = { connectionID: "server-a", projectID: "project", directory: "/project" };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -105,6 +105,49 @@ function setup() {
 }
 
 describe("integration connection workflow", () => {
+  it("keeps cancellation and late cleanup on the original server when another attempt starts", async () => {
+    const { workflow, palot, callbacks } = setup();
+    const pending = deferred<Awaited<ReturnType<typeof palot.connectIntegrationOAuth>>>();
+    vi.mocked(palot.connectIntegrationOAuth).mockReturnValueOnce(pending.promise);
+    const first = workflow.start(
+      { ...location, integration, method: oauth, key: "", label: "", answer: {} },
+      callbacks,
+    );
+    await workflow.start(
+      {
+        ...location,
+        connectionID: "server-b",
+        integration,
+        method: command,
+        key: "",
+        label: "",
+        answer: {},
+      },
+      callbacks,
+    );
+    pending.resolve({
+      attemptID: "late-a",
+      url: "https://example.com/auth",
+      instructions: "Authorize",
+      mode: "auto",
+      createdAt: 1,
+      expiresAt: 2,
+    });
+    await first;
+    expect(palot.cancelIntegrationOAuth).toHaveBeenCalledWith({
+      ...location,
+      integrationID: integration.id,
+      attemptID: "late-a",
+    });
+    workflow.dispose();
+    expect(palot.cancelIntegrationCommand).toHaveBeenCalledWith({
+      ...location,
+      connectionID: "server-b",
+      integrationID: integration.id,
+      attemptID: "command-1",
+    });
+  });
+
   it("branches key connections and refreshes before toast and close", async () => {
     const { workflow, palot, callbacks, events } = setup();
 

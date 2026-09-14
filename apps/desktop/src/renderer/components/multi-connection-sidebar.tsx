@@ -283,7 +283,12 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
       });
     const badge =
       connection.profile.kind === "local" ? null : (
-        <ConnectionBadge profile={connection.profile} connected={connected} compact />
+        <ConnectionBadge
+          profile={connection.profile}
+          connected={connected}
+          compact
+          iconOnly={mode === "inbox" && (item.section === "pinned" || item.section === "inbox")}
+        />
       );
     const menu = (
       <DropdownMenu>
@@ -642,14 +647,13 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
           <>
             <DropdownMenuSeparator />
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Connections</DropdownMenuSubTrigger>
+              <DropdownMenuSubTrigger>Enabled servers</DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="max-w-sm">
                 {overview.connections.map((c) => (
                   <DropdownMenuCheckboxItem
                     key={c.profile.id}
                     closeOnClick={false}
                     checked={overview.includedProfileIDs.includes(c.profile.id)}
-                    disabled={runtime?.profileID === c.profile.id}
                     onCheckedChange={(checked) =>
                       overview.setIncludedProfileIDs(
                         checked
@@ -658,7 +662,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                       )
                     }
                   >
-                    Monitor {connectionDescription(c.profile)}
+                    Enable {connectionDescription(c.profile)}
                   </DropdownMenuCheckboxItem>
                 ))}
                 <DropdownMenuSeparator />

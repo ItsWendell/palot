@@ -16,17 +16,19 @@ import { chromium, type Browser, type CDPSession, type Page } from "@playwright/
 import packageJson from "../package.json" with { type: "json" };
 import { isSupportedOpenCodeVersion } from "../src/main/opencode-version.ts";
 import { scenarioNames, scenarios } from "../test/e2e/scenarios.ts";
+import { demoScenarios } from "../test/e2e/demo-scenarios.ts";
 import { showcaseScenarios } from "../test/e2e/showcase-scenarios.ts";
 import { TestLLMServer } from "../test/e2e/test-llm-server.ts";
 import { assertVideoPrerequisites, startVideoCapture } from "../test/e2e/video.ts";
 import { captureShowcaseAssets } from "./showcase-assets.ts";
 import { E2ERun } from "./e2e-lifecycle.ts";
+import { seedDemoAppearance } from "./demo-appearance.ts";
 import type {} from "../src/preload/api";
 
 const execFileAsync = promisify(execFile);
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WORKSPACE_ROOT = path.resolve(APP_ROOT, "../..");
-const allScenarios = { ...scenarios, ...showcaseScenarios };
+const allScenarios = { ...scenarios, ...showcaseScenarios, ...demoScenarios };
 const { values: options, positionals } = parseCommandLine();
 const EXPECTED_OPENCODE_VERSION =
   options["opencode-version"] ?? packageJson.devDependencies["@opencode/client"];
@@ -77,7 +79,7 @@ Examples:
 }
 if (options.list) {
   for (const name of scenarioNames()) console.log(`${name}: ${scenarios[name].description}`);
-  for (const [name, scenario] of Object.entries(showcaseScenarios)) {
+  for (const [name, scenario] of Object.entries({ ...showcaseScenarios, ...demoScenarios })) {
     console.log(`${name}: ${scenario.description}`);
   }
   process.exit(0);
@@ -171,7 +173,10 @@ try {
   if (packagedExecutable) await access(packagedExecutable, constants.X_OK);
   else await runBuild();
   lifecycle.phase("fixtures");
-  const projectDirectory = path.join(runRoot, showcase ? "palot" : "project");
+  const projectDirectory = path.join(
+    runRoot,
+    "projectName" in scenario ? scenario.projectName : showcase ? "palot" : "project",
+  );
   const home = path.join(runRoot, "home");
   const palotUserData = path.join(runRoot, "palot-user-data");
   await Promise.all([
@@ -179,6 +184,16 @@ try {
     mkdir(home, { recursive: true }),
     mkdir(palotUserData, { recursive: true }),
   ]);
+  if (name === "demo-workspace" && inspect) {
+    const source = await seedDemoAppearance({
+      destination: path.join(palotUserData, "appearance.json"),
+    });
+    console.log(
+      source
+        ? `Demo appearance copied from: ${source}`
+        : "Demo appearance: no saved Palot profile; using system defaults.",
+    );
+  }
   if (showcase) {
     await writeFile(
       path.join(palotUserData, "appearance.json"),
@@ -446,7 +461,9 @@ try {
   } else {
     await scenario.assert(page, scenarioContext);
   }
-  if (llm.pendingResponses() !== 0) {
+  const pendingModelResponses =
+    "pendingModelResponses" in scenario ? scenario.pendingModelResponses : 0;
+  if (llm.pendingResponses() !== pendingModelResponses) {
     throw new Error(`${llm.pendingResponses()} scripted model responses were not consumed`);
   }
   if (showcase) {

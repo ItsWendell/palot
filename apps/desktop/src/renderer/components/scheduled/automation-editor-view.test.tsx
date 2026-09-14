@@ -2,6 +2,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AutomationDraft, AutomationRecord, AutomationRun } from "../../../shared";
+import { Provider, createStore } from "jotai";
+import { runtimeAtom } from "../../atoms/workspace";
 
 vi.mock("../../hooks/use-settings-snapshot", () => ({
   useSettingsSnapshot: () => ({ data: { agents: [], catalog: { models: [] }, skills: [] } }),
@@ -90,22 +92,34 @@ function renderEditor(input: {
   automation?: AutomationRecord;
   runs?: AutomationRun[];
   selectedRunID?: string;
+  remote?: boolean;
+  initialDraft?: AutomationDraft;
 }) {
   const onRunAction = vi.fn();
+  const store = createStore();
+  if (input.remote)
+    store.set(runtimeAtom, {
+      profileID: "remote",
+      connectionID: "remote",
+      connected: true,
+      capabilities: { localPathActions: false },
+    } as never);
   render(
-    <AutomationEditor
-      automation={input.automation ?? automation()}
-      initialDraft={draft}
-      projects={[]}
-      sessions={[]}
-      runs={input.runs ?? []}
-      selectedRunID={input.selectedRunID}
-      saving={false}
-      onClose={vi.fn()}
-      onSave={vi.fn().mockResolvedValue(undefined)}
-      onAction={vi.fn().mockResolvedValue(undefined)}
-      onRunAction={onRunAction}
-    />,
+    <Provider store={store}>
+      <AutomationEditor
+        automation={input.automation ?? automation()}
+        initialDraft={input.initialDraft ?? draft}
+        projects={[]}
+        sessions={[]}
+        runs={input.runs ?? []}
+        selectedRunID={input.selectedRunID}
+        saving={false}
+        onClose={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onAction={vi.fn().mockResolvedValue(undefined)}
+        onRunAction={onRunAction}
+      />
+    </Provider>,
   );
   return { onRunAction };
 }
@@ -113,6 +127,23 @@ function renderEditor(input: {
 afterEach(cleanup);
 
 describe("AutomationEditor run navigation", () => {
+  it.each(["standalone", "session"] as const)(
+    "explains %s continuity without promising remote file memory",
+    (destination) => {
+      renderEditor({
+        remote: true,
+        initialDraft:
+          destination === "session"
+            ? { ...draft, destination: { type: "session", sessionID: "session-1" } }
+            : draft,
+      });
+      const memory = screen.queryByText(
+        /Standalone runs on this server do not share a memory file/,
+      );
+      if (destination === "standalone") expect(memory).toBeTruthy();
+      else expect(memory).toBeNull();
+    },
+  );
   it("keeps a sessionless setup failure clickable and exposes its resolution", async () => {
     const setupRun = run({
       state: "needs-attention",

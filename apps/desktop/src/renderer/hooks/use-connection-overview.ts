@@ -1,11 +1,18 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouterState } from "@tanstack/react-router";
-import { includedProfileIDsAtom, visibleProfileIDsAtom } from "../atoms/connections";
+import {
+  discoverProfilesAtom,
+  discoveredProfileIDsAtom,
+  disabledProfileIDsAtom,
+  includedProfileIDsAtom,
+  visibleProfileIDsAtom,
+} from "../atoms/connections";
 import { runtimeAtom } from "../atoms/workspace";
 import { sessionTriageSnapshotAtom } from "../atoms/inbox";
 import { connectionOverview } from "../lib/connection-overview";
+import { setFocusedOpenCodeRuntime } from "../services/opencode-client";
 
 export type { ConnectionOverview, OverviewTriageCommand } from "../lib/connection-overview";
 
@@ -54,20 +61,47 @@ export function useConnectionOverview() {
 export function useConnectionOverviewController() {
   const controller = connectionOverview(useQueryClient());
   const runtime = useAtomValue(runtimeAtom);
-  const [included, setIncluded] = useAtom(includedProfileIDsAtom);
+  const setRuntime = useSetAtom(runtimeAtom);
+  const included = useAtomValue(includedProfileIDsAtom);
+  const discovered = useAtomValue(discoveredProfileIDsAtom);
+  const disabled = useAtomValue(disabledProfileIDsAtom);
+  const discoverProfiles = useSetAtom(discoverProfilesAtom);
+  const connections = useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+    controller.getSnapshot,
+  );
   const triage = useAtomValue(sessionTriageSnapshotAtom);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   useEffect(() => controller.start(), [controller]);
   useEffect(() => {
-    if (runtime && !included.includes(runtime.profileID)) {
-      setIncluded((current) =>
-        current.includes(runtime.profileID) ? current : [...current, runtime.profileID],
-      );
-    }
-  }, [runtime?.profileID, included, setIncluded]);
+    if (!runtime || connections.length === 0) return;
+    discoverProfiles({
+      ids: connections.map((entry) => entry.profile.id),
+      activeProfileID: runtime.profileID,
+    });
+  }, [runtime?.profileID, connections, discoverProfiles]);
   useEffect(() => {
-    controller.setIncluded(included);
-  }, [controller, included]);
+    if (discovered !== null) controller.setIncluded(included);
+  }, [controller, included, discovered]);
+  useEffect(() => {
+    if (!runtime) return;
+    const entry = connections.find((entry) => entry.profile.id === runtime.profileID);
+    const next = disabled.includes(runtime.profileID)
+      ? { ...runtime, connected: false, phase: "stopped" as const }
+      : runtime.phase === "stopped" &&
+          included.includes(runtime.profileID) &&
+          entry?.phase === "ready" &&
+          entry.runtime?.connected
+        ? entry.runtime
+        : null;
+    // Registry snapshots may predate the focused connection's successful startup.
+    // Live status belongs to the workspace; adopt overview state only when a
+    // deliberately stopped profile has finished enabling again.
+    if (!next || JSON.stringify(next) === JSON.stringify(runtime)) return;
+    setFocusedOpenCodeRuntime(next);
+    setRuntime(next);
+  }, [runtime, connections, disabled, included, setRuntime]);
   useEffect(() => {
     void controller.refreshRegistry().catch(() => undefined);
   }, [controller, pathname]);

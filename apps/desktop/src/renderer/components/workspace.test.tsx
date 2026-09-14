@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { phaseAtom, runtimeAtom } from "../atoms/workspace";
 import { renderWithRouter } from "../test-utils/render-with-router";
 import { Workspace } from "./workspace";
+import { palot } from "../services/palot";
+import type { AutomationNotificationTarget, OpenCodeRuntimeStatus } from "../../shared";
 
 // This suite verifies pane ownership; native E2E covers ScrollArea layout and animations.
 vi.mock("./ui/scroll-area", () => ({
@@ -59,6 +61,45 @@ afterEach(() => {
 });
 
 describe("Workspace pane visibility", () => {
+  it.each(["schedule", "request"] as const)(
+    "routes an automation %s notification to its owner instead of the selected server",
+    async (kind) => {
+      const store = createStore();
+      store.set(runtimeAtom, {
+        profileID: "selected",
+        connectionID: "selected",
+        connected: true,
+      } as OpenCodeRuntimeStatus);
+      vi.spyOn(palot, "takeAutomationNotificationTarget").mockResolvedValue(null);
+      let listener!: (target: AutomationNotificationTarget) => void;
+      vi.spyOn(palot, "onAutomationNotificationOpened").mockImplementation((callback) => {
+        listener = callback;
+        return () => {};
+      });
+      const { router } = renderWithRouter(<Workspace content={null} />, store);
+      const navigate = vi.spyOn(router, "navigate").mockResolvedValue();
+      act(() =>
+        listener({
+          profileID: "owner",
+          automationID: "automation",
+          runID: "run",
+          sessionID: "session",
+          requestID: kind === "request" ? "request" : null,
+          requestType: kind === "request" ? "permission" : null,
+        }),
+      );
+      expect(navigate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          search: expect.objectContaining({
+            profileID: "owner",
+            ...(kind === "request"
+              ? { requestID: "request" }
+              : { automationID: "automation", runID: "run" }),
+          }),
+        }),
+      );
+    },
+  );
   it("collapses closed workbench panes when panels mount after loading", async () => {
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callback(0);

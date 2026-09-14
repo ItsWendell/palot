@@ -8,7 +8,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useAtomValue } from "jotai";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PalotProject, PalotSession } from "../../../shared";
 import { runtimeAtom } from "../../atoms/workspace";
 import { useProjectWorktrees, useRemoveProjectCopy } from "../../hooks/use-project-worktrees";
@@ -39,6 +39,8 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { toast } from "../ui/toast";
 
 interface RemovalTarget {
+  connectionID: string;
+  projectID: string;
   directory: string;
   files: string[];
   forceRequired: boolean;
@@ -61,6 +63,15 @@ export function WorktreesPage() {
   const removeProjectCopy = useRemoveProjectCopy(project);
   const [target, setTarget] = useState<RemovalTarget | null>(null);
   const [checkingDirectory, setCheckingDirectory] = useState<string | null>(null);
+  const removalGeneration = useRef(0);
+  useEffect(() => {
+    removalGeneration.current += 1;
+    setTarget(null);
+    setCheckingDirectory(null);
+    return () => {
+      removalGeneration.current += 1;
+    };
+  }, [runtime?.connectionID, project?.id]);
   const managed = useMemo(
     () =>
       (worktreesQuery.data ?? []).filter(
@@ -76,11 +87,17 @@ export function WorktreesPage() {
 
   const remove = useCallback(async () => {
     if (!target || !project) return;
+    const generation = removalGeneration.current;
     try {
+      if (target.connectionID !== runtime?.connectionID || target.projectID !== project.id)
+        throw new Error(
+          "The server or project changed. Check this worktree again before removing it.",
+        );
       await removeProjectCopy.mutateAsync({
         directory: target.directory,
         force: target.forceRequired,
       });
+      if (generation !== removalGeneration.current) return;
       setTarget(null);
       toast.add({
         type: "success",
@@ -88,29 +105,39 @@ export function WorktreesPage() {
         description: directoryLabel(target.directory),
       });
     } catch (error) {
+      if (generation !== removalGeneration.current) return;
       if (!target.forceRequired && worktreeRemovalRequiresForce(error)) {
         setTarget({ ...target, forceRequired: true });
         return;
       }
       showErrorToast("Could not remove worktree", error);
     }
-  }, [project, removeProjectCopy, target]);
+  }, [project, removeProjectCopy, target, runtime?.connectionID]);
 
-  const prepareRemoval = useCallback(async (directory: string) => {
-    setCheckingDirectory(directory);
-    try {
-      const files = await getOpenCodeVcsStatus({ directory });
-      setTarget({
-        directory,
-        files: files.map((file) => file.file),
-        forceRequired: files.length > 0,
-      });
-    } catch (error) {
-      showErrorToast("Could not check worktree changes", error);
-    } finally {
-      setCheckingDirectory((current) => (current === directory ? null : current));
-    }
-  }, []);
+  const prepareRemoval = useCallback(
+    async (directory: string) => {
+      if (!runtime?.connected || !project) return;
+      const generation = ++removalGeneration.current;
+      setCheckingDirectory(directory);
+      try {
+        const files = await getOpenCodeVcsStatus({ directory }, undefined, runtime.connectionID);
+        if (generation !== removalGeneration.current) return;
+        setTarget({
+          connectionID: runtime.connectionID,
+          projectID: project.id,
+          directory,
+          files: files.map((file) => file.file),
+          forceRequired: files.length > 0,
+        });
+      } catch (error) {
+        if (generation === removalGeneration.current)
+          showErrorToast("Could not check worktree changes", error);
+      } finally {
+        if (generation === removalGeneration.current) setCheckingDirectory(null);
+      }
+    },
+    [runtime, project],
+  );
 
   return (
     <main

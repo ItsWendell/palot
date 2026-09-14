@@ -1,4 +1,4 @@
-import { Check, FolderGit2, LoaderCircle, Server } from "lucide-react";
+import { FolderGit2, LoaderCircle, Server } from "lucide-react";
 import { useAtom, useAtomValue } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
 import { memo, useState } from "react";
@@ -12,7 +12,6 @@ import { useConnectionOverview } from "../hooks/use-connection-overview";
 import { MultiConnectionSidebar } from "./multi-connection-sidebar";
 import { cn } from "../lib/cn";
 import { palotBuild } from "../lib/build";
-import { showErrorToast } from "../lib/toast-error";
 import { palot } from "../services/palot";
 import { InboxSidebarContent } from "./inbox-sidebar";
 import { ProjectSidebarContent } from "./sidebar";
@@ -23,6 +22,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
@@ -60,7 +60,21 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const scheduledUnreadCount = useAtomValue(automationUnreadCountAtom);
   const runtime = useAtomValue(runtimeAtom);
   const { connections, includedProfileIDs, visibleProfileIDs } = useConnectionOverview();
-  const multiConnection = connections.length > 1;
+  const multiConnection =
+    connections.length > 1 ||
+    connections.some((connection) => !includedProfileIDs.includes(connection.profile.id));
+  const enabledConnections = connections.filter((connection) =>
+    includedProfileIDs.includes(connection.profile.id),
+  );
+  const connectedCount = enabledConnections.filter(
+    (connection) => connection.runtime?.connected,
+  ).length;
+  const connectionSummary =
+    connections.length === 0
+      ? runtimeLabel(runtime)
+      : enabledConnections.length === 0
+        ? "Servers disabled"
+        : `${connectedCount} of ${enabledConnections.length} ${enabledConnections.length === 1 ? "server" : "servers"} connected`;
   const [searchOpen, setSearchOpen] = useState(false);
 
   return (
@@ -189,7 +203,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                 <span className="min-w-0 flex-1 text-left">
                   <span className="block truncate font-medium">Palot</span>
                   <span className="block truncate text-micro/tight font-normal text-sidebar-foreground/55">
-                    {runtimeLabel(runtime)}
+                    {connectionSummary}
                   </span>
                 </span>
                 <AppIcon
@@ -244,9 +258,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 });
 
 function ServerProfileMenu({ onManage }: { onManage(): void }) {
-  const { openNewTask } = usePalotNavigation();
+  const { includedProfileIDs, setIncludedProfileIDs } = useConnectionOverview();
   const [snapshot, setSnapshot] = useState<OpenCodeProfileSnapshot | null>(null);
-  const [busyID, setBusyID] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
@@ -262,50 +275,38 @@ function ServerProfileMenu({ onManage }: { onManage(): void }) {
     }
   };
 
-  const switchProfile = async (profileID: string, profileName: string) => {
-    if (profileID === snapshot?.activeProfileID) return;
-    setBusyID(profileID);
-    try {
-      await openNewTask(undefined, profileID);
-      setSnapshot((current) => (current ? { ...current, activeProfileID: profileID } : current));
-    } catch (error) {
-      setBusyID(null);
-      showErrorToast(`Could not connect to ${profileName}`, error);
-    } finally {
-      setBusyID(null);
-    }
-  };
-
   return (
     <DropdownMenuSub
       onOpenChange={(open) => {
-        if (open && !snapshot && !loading) void loadProfiles();
+        if (open && !loading) void loadProfiles();
       }}
     >
       <DropdownMenuSubTrigger>
         <Server aria-hidden="true" />
-        <span>OpenCode server</span>
+        <span>Servers</span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-64 p-1.5">
         {snapshot ? (
           snapshot.profiles.map((profile) => {
-            const active = profile.id === snapshot.activeProfileID;
+            const enabled = includedProfileIDs.includes(profile.id);
             return (
-              <DropdownMenuItem
+              <DropdownMenuCheckboxItem
                 key={profile.id}
-                disabled={busyID !== null}
-                onClick={() => void switchProfile(profile.id, profile.name)}
+                checked={enabled}
+                closeOnClick={false}
+                onCheckedChange={(checked) =>
+                  setIncludedProfileIDs((current) =>
+                    checked
+                      ? [...new Set([...current, profile.id])]
+                      : current.filter((id) => id !== profile.id),
+                  )
+                }
               >
-                {busyID === profile.id ? (
-                  <LoaderCircle className="animate-spin" aria-hidden="true" />
-                ) : active ? (
-                  <Check aria-hidden="true" />
-                ) : (
-                  <Server aria-hidden="true" />
-                )}
                 <span className="min-w-0 flex-1 truncate">{profile.name}</span>
-                <span className="text-xs text-muted-foreground">{active ? "Active" : "Saved"}</span>
-              </DropdownMenuItem>
+                <span className="text-meta text-muted-foreground">
+                  {enabled ? "Enabled" : "Disabled"}
+                </span>
+              </DropdownMenuCheckboxItem>
             );
           })
         ) : loadError ? (

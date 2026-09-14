@@ -247,7 +247,7 @@ function effectiveSection(input: {
     return "snoozed";
   }
   if (input.pinnedAt !== null) return "pinned";
-  if (input.attention || input.running || input.failed) return "inbox";
+  if (input.attention || input.running) return "inbox";
   if (input.disposition === "inbox") return "inbox";
   if (
     input.disposition === "settled" &&
@@ -256,6 +256,7 @@ function effectiveSection(input: {
   ) {
     return "settled";
   }
+  if (input.failed) return "inbox";
   if (
     input.disposition === null &&
     input.bootstrapThrough !== null &&

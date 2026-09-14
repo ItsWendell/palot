@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import Store from "electron-store";
 import type {
   OpenCodeProfile,
@@ -45,16 +46,19 @@ export class OpenCodeProfileStore {
   }
 
   snapshot(): OpenCodeProfileSnapshot {
-    const profiles = normalizeProfiles(this.store.get("profiles"));
+    const storedProfiles = this.store.get("profiles");
+    const profiles = normalizeProfiles(storedProfiles);
     const storedActiveProfileID = this.store.get("activeProfileID");
     let activeProfileID =
       typeof storedActiveProfileID === "string" ? storedActiveProfileID : LOCAL_DEFAULT.id;
     if (!profiles.some((profile) => profile.id === activeProfileID))
       activeProfileID = LOCAL_DEFAULT.id;
     const snapshot = { activeProfileID, profiles };
-    this.store.set("schemaVersion", PROFILE_SCHEMA_VERSION);
-    this.store.set("activeProfileID", activeProfileID);
-    this.store.set("profiles", profiles);
+    if (this.store.get("schemaVersion") !== PROFILE_SCHEMA_VERSION)
+      this.store.set("schemaVersion", PROFILE_SCHEMA_VERSION);
+    if (storedActiveProfileID !== activeProfileID)
+      this.store.set("activeProfileID", activeProfileID);
+    if (!isDeepStrictEqual(storedProfiles, profiles)) this.store.set("profiles", profiles);
     return structuredClone(snapshot);
   }
 
@@ -100,13 +104,14 @@ export class OpenCodeProfileStore {
     if (!snapshot.profiles.some((profile) => profile.id === profileID)) {
       throw new Error("OpenCode profile was not found");
     }
-    this.store.set("activeProfileID", profileID);
+    if (snapshot.activeProfileID !== profileID) this.store.set("activeProfileID", profileID);
     return structuredClone({ ...snapshot, activeProfileID: profileID });
   }
 
   recordConnection(profileID: string, url: string, connectedAt: number): void {
     const profile = this.get(profileID);
     if (profile.kind !== "remote") return;
+    if (profile.lastSuccessfulUrl === url && profile.lastConnectedAt === connectedAt) return;
     this.store.set(
       "profiles",
       this.snapshot().profiles.map((item) =>

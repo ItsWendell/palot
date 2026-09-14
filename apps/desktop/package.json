@@ -1,6 +1,6 @@
 {
   "name": "@palot/desktop",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "private": true,
   "description": "Palot 2 desktop client for OpenCode 2",
   "homepage": "https://github.com/ItsWendell/palot",
@@ -46,6 +46,7 @@
     "test:e2e": "node --experimental-strip-types scripts/e2e.ts",
     "test:e2e:list": "node --experimental-strip-types scripts/e2e.ts --list",
     "showcase": "node --experimental-strip-types scripts/showcase.ts",
+    "demo": "node --experimental-strip-types scripts/demo.ts",
     "typecheck": "tsc -b --pretty false",
     "check": "vp check . && bun run typecheck && bun run opencode:coverage:check && bun run test",
     "package": "bun run scripts/package.ts stable",

@@ -79,6 +79,7 @@ import { modelMatchesRef, resolveModelSelection } from "../lib/model-selection";
 import {
   applyModelPreference,
   modelPreferenceKey,
+  modelProjectPreferenceKey,
   reconcileModelPreference,
 } from "../lib/model-preferences";
 import { showErrorToast } from "../lib/toast-error";
@@ -322,7 +323,11 @@ function ComposerView({
     Boolean(onCreateSession) || activeMenu === "agent",
   );
   const catalog = modelCatalogQuery.data ?? EMPTY_MODEL_CATALOG;
-  const storedPickerPreference = modelPickerPreferences[session.projectID];
+  const preferenceScope = modelProjectPreferenceKey(
+    runtime?.profileID ?? "disconnected",
+    session.projectID,
+  );
+  const storedPickerPreference = modelPickerPreferences[preferenceScope];
   const pickerPreference = useMemo(
     () => reconcileModelPreference(catalog.models, storedPickerPreference),
     [catalog.models, storedPickerPreference],
@@ -337,7 +342,7 @@ function ComposerView({
     draftScope,
     agents: agentCatalogQuery.data?.agents ?? EMPTY_AGENTS,
     models: catalog.models,
-    projectDefault: defaultModels[session.projectID] ?? null,
+    projectDefault: defaultModels[preferenceScope] ?? null,
     forceCatalogDefault: Boolean(
       catalog.defaultModel &&
       pickerPreference.hidden.includes(modelPreferenceKey(catalog.defaultModel)),

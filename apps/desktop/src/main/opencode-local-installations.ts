@@ -319,6 +319,7 @@ export class OpenCodeInstallations {
               installation: {
                 id: createHash("sha256").update(candidate.file).digest("hex"),
                 path: candidate.file,
+                ...(candidate.source !== candidate.file ? { launchPath: candidate.source } : {}),
                 version,
                 compatible: isSupportedOpenCodeVersion(version),
               },
@@ -384,6 +385,27 @@ export class OpenCodeInstallations {
       );
     }
     return { path: current, version: snapshot.installation.version };
+  }
+
+  /** Revalidate the exact installed CLI shown in the login-startup confirmation. */
+  async loginBinary(id: string, version: string): Promise<{ path: string; version: string }> {
+    this.assertIdle();
+    const snapshot = this.known(id);
+    const current = await this.canonical(snapshot.source, await this.roots());
+    if (
+      !current ||
+      current !== snapshot.installation.path ||
+      version !== snapshot.installation.version ||
+      (await this.probe(current)) !== version ||
+      (!snapshot.installation.compatible && !this.accepted(id, version))
+    ) {
+      throw new Error(
+        "This OpenCode installation changed or is incompatible. Inspect installations and confirm login startup again.",
+      );
+    }
+    this.assertIdle();
+    // Keep the package manager's stable launcher, not a versioned store target.
+    return { path: snapshot.source, version };
   }
 
   upgrade(input: OpenCodeInstallationUpgradeInput): Promise<OpenCodeInstallationStatus> {

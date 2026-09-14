@@ -47,6 +47,7 @@ import {
 import { openCodeRuntime } from "./opencode-runtime";
 import { getOpenCodeReleaseManager } from "./opencode-release-manager";
 import { getOpenCodeInstallations } from "./opencode-local-installations";
+import { getOpenCodeLoginAutostart } from "./opencode-login-autostart";
 import { OpenCodeRequestProxy } from "./opencode-request-proxy";
 import { createSessionPty, ptyTransport } from "./opencode-pty";
 import {
@@ -80,9 +81,6 @@ let performanceTraceActive = false;
 const requestProxy = new OpenCodeRequestProxy({
   connection: (target) => openCodeRuntime.requestConnection(target),
   fetch: (input, init) => globalThis.fetch(input, { ...init, redirect: "error" }),
-});
-openCodeRuntime.onBeforeSwitch(() => {
-  ptyTransport.closeAll();
 });
 const observedRequestSenders = new WeakSet<WebContents>();
 const nativeSymbolCache = new Map<string, string | null>();
@@ -425,12 +423,6 @@ function register(channel: string, handler: Parameters<typeof ipcMain.handle>[1]
   registerTrustedIpcHandler(channel, ipcTrust, handler);
 }
 
-function assertActiveProfile(profileID: string): void {
-  if (profileID !== openCodeRuntime.runtimeStatus().profileID) {
-    throw new Error("Session triage profile does not match the active OpenCode connection");
-  }
-}
-
 function assertKnownProfile(profileID: string): void {
   if (!openCodeRuntime.profileSnapshot().profiles.some((profile) => profile.id === profileID)) {
     throw new Error("Unknown OpenCode profile");
@@ -456,6 +448,7 @@ function focusedPtyRuntime() {
   const status = openCodeRuntime.runtimeStatus();
   const scoped = openCodeRuntime.scopedConnection(status.connectionID);
   return {
+    onDispose: scoped.onDispose,
     withClient: <T>(
       operation: (client: import("@opencode/client").OpenCodeClient, remote: boolean) => Promise<T>,
     ) => scoped.withClient((client) => operation(client, status.topology === "remote-machine")),
@@ -502,8 +495,15 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   register(IPC_CHANNELS.closeWindow, (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
-  register(IPC_CHANNELS.attentionNotification, (_event, input: unknown) => {
-    desktopNotificationService().notifyAttention(v.parse(attentionNotificationSchema, input));
+  register(IPC_CHANNELS.attentionNotification, (event, input: unknown) => {
+    const window = BrowserWindow.fromWebContents(assertTrustedMainFrame(event));
+    if (!window) throw new Error("Notification window is unavailable");
+    const owner =
+      options.sessionWindowScope(window)?.runtimeStatus() ?? openCodeRuntime.runtimeStatus();
+    desktopNotificationService().notifyAttention(
+      v.parse(attentionNotificationSchema, input),
+      owner.profileID,
+    );
   });
   register(IPC_CHANNELS.attentionSnapshot, (event, input: unknown) => {
     assertTrustedMainFrame(event);
@@ -580,6 +580,31 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   register(IPC_CHANNELS.openCodeInstallationStatus, (event) => {
     assertTrustedMainFrame(event);
     return getOpenCodeInstallations().status();
+  });
+  register(IPC_CHANNELS.openCodeLoginStatus, (event) => {
+    assertTrustedMainFrame(event);
+    return getOpenCodeLoginAutostart().status();
+  });
+  register(IPC_CHANNELS.openCodeLoginUpdate, async (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    const update = v.parse(
+      v.variant("enabled", [
+        v.strictObject({ enabled: v.literal(false) }),
+        v.strictObject({
+          enabled: v.literal(true),
+          installationID: identifier,
+          version: v.pipe(v.string(), v.minLength(1), v.maxLength(80)),
+        }),
+      ]),
+      input,
+    );
+    const manager = getOpenCodeLoginAutostart();
+    if (!update.enabled) return manager.disable();
+    const binary = await getOpenCodeInstallations().loginBinary(
+      update.installationID,
+      update.version,
+    );
+    return manager.enable(binary);
   });
   register(IPC_CHANNELS.openCodeRuntimePreference, (event, input: unknown) => {
     assertTrustedMainFrame(event);
@@ -759,13 +784,13 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   register(IPC_CHANNELS.automationLoad, (event, input: unknown) => {
     assertTrustedMainFrame(event);
     const profileID = v.parse(identifier, input);
-    assertActiveProfile(profileID);
+    assertKnownProfile(profileID);
     return automationService().load(profileID);
   });
   register(IPC_CHANNELS.automationDispatch, (event, input: unknown) => {
     assertTrustedMainFrame(event);
     const command = v.parse(automationCommandSchema, input) as AutomationCommand;
-    assertActiveProfile(command.profileID);
+    assertKnownProfile(command.profileID);
     return automationService().dispatch(command);
   });
   register(IPC_CHANNELS.automationPreview, (event, input: unknown) => {

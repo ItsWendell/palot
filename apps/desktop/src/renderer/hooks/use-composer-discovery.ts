@@ -13,7 +13,7 @@ export function composerCatalogQueryOptions(
 ) {
   return queryOptions({
     queryKey: openCodeKeys.composerCatalog(connectionID, location),
-    queryFn: ({ signal }) => palot.loadComposerCatalog(location, signal),
+    queryFn: ({ signal }) => palot.loadComposerCatalog(location, signal, connectionID),
     enabled: enabled && Boolean(location.directory),
     staleTime: Number.POSITIVE_INFINITY,
     refetchOnMount: false,
@@ -41,7 +41,8 @@ export function workspaceFileSearchQueryOptions(
 ) {
   return queryOptions({
     queryKey: openCodeKeys.fileSearch(connectionID, location, query),
-    queryFn: ({ signal }) => palot.findWorkspaceFiles({ ...location, query, limit: 20 }, signal),
+    queryFn: ({ signal }) =>
+      palot.findWorkspaceFiles({ ...location, query, limit: 20 }, signal, connectionID),
     enabled: enabled && Boolean(location.directory),
     retry: false,
   });

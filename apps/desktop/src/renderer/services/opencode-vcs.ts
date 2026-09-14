@@ -7,8 +7,12 @@ export interface OpenCodeVcsInfo {
   defaultBranch: string | null;
 }
 
-export async function getOpenCodeVcsBase(location: LocationRef, requestSignal?: AbortSignal) {
-  const response = await openCodeClient().vcs.base(
+export async function getOpenCodeVcsBase(
+  location: LocationRef,
+  requestSignal?: AbortSignal,
+  connectionID?: string,
+) {
+  const response = await openCodeClient(connectionID).vcs.base(
     {
       location: {
         directory: location.directory,
@@ -43,8 +47,9 @@ export async function getOpenCodeVcsInfo(
 export async function getOpenCodeVcsStatus(
   location: LocationRef,
   requestSignal?: AbortSignal,
+  connectionID?: string,
 ): Promise<VcsFileStatus[]> {
-  const response = await openCodeClient().vcs.status(
+  const response = await openCodeClient(connectionID).vcs.status(
     {
       location: {
         directory: location.directory,
@@ -60,8 +65,9 @@ export async function listOpenCodeVcsBranches(
   location: LocationRef,
   search = "",
   requestSignal?: AbortSignal,
+  connectionID?: string,
 ): Promise<string[]> {
-  const response = await openCodeClient().vcs.branches(
+  const response = await openCodeClient(connectionID).vcs.branches(
     {
       location: {
         directory: location.directory,

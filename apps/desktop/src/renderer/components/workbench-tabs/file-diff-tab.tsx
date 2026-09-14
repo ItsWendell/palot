@@ -13,11 +13,17 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Spinner } from "../ui/spinner";
 import { ReviewBasePicker, ReviewBaseStatus } from "./review-base-picker";
 
-export function FileDiffTab({ tab }: { tab: Extract<WorkbenchTab, { kind: "file-diff" }> }) {
+export function FileDiffTab({
+  tab,
+  active = true,
+}: {
+  tab: Extract<WorkbenchTab, { kind: "file-diff" }>;
+  active?: boolean;
+}) {
   const [expandUnchanged, setExpandUnchanged] = useState(false);
   const query = useLocationDiffs(
     tab.resource.location,
-    true,
+    active,
     tab.resource.mode,
     expandUnchanged ? null : 3,
   );
@@ -25,7 +31,7 @@ export function FileDiffTab({ tab }: { tab: Extract<WorkbenchTab, { kind: "file-
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card">
       {tab.resource.mode === "branch" ? (
         <div className="min-w-0 shrink-0 border-b border-border bg-background px-2">
-          <ReviewBasePicker location={tab.resource.location} />
+          <ReviewBasePicker location={tab.resource.location} active={active} />
         </div>
       ) : null}
       {tab.resource.mode === "branch" && !query.reviewBase.ref ? (

@@ -24,10 +24,10 @@ export function useTranscriptInfiniteScroll(input: TranscriptInfiniteScrollInput
     if (intent.current.scopeID !== input.scopeID || intent.current.resetKey !== input.resetKey) {
       intent.current = { scopeID: input.scopeID, resetKey: input.resetKey, upward: false };
     }
-    if (intent.current.upward) return;
     intent.current.upward = true;
     // Usually the existing virtual-range update wakes the effect. At the very top
-    // (or with short content), a gesture may not move the viewport at all.
+    // (or with short content), a gesture may not move the viewport at all. Wake
+    // even for pending intent: a synchronous load guard may have deferred it.
     if (input.firstVisibleIndex !== null && input.firstVisibleIndex <= NEAR_TOP_TURN_INDEX) {
       setWake((current) => current + 1);
     }

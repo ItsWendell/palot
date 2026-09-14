@@ -1,6 +1,7 @@
 import type { OpenCodeClient } from "@opencode/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "./opencode-client";
+import * as clients from "./opencode-client";
 import {
   createWorktree,
   listWorktrees,
@@ -12,9 +13,34 @@ import {
 afterEach(() => {
   resetOpenCodeClientForTest();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("renderer OpenCode worktree service", () => {
+  it("creates and resolves a remote worktree on its explicit owner, not the focused server", async () => {
+    const create = vi.fn().mockResolvedValue({ directory: "/srv/worktrees/new" });
+    const get = vi.fn().mockResolvedValue({});
+    const focusedCreate = vi.fn();
+    vi.spyOn(clients, "openCodeClient").mockImplementation(
+      (connectionID) =>
+        (connectionID === "remote-a"
+          ? { worktree: { create }, location: { get } }
+          : { worktree: { create: focusedCreate } }) as unknown as OpenCodeClient,
+    );
+    await expect(createWorktree("/srv/repo", "feature", undefined, "remote-a")).resolves.toEqual({
+      directory: "/srv/worktrees/new",
+    });
+    expect(create).toHaveBeenCalledWith(
+      { location: { directory: "/srv/repo" }, branch: "feature" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(get).toHaveBeenCalledWith(
+      { location: { directory: "/srv/worktrees/new" } },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(focusedCreate).not.toHaveBeenCalled();
+  });
+
   it("uses the official worktree resource for every operation", async () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     const list = vi.fn().mockResolvedValue([{ directory: "/worktree", strategy: "git" }]);

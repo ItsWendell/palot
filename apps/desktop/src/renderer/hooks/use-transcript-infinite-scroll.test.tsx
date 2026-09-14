@@ -84,6 +84,22 @@ describe("virtual transcript infinite scroll", () => {
     expect(loadOlder).toHaveBeenCalledOnce();
   });
 
+  it("rechecks deferred intent on a new gesture at the top without a range change", () => {
+    const { rerender, initial, result, loadOlder, canLoad } = setup();
+    act(() => result.current.onUpwardIntent());
+    // Request/anchor ownership can change synchronously before its loading render.
+    canLoad.mockReturnValue(false);
+    rerender({ ...initial, firstVisibleIndex: 0 });
+    expect(loadOlder).not.toHaveBeenCalled();
+
+    canLoad.mockReturnValue(true);
+    expect(loadOlder).not.toHaveBeenCalled();
+    act(() => result.current.onUpwardIntent());
+    expect(loadOlder).toHaveBeenCalledOnce();
+    rerender({ ...initial, firstVisibleIndex: 0 });
+    expect(loadOlder).toHaveBeenCalledOnce();
+  });
+
   it("discards pending user intent when navigation or restoration takes over", () => {
     const { rerender, initial, result, loadOlder } = setup();
     act(() => result.current.onUpwardIntent());

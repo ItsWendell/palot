@@ -75,17 +75,19 @@ export function ChangesTab({
   tab,
   pane,
   scope,
+  active = true,
 }: {
   tab: Extract<WorkbenchTab, { kind: "changes" }>;
   pane: WorkbenchPaneID;
   scope: WorkbenchScope;
+  active?: boolean;
 }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
   const [expandUnchanged, setExpandUnchanged] = useState(false);
   const modeLabel = tab.resource.mode === "branch" ? "branch" : "working";
   const query = useLocationDiffs(
     tab.resource.location,
-    true,
+    active,
     tab.resource.mode,
     expandUnchanged ? null : 3,
   );
@@ -181,7 +183,7 @@ export function ChangesTab({
   if (tab.resource.mode === "branch" && !query.reviewBase.ref) {
     return (
       <div className="flex min-h-0 flex-1 flex-col bg-card">
-        <ReviewModeBar tab={tab} pane={pane} commands={commands} />
+        <ReviewModeBar tab={tab} pane={pane} commands={commands} active={active} />
         <div className="flex flex-1 items-center justify-center p-5">
           <ReviewBaseStatus base={query.reviewBase} />
         </div>
@@ -191,7 +193,7 @@ export function ChangesTab({
   if (query.isPending) {
     return (
       <div className="flex min-h-0 flex-1 flex-col bg-card">
-        <ReviewModeBar tab={tab} pane={pane} commands={commands} />
+        <ReviewModeBar tab={tab} pane={pane} commands={commands} active={active} />
         <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-muted-foreground">
           <Spinner /> Loading {modeLabel} changes
         </div>
@@ -201,7 +203,7 @@ export function ChangesTab({
   if (query.isError) {
     return (
       <div className="flex min-h-0 flex-1 flex-col bg-card">
-        <ReviewModeBar tab={tab} pane={pane} commands={commands} />
+        <ReviewModeBar tab={tab} pane={pane} commands={commands} active={active} />
         <Empty className="min-h-0 flex-1 rounded-none p-5">
           <EmptyHeader>
             <EmptyTitle>Could not load changes</EmptyTitle>
@@ -217,7 +219,7 @@ export function ChangesTab({
   if (diffs.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col bg-card">
-        <ReviewModeBar tab={tab} pane={pane} commands={commands} />
+        <ReviewModeBar tab={tab} pane={pane} commands={commands} active={active} />
         <Empty className="min-h-0 flex-1 rounded-none p-5">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -335,7 +337,7 @@ export function ChangesTab({
       </div>
       {tab.resource.mode === "branch" ? (
         <div className="min-w-0 shrink-0 border-b border-border bg-background px-2">
-          <ReviewBasePicker location={tab.resource.location} />
+          <ReviewBasePicker location={tab.resource.location} active={active} />
         </div>
       ) : null}
       <div className="relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden @min-[46rem]/workbench:grid-cols-[13rem_minmax(0,1fr)]">
@@ -531,10 +533,12 @@ function ReviewModeBar({
   tab,
   pane,
   commands,
+  active,
 }: {
   tab: Extract<WorkbenchTab, { kind: "changes" }>;
   pane: WorkbenchPaneID;
   commands: ReturnType<typeof useWorkbenchCommands>;
+  active: boolean;
 }) {
   return (
     <div className="flex shrink-0 flex-col border-b border-border bg-background px-2">
@@ -542,7 +546,7 @@ function ReviewModeBar({
         <ReviewModeToggle tab={tab} pane={pane} commands={commands} />
       </div>
       {tab.resource.mode === "branch" ? (
-        <ReviewBasePicker location={tab.resource.location} />
+        <ReviewBasePicker location={tab.resource.location} active={active} />
       ) : null}
     </div>
   );

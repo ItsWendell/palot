@@ -38,6 +38,9 @@ import { remoteTerminalScenario } from "./remote-terminal-scenario.ts";
 import { sharedServiceScenario } from "./shared-service-scenario.ts";
 import { openCodeReleaseChannelScenario } from "./opencode-release-channel-scenario.ts";
 import { openCodeRuntimeAcquisitionScenario } from "./opencode-runtime-acquisition-scenario.ts";
+import { openCodeLoginSettingsScenario } from "./opencode-login-settings-scenario.ts";
+import { shortTranscriptScenario } from "./short-transcript-scenario.ts";
+import { coldSessionNavigationScenario } from "./cold-session-navigation-scenario.ts";
 import { startupAttentionScenario } from "./startup-attention-scenario.ts";
 import { multiConnectionScenario } from "./multi-connection-scenario.ts";
 import {
@@ -171,6 +174,9 @@ export const scenarios = {
   "shared-service": sharedServiceScenario,
   "opencode-release-channel": openCodeReleaseChannelScenario,
   "opencode-runtime-acquisition": openCodeRuntimeAcquisitionScenario,
+  "opencode-login-settings": openCodeLoginSettingsScenario,
+  "short-transcript": shortTranscriptScenario,
+  "cold-session-navigation": coldSessionNavigationScenario,
   "linux-desktop": linuxDesktopScenario,
   "compact-windows": compactWindowsScenario,
   "session-window-drag": sessionWindowDragScenario,
@@ -1647,7 +1653,17 @@ export const scenarios = {
           })
         : await switchToBeta();
 
+      await writeFile(join(runRoot, "session-switch.json"), JSON.stringify(state, null, 2), {
+        mode: 0o600,
+      });
       expect(state.targetVisible).toBe(true);
+      expect(
+        Number(
+          await page
+            .locator("[data-palot-transcript-restored-measurements]")
+            .getAttribute("data-palot-transcript-restored-measurements"),
+        ),
+      ).toBeGreaterThan(0);
       expect(state.staleVisible).toBe(false);
       expect(state.transcriptSettledAtMs).not.toBeNull();
       expect(state.transcriptFullyVisibleAtMs).not.toBeNull();
@@ -1657,7 +1673,7 @@ export const scenarios = {
           300,
         );
       }
-      expect(state.transcriptFadeObserved).toBe(true);
+      expect(state.transcriptFadeObserved).toBe(false);
       expect(state.maxSettlingOpacity).toBeLessThanOrEqual(0.01);
       expect(state.transcriptOpacityMonotonic).toBe(true);
       expect(state.maxBottomGap).not.toBeNull();
@@ -1736,6 +1752,8 @@ export const scenarios = {
     },
     async assert(page, { runRoot }) {
       const transcript = page.getByLabel("Task transcript");
+      const originalViewport = await transcript.elementHandle();
+      if (!originalViewport) throw new Error("Missing initial transcript viewport");
       for (const pageNumber of [1, 2]) {
         await startTranscriptPrependProbe(page);
         try {
@@ -1757,6 +1775,7 @@ export const scenarios = {
             .toBeLessThanOrEqual(2);
           // Give range/measurement callbacks opportunities to expose duplicate requests.
           await waitForAnimationFrames(page, 20);
+          expect(await originalViewport.evaluate((viewport) => viewport.isConnected)).toBe(true);
           // The full first page includes the existing one-message cursor verification.
           expect((await readTranscriptPrependProbe(page)).requests).toBe(pageNumber === 1 ? 2 : 1);
           if (pageNumber === 2) {

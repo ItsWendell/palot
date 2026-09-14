@@ -1,7 +1,7 @@
 import { OpenCode } from "@opencode/client";
 import { Service } from "@opencode/client/service";
 import { expect, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import packageJson from "../../package.json" with { type: "json" };
 import type { PalotApi } from "../../src/shared/opencode-contract";
@@ -11,6 +11,121 @@ import { startLoopbackServiceProxy } from "./loopback-service-proxy.ts";
 const localTitle = "Overview local collision";
 const remoteTitle = "Overview remote collision";
 const remoteName = "Overview isolated remote";
+
+async function checkWarmNavigation(
+  page: Page,
+  localRow: Locator,
+  remoteRow: Locator,
+  localProfileID: string,
+  remoteProfileID: string,
+  sessionID: string,
+  runRoot: string,
+) {
+  const samples: { server: string; visibleMs: number; splashMounts: number }[] = [];
+  const composer = page.getByRole("textbox", { name: "Message Palot", exact: true });
+  await composer.fill("Local draft survives server navigation");
+  let remoteDraftCreated = false;
+  for (const remote of [true, false, true, false, true, false]) {
+    const profileID = remote ? remoteProfileID : localProfileID;
+    const title = remote ? remoteTitle : localTitle;
+    await page.evaluate(
+      ({ profileID, title }) => {
+        const state = { started: 0, visibleMs: -1, splashMounts: 0, stop: () => {} };
+        const observer = new MutationObserver((records) => {
+          for (const record of records)
+            for (const node of record.addedNodes) {
+              if (
+                node instanceof Element &&
+                (node.matches('[aria-label="Loading Palot"]') ||
+                  node.querySelector('[aria-label="Loading Palot"]'))
+              )
+                state.splashMounts++;
+            }
+        });
+        observer.observe(document.body, { subtree: true, childList: true });
+        let frame = 0;
+        const check = () => {
+          const task = document.querySelector('[aria-label="Current task"]');
+          const route = new URL(location.hash.slice(1), location.origin);
+          if (
+            state.started &&
+            route.searchParams.get("profileID") === profileID &&
+            task?.textContent?.includes(title) &&
+            task.getBoundingClientRect().height > 0 &&
+            document.querySelector('[aria-label="Message Palot"]')
+          ) {
+            state.visibleMs = performance.now() - state.started;
+          } else frame = requestAnimationFrame(check);
+        };
+        document.addEventListener(
+          "pointerdown",
+          () => {
+            state.started = performance.now();
+            frame = requestAnimationFrame(check);
+          },
+          { once: true },
+        );
+        state.stop = () => {
+          observer.disconnect();
+          cancelAnimationFrame(frame);
+        };
+        Object.assign(window, { __palotNavigationProbe: state });
+      },
+      { profileID, title },
+    );
+    await (remote ? remoteRow : localRow).click();
+    await assertOwner(page, sessionID, profileID);
+    if (remote && !remoteDraftCreated) {
+      await expect(composer).toHaveValue("");
+      await composer.fill("Remote draft survives server navigation");
+      remoteDraftCreated = true;
+    } else {
+      await expect(composer).toHaveValue(
+        remote
+          ? "Remote draft survives server navigation"
+          : "Local draft survives server navigation",
+      );
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __palotNavigationProbe: { visibleMs: number } })
+              .__palotNavigationProbe.visibleMs,
+        ),
+      )
+      .toBeGreaterThanOrEqual(0);
+    samples.push(
+      await page.evaluate(
+        (server) => {
+          const state = (
+            window as unknown as {
+              __palotNavigationProbe: { visibleMs: number; splashMounts: number; stop(): void };
+            }
+          ).__palotNavigationProbe;
+          state.stop();
+          return { server, visibleMs: state.visibleMs, splashMounts: state.splashMounts };
+        },
+        remote ? "remote" : "local",
+      ),
+    );
+  }
+  await writeFile(
+    join(runRoot, "warm-navigation.json"),
+    JSON.stringify(
+      {
+        metric: "trusted pointerdown to next-frame target task DOM, not compositor presentation",
+        samples,
+      },
+      null,
+      2,
+    ),
+  );
+  expect(
+    samples.map((sample) => sample.splashMounts),
+    "Warm session switches must never mount the app splash",
+  ).toEqual(samples.map(() => 0));
+}
 
 async function closeSessionWindow(child: Page) {
   const closed = child.waitForEvent("close");
@@ -160,6 +275,39 @@ async function captureOverview(page: Page, runRoot: string) {
             )
             .toBe(true);
           if (mode === "inbox") {
+            if (title === remoteTitle) {
+              const card = page.locator("[data-inbox-card]").filter({ has: row });
+              const cloud = card.getByRole("img", { name: new RegExp(`^${remoteName} ·`) });
+              await expect(card.getByText(remoteName, { exact: true })).toHaveCount(0);
+              expect(
+                await cloud.evaluate((icon) => {
+                  const project = icon.nextElementSibling;
+                  if (!project) return false;
+                  const a = icon.getBoundingClientRect();
+                  const b = project.getBoundingClientRect();
+                  return (
+                    a.right <= b.left &&
+                    Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2) <= 2
+                  );
+                }),
+              ).toBe(true);
+              await cloud.hover();
+              const details = page
+                .locator('[data-slot="tooltip-content"]')
+                .filter({ hasText: remoteName });
+              await expect(details).toBeVisible();
+              await expect(details).toContainText("Connected");
+              await page.screenshot({
+                path: join(runRoot, `overview-server-tooltip-${scheme}.png`),
+                animations: "disabled",
+              });
+              await cloud.focus();
+              await page.mouse.move(0, 0);
+              await expect(cloud).toBeFocused();
+              await expect(details).toBeVisible();
+              await page.keyboard.press("Escape");
+              await row.focus();
+            }
             await expect
               .poll(
                 () =>
@@ -312,7 +460,12 @@ export const multiConnectionScenario: Scenario = {
       started = true;
       const endpoint = await Service.ensure({
         file,
-        version: packageJson.devDependencies["@opencode/client"],
+        version:
+          (
+            await page.evaluate(async () =>
+              (globalThis as unknown as { palot: PalotApi }).palot.runtimeStatus(),
+            )
+          ).version ?? packageJson.devDependencies["@opencode/client"],
         command: [process.env.OPENCODE_BIN ?? "opencode2", "serve", "--service", "--port=0"],
         env: {
           HOME: home,
@@ -381,9 +534,9 @@ export const multiConnectionScenario: Scenario = {
         page.getByRole("button", { name: "Add project folder", exact: true }),
       ).toBeVisible();
       await options.click();
-      await page.getByRole("menuitem", { name: "Connections", exact: true }).hover();
+      await page.getByRole("menuitem", { name: "Enabled servers", exact: true }).hover();
       const monitor = page.getByRole("menuitemcheckbox", {
-        name: new RegExp(`^Monitor ${remoteName}`),
+        name: new RegExp(`^Enable ${remoteName}`),
       });
       await expect(monitor).toBeVisible();
       if ((await monitor.getAttribute("aria-checked")) !== "true") await monitor.click();
@@ -462,14 +615,21 @@ export const multiConnectionScenario: Scenario = {
         .click();
       await page.getByRole("menuitem", { name: "Move to inbox", exact: true }).click();
       await expect(page.locator("[data-inbox-card]").filter({ has: remoteRow })).toBeVisible();
-      // Complete the additional profile's real onboarding once. Writing its
-      // localStorage record after startup does not update the mounted atom and
-      // would require a reload, defeating this scenario's switching assertion.
+      // Onboarding is app-wide, never repeated when selecting another server.
       await remoteRow.click();
-      await page.getByRole("button", { name: "Continue", exact: true }).click();
-      await page.getByRole("button", { name: "Skip for now", exact: true }).click();
+      await assertOwner(page, session.id, profileID);
+      await expect(page.getByRole("heading", { name: /Welcome to Palot/ })).toHaveCount(0);
       await localRow.click();
       await assertOwner(page, session.id, original.activeProfileID);
+      await checkWarmNavigation(
+        page,
+        localRow,
+        remoteRow,
+        original.activeProfileID,
+        profileID,
+        session.id,
+        runRoot,
+      );
       // Restored row interactions must use the background owner even when the
       // active service has a different task with exactly the same session ID.
       const sourceURL = page.url();
@@ -534,6 +694,30 @@ export const multiConnectionScenario: Scenario = {
       const timeOrigin = await page.evaluate(() => performance.timeOrigin);
       await remoteRow.click();
       await assertOwner(page, session.id, profileID);
+      const selectedRemoteURL = page.url();
+      for (const enabled of [false, true]) {
+        await page.getByRole("button", { name: "Open Palot menu", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Servers", exact: true }).hover();
+        const toggle = page.getByRole("menuitemcheckbox", { name: new RegExp(`^${remoteName} `) });
+        await expect(toggle).toHaveAttribute("aria-checked", String(!enabled));
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+        await page.keyboard.press("Escape");
+        await page.keyboard.press("Escape");
+        await expect
+          .poll(
+            async () =>
+              (
+                await page.evaluate(async () =>
+                  (globalThis as unknown as { palot: PalotApi }).palot.runtimeStatus(),
+                )
+              ).connected,
+          )
+          .toBe(enabled);
+        expect(page.url()).toBe(selectedRemoteURL);
+        await expect(page.getByRole("heading", { name: /Welcome to Palot/ })).toHaveCount(0);
+      }
+      await assertOwner(page, session.id, profileID);
       const destination = page
         .locator(".palot-composer-context")
         .getByLabel(`Execution connection: ${remoteName}`, { exact: true });
@@ -579,6 +763,109 @@ export const multiConnectionScenario: Scenario = {
       await expect(backgroundRow).toBeVisible({ timeout: 30_000 });
       await expect(localRow).toBeVisible();
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
+
+      const taskURL = page.url();
+      await page.getByRole("button", { name: "Add project folder", exact: true }).click();
+      const folderDialog = page.getByRole("dialog", { name: "Add project folder", exact: true });
+      await folderDialog.getByRole("combobox", { name: "Server", exact: true }).click();
+      await page.getByRole("option", { name: remoteName, exact: true }).click();
+      await expect(
+        folderDialog.getByRole("button", { name: "Choose local folder…", exact: true }),
+      ).toHaveCount(0);
+      await folderDialog
+        .getByRole("textbox", { name: "Folder path", exact: true })
+        .fill(projectDirectory);
+      await folderDialog.getByRole("button", { name: "Browse", exact: true }).click();
+      await expect(
+        folderDialog.getByRole("navigation", { name: "Folder breadcrumbs" }),
+      ).toBeVisible();
+      await expect(folderDialog.getByText("Loading folders…", { exact: true })).toHaveCount(0);
+      await expect(folderDialog.getByRole("alert")).toHaveCount(0);
+      const folderBounds = await folderDialog.boundingBox();
+      expect(folderBounds!.y).toBeGreaterThanOrEqual(15);
+      expect(folderBounds!.y + folderBounds!.height).toBeLessThanOrEqual(
+        page.viewportSize()!.height - 15,
+      );
+      if (visible)
+        await page.screenshot({
+          path: join(runRoot, "add-project-remote-folder.png"),
+          animations: "disabled",
+        });
+      await folderDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await assertOwner(page, session.id, original.activeProfileID);
+      await page.evaluate(() => {
+        window.location.hash = "#/settings/providers";
+      });
+      await page.getByRole("combobox", { name: "Configure server", exact: true }).click();
+      await page.getByRole("option", { name: new RegExp(remoteName) }).click();
+      await expect(
+        page.getByRole("combobox", { name: "Configure server", exact: true }),
+      ).toContainText(remoteName);
+      expect(
+        (
+          await page.evaluate(async () =>
+            (globalThis as unknown as { palot: PalotApi }).palot.runtimeStatus(),
+          )
+        ).profileID,
+      ).toBe(original.activeProfileID);
+      if (visible)
+        await page.screenshot({
+          path: join(runRoot, "settings-independent-server.png"),
+          animations: "disabled",
+        });
+      await page.evaluate((url) => {
+        window.location.hash = new URL(url).hash;
+      }, taskURL);
+      await assertOwner(page, session.id, original.activeProfileID);
+
+      // Copy through the native UI and verify both isolated databases. Never move/delete source.
+      const copyText = "This isolated conversation must survive the server copy unchanged.";
+      const copySource = await client.session.import({
+        info: {
+          ...(await client.session.get({ sessionID: session.id })),
+          id: `ses_${crypto.randomUUID()}`,
+          title: "Copy across isolated servers",
+          parentID: undefined,
+        },
+        messages: [
+          {
+            id: `msg_${crypto.randomUUID()}`,
+            type: "user",
+            text: copyText,
+            time: { created: Date.now() },
+          },
+        ],
+        location: { directory: projectDirectory },
+      });
+      const copyRow = page.getByRole("button", { name: /^Copy across isolated servers ·/ });
+      await expect(copyRow).toBeVisible({ timeout: 30_000 });
+      await copyRow.click();
+      await assertOwner(page, copySource.id, original.activeProfileID);
+      await page.getByRole("button", { name: "Task actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Copy task to server…", exact: true }).click();
+      const copyDialog = page.getByRole("dialog", { name: "Copy task to server", exact: true });
+      await copyDialog.getByRole("combobox", { name: "Destination server" }).click();
+      await page.getByRole("option", { name: remoteName, exact: true }).click();
+      await copyDialog.getByRole("textbox", { name: "Destination folder" }).fill(projectDirectory);
+      if (visible)
+        await page.screenshot({
+          path: join(runRoot, "copy-task-to-server.png"),
+          animations: "disabled",
+        });
+      await copyDialog.getByRole("button", { name: "Copy task", exact: true }).click();
+      await expect(copyDialog).toHaveCount(0);
+      await assertOwner(page, copySource.id, profileID);
+      expect((await client.session.get({ sessionID: copySource.id })).title).toBe(copySource.title);
+      expect((await remote.session.get({ sessionID: copySource.id })).title).toBe(copySource.title);
+      const copiedTranscript = await remote.session.export({
+        sessionID: copySource.id,
+        sanitize: false,
+      });
+      expect(copiedTranscript.messages).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: "user", text: copyText })]),
+      );
+      await localRow.click();
+      await assertOwner(page, session.id, original.activeProfileID);
 
       await Service.stop({ file });
       started = false;

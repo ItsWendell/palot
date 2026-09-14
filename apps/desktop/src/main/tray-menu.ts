@@ -29,8 +29,12 @@ export function prioritizeTrayTasks(input: TrayTaskSections): TrayTaskSections {
     const limit = section === "recent" ? remaining : Math.min(SECTION_LIMIT, remaining);
     for (const item of input[section]) {
       if (remaining === 0 || output[section].length === limit) break;
-      if (claimed.has(item.sessionID)) continue;
-      claimed.add(item.sessionID);
+      const key = JSON.stringify([
+        item.target.type === "session" ? item.target.profileID : undefined,
+        item.sessionID,
+      ]);
+      if (claimed.has(key)) continue;
+      claimed.add(key);
       output[section].push(item);
       remaining -= 1;
     }

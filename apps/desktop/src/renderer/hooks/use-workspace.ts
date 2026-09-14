@@ -39,6 +39,7 @@ import {
   sessionTriageSnapshotAtom,
 } from "../atoms/inbox";
 import { sidebarModeAtom } from "../atoms/ui";
+import { disabledProfileIDsAtom } from "../atoms/connections";
 import {
   EMPTY_SESSION_REQUEST_SNAPSHOT,
   mergeAttentionRequests,
@@ -351,10 +352,11 @@ export function useWorkspaceController(selectedSessionID: string | null) {
         initialHydrationStarted.current = true;
       }
       const token = synchronization.current.beginWorkspaceSnapshot();
+      const workspaceReady = store.get(phaseAtom) === "ready";
       cancelAttention();
       setAttentionSyncState("syncing");
       const previousConnection = connectionIDRef.current;
-      if (previousConnection) {
+      if (refresh && previousConnection) {
         void queryClient.cancelQueries({
           queryKey: openCodeKeys.projects(previousConnection),
           exact: true,
@@ -364,27 +366,56 @@ export function useWorkspaceController(selectedSessionID: string | null) {
           exact: true,
         });
       }
-      if (!refresh) setPhase("loading");
+      if (!refresh && !workspaceReady) setPhase("loading");
       setSessionCatalogReady(false);
       setError(null);
-      const focused = store.get(runtimeAtom);
-      let focusedConnectionID = focused?.connectionID;
+      const disabled = store.get(disabledProfileIDsAtom);
+      const focused =
+        store.get(runtimeAtom) ?? (disabled.length ? await palot.runtimeStatus() : null);
+      let focusedConnectionID = store.get(runtimeAtom)?.connectionID;
       const isCurrent = () =>
         alive.current &&
         synchronization.current.isCurrentWorkspaceSnapshot(token) &&
         store.get(runtimeAtom)?.connectionID === focusedConnectionID;
       if (
         focused &&
-        !focused.connected &&
-        !connectInput &&
-        sessionCatalogInfo(queryClient, focused.connectionID).length > 0
+        (disabled.includes(focused.profileID) ||
+          (!focused.connected &&
+            !connectInput &&
+            sessionCatalogInfo(queryClient, focused.connectionID).length > 0))
       ) {
+        const offline = disabled.includes(focused.profileID)
+          ? { ...focused, connected: false, phase: "stopped" as const }
+          : focused;
         connectionIDRef.current = focused.connectionID;
-        setFocusedOpenCodeRuntime(focused);
+        setRuntime(offline);
+        setFocusedOpenCodeRuntime(offline);
         openCodeReconciler(queryClient).setFocusedConnection(focused.connectionID);
         setPhase("ready");
         setAttentionSyncState("error");
         return;
+      }
+      if (!refresh && workspaceReady && focused?.connected && !palot.isPreview()) {
+        const roots = rootSessionsQueryOptions(queryClient, focused.connectionID);
+        if (queryClient.getQueryData(roots.queryKey)) {
+          // Owner-keyed remounts are navigation, not startup. Keep the retained
+          // catalog (including loaded pages) and let invalidations refresh it in
+          // the background. Live events remain the normal freshness mechanism.
+          registerOpenCodeRuntime(focused);
+          setFocusedOpenCodeRuntime(focused);
+          openCodeReconciler(queryClient).setFocusedConnection(focused.connectionID);
+          void queryClient
+            .ensureInfiniteQueryData({ ...roots, revalidateIfStale: true })
+            .catch(() => undefined);
+          void queryClient
+            .fetchQuery(projectsQueryOptions(queryClient, focused.connectionID))
+            .catch(() => undefined);
+          void queryClient
+            .fetchQuery(sessionActivityQueryOptions(queryClient, focused.connectionID))
+            .catch(() => undefined);
+          refreshAttention(focused.connectionID, isCurrent);
+          return;
+        }
       }
       try {
         const result = palot.isPreview()
@@ -400,12 +431,7 @@ export function useWorkspaceController(selectedSessionID: string | null) {
               registerOpenCodeRuntime(runtime);
               setFocusedOpenCodeRuntime(runtime);
               openCodeReconciler(queryClient).setFocusedConnection(runtime.connectionID);
-              const previousConnectionID = connectionIDRef.current;
-              if (previousConnectionID && previousConnectionID !== runtime.connectionID) {
-                await queryClient.cancelQueries({
-                  queryKey: openCodeKeys.all(previousConnectionID),
-                });
-              } else if (refresh) {
+              if (refresh) {
                 await queryClient.cancelQueries({
                   queryKey: openCodeKeys.all(runtime.connectionID),
                 });
@@ -529,7 +555,7 @@ export function useWorkspaceController(selectedSessionID: string | null) {
         if (!isCurrent()) return;
         setError(error instanceof Error ? error.message : "Could not connect to OpenCode");
         setAttentionSyncState("error");
-        setPhase("error");
+        if (!workspaceReady) setPhase("error");
       }
     },
     [
@@ -557,7 +583,8 @@ export function useWorkspaceController(selectedSessionID: string | null) {
       cancelAttention();
       setAttentionSyncState(runtime?.connected ? "syncing" : "error");
       setSessionCatalogReady(false);
-      if (connectionID && (next !== connectionID || !runtime?.connected))
+      // Queries belong to connections, not the currently focused controller.
+      if (connectionID && next === connectionID && connected && !runtime?.connected)
         void queryClient.cancelQueries({ queryKey: openCodeKeys.all(connectionID) });
       connectionID = next;
       connected = runtime?.connected;
@@ -566,8 +593,6 @@ export function useWorkspaceController(selectedSessionID: string | null) {
       alive.current = false;
       cancelAttention();
       unsubscribeFocus();
-      if (connectionID)
-        void queryClient.cancelQueries({ queryKey: openCodeKeys.all(connectionID) });
       synchronization.current.dispose();
     };
   }, [cancelAttention, queryClient, setAttentionSyncState, setSessionCatalogReady, store]);
@@ -647,7 +672,10 @@ export function useWorkspaceController(selectedSessionID: string | null) {
       setActiveShells((current) => applyShellEvents(current, batch.events));
 
       const runtimeEvent = batch.events.findLast((event) => event.type === "palot.runtime.status");
-      if (runtimeEvent) setRuntime(runtimeEvent.data);
+      if (runtimeEvent) {
+        if (store.get(disabledProfileIDsAtom).includes(runtimeEvent.data.profileID)) return;
+        setRuntime(runtimeEvent.data);
+      }
 
       const currentSession = selectedSessionRef.current;
       if (currentSession) {

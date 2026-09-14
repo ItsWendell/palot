@@ -1,5 +1,6 @@
 import type { SessionMessageInfo, SessionMessagesResponse } from "@opencode/client";
 import {
+  infiniteQueryOptions,
   useInfiniteQuery,
   useQueryClient,
   type InfiniteData,
@@ -206,6 +207,47 @@ export function removeTranscriptCacheMessage(
   );
 }
 
+export function sessionTranscriptQueryOptions(
+  queryClient: QueryClient,
+  session: PalotSession,
+  runtime: OpenCodeRuntimeStatus | null,
+  requireAvailableOwner = false,
+) {
+  const connectionID = runtime?.connectionID ?? "disconnected";
+  return infiniteQueryOptions({
+    queryKey: transcriptQueryKey(connectionID, session.id),
+    enabled: canFetchOpenCode(runtime),
+    initialPageParam: null as TranscriptPageParam,
+    queryFn: async ({ pageParam, signal }) => {
+      if (requireAvailableOwner && !canFetchOpenCode(runtime)) {
+        throw new Error("The task's connection is unavailable");
+      }
+      const reconciler = openCodeReconciler(queryClient);
+      const token = reconciler.beginSnapshot(connectionID);
+      const page =
+        pageParam !== null
+          ? await palot.loadOlder(session.id, pageParam, signal, connectionID)
+          : await palot.loadTranscript(session, "rooted", signal, connectionID);
+      reconciler.setTranscriptSnapshot(
+        connectionID,
+        session.id,
+        projectTranscriptMessages(page.data),
+        pageParam === null ? "rooted" : "older",
+        token,
+      );
+      return page;
+    },
+    getNextPageParam: (page, _pages, _lastPageParam, pageParams) => {
+      const next = page.cursor.next ?? undefined;
+      return next && !pageParams.includes(next) ? next : undefined;
+    },
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function useSessionTranscript(session: PalotSession, owner?: OpenCodeRuntimeStatus | null) {
   const activeRuntime = useAtomValue(runtimeAtom);
   const runtime = owner === undefined ? activeRuntime : owner;
@@ -223,45 +265,9 @@ export function useSessionTranscript(session: PalotSession, owner?: OpenCodeRunt
   const overlay = useAtomValue(overlayAtom);
   const records = useOpenCodeRecords(connectionID ?? "disconnected", "session-message", session.id);
   const queryKey = transcriptQueryKey(connectionID ?? "disconnected", session.id);
-  const query = useInfiniteQuery<
-    SessionMessagesResponse,
-    Error,
-    TranscriptData,
-    ReturnType<typeof transcriptQueryKey>,
-    TranscriptPageParam
-  >({
-    queryKey,
-    enabled: canFetchOpenCode(runtime),
-    initialPageParam: null as TranscriptPageParam,
-    queryFn: async ({ pageParam, signal }) => {
-      if (owner !== undefined && !canFetchOpenCode(runtime)) {
-        throw new Error("The task's connection is unavailable");
-      }
-      const resolvedConnectionID = connectionID ?? "disconnected";
-      const reconciler = openCodeReconciler(queryClient);
-      const token = reconciler.beginSnapshot(resolvedConnectionID);
-      const page =
-        pageParam !== null
-          ? await palot.loadOlder(session.id, pageParam, signal, resolvedConnectionID)
-          : await palot.loadTranscript(session, "rooted", signal, resolvedConnectionID);
-      reconciler.setTranscriptSnapshot(
-        resolvedConnectionID,
-        session.id,
-        projectTranscriptMessages(page.data),
-        pageParam === null ? "rooted" : "older",
-        token,
-      );
-      return page;
-    },
-    getNextPageParam: (page, _pages, _lastPageParam, pageParams) => {
-      const next = page.cursor.next ?? undefined;
-      return next && !pageParams.includes(next) ? next : undefined;
-    },
-    staleTime: Number.POSITIVE_INFINITY,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
-  });
+  const query = useInfiniteQuery(
+    sessionTranscriptQueryOptions(queryClient, session, runtime, owner !== undefined),
+  );
   useEffect(() => {
     if (records.length > 0) return;
     const cached = queryClient.getQueryData<TranscriptData>(queryKey);
@@ -278,9 +284,10 @@ export function useSessionTranscript(session: PalotSession, owner?: OpenCodeRunt
     [records],
   );
   const snapshotMessageCount = useMemo(
+    // Overlapping pages hydrate into one authoritative record per message ID.
     () =>
       query.data
-        ? projectTranscriptMessages(query.data.pages.flatMap((page) => page.data)).length
+        ? new Set(query.data.pages.flatMap((page) => page.data.map((message) => message.id))).size
         : 0,
     [query.data],
   );

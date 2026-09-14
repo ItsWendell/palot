@@ -1,6 +1,7 @@
 import type { OpenCodeClient } from "@opencode/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "./opencode-client";
+import * as clients from "./opencode-client";
 import {
   activateCredential,
   addMcpServer,
@@ -64,6 +65,45 @@ afterEach(() => {
 });
 
 describe("renderer OpenCode settings service", () => {
+  it("keeps catalog reads on the settings owner after plugin activation and a focus change", async () => {
+    const activation = Promise.withResolvers<void>();
+    const owner = client();
+    const focused = client();
+    vi.mocked(owner.plugin.awaitActivation).mockReturnValue(activation.promise);
+    vi.spyOn(clients, "openCodeClient").mockImplementation((connectionID) =>
+      connectionID === "server-a" ? owner : focused,
+    );
+    const loading = loadSettings({
+      connectionID: "server-a",
+      directory: "/repo",
+      projectID: "project-1",
+      capabilities: ["catalog", "agents"],
+    });
+    expect(owner.model.list).not.toHaveBeenCalled();
+    activation.resolve();
+    await loading;
+    expect(owner.model.list).toHaveBeenCalledOnce();
+    expect(owner.agent.list).toHaveBeenCalledOnce();
+    expect(focused.model.list).not.toHaveBeenCalled();
+    expect(focused.agent.list).not.toHaveBeenCalled();
+  });
+
+  it("checks and updates plugins on an explicit owner rather than the focused server", async () => {
+    const owner = client();
+    const focused = client();
+    vi.spyOn(clients, "openCodeClient").mockImplementation((connectionID) =>
+      connectionID === "server-a" ? owner : focused,
+    );
+    const input = { connectionID: "server-a", directory: "/repo", projectID: "project-1" };
+    await checkPlugins(input);
+    await updatePlugins({ ...input, targets: ["plugin-a"] });
+    expect(owner.plugin.check).toHaveBeenCalledOnce();
+    expect(owner.plugin.update).toHaveBeenCalledOnce();
+    expect(owner.plugin.awaitActivation).toHaveBeenCalledOnce();
+    expect(focused.plugin.check).not.toHaveBeenCalled();
+    expect(focused.plugin.update).not.toHaveBeenCalled();
+  });
+
   it.each(["disable", "notify", "auto"])("summarizes the %s update policy", async (update) => {
     setOpenCodeClientForTest(
       client({

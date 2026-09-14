@@ -40,20 +40,24 @@ interface AutomationRunnerOptions {
 export function automationSessionInstructions(input: {
   definition: AutomationDefinition;
   run: AutomationRun;
-  memoryPath: string;
+  memoryPath: string | null;
   lastRunAt: number | null;
 }): string {
   const lastRun = input.lastRunAt === null ? "never" : new Date(input.lastRunAt).toISOString();
+  const memory = input.memoryPath
+    ? `Automation memory: ${input.memoryPath}
+
+Use the memory file for continuity between this automation's standalone runs. Read it first to avoid repeating recent work. Before returning, update it with a concise summary of what you did or decided, unfinished work, and the current run time.
+
+Only the root automation session updates the memory file. Child or subagent sessions should report their findings to the root session and must not write automation memory directly.`
+    : `Persistent cross-run file memory is unavailable on this server. This standalone run does not share a memory file with earlier runs. Use this task's transcript for context; do not assume previous runs are available.`;
   return `## Palot automation
 
 Automation ID: ${input.definition.id}
 Run ID: ${input.run.id}
-Automation memory: ${input.memoryPath}
 Last run: ${lastRun}
 
-Use the memory file for continuity between this automation's standalone runs. Read it first to avoid repeating recent work. Before returning, update it with a concise summary of what you did or decided, unfinished work, and the current run time.
-
-Only the root automation session updates the memory file. Child or subagent sessions should report their findings to the root session and must not write automation memory directly.
+${memory}
 
 Store requested code changes and deliverables in the current workspace according to the project's instructions. Do not invent project-level artifact folders or conventions.`;
 }
@@ -340,8 +344,13 @@ export class AutomationRunner {
 
     if (definition.destination.type === "standalone") {
       const previousRun = this.options.repository.previousRun(definition.id, run.id);
-      const memoryPath = await this.options.memory.ensure(definition.id);
-      this.memoryDirectories.set(run.id, path.dirname(memoryPath));
+      // The registry lives on the desktop. The official filesystem API cannot create a
+      // corresponding remote file, so never expose or auto-approve its path remotely.
+      const memoryPath = this.capabilities().localPathActions
+        ? await this.options.memory.ensure(definition.id)
+        : null;
+      if (memoryPath) this.memoryDirectories.set(run.id, path.dirname(memoryPath));
+      else this.memoryDirectories.delete(run.id);
       await client.session.instructions.entry.put(
         {
           sessionID,

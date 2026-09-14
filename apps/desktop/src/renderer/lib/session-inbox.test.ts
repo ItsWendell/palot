@@ -78,6 +78,56 @@ describe("projectSessionInbox", () => {
     expect(result.inbox[0]?.failed).toBe(true);
   });
 
+  it("keeps failed history in the inbox until explicitly settled", () => {
+    const session = { ...root, outcome: "failed" as const };
+    const triage: SessionTriageSnapshot = {
+      profileID: "local",
+      bootstrapThrough: { updatedAt: 100, sessionID: "z" },
+      sessions: [],
+    };
+    const before = project(triage, emptyRequests, inactive, session);
+    expect(before.inbox[0]).toMatchObject({ failed: true, canSettle: true });
+
+    triage.sessions.push({
+      sessionID: root.id,
+      disposition: "settled",
+      settledThrough: before.inbox[0]!.activityThrough,
+      pinnedAt: null,
+      snoozedUntil: null,
+      snoozedThrough: null,
+      updatedAt: 500,
+    });
+
+    const after = project(triage, emptyRequests, inactive, session);
+    expect(after.inbox).toHaveLength(0);
+    expect(after.settled[0]).toMatchObject({ failed: true, section: "settled" });
+
+    const updated = project(triage, emptyRequests, inactive, { ...session, updatedAt: 20 });
+    expect(updated.settled).toHaveLength(0);
+    expect(updated.inbox[0]).toMatchObject({ failed: true });
+
+    const running = project(
+      triage,
+      emptyRequests,
+      { status: "running", startedAt: 100, completedAt: null },
+      session,
+    );
+    expect(running.settled).toHaveLength(0);
+    expect(running.inbox[0]).toMatchObject({ running: true, canSettle: false });
+
+    const blocked = project(
+      triage,
+      {
+        ...emptyRequests,
+        permissions: [{ id: "permission", sessionID: root.id, action: "shell", resources: [] }],
+      },
+      inactive,
+      session,
+    );
+    expect(blocked.settled).toHaveLength(0);
+    expect(blocked.inbox[0]).toMatchObject({ attention: true, canSettle: false });
+  });
+
   it("lets a repaired running snapshot override an old persisted failure", () => {
     const result = project(
       null,

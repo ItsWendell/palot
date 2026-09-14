@@ -5,6 +5,8 @@ export interface OpenCodeInstallation {
   /** Opaque main-owned identity; never accepted as an executable path. */
   id: string;
   path: string;
+  /** Stable package-manager launcher, when different from the resolved executable. */
+  launchPath?: string;
   version: string;
   compatible: boolean;
   /** Exact installed beta was explicitly accepted for the current Palot client. */

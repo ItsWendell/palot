@@ -61,12 +61,14 @@ it("uses the official inferred ref, then manual selection, then reset", async ()
   expect(diffs).toHaveBeenLastCalledWith(
     { ...location, mode: "branch", context: 3, base: "refs/heads/release" },
     expect.any(AbortSignal),
+    "one",
   );
   act(() => result.current.reviewBase.setManual(" origin/topic "));
   await waitFor(() =>
     expect(diffs).toHaveBeenLastCalledWith(
       { ...location, mode: "branch", context: 3, base: "origin/topic" },
       expect.any(AbortSignal),
+      "one",
     ),
   );
   act(() => result.current.reviewBase.setManual(null));
@@ -83,6 +85,7 @@ it("does not request a branch diff for null inference; manual refs still work", 
   expect(diffs).toHaveBeenLastCalledWith(
     expect.objectContaining({ base: "abc123" }),
     expect.any(AbortSignal),
+    "one",
   );
 });
 
@@ -121,6 +124,7 @@ it("does not carry a manual ref into another worktree or working mode", async ()
     expect(diffs).toHaveBeenLastCalledWith(
       expect.objectContaining({ base: "release" }),
       expect.any(AbortSignal),
+      "one",
     ),
   );
   rerender({ workspaceID: "other", mode: "branch" });
@@ -129,12 +133,14 @@ it("does not carry a manual ref into another worktree or working mode", async ()
   expect(diffs).toHaveBeenLastCalledWith(
     expect.objectContaining({ workspaceID: "other", base: "refs/heads/main" }),
     expect.any(AbortSignal),
+    "one",
   );
   rerender({ workspaceID: "tree", mode: "working" });
   await waitFor(() =>
     expect(diffs).toHaveBeenLastCalledWith(
       { directory: "/repo", workspaceID: "tree", mode: "working", context: 3 },
       expect.any(AbortSignal),
+      "one",
     ),
   );
 });

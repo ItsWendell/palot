@@ -20,6 +20,17 @@ const pairingInfo = { ...payload, payload: JSON.stringify(payload) };
 
 describe("LocalServiceSettings", () => {
   beforeEach(() => {
+    vi.spyOn(palot, "getOpenCodeLoginStatus").mockResolvedValue({
+      manager: "systemd",
+      supported: true,
+      enabled: false,
+      owned: false,
+      running: false,
+      pid: null,
+      binaryPath: null,
+      configPath: null,
+      reason: null,
+    });
     vi.spyOn(palot, "inspectOpenCodeInstallations").mockResolvedValue({
       preference: "installed",
       selectedID: null,
@@ -107,6 +118,9 @@ describe("LocalServiceSettings", () => {
       (screen.getByRole("combobox", { name: "Preferred channel" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(screen.getByText(/bounded timeout/)).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Enable login startup" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     await act(async () => pending.resolve(status));
     expect(onRestart).not.toHaveBeenCalled();
     expect(connect).not.toHaveBeenCalled();
@@ -156,6 +170,56 @@ describe("LocalServiceSettings", () => {
     expect(onRestart).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Restart" }));
     expect(onRestart).toHaveBeenCalledOnce();
+  });
+
+  it("blocks runtime updates and restart while login startup is being confirmed or saved", async () => {
+    const user = userEvent.setup();
+    vi.mocked(palot.inspectOpenCodeInstallations).mockResolvedValue({
+      preference: "installed",
+      selectedID: "cli",
+      installations: [{ id: "cli", path: "/opt/opencode2", version: "2.0.2", compatible: true }],
+    });
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof palot.updateOpenCodeLogin>>>();
+    vi.spyOn(palot, "updateOpenCodeLogin").mockReturnValue(pending.promise);
+    const onRestart = vi.fn();
+    render(
+      <LocalServiceSettings
+        info={
+          { local: { available: true, restartAvailable: true } } as Parameters<
+            typeof LocalServiceSettings
+          >[0]["info"]
+        }
+        busy={false}
+        onRefresh={() => {}}
+        onRestart={onRestart}
+      />,
+    );
+    await screen.findByText("Disabled");
+    const restart = screen.getByRole("button", { name: "Restart service" }) as HTMLButtonElement;
+    const channel = (await screen.findByRole("combobox", {
+      name: "Runtime source",
+    })) as HTMLButtonElement;
+    await user.click(screen.getByRole("button", { name: "Enable login startup" }));
+    expect(restart.disabled).toBe(true);
+    expect(channel.disabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Confirm enable" }));
+    expect(restart.disabled).toBe(true);
+    await act(async () =>
+      pending.resolve({
+        manager: "systemd",
+        supported: true,
+        enabled: true,
+        owned: true,
+        running: false,
+        pid: null,
+        binaryPath: "/opt/opencode2",
+        configPath: null,
+        reason: null,
+      }),
+    );
+    expect(restart.disabled).toBe(false);
+    expect(channel.disabled).toBe(false);
+    expect(onRestart).not.toHaveBeenCalled();
   });
 
   it("confirms restart and does not offer startup without permission", async () => {

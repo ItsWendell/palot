@@ -302,7 +302,16 @@ export function cacheSessions(
   connectionID: string,
   sessions: readonly PalotSession[],
 ): void {
-  for (const session of sessions) cacheSession(queryClient, connectionID, session);
+  const reconciler = openCodeReconciler(queryClient);
+  // Hydration snapshots can finish after live metadata events. Unlike an
+  // acknowledged single-session mutation, a snapshot must not overwrite them.
+  seedSessionDetails(
+    queryClient,
+    connectionID,
+    sessions.map((session) =>
+      sessionInfoFromPalot(session, reconciler.session(connectionID, session.id)),
+    ),
+  );
 }
 
 function insertSessionInfo(

@@ -6,6 +6,7 @@ import { Provider, createStore } from "jotai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeKeys } from "../lib/opencode-query";
+import { runtimeAtom } from "../atoms/workspace";
 import { setOpenCodeClientForTest, resetOpenCodeClientForTest } from "../services/opencode-client";
 import { mapProject } from "../services/opencode-mappers";
 import { ProjectSettings, projectDetailsKey } from "./project-settings";
@@ -29,6 +30,20 @@ function setup(update = vi.fn().mockResolvedValue({ ...first, name: "Edited" }))
   } as unknown as OpenCodeClient);
   const client = createRendererQueryClient();
   const store = createStore();
+  store.set(runtimeAtom, {
+    connectionID: "connection-1",
+    profileID: "local-default",
+    phase: "connected",
+    connected: true,
+    contractVersion: "2.0.3",
+    version: "2.0.3",
+    binaryPath: null,
+    pid: null,
+    managed: false,
+    lastConnectedAt: 1,
+    error: null,
+    versionMismatch: null,
+  });
   const view = (project: Project) => (
     <QueryClientProvider client={client}>
       <Provider store={store}>
@@ -51,8 +66,8 @@ describe("Project settings", () => {
         }),
     );
     const { client, switchProject } = setup(update);
-    const oldKey = openCodeKeys.vcsStatus("disconnected", { directory: "/first" });
-    const newKey = openCodeKeys.settingsLocation("disconnected", { directory: "/new" });
+    const oldKey = openCodeKeys.vcsStatus("connection-1", { directory: "/first" });
+    const newKey = openCodeKeys.settingsLocation("connection-1", { directory: "/new" });
     const unrelated = openCodeKeys.vcsStatus("other-server", { directory: "/first" });
     client.setQueryData(oldKey, {});
     client.setQueryData(newKey, {});
@@ -109,7 +124,7 @@ describe("Project settings", () => {
     const input = await screen.findByLabelText("Project name");
     await user.clear(input);
     await user.type(input, "Unsaved");
-    await client.invalidateQueries({ queryKey: projectDetailsKey("disconnected", "first") });
+    await client.invalidateQueries({ queryKey: projectDetailsKey("connection-1", "first") });
     expect((input as HTMLInputElement).value).toBe("Unsaved");
     switchProject();
     await waitFor(() =>

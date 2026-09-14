@@ -74,7 +74,13 @@ export function useRemoveProjectCopy(project: PalotProject | null | undefined) {
     mutationFn: ({ directory, force = false }: { directory: string; force?: boolean }) => {
       if (!project) throw new Error("Project is unavailable");
       if (!canFetchOpenCode(runtime)) throw new Error("OpenCode is disconnected");
-      return palot.removeProjectCopy(project.id, project.canonical, directory, force);
+      return palot.removeProjectCopy(
+        project.id,
+        project.canonical,
+        directory,
+        force,
+        runtime?.connectionID,
+      );
     },
     onSuccess: async () => {
       if (!project) return;

@@ -20,6 +20,7 @@ import {
 } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
 import { selectionMemoriesAtom } from "../lib/selection-memory";
+import { modelProjectPreferenceKey } from "../lib/model-preferences";
 import type { OpenCodeClient } from "@opencode/client";
 import { createRendererQueryClient } from "../lib/query-client";
 import type { PendingRequestView } from "../lib/view-models";
@@ -455,8 +456,14 @@ describe("Composer discovery", () => {
       versionMismatch: null,
     });
     store.set(defaultModelsAtom, {
-      "project-1": { id: "fast", providerID: "openai" },
-      "project-2": { id: "fast", providerID: "openai" },
+      [modelProjectPreferenceKey("test-profile", "project-1")]: {
+        id: "fast",
+        providerID: "openai",
+      },
+      [modelProjectPreferenceKey("test-profile", "project-2")]: {
+        id: "fast",
+        providerID: "openai",
+      },
     });
     Object.defineProperty(window, "palot", {
       configurable: true,
@@ -525,7 +532,11 @@ describe("Composer discovery", () => {
     };
     const store = createStore();
     store.set(defaultModelsAtom, {
-      [session.projectID]: { id: model.id, providerID: model.providerID, variant: "low" },
+      [modelProjectPreferenceKey("test-profile", session.projectID)]: {
+        id: model.id,
+        providerID: model.providerID,
+        variant: "low",
+      },
     });
     Object.defineProperty(window, "palot", {
       configurable: true,
@@ -565,7 +576,9 @@ describe("Composer discovery", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Model: Reasoner" }));
     await userEvent.click(screen.getByRole("button", { name: "High" }));
 
-    expect(store.get(defaultModelsAtom)[session.projectID]).toEqual({
+    expect(
+      store.get(defaultModelsAtom)[modelProjectPreferenceKey("test-profile", session.projectID)],
+    ).toEqual({
       id: "reasoner",
       providerID: "openai",
       variant: "low",
@@ -592,7 +605,7 @@ describe("Composer discovery", () => {
     }));
     const store = createStore();
     store.set(modelPickerPreferencesAtom, {
-      [session.projectID]: {
+      [modelProjectPreferenceKey("test-profile", session.projectID)]: {
         hidden: ["openai/fast"],
         order: ["openai/deep", "openai/balanced", "openai/fast"],
       },
@@ -619,6 +632,70 @@ describe("Composer discovery", () => {
     expect(options).toEqual([expect.stringContaining("Deep"), expect.stringContaining("Balanced")]);
     expect(screen.queryByRole("option", { name: /Fast/ })).toBeNull();
   });
+
+  it.each([
+    { profileID: "server-a", model: "deep", hidden: "Fast" },
+    { profileID: "server-b", model: "fast", hidden: "Deep" },
+  ])(
+    "uses only $profileID model defaults and visibility for a shared project ID",
+    async ({ profileID, model, hidden }) => {
+      const models: PalotModel[] = ["fast", "deep"].map((id) => ({
+        id,
+        modelID: id,
+        providerID: "openai",
+        name: id === "fast" ? "Fast" : "Deep",
+        family: null,
+        variants: [],
+        inputLimit: null,
+        contextLimit: 100_000,
+        outputLimit: 10_000,
+        releasedAt: 0,
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        status: "active",
+      }));
+      const store = createStore();
+      store.set(defaultModelsAtom, {
+        [modelProjectPreferenceKey("server-a", session.projectID)]: {
+          id: "deep",
+          providerID: "openai",
+        },
+        [modelProjectPreferenceKey("server-b", session.projectID)]: {
+          id: "fast",
+          providerID: "openai",
+        },
+      });
+      store.set(modelPickerPreferencesAtom, {
+        [modelProjectPreferenceKey("server-a", session.projectID)]: {
+          hidden: ["openai/fast"],
+          order: ["openai/deep"],
+        },
+        [modelProjectPreferenceKey("server-b", session.projectID)]: {
+          hidden: ["openai/deep"],
+          order: ["openai/fast"],
+        },
+      });
+      vi.spyOn(palot, "listModels").mockResolvedValue({
+        models,
+        defaultModel: models[0]!,
+        providers: [],
+        errors: [],
+      });
+      renderComposer(
+        <Composer
+          session={{ ...session, id: "new:project-1" }}
+          messages={[]}
+          isWorking={false}
+          onCreateSession={vi.fn()}
+        />,
+        store,
+        profileID,
+      );
+      const name = model === "fast" ? "Fast" : "Deep";
+      await userEvent.click(await screen.findByRole("button", { name: `Model: ${name}` }));
+      expect(screen.getByRole("option", { name: new RegExp(name) })).toBeTruthy();
+      expect(screen.queryByRole("option", { name: new RegExp(hidden) })).toBeNull();
+    },
+  );
 
   it.each([
     { providerID: "openai", hiddenProviderID: "openai", expectedID: "deep", expectedName: "Deep" },
@@ -654,7 +731,7 @@ describe("Composer discovery", () => {
       }));
       const store = createStore();
       store.set(modelPickerPreferencesAtom, {
-        [session.projectID]: {
+        [modelProjectPreferenceKey("test-profile", session.projectID)]: {
           hidden: [`${hiddenProviderID}/fast`],
           order: [`${hiddenProviderID}/deep`, `${hiddenProviderID}/fast`],
         },

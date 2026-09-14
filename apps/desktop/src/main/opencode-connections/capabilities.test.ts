@@ -18,8 +18,8 @@ describe("classifyOpenCodeProfile", () => {
       capabilities: {
         localPathActions: false,
         localFileAttachments: false,
-        worktreeCreate: false,
-        pty: "legacy",
+        worktreeCreate: true,
+        pty: "persistent",
         scheduledAutomations: false,
         manualAutomations: true,
         integrationCallback: "code",
@@ -61,8 +61,8 @@ describe("classifyOpenCodeProfile", () => {
       capabilities: {
         localPathActions: false,
         localFileAttachments: false,
-        worktreeCreate: false,
-        pty: "legacy",
+        worktreeCreate: true,
+        pty: "persistent",
         scheduledAutomations: false,
         manualAutomations: true,
       },

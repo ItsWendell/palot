@@ -21,6 +21,28 @@ function event(
 describe("OpenCodeEventBatcher", () => {
   afterEach(() => vi.useRealTimers());
 
+  it("keeps each server's delivery contiguous when monitored servers interleave", () => {
+    const batches: PalotEventBatch[] = [];
+    const batcher = new OpenCodeEventBatcher((batch) => batches.push(batch));
+    for (let index = 0; index < 3; index++) {
+      for (const connectionID of ["local", "remote"]) {
+        batcher.push(event("session.status", {}, `${connectionID}-${index}`), {
+          ...context,
+          connectionID,
+        });
+      }
+      batcher.flush();
+    }
+    for (const connectionID of ["local", "remote"]) {
+      const delivered = batches.filter((batch) => batch.connectionID === connectionID);
+      expect(delivered.map((batch) => batch.batchSequence)).toEqual([1, 2, 3]);
+      expect(
+        delivered.flatMap((batch) => batch.events.map((event) => event.receiveSequence)),
+      ).toEqual([1, 2, 3]);
+    }
+    batcher.dispose();
+  });
+
   it("preserves every event in source order, including A B A", () => {
     vi.useFakeTimers();
     const batches: PalotEventBatch[] = [];

@@ -112,7 +112,10 @@ function client(profileID: string, connectionID = `${profileID}-1`) {
     session: {
       list: vi.fn().mockResolvedValue({ data: [session("same", profileID)], cursor: {} }),
       active: vi.fn().mockResolvedValue({}),
-      get: vi.fn(async ({ sessionID }: { sessionID: string }) => session(sessionID, profileID)),
+      get: vi.fn(
+        async ({ sessionID }: { sessionID: string }, _options?: { signal?: AbortSignal }) =>
+          session(sessionID, profileID),
+      ),
       log: vi.fn(async function* () {
         yield { type: "log.synced", created: 1, cursor: 0 };
       }),
@@ -193,10 +196,173 @@ function emit(type: PalotEvent["type"], data: unknown, gap = false) {
 }
 
 describe("connection overview", () => {
+  it("honors failed attention cooldown while projecting permission events immediately", async () => {
+    vi.useFakeTimers();
+    client("a");
+    mocks.attention.mockResolvedValue({ complete: false, sessions: [], requests: [] });
+    await start(["a"]);
+    mocks.attention.mockClear();
+    for (let index = 0; index < 3; index++) {
+      emit("permission.asked", {
+        id: `request-${index}`,
+        sessionID: "same",
+        action: "read",
+        resources: [],
+      });
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    expect(controller.getSnapshot()[0]?.inbox.inbox[0]?.attentionCount).toBe(3);
+    expect(mocks.attention).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4_850);
+    expect(mocks.attention).toHaveBeenCalledOnce();
+    controller.setIncluded([]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mocks.attention).toHaveBeenCalledOnce();
+  });
+
+  it("bounds retained lookups and retries negative results only after their TTL", async () => {
+    vi.useFakeTimers();
+    const a = client("a");
+    const gate = deferred<void>();
+    let active = 0;
+    let peak = 0;
+    a.session.get.mockImplementation(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await gate.promise;
+      active--;
+      throw new Error("missing");
+    });
+    mocks.triage.mockResolvedValue({
+      ...triage("a"),
+      sessions: Array.from({ length: 9 }, (_, index) => ({
+        ...triage("a", true).sessions[0]!,
+        sessionID: `missing-${index}`,
+      })),
+    });
+    const starting = start(["a"]);
+    await vi.waitFor(() => expect(a.session.get).toHaveBeenCalledTimes(4));
+    gate.resolve();
+    await starting;
+    expect(peak).toBe(4);
+    expect(a.session.get).toHaveBeenCalledTimes(9);
+    await controller.refresh("a");
+    expect(a.session.get).toHaveBeenCalledTimes(9);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await controller.refresh("a");
+    expect(a.session.get).toHaveBeenCalledTimes(18);
+  });
+
+  it("cancels retained lookup workers and does not start queued lookups after disable", async () => {
+    const a = client("a");
+    const gate = deferred<void>();
+    const signals: AbortSignal[] = [];
+    a.session.get.mockImplementation(async (_input, options) => {
+      signals.push(options!.signal!);
+      await gate.promise;
+      throw new Error("cancelled");
+    });
+    mocks.triage.mockResolvedValue({
+      ...triage("a"),
+      sessions: Array.from({ length: 9 }, (_, index) => ({
+        ...triage("a", true).sessions[0]!,
+        sessionID: `missing-${index}`,
+      })),
+    });
+    const starting = start(["a"]);
+    await vi.waitFor(() => expect(signals).toHaveLength(4));
+    controller.setIncluded([]);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    gate.resolve();
+    await starting;
+    expect(a.session.get).toHaveBeenCalledTimes(4);
+  });
+
+  it("reconciles rename and deletion without rehydrating the connection", async () => {
+    const a = client("a");
+    await start(["a"]);
+    mocks.connect.mockClear();
+    mocks.attention.mockClear();
+    a.session.list.mockClear();
+    a.project.list.mockClear();
+    a.session.get.mockResolvedValue({
+      ...session("same", "Renamed"),
+      time: { created: 1, updated: 10 },
+    });
+    await controller.rename("a", "same", "Renamed");
+    expect(controller.getSnapshot()[0]?.sessions[0]?.title).toBe("Renamed");
+    await controller.archive("a", "same");
+    expect(controller.getSnapshot()[0]?.sessions).toEqual([]);
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.attention).not.toHaveBeenCalled();
+    expect(a.session.list).not.toHaveBeenCalled();
+    expect(a.project.list).not.toHaveBeenCalled();
+    expect(a.session.get).toHaveBeenCalledOnce();
+  });
+
+  it("projects a live rename without refreshing the connection", async () => {
+    vi.useFakeTimers();
+    client("a");
+    await start(["a"]);
+    mocks.connect.mockClear();
+    emit("session.renamed", { sessionID: "same", title: "Renamed task" });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(controller.getSnapshot()[0]?.sessions[0]?.title).toBe("Renamed task");
+    expect(mocks.connect).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a live rename with an older pending attention snapshot", async () => {
+    vi.useFakeTimers();
+    client("a");
+    const attention = deferred<PalotAttentionSnapshot>();
+    mocks.attention.mockReturnValue(attention.promise);
+    const starting = start(["a"]);
+    await vi.waitFor(() => expect(controller.getSnapshot()[0]?.phase).toBe("ready"));
+    sequence = 2;
+    emit("session.renamed", { sessionID: "same", title: "Renamed task" });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(controller.getSnapshot()[0]?.sessions[0]?.title).toBe("Renamed task");
+    attention.resolve({
+      complete: true,
+      sessions: [mapSession(session("same", "a"))],
+      requests: [],
+    });
+    await starting;
+    expect(controller.getSnapshot()[0]?.sessions[0]?.title).toBe("Renamed task");
+  });
+
+  it("disconnects an excluded focused server and does not reconnect it on registry refresh", async () => {
+    client("a");
+    client("b");
+    mocks.profiles.mockImplementation(async () => ({ profiles, activeProfileID: "a" }));
+    await start();
+    mocks.connect.mockClear();
+    controller.setIncluded(["b"]);
+    expect(mocks.disconnect).toHaveBeenCalledWith("a");
+    expect(controller.getSnapshot()[0]).toMatchObject({
+      phase: "idle",
+      runtime: { connected: false, phase: "stopped" },
+      sessions: [expect.objectContaining({ id: "same" })],
+    });
+    runtimes = [runtime("b")];
+    await controller.refreshRegistry();
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()[0]?.runtime?.connected).toBe(false);
+    runtimes = [runtime("a", "a-2"), runtime("b")];
+    client("a", "a-2");
+    controller.setIncluded(["a", "b"]);
+    await controller.connect("a");
+    expect(controller.getSnapshot()[0]).toMatchObject({
+      phase: "ready",
+      runtime: { connectionID: "a-2", connected: true },
+    });
+  });
+
   it("marks external attention incomplete until queued lineage snapshots finish", async () => {
     vi.useFakeTimers();
     client("a");
     await start(["a"]);
+    await vi.advanceTimersByTimeAsync(1_000);
     const snapshot = deferred<PalotAttentionSnapshot>();
     const response = (ids: string[]): PalotAttentionSnapshot => ({
       complete: true,
@@ -232,7 +398,7 @@ describe("connection overview", () => {
     snapshot.resolve(response(["external"]));
     await vi.advanceTimersByTimeAsync(0);
     expect(controller.getSnapshot()[0]?.attentionState).toBe("syncing");
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(controller.getSnapshot()[0]?.attentionState).toBe("ready");
     expect(
       controller

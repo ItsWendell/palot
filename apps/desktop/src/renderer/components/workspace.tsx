@@ -474,7 +474,9 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
       }
     });
     if (opened) return;
-    await palot.removePty(selectedSession.location, pty.id, pty.transport).catch(() => undefined);
+    await palot
+      .removePty(selectedSession.location, pty.id, pty.transport, runtime?.connectionID)
+      .catch(() => undefined);
     throw new Error("Close a workbench tab before opening another terminal");
   }, [
     bottomPanelRef,
@@ -581,13 +583,18 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
     const openTarget = (target: AutomationNotificationTarget) => {
       if (target.sessionID && target.requestID && target.requestType) {
         void openSession(target.sessionID, {
+          profileID: target.profileID,
           focus: "request",
           requestID: target.requestID,
           requestType: target.requestType,
         });
         return;
       }
-      void openScheduled({ automationID: target.automationID, runID: target.runID });
+      void openScheduled({
+        automationID: target.automationID,
+        runID: target.runID,
+        profileID: target.profileID,
+      });
     };
     void palot.takeAutomationNotificationTarget().then((target) => {
       if (target) openTarget(target);

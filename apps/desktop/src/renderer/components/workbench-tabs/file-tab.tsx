@@ -14,10 +14,16 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 
-export function FileTab({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
+export function FileTab({
+  tab,
+  active = true,
+}: {
+  tab: Extract<WorkbenchTab, { kind: "file" }>;
+  active?: boolean;
+}) {
   const runtime = useAtomValue(runtimeAtom);
   const appearance = useAtomValue(resolvedAppearanceAtom);
-  const query = useWorkspaceFile(tab.resource.location, tab.resource.path);
+  const query = useWorkspaceFile(tab.resource.location, tab.resource.path, active);
   const decoded = useMemo(() => decodeFile(query.data), [query.data]);
   const selectedLines = useMemo<SelectedLineRange | null>(
     () => (tab.resource.line ? { start: tab.resource.line, end: tab.resource.line } : null),

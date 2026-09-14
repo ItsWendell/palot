@@ -8,5 +8,6 @@ export * from "./release-build-info";
 export * from "./opencode-contract";
 export * from "./opencode-release-contract";
 export * from "./opencode-installation-contract";
+export * from "./opencode-login-contract";
 export * from "./session-triage-contract";
 export * from "./window-chrome";

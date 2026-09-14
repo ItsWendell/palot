@@ -39,8 +39,11 @@ export function isAbsoluteProjectPath(path: string): boolean {
 export async function loadProjectDetails(
   projectID: string,
   signal?: AbortSignal,
+  connectionID?: string,
 ): Promise<ProjectDetails> {
-  const projects = await openCodeClient().project.list({ signal: openCodeRequestSignal(signal) });
+  const projects = await openCodeClient(connectionID).project.list({
+    signal: openCodeRequestSignal(signal),
+  });
   const project = projects.find((item) => item.id === projectID);
   if (!project) throw new Error("This project is no longer available on the connected server.");
   return project;
@@ -49,8 +52,9 @@ export async function loadProjectDetails(
 export async function updateProjectDetails(
   projectID: string,
   edits: ProjectEdits,
+  connectionID?: string,
 ): Promise<ProjectDetails> {
-  return openCodeClient().project.update(projectUpdatePatch(projectID, edits), {
+  return openCodeClient(connectionID).project.update(projectUpdatePatch(projectID, edits), {
     signal: openCodeRequestSignal(),
   });
 }

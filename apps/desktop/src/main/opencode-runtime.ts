@@ -45,6 +45,10 @@ export function mapEvent(event: OpenCodeEvent): OpenCodeTransportEvent {
 
 export class OpenCodeRuntime {
   private readonly eventObservers = new Set<(event: OpenCodeEvent) => void>();
+  private readonly allEventObservers = new Set<
+    (input: { event: OpenCodeEvent; runtime: OpenCodeRuntimeStatus }) => void
+  >();
+  private readonly statusObservers = new Set<(runtime: OpenCodeRuntimeStatus) => void>();
   private readonly scopedEventObservers = new Map<string, Set<(event: OpenCodeEvent) => void>>();
   private readonly scopedReconnectObservers = new Map<
     string,
@@ -103,6 +107,16 @@ export class OpenCodeRuntime {
       onEvent: (event, streamEpoch) => {
         if (this.monitored.get(profile.id) !== lifecycle) return;
         if (!replayGuard.admit(event)) return;
+        notifyEventObservers(
+          this.allEventObservers,
+          { event, runtime: lifecycle.status() },
+          (error) => {
+            openCodeLog.warn("scoped event observer failed", {
+              connectionID: lifecycle.connectionID,
+              error: String(error),
+            });
+          },
+        );
         if (this.lifecycle === lifecycle)
           notifyEventObservers(this.eventObservers, event, (error) => {
             openCodeLog.warn("event observer failed", {
@@ -164,6 +178,7 @@ export class OpenCodeRuntime {
       assertPlainHttpAllowed(profile.urls, profile.allowPlainHttp, { type: "none" });
     }
     const lifecycle = this.retainLifecycle(profile);
+    if (this.lifecycle.profileID === profileID) this.lifecycle = lifecycle;
     const status = await lifecycle.connect({}, sshConnector);
     if (this.monitored.get(profileID) !== lifecycle)
       throw new Error("OpenCode connection has been disposed");
@@ -190,8 +205,6 @@ export class OpenCodeRuntime {
   async disconnectProfile(profileID: string): Promise<void> {
     this.assertNotSwitching();
     this.profiles.get(profileID);
-    if (profileID === this.profileID())
-      throw new Error("Cannot disconnect the focused OpenCode profile");
     await this.invalidateProfile(profileID, true);
   }
 
@@ -574,6 +587,12 @@ export class OpenCodeRuntime {
       }
     };
     return {
+      onDispose: (observer: () => void) => {
+        validate();
+        return this.onConnectionDisposed((disposedID) => {
+          if (disposedID === connectionID) observer();
+        });
+      },
       runtimeStatus: () => {
         validate();
         return lifecycle.status();
@@ -624,6 +643,21 @@ export class OpenCodeRuntime {
     return () => this.eventObservers.delete(observer);
   }
 
+  /** All retained connections, with the immutable event owner captured before dispatch. */
+  onScopedEvent(
+    observer: (event: OpenCodeEvent, runtime: OpenCodeRuntimeStatus) => void,
+  ): () => void {
+    const listener = (input: { event: OpenCodeEvent; runtime: OpenCodeRuntimeStatus }) =>
+      observer(input.event, input.runtime);
+    this.allEventObservers.add(listener);
+    return () => this.allEventObservers.delete(listener);
+  }
+
+  onRuntimeStatus(observer: (runtime: OpenCodeRuntimeStatus) => void): () => void {
+    this.statusObservers.add(observer);
+    return () => this.statusObservers.delete(observer);
+  }
+
   onReconnect(observer: (client: OpenCodeClient) => void | Promise<void>): () => void {
     this.reconnectObservers.add(observer);
     return () => this.reconnectObservers.delete(observer);
@@ -638,6 +672,8 @@ export class OpenCodeRuntime {
       openCodeLog.warn("OpenCode connection cleanup could not be completed");
     }
     this.eventObservers.clear();
+    this.allEventObservers.clear();
+    this.statusObservers.clear();
     this.reconnectObservers.clear();
     this.beforeSwitchObservers.clear();
     for (const lifecycle of this.monitored.values()) {
@@ -649,6 +685,12 @@ export class OpenCodeRuntime {
   }
 
   private publishStatus(lifecycle: OpenCodeRuntimeLifecycle, status: OpenCodeRuntimeStatus): void {
+    notifyEventObservers(this.statusObservers, status, (error) => {
+      openCodeLog.warn("runtime status observer failed", {
+        connectionID: lifecycle.connectionID,
+        error: String(error),
+      });
+    });
     this.batcher.push(
       {
         id: `palot-status-${Date.now()}-${status.phase}`,

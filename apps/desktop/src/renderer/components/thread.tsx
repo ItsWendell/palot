@@ -47,6 +47,8 @@ import {
 } from "../atoms/workspace";
 import { contextMessageTargetAtom, useWorkbenchCommands } from "../atoms/workbench";
 import { attentionTargetAtom } from "../atoms/attention";
+import { resolvedAppearanceAtom } from "../atoms/appearance";
+import { retainedTranscriptLayouts } from "../lib/transcript-layout-cache";
 import { useSessionTranscript } from "../hooks/use-session-transcript";
 import { useSessionTranscriptProjection } from "../hooks/use-session-transcript-projection";
 import { useSessionRequests, useSessionFamilyRequestViews } from "../hooks/use-session-requests";
@@ -120,7 +122,6 @@ import {
 } from "./markdown-content";
 import { NewTask } from "./new-task";
 import { OpenInSelector } from "./open-in-selector";
-import { SessionRoutePending } from "./session-route-pending";
 import { SessionExportMenu, type SessionHistoryActions } from "./session-context-menu";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { AttachmentGroup } from "./ui/attachment";
@@ -274,6 +275,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const messages = transcript.messages;
   const requests = requestsQuery.data ?? null;
   const loading = transcript.isPending || transcript.isHydrating;
+  const [animateTranscriptEntrance] = useState(transcript.isPending);
   const cursor = transcript.hasNextPage;
   const activity = useSessionActivityForSession(session.id).data;
   const executionStates = activity?.execution ?? EMPTY_EXECUTION_STATES;
@@ -303,15 +305,23 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const scrollIntentRef = useRef<TranscriptScrollIntent>(null);
   const previousScrollTopRef = useRef<number | null>(null);
   const touchYRef = useRef<number | null>(null);
-  const initialColdTranscriptRef = useRef(transcript.isPending && messages.length === 0);
-  const initialTranscriptSettledRef = useRef(initialColdTranscriptRef.current);
+  const coldTranscriptPendingRef = useRef(transcript.isPending && messages.length === 0);
+  const initialTranscriptSettledRef = useRef(coldTranscriptPendingRef.current);
   const [composerDockHeight, setComposerDockHeight] = useState<number | null>(null);
+  const [layoutWidth, setLayoutWidth] = useState<number | null>(null);
+  const [layoutHeight, setLayoutHeight] = useState<number | null>(null);
+  const appearance = useAtomValue(resolvedAppearanceAtom);
+  const appearanceLayoutKey = useMemo(() => JSON.stringify(appearance), [appearance]);
   const [initialTranscriptVisible, setInitialTranscriptVisible] = useState(
-    initialColdTranscriptRef.current,
+    coldTranscriptPendingRef.current,
   );
   const [submissionScrollRequest, setSubmissionScrollRequest] = useState(0);
   const [bottomLocked, setBottomLocked] = useState(true);
   const [historyMode, setHistoryMode] = useState<"timeline" | "fork" | null>(null);
+  useLayoutEffect(() => {
+    // Later page hydration must not unmount the viewport, composer, or scroll observers.
+    if (!loading) coldTranscriptPendingRef.current = false;
+  }, [loading]);
   const forkFromPrompt = useSessionFork();
   const handleMessageAdmitted = useCallback(
     () => setSubmissionScrollRequest((current) => current + 1),
@@ -385,6 +395,39 @@ const SessionThreadContents = memo(function SessionThreadContents({
     policy: projectionPolicy,
   });
   const turnRows = projection.rows;
+  const layoutOwner = JSON.stringify([transcript.connectionID, session.id]);
+  const windowWidth = window.innerWidth;
+  const pixelRatio = window.devicePixelRatio;
+  const fontStatus = document.fonts?.status;
+  const layoutKey = useMemo(
+    () =>
+      JSON.stringify([
+        layoutWidth,
+        windowWidth,
+        pixelRatio,
+        appearanceLayoutKey,
+        projectionPreference,
+        showTimelineCacheBusts,
+        fontStatus,
+      ]),
+    [
+      layoutWidth,
+      windowWidth,
+      pixelRatio,
+      appearanceLayoutKey,
+      projectionPreference,
+      showTimelineCacheBusts,
+      fontStatus,
+    ],
+  );
+  const layoutRows = useMemo(() => turnRows.map((row) => ({ id: row.id, token: row })), [turnRows]);
+  const restoredLayout = useMemo(
+    () =>
+      layoutWidth === null
+        ? null
+        : retainedTranscriptLayouts.get(layoutOwner, layoutKey, layoutRows),
+    [layoutOwner, layoutKey, layoutRows, layoutWidth],
+  );
   const rows = projection.presentationRows;
   const latestUserTurnIndex = turnRows.findLastIndex((row) => row.turn.user !== null);
   const activeTurnIndex = turnRows.at(-1)?.turn.status === "working" ? turnRows.length - 1 : -1;
@@ -476,6 +519,9 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [composerDockHeight],
   );
   const virtualizer = useVirtualizer({
+    // The dock's first layout gives us the actual pane width before seeding
+    // measurements. Never reuse wrapping estimates based on window width alone.
+    enabled: composerDockHeight !== null && layoutWidth !== null,
     count: turnRows.length,
     getScrollElement: () => scrollRef.current,
     getItemKey: getVirtualTurnKey,
@@ -485,7 +531,16 @@ const SessionThreadContents = memo(function SessionThreadContents({
     paddingStart: cursor ? 64 : 32,
     paddingEnd: (composerDockHeight ?? 0) + 16,
     scrollPaddingEnd: (composerDockHeight ?? 0) + 16,
-    initialOffset: Number.MAX_SAFE_INTEGER,
+    // Bottom-follow positions the real viewport. An out-of-range initial offset
+    // never gets a correcting scroll event while a short transcript still fits.
+    initialMeasurementsCache: restoredLayout?.measurements,
+    initialRect: restoredLayout?.viewport,
+    initialOffset:
+      restoredLayout?.complete &&
+      restoredLayout.composerHeight === composerDockHeight &&
+      restoredLayout.viewport.height === layoutHeight
+        ? Math.max(0, restoredLayout.totalSize - restoredLayout.viewport.height)
+        : 0,
     useFlushSync: false,
     // TanStack owns the spacer and vertical positions. Its onChange runs AFTER
     // those DOM writes, including ResizeObserver measurements, so bottom-follow
@@ -504,6 +559,29 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const virtualItems = virtualizer.getVirtualItems();
   const virtualTranscriptHeight = virtualizer.getTotalSize();
   const hasVirtualTurns = turnRows.length > 0;
+  const saveLayoutRef = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    saveLayoutRef.current = () => {
+      const viewport = scrollRef.current;
+      if (
+        !viewport ||
+        !initialTranscriptSettledRef.current ||
+        composerDockHeight === null ||
+        viewport.clientWidth !== layoutWidth ||
+        document.fonts?.status === "loading"
+      )
+        return;
+      retainedTranscriptLayouts.set(layoutOwner, {
+        layoutKey,
+        rows: layoutRows,
+        measurements: virtualizer.takeSnapshot(),
+        viewport: { width: viewport.clientWidth, height: viewport.clientHeight },
+        totalSize: virtualizer.getTotalSize(),
+        composerHeight: composerDockHeight,
+      });
+    };
+  });
+  useLayoutEffect(() => () => saveLayoutRef.current?.(), [layoutOwner, virtualizer]);
   useEffect(() => {
     return () => {
       if (bottomFollowFrameRef.current !== null) {
@@ -607,6 +685,13 @@ const SessionThreadContents = memo(function SessionThreadContents({
     const setMeasuredHeight = (height: number) => {
       const next = Math.ceil(height);
       setComposerDockHeight((current) => (current === next ? current : next));
+      const width = element.parentElement?.clientWidth ?? null;
+      setLayoutWidth((current) => (current === width ? current : width));
+      const parent = element.parentElement;
+      const viewportHeight = parent
+        ? parent.clientHeight - (parent.querySelector("header")?.clientHeight ?? 0)
+        : null;
+      setLayoutHeight((current) => (current === viewportHeight ? current : viewportHeight));
     };
     // Reserve the overlay before paint so bottom-anchored content never starts behind it.
     setMeasuredHeight(element.getBoundingClientRect().height);
@@ -822,7 +907,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [session.id, session.location, workbench, runtime?.connectionID],
   );
 
-  if (initialColdTranscriptRef.current && loading) return <SessionRoutePending />;
+  const coldTranscriptLoading = coldTranscriptPendingRef.current && loading;
 
   return createElement(
     MarkdownWorkspaceProvider,
@@ -860,16 +945,22 @@ const SessionThreadContents = memo(function SessionThreadContents({
         />
       ) : null}
 
-      {composerDockHeight === null ? (
-        <div className="min-h-0 flex-1" />
+      {composerDockHeight === null || coldTranscriptLoading ? (
+        <div
+          className="min-h-0 flex-1"
+          aria-label={coldTranscriptLoading ? "Loading task transcript" : undefined}
+          aria-busy={coldTranscriptLoading || undefined}
+        />
       ) : (
         <div
           data-palot-transcript-surface
           data-palot-transcript-state={initialTranscriptVisible ? "visible" : "settling"}
+          data-palot-transcript-restored-measurements={restoredLayout?.measurements.length ?? 0}
           aria-hidden={initialTranscriptVisible ? undefined : true}
           className={cn(
             "relative min-h-0 flex-1",
             initialTranscriptVisible &&
+              animateTranscriptEntrance &&
               "transition-opacity duration-100 ease-out motion-reduce:transition-none",
           )}
           style={{
@@ -1141,9 +1232,12 @@ const SessionThreadContents = memo(function SessionThreadContents({
           </ScrollAreaRoot>
         </div>
       )}
+      {/* Measure the dock during loading without permitting submissions against incomplete history. */}
       <div
         ref={composerDockRef}
         data-palot-composer-dock
+        inert={coldTranscriptLoading}
+        aria-busy={coldTranscriptLoading || undefined}
         className="pointer-events-none absolute inset-x-0 bottom-0 z-40"
       >
         <div className="pointer-events-auto">

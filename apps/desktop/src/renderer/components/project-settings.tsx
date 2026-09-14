@@ -1,14 +1,14 @@
 import { useState } from "react";
-import { useAtomValue } from "jotai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderGit2 } from "lucide-react";
 import type { PalotProject } from "../../shared";
-import { runtimeAtom } from "../atoms/workspace";
+import { useSettingsOwner } from "../hooks/use-settings-owner";
+import { canFetchOpenCode } from "../lib/opencode-runtime-query";
 import { openCodeKeys } from "../lib/opencode-query";
-import { mapProject } from "../services/opencode-mappers";
 import {
   loadProjectDetails,
   updateProjectDetails,
+  type ProjectDetails,
   type ProjectEdits,
 } from "../services/opencode-projects";
 import { SettingsGroup, SettingsSection } from "./settings-layout";
@@ -21,13 +21,14 @@ export const projectDetailsKey = (connectionID: string, projectID: string) =>
   [...openCodeKeys.projects(connectionID), "details", projectID] as const;
 
 export function ProjectSettings({ project }: { project: PalotProject }) {
-  const runtime = useAtomValue(runtimeAtom);
+  const runtime = useSettingsOwner();
   const connectionID = runtime?.connectionID ?? "disconnected";
   return (
     <ProjectSettingsScope
       key={`${connectionID}:${project.id}`}
       projectID={project.id}
       connectionID={connectionID}
+      available={canFetchOpenCode(runtime)}
     />
   );
 }
@@ -35,15 +36,18 @@ export function ProjectSettings({ project }: { project: PalotProject }) {
 function ProjectSettingsScope({
   projectID,
   connectionID,
+  available,
 }: {
   projectID: string;
   connectionID: string;
+  available: boolean;
 }) {
   const client = useQueryClient();
   const key = projectDetailsKey(connectionID, projectID);
   const query = useQuery({
     queryKey: key,
-    queryFn: ({ signal }) => loadProjectDetails(projectID, signal),
+    queryFn: ({ signal }) => loadProjectDetails(projectID, signal, connectionID),
+    enabled: available,
   });
   const [edits, setEdits] = useState<ProjectEdits>({});
   const [pending, setPending] = useState(false);
@@ -52,15 +56,15 @@ function ProjectSettingsScope({
   const project = query.data;
 
   async function save() {
-    if (!project || pending) return;
+    if (!project || pending || !available) return;
     setPending(true);
     setError(null);
     setSaved(false);
     try {
-      const updated = await updateProjectDetails(projectID, edits);
+      const updated = await updateProjectDetails(projectID, edits, connectionID);
       client.setQueryData(key, updated);
-      client.setQueryData<PalotProject[]>(openCodeKeys.projects(connectionID), (items) =>
-        items?.map((item) => (item.id === updated.id ? mapProject(updated) : item)),
+      client.setQueryData<ProjectDetails[]>(openCodeKeys.projects(connectionID), (items) =>
+        items?.map((item) => (item.id === updated.id ? updated : item)),
       );
       setEdits({});
       setSaved(true);

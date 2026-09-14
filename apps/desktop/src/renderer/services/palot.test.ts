@@ -674,8 +674,11 @@ describe("palot over the official OpenCode client", () => {
     expect(remove).toHaveBeenCalledWith({ sessionID: "session-1" });
   });
 
-  it("exports a sanitized task through the native save dialog", async () => {
-    const transfer = { info: { ...session, parentID: "parent-session" }, messages: [] };
+  it("exports the original task text through the native save dialog", async () => {
+    const messages = [
+      { id: "user-1", type: "user", time: { created: 1 }, text: "Keep the original question" },
+    ];
+    const transfer = { info: { ...session, parentID: "parent-session" }, messages };
     const exportSession = vi.fn().mockResolvedValue(transfer);
     const saveSessionExport = vi.fn().mockResolvedValue("/tmp/Task.palot-task.json");
     setOpenCodeClientForTest(client({ session: { export: exportSession } }));
@@ -688,16 +691,16 @@ describe("palot over the official OpenCode client", () => {
       "/tmp/Task.palot-task.json",
     );
     expect(exportSession).toHaveBeenCalledWith(
-      { sessionID: "session-1", sanitize: true },
+      { sessionID: "session-1", sanitize: false },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(saveSessionExport).toHaveBeenCalledWith({
       suggestedName: "Task.palot-task.json",
-      contents: `${JSON.stringify({ info: session, messages: [] }, null, 2)}\n`,
+      contents: `${JSON.stringify({ info: session, messages }, null, 2)}\n`,
     });
   });
 
-  it("copies a sanitized complete task as Markdown", async () => {
+  it("copies the original title and conversation text as Markdown", async () => {
     const transfer = {
       info: { ...session, title: "Task" },
       messages: [{ id: "user-1", type: "user", time: { created: 1 }, text: "Hello" }],
@@ -713,7 +716,7 @@ describe("palot over the official OpenCode client", () => {
     await palot.copySessionMarkdown("session-1");
 
     expect(exportSession).toHaveBeenCalledWith(
-      { sessionID: "session-1", sanitize: true },
+      { sessionID: "session-1", sanitize: false },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(writeClipboardText).toHaveBeenCalledWith(

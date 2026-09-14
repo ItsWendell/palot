@@ -1,10 +1,13 @@
-import { useAtom, useSetAtom } from "jotai";
-import { startTransition, useCallback, useEffect } from "react";
+import { useAtomValue, useStore } from "jotai";
+import { useCallback, useEffect } from "react";
 import type { AutomationCommand } from "../../shared";
 import {
   automationErrorAtom,
+  automationErrorsByProfileAtom,
   automationLoadingAtom,
+  automationLoadingByProfileAtom,
   automationSnapshotAtom,
+  automationSnapshotsAtom,
 } from "../atoms/automations";
 import { runtimeAtom } from "../atoms/workspace";
 import { palot } from "../services/palot";
@@ -15,54 +18,65 @@ type AutomationActionCommand = AutomationCommand extends infer Command
     : never
   : never;
 
-let refreshGeneration = 0;
+const generations = new WeakMap<ReturnType<typeof useStore>, Map<string, number>>();
 
 export function useAutomations(synchronize = true) {
-  const [snapshot, setSnapshot] = useAtom(automationSnapshotAtom);
-  const [loading, setLoading] = useAtom(automationLoadingAtom);
-  const [error, setError] = useAtom(automationErrorAtom);
-  const setRuntime = useSetAtom(runtimeAtom);
+  const store = useStore();
+  const snapshot = useAtomValue(automationSnapshotAtom);
+  const loading = useAtomValue(automationLoadingAtom);
+  const error = useAtomValue(automationErrorAtom);
+  const profileID = useAtomValue(runtimeAtom)?.profileID;
 
   const refresh = useCallback(async () => {
-    const generation = ++refreshGeneration;
-    setLoading(true);
-    setError(null);
+    if (!profileID) return null;
+    let versions = generations.get(store);
+    if (!versions) generations.set(store, (versions = new Map()));
+    const generation = (versions.get(profileID) ?? 0) + 1;
+    versions.set(profileID, generation);
+    store.set(automationLoadingByProfileAtom, (current) => ({ ...current, [profileID]: true }));
+    store.set(automationErrorsByProfileAtom, (current) => ({ ...current, [profileID]: null }));
     try {
-      const runtime = await palot.runtimeStatus();
-      if (generation !== refreshGeneration) return null;
-      setRuntime(runtime);
-      const value = await palot.loadAutomations(runtime.profileID);
-      if (generation !== refreshGeneration) return null;
-      startTransition(() => setSnapshot(value));
+      const value = await palot.loadAutomations(profileID);
+      if (versions.get(profileID) !== generation) return null;
+      store.set(automationSnapshotsAtom, (current) => ({ ...current, [profileID]: value }));
       return value;
     } catch (cause) {
-      if (generation === refreshGeneration) {
-        setError(cause instanceof Error ? cause.message : "Could not load scheduled tasks");
-      }
+      if (versions.get(profileID) === generation)
+        store.set(automationErrorsByProfileAtom, (current) => ({
+          ...current,
+          [profileID]: cause instanceof Error ? cause.message : "Could not load scheduled tasks",
+        }));
       return null;
     } finally {
-      if (generation === refreshGeneration) setLoading(false);
+      if (versions.get(profileID) === generation)
+        store.set(automationLoadingByProfileAtom, (current) => ({
+          ...current,
+          [profileID]: false,
+        }));
     }
-  }, [setError, setLoading, setRuntime, setSnapshot]);
+  }, [profileID, store]);
 
   const dispatch = useCallback(
     async (command: AutomationActionCommand) => {
-      const runtime = await palot.runtimeStatus();
-      const value = await palot.dispatchAutomation({
-        ...command,
-        profileID: runtime.profileID,
-      } as AutomationCommand);
-      startTransition(() => setSnapshot(value));
+      if (!profileID) throw new Error("Select a server before editing scheduled tasks.");
+      const value = await palot.dispatchAutomation({ ...command, profileID } as AutomationCommand);
+      // Invalidate older reads without changing another profile's selection or data.
+      const versions = generations.get(store);
+      versions?.set(profileID, (versions.get(profileID) ?? 0) + 1);
+      store.set(automationLoadingByProfileAtom, (current) => ({ ...current, [profileID]: false }));
+      store.set(automationSnapshotsAtom, (current) => ({ ...current, [profileID]: value }));
       return value;
     },
-    [setSnapshot],
+    [profileID, store],
   );
 
   useEffect(() => {
-    if (!synchronize) return;
+    if (!synchronize || !profileID) return;
     void refresh();
-    return palot.onAutomationChanged(() => void refresh());
-  }, [refresh, synchronize]);
+    return palot.onAutomationChanged((event) => {
+      if (event.profileID === profileID) void refresh();
+    });
+  }, [refresh, synchronize, profileID]);
 
   return { snapshot, loading, error, refresh, dispatch };
 }

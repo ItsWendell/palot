@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { Provider, createStore } from "jotai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotSession } from "../../shared";
+import { ONBOARDING_VERSION, onboardingCompletedVersionAtom } from "../atoms/onboarding";
 import { runtimeAtom } from "../atoms/workspace";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { createRendererQueryClient } from "../lib/query-client";
@@ -51,6 +52,26 @@ afterEach(() => {
 });
 
 describe("welcome project creation ownership", () => {
+  it("completes onboarding for the app and keeps replay available after switching profiles", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, runtime);
+    store.set(onboardingCompletedVersionAtom, 0);
+    const Welcome = Route.options.component!;
+    render(
+      <QueryClientProvider client={createRendererQueryClient()}>
+        <Provider store={store}>
+          <Welcome />
+        </Provider>
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByRole("button", { name: "Back to Palot" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Skip for now" })));
+    expect(store.get(onboardingCompletedVersionAtom)).toBe(ONBOARDING_VERSION);
+    act(() => store.set(runtimeAtom, { ...runtime, profileID: "remote", connectionID: "remote" }));
+    expect(screen.getByRole("button", { name: "Back to Palot" })).toBeTruthy();
+  });
+
   it("offers local release setup on the initial step without checking releases or changing the service", async () => {
     const store = createStore();
     store.set(runtimeAtom, { ...runtime, source: "shared-service" });

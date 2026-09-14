@@ -17,6 +17,7 @@ import {
   cacheSessions,
   rootSessionsQueryOptions,
   seedSessionDetails,
+  removeSession,
   type RootSessionCatalogData,
 } from "./session-catalog-query";
 import { sessionActivityQueryOptions } from "./session-activity-query";
@@ -30,6 +31,10 @@ import {
   mergeAttentionRequests,
   setSessionRequestSnapshot,
 } from "./session-request-query";
+
+const ATTENTION_MIN_INTERVAL_MS = 1_000;
+const RETAINED_LOOKUP_CONCURRENCY = 4;
+const MISSING_SESSION_RETRY_MS = 30_000;
 
 export type OverviewTriageCommand = SessionTriageCommand extends infer Command
   ? Command extends { profileID: string }
@@ -140,7 +145,11 @@ export class ConnectionOverviewController {
   private readonly attentionRequested = new Set<string>();
   private readonly attentionRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly attentionRetryDelays = new Map<string, number>();
+  private readonly attentionNextAttempt = new Map<string, number>();
+  private readonly missingSessions = new Map<string, Map<string, number>>();
+  private readonly retainedLookups = new Map<string, AbortController>();
   private included = new Set<string>();
+  private includedInitialized = false;
   private unsubscribe: (() => void) | null = null;
   private searchGeneration = 0;
   private generation = 0;
@@ -170,6 +179,10 @@ export class ConnectionOverviewController {
       for (const timer of this.attentionRetryTimers.values()) clearTimeout(timer);
       this.attentionRetryTimers.clear();
       this.attentionRetryDelays.clear();
+      this.attentionNextAttempt.clear();
+      for (const controller of this.retainedLookups.values()) controller.abort();
+      this.retainedLookups.clear();
+      this.missingSessions.clear();
       this.attentionPending.clear();
       this.attentionRequested.clear();
       this.registryPending = null;
@@ -177,7 +190,12 @@ export class ConnectionOverviewController {
   }
 
   setIncluded(ids: string[]) {
-    for (const id of this.included) {
+    this.includedInitialized = true;
+    const monitored = new Set([
+      ...this.included,
+      ...this.snapshot.filter((entry) => entry.runtime?.connected).map((entry) => entry.profile.id),
+    ]);
+    for (const id of monitored) {
       if (ids.includes(id)) continue;
       this.invalidate(id);
       const entry = this.entry(id);
@@ -210,11 +228,12 @@ export class ConnectionOverviewController {
       const previous = new Map(this.snapshot.map((entry) => [entry.profile.id, entry]));
       this.snapshot = profiles.profiles.map((profile) => {
         const old = previous.get(profile.id);
+        const listedRuntime = runtimes.find((item) => item.profileID === profile.id);
         const retained =
-          old?.runtime && !this.included.has(profile.id) && profile.id !== profiles.activeProfileID
+          !listedRuntime && old?.runtime && !this.included.has(profile.id)
             ? { ...old.runtime, connected: false, phase: "stopped" as const }
             : null;
-        const runtime = retained ?? runtimes.find((item) => item.profileID === profile.id) ?? null;
+        const runtime = listedRuntime ?? retained ?? null;
         if (runtime) registerOpenCodeRuntime(runtime);
         if (old && old.runtime?.connectionID === runtime?.connectionID)
           return { ...old, profile, runtime };
@@ -252,11 +271,9 @@ export class ConnectionOverviewController {
         }
       }
       this.emit();
+      if (this.includedInitialized) this.setIncluded([...this.included]);
       for (const entry of this.snapshot) {
-        if (
-          entry.phase === "idle" &&
-          (this.included.has(entry.profile.id) || entry.profile.id === profiles.activeProfileID)
-        ) {
+        if (entry.phase === "idle" && this.included.has(entry.profile.id)) {
           void this.connect(entry.profile.id).catch(() => undefined);
         }
       }
@@ -268,7 +285,7 @@ export class ConnectionOverviewController {
     return promise;
   }
 
-  connect = async (profileID: string) => {
+  connect = async (profileID: string, forceAttention = false) => {
     if (!this.entry(profileID)) return;
     const previous = this.pending.get(profileID);
     if (previous) return previous;
@@ -282,7 +299,7 @@ export class ConnectionOverviewController {
         registerOpenCodeRuntime(runtime);
         this.update(profileID, { runtime });
         if (!runtime.connected) throw new Error(runtime.error ?? "Connection unavailable");
-        await this.hydrate(profileID, runtime, generation, epoch);
+        await this.hydrate(profileID, runtime, generation, epoch, forceAttention);
       } catch (error) {
         if (this.valid(profileID, generation, epoch))
           this.update(profileID, {
@@ -301,7 +318,7 @@ export class ConnectionOverviewController {
     return promise;
   };
 
-  refresh = async (profileID?: string) => {
+  refresh = async (profileID?: string, automatic = false) => {
     if (profileID) {
       const generation = this.generation;
       const epoch = this.epoch(profileID);
@@ -312,7 +329,7 @@ export class ConnectionOverviewController {
           refetchType: "none",
         });
       if (!this.valid(profileID, generation, epoch)) return;
-      return this.connect(profileID);
+      return this.connect(profileID, !automatic);
     }
     await this.refreshRegistry();
     await Promise.allSettled([...this.included].map((id) => this.refresh(id)));
@@ -323,6 +340,7 @@ export class ConnectionOverviewController {
     runtime: OpenCodeRuntimeStatus,
     generation: number,
     epoch: number,
+    forceAttention: boolean,
   ) {
     const id = runtime.connectionID;
     const updateSummaries = () => {
@@ -339,7 +357,7 @@ export class ConnectionOverviewController {
     if (!this.current(profileID, id, generation, epoch)) return;
     this.update(profileID, { phase: "ready" });
     this.project(profileID);
-    const attention = this.hydrateAttention(profileID, runtime, generation, epoch);
+    const attention = this.hydrateAttention(profileID, runtime, generation, epoch, forceAttention);
     await supplemental;
     if (!this.current(profileID, id, generation, epoch)) return;
     const reconciler = openCodeReconciler(this.queryClient);
@@ -353,15 +371,47 @@ export class ConnectionOverviewController {
             record.snoozedUntil !== null ||
             record.disposition === "inbox",
         ) ?? [];
-    await Promise.allSettled(
-      retained
-        .filter((record) => !known.has(record.sessionID))
-        .map(async (record) => {
-          const session = await openCodeClient(id).session.get({ sessionID: record.sessionID });
-          if (this.current(profileID, id, generation, epoch))
-            seedSessionDetails(this.queryClient, id, [session]);
-        }),
+    const missing = this.missingSessions.get(profileID) ?? new Map<string, number>();
+    this.missingSessions.set(profileID, missing);
+    const retainedIDs = new Set(retained.map((record) => record.sessionID));
+    for (const [sessionID, deadline] of missing)
+      if (deadline <= Date.now() || !retainedIDs.has(sessionID) || known.has(sessionID))
+        missing.delete(sessionID);
+    const queue = retained.filter(
+      (record) => !known.has(record.sessionID) && !missing.has(record.sessionID),
     );
+    const controller = new AbortController();
+    this.retainedLookups.set(profileID, controller);
+    let cursor = 0;
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(RETAINED_LOOKUP_CONCURRENCY, queue.length) }, async () => {
+          while (
+            cursor < queue.length &&
+            this.current(profileID, id, generation, epoch) &&
+            !controller.signal.aborted
+          ) {
+            const record = queue[cursor++]!;
+            try {
+              const session = await openCodeClient(id).session.get(
+                { sessionID: record.sessionID },
+                {
+                  signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+                },
+              );
+              if (this.current(profileID, id, generation, epoch))
+                seedSessionDetails(this.queryClient, id, [session]);
+            } catch {
+              if (this.current(profileID, id, generation, epoch) && !controller.signal.aborted)
+                missing.set(record.sessionID, Date.now() + MISSING_SESSION_RETRY_MS);
+            }
+          }
+        }),
+      );
+    } finally {
+      if (this.retainedLookups.get(profileID) === controller)
+        this.retainedLookups.delete(profileID);
+    }
     if (!this.current(profileID, id, generation, epoch)) return;
     this.project(profileID);
     await attention;
@@ -372,9 +422,24 @@ export class ConnectionOverviewController {
     runtime: OpenCodeRuntimeStatus,
     generation: number,
     epoch: number,
+    force = false,
   ): Promise<void> {
     const pending = this.attentionPending.get(profileID);
     if (pending) return pending;
+    const delay = (this.attentionNextAttempt.get(profileID) ?? 0) - Date.now();
+    if (!force && delay > 0) {
+      this.attentionRequested.add(profileID);
+      this.deferAttention(profileID, runtime, generation, epoch, delay);
+      return Promise.resolve();
+    }
+    this.attentionRequested.delete(profileID);
+    this.attentionNextAttempt.set(
+      profileID,
+      Math.max(
+        this.attentionNextAttempt.get(profileID) ?? 0,
+        Date.now() + ATTENTION_MIN_INTERVAL_MS,
+      ),
+    );
     const id = runtime.connectionID;
     const work = async () => {
       const reconciler = openCodeReconciler(this.queryClient);
@@ -413,6 +478,7 @@ export class ConnectionOverviewController {
           clearTimeout(this.attentionRetryTimers.get(profileID));
           this.attentionRetryTimers.delete(profileID);
           this.attentionRetryDelays.delete(profileID);
+          this.attentionNextAttempt.set(profileID, Date.now() + ATTENTION_MIN_INTERVAL_MS);
         } else this.retryAttention(profileID, runtime, generation, epoch);
         this.project(profileID);
       } catch {
@@ -439,6 +505,18 @@ export class ConnectionOverviewController {
     if (this.attentionRetryTimers.has(profileID)) return;
     const delay = this.attentionRetryDelays.get(profileID) ?? 5_000;
     this.attentionRetryDelays.set(profileID, Math.min(delay * 2, 30_000));
+    this.attentionNextAttempt.set(profileID, Date.now() + delay);
+    this.deferAttention(profileID, runtime, generation, epoch, delay);
+  }
+
+  private deferAttention(
+    profileID: string,
+    runtime: OpenCodeRuntimeStatus,
+    generation: number,
+    epoch: number,
+    delay: number,
+  ) {
+    if (this.attentionRetryTimers.has(profileID)) return;
     this.attentionRetryTimers.set(
       profileID,
       setTimeout(() => {
@@ -539,7 +617,10 @@ export class ConnectionOverviewController {
     const epoch = this.epoch(profileID);
     await openCodeClient(runtime.connectionID).session.rename({ sessionID, title });
     if (!this.current(profileID, runtime.connectionID, generation, epoch)) return;
-    await this.refresh(profileID);
+    const session = await openCodeClient(runtime.connectionID).session.get({ sessionID });
+    if (!this.current(profileID, runtime.connectionID, generation, epoch)) return;
+    seedSessionDetails(this.queryClient, runtime.connectionID, [session]);
+    this.project(profileID);
   };
 
   archive = async (profileID: string, sessionID: string) => {
@@ -549,7 +630,8 @@ export class ConnectionOverviewController {
     const epoch = this.epoch(profileID);
     await openCodeClient(runtime.connectionID).session.remove({ sessionID });
     if (!this.current(profileID, runtime.connectionID, generation, epoch)) return;
-    await this.refresh(profileID);
+    removeSession(this.queryClient, runtime.connectionID, sessionID);
+    this.project(profileID);
   };
 
   /** Fill a selected project's summary catalog without loading conversation messages. */
@@ -663,7 +745,7 @@ export class ConnectionOverviewController {
         }
         if (this.refreshRequested.has(profileID) && !this.pending.has(profileID)) {
           this.refreshRequested.delete(profileID);
-          void this.refresh(profileID).catch(() => undefined);
+          void this.refresh(profileID, true).catch(() => undefined);
         }
       }, 50),
     );
@@ -734,6 +816,10 @@ export class ConnectionOverviewController {
     clearTimeout(this.attentionRetryTimers.get(profileID));
     this.attentionRetryTimers.delete(profileID);
     this.attentionRetryDelays.delete(profileID);
+    this.attentionNextAttempt.delete(profileID);
+    this.missingSessions.delete(profileID);
+    this.retainedLookups.get(profileID)?.abort();
+    this.retainedLookups.delete(profileID);
     const id = this.entry(profileID)?.runtime?.connectionID;
     if (id) void this.queryClient.cancelQueries({ queryKey: openCodeKeys.all(id) });
   }

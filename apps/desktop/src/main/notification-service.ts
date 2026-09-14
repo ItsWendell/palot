@@ -7,6 +7,7 @@ import {
   type AttentionNotificationInput,
   type DesktopNotificationDeliveryStatus,
   type DesktopNotificationSettings,
+  type OpenCodeRuntimeStatus,
 } from "../shared/opencode-contract";
 import { desktopNavigation } from "./desktop-navigation";
 import {
@@ -39,7 +40,9 @@ class DesktopNotificationService {
 
   start(): void {
     if (this.unsubscribe) return;
-    this.unsubscribe = openCodeRuntime.onEvent((event) => this.handleEvent(event));
+    this.unsubscribe = openCodeRuntime.onScopedEvent((event, runtime) =>
+      this.handleEvent(event, runtime),
+    );
   }
 
   shutdown(): void {
@@ -91,12 +94,12 @@ class DesktopNotificationService {
     });
   }
 
-  notifyAttention(input: AttentionNotificationInput): void {
+  notifyAttention(input: AttentionNotificationInput, profileID: string): void {
     const settings = this.settings();
     const enabled =
       input.type === "permission" ? settings.permissionRequests : settings.questionRequests;
     if (!enabled) return;
-    const key = `attention:${input.sessionID}:${input.type}:${input.requestID}`;
+    const key = `attention:${profileID}:${input.sessionID}:${input.type}:${input.requestID}`;
     if (!this.claim(key)) return;
     const permission = input.type === "permission";
     this.show(
@@ -106,6 +109,7 @@ class DesktopNotificationService {
         : "A task is waiting for your answer to continue.",
       {
         type: "session",
+        profileID,
         sessionID: input.sessionID,
         requestID: input.requestID,
         requestType: input.type,
@@ -113,21 +117,29 @@ class DesktopNotificationService {
     );
   }
 
-  private handleEvent(event: OpenCodeEvent): void {
+  private handleEvent(event: OpenCodeEvent, runtime: OpenCodeRuntimeStatus): void {
+    if (!runtime.connected) return;
     const attention = attentionCandidate(event);
-    if (attention) this.notifyAttention(attention);
+    if (attention) this.notifyAttention(attention, runtime.profileID);
     const completion = completionCandidate(event);
-    if (completion) void this.notifyCompletion(completion);
+    if (completion) void this.notifyCompletion(completion, runtime);
   }
 
   private async notifyCompletion(
     candidate: NonNullable<ReturnType<typeof completionCandidate>>,
+    runtime: OpenCodeRuntimeStatus,
   ): Promise<void> {
     const settings = this.settings();
     const focused = BrowserWindow.getAllWindows().some((window) => window.isFocused());
     if (!shouldShowCompletionNotification(settings, focused)) return;
-    if (!this.claim(`completion:${candidate.eventID}`)) return;
-    const session = await openCodeRuntime
+    if (!this.claim(`completion:${runtime.profileID}:${candidate.eventID}`)) return;
+    let owner: ReturnType<typeof openCodeRuntime.scopedConnection>;
+    try {
+      owner = openCodeRuntime.scopedConnection(runtime.connectionID);
+    } catch {
+      return;
+    }
+    const session = await owner
       .withClient((client) =>
         client.session.get(
           { sessionID: candidate.sessionID },
@@ -135,6 +147,11 @@ class DesktopNotificationService {
         ),
       )
       .catch(() => null);
+    try {
+      if (!owner.runtimeStatus().connected) return;
+    } catch {
+      return;
+    }
     if (session?.parentID) return;
     const name = session?.title?.trim() || "Task";
     this.show(
@@ -142,7 +159,7 @@ class DesktopNotificationService {
       candidate.outcome === "succeeded"
         ? "Open Palot to review the result."
         : (candidate.error ?? "Open Palot to review what went wrong."),
-      { type: "session", sessionID: candidate.sessionID },
+      { type: "session", profileID: runtime.profileID, sessionID: candidate.sessionID },
     );
   }
 

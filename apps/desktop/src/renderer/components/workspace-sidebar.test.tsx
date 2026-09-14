@@ -6,6 +6,7 @@ import { renderWithRouter } from "../test-utils/render-with-router";
 import { SidebarProvider } from "./ui/sidebar";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { runtimeAtom } from "../atoms/workspace";
+import { includedProfileIDsAtom } from "../atoms/connections";
 import { palot } from "../services/palot";
 
 beforeEach(() => {
@@ -76,6 +77,7 @@ describe("WorkspaceSidebar", () => {
       ],
     });
     const store = createStore();
+    store.set(includedProfileIDsAtom, ["local"]);
     store.set(runtimeAtom, {
       connectionID: "connection",
       profileID: "profile",
@@ -99,12 +101,21 @@ describe("WorkspaceSidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Open Palot menu" }));
     expect(await screen.findByText("OpenCode 0.0.0-beta-19425 · Disconnected")).toBeTruthy();
-    const serverMenu = screen.getByRole("menuitem", { name: "OpenCode server" });
+    const serverMenu = screen.getByRole("menuitem", { name: "Servers" });
     expect(listProfiles).not.toHaveBeenCalled();
     serverMenu.focus();
     await userEvent.keyboard("{ArrowRight}");
-    expect(await screen.findByRole("menuitem", { name: "Local OpenCode Active" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "Remote workstation Saved" })).toBeTruthy();
+    expect(
+      await screen.findByRole("menuitemcheckbox", { name: "Local OpenCode Enabled" }),
+    ).toBeTruthy();
+    const remote = screen.getByRole("menuitemcheckbox", { name: "Remote workstation Disabled" });
+    const before = router.state.location.href;
+    await userEvent.click(remote);
+    expect(store.get(includedProfileIDsAtom)).toEqual(["local", "remote"]);
+    expect(router.state.location.href).toBe(before);
+    await userEvent.click(screen.getByRole("menuitemcheckbox", { name: "Local OpenCode Enabled" }));
+    expect(store.get(includedProfileIDsAtom)).toEqual(["remote"]);
+    expect(router.state.location.href).toBe(before);
     expect(listProfiles).toHaveBeenCalledTimes(1);
     await userEvent.keyboard("{Escape}{Escape}");
 

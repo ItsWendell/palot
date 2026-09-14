@@ -280,6 +280,54 @@ describe("session transcript queries", () => {
     ).toEqual(["cached"]);
   });
 
+  it("finishes hydrating overlapping history pages with unique, complete messages", async () => {
+    vi.spyOn(palot, "loadTranscript").mockResolvedValue(
+      page([rawMessage("user-middle", 2, "middle"), rawMessage("assistant", 3, "new")], "older"),
+    );
+    vi.spyOn(palot, "loadOlder").mockResolvedValue(
+      page([rawMessage("user-old", 1, "old"), rawMessage("user-middle", 2, "middle")], null),
+    );
+    const queryClient = createRendererQueryClient();
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connectionID: "connection",
+      profileID: "profile",
+      contractVersion: "0.0.0-beta-19425",
+      phase: "connected",
+      connected: true,
+      binaryPath: null,
+      version: "0.0.0-beta-19425",
+      pid: 1,
+      managed: false,
+      lastConnectedAt: 1,
+      error: null,
+      versionMismatch: null,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <Provider store={store}>{children}</Provider>
+      </QueryClientProvider>
+    );
+    const { result } = renderHook(() => useSessionTranscript(session), { wrapper });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.hasNextPage).toBe(true);
+
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+
+    await waitFor(() => {
+      expect(result.current.hasNextPage).toBe(false);
+      expect(result.current.messages.map((message) => message.id)).toEqual([
+        "user-old",
+        "user-middle",
+        "assistant",
+      ]);
+      expect(result.current.messages.map(projectedText)).toEqual(["old", "middle", "new"]);
+      expect(result.current.isHydrating).toBe(false);
+    });
+  });
+
   it("loads rooted messages once and uses the next cursor for pagination", async () => {
     const loadTranscript = vi
       .spyOn(palot, "loadTranscript")

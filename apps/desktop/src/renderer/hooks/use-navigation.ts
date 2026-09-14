@@ -1,27 +1,40 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "jotai";
 import { useCallback } from "react";
 import { newTaskProjectIDAtom, selectedSessionIDAtom, runtimeAtom } from "../atoms/workspace";
 import { usageRangeAtom } from "../atoms/ui";
 import type { SettingsCategory } from "../lib/settings-navigation";
 import type { SessionRouteSearch, UsageRouteSearch } from "../lib/route-search";
+import { disabledProfileIDsAtom } from "../atoms/connections";
+import { prefetchSessionNavigation } from "../lib/session-navigation-prefetch";
 
 export function usePalotNavigation() {
   const navigate = useNavigate();
   const router = useRouter();
   const store = useStore();
+  const queryClient = useQueryClient();
   const sessionDestination = useCallback(
     (sessionID: string) => ({ to: "/sessions/$sessionID", params: { sessionID } }) as const,
     [],
   );
   const openSession = useCallback(
     (sessionID: string, search: SessionRouteSearch = {}) => {
+      const runtime = store.get(runtimeAtom);
+      const destinationSearch = { profileID: runtime?.profileID, ...search };
+      prefetchSessionNavigation(
+        queryClient,
+        sessionID,
+        destinationSearch.profileID,
+        runtime,
+        store.get(disabledProfileIDsAtom),
+      );
       return navigate({
         ...sessionDestination(sessionID),
-        search: { profileID: store.get(runtimeAtom)?.profileID, ...search },
+        search: destinationSearch,
       });
     },
-    [navigate, sessionDestination, store],
+    [navigate, queryClient, sessionDestination, store],
   );
   const preloadSession = useCallback(
     (sessionID: string, profileID?: string) =>

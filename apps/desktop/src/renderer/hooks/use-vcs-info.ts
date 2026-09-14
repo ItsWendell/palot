@@ -33,7 +33,8 @@ function vcsQueryOptions(
 ) {
   return queryOptions({
     queryKey: vcsQueryKey(connectionID, location),
-    queryFn: ({ signal }) => getOpenCodeVcsInfo(location, signal, ownerConnectionID),
+    queryFn: ({ signal }) =>
+      getOpenCodeVcsInfo(location, signal, ownerConnectionID ?? connectionID),
     enabled,
     // Branch events invalidate immediately; remounts need not re-read Git after five seconds.
     staleTime: 60_000,
@@ -61,7 +62,8 @@ export function useVcsBranches(location: LocationRef | null, search = "") {
   const resolvedLocation = location ?? { directory: "" };
   return useQuery({
     queryKey: openCodeKeys.vcsBranchSearch(connectionID, resolvedLocation, search.trim()),
-    queryFn: ({ signal }) => listOpenCodeVcsBranches(resolvedLocation, search, signal),
+    queryFn: ({ signal }) =>
+      listOpenCodeVcsBranches(resolvedLocation, search, signal, connectionID),
     enabled: Boolean(location && runtime?.connected && runtime.connectionID !== "preview"),
     staleTime: 5_000,
     refetchOnWindowFocus: false,
@@ -77,7 +79,7 @@ export function useReviewBase(location: LocationRef, enabled = true) {
   const manual = choices(scope);
   const inferred = useQuery({
     queryKey: openCodeKeys.vcsBase(connectionID, location),
-    queryFn: ({ signal }) => getOpenCodeVcsBase(location, signal),
+    queryFn: ({ signal }) => getOpenCodeVcsBase(location, signal, connectionID),
     enabled: Boolean(
       enabled && location.directory && runtime?.connected && connectionID !== "preview",
     ),
@@ -168,7 +170,8 @@ export function useVcsStatusMap(
   const values = useQueries({
     queries: locations.map((location) => ({
       queryKey: openCodeKeys.vcsStatus(connectionID, location),
-      queryFn: ({ signal }: { signal: AbortSignal }) => getOpenCodeVcsStatus(location, signal),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        getOpenCodeVcsStatus(location, signal, connectionID),
       enabled,
       staleTime: 5_000,
       refetchOnWindowFocus: false,

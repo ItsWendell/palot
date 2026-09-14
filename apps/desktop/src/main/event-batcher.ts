@@ -48,8 +48,9 @@ export class OpenCodeEventBatcher {
   private readonly pending: PalotEvent[] = [];
   private context: DeliveryContext | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private batchSequence = 0;
-  private receiveSequence = 0;
+  // Renderer gap detection tracks each connection independently, even though
+  // this transport multiplexes all monitored runtimes.
+  private readonly sequences = new Map<string, { batch: number; receive: number }>();
   private receivedAt = 0;
   private readonly metrics = emptyMetrics();
 
@@ -66,7 +67,7 @@ export class OpenCodeEventBatcher {
     }
     this.context = context;
     if (this.pending.length === 0) this.receivedAt = Date.now();
-    this.pending.push({ ...event, receiveSequence: ++this.receiveSequence });
+    this.pending.push({ ...event, receiveSequence: ++this.sequence(context.connectionID).receive });
     this.metrics.receivedEvents += 1;
     if (this.pending.length >= MAX_PENDING_EVENTS) {
       this.flush("capacity");
@@ -84,10 +85,9 @@ export class OpenCodeEventBatcher {
     if (!context) throw new Error("OpenCode event batch has no delivery context");
     const events = this.pending.splice(0);
     this.context = null;
-    this.batchSequence += 1;
     const batch = {
       ...context,
-      batchSequence: this.batchSequence,
+      batchSequence: ++this.sequence(context.connectionID).batch,
       receivedAt: this.receivedAt,
       sentAt: Date.now(),
       events,
@@ -114,6 +114,15 @@ export class OpenCodeEventBatcher {
 
   snapshotMetrics(): OpenCodeEventBatcherMetrics {
     return { ...this.metrics };
+  }
+
+  private sequence(connectionID: string) {
+    let sequence = this.sequences.get(connectionID);
+    if (!sequence) {
+      sequence = { batch: 0, receive: 0 };
+      this.sequences.set(connectionID, sequence);
+    }
+    return sequence;
   }
 
   private schedule(): void {

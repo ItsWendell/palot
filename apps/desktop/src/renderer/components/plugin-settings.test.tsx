@@ -5,6 +5,7 @@ import { Provider, createStore } from "jotai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PalotPlugin, PalotProject } from "../../shared";
 import { createRendererQueryClient } from "../lib/query-client";
+import { runtimeAtom } from "../atoms/workspace";
 import { palot } from "../services/palot";
 import { PluginSettings } from "./plugin-settings";
 import { toast } from "./ui/toast";
@@ -39,9 +40,24 @@ const plugins: PalotPlugin[] = [
 ];
 
 function renderPlugins(inventory = plugins, refresh = vi.fn().mockResolvedValue(undefined)) {
+  const store = createStore();
+  store.set(runtimeAtom, {
+    connectionID: "plugin-owner",
+    profileID: "plugin-server",
+    phase: "connected",
+    connected: true,
+    contractVersion: "2.0.3",
+    version: "2.0.3",
+    binaryPath: null,
+    pid: null,
+    managed: false,
+    lastConnectedAt: 1,
+    error: null,
+    versionMismatch: null,
+  });
   render(
     <QueryClientProvider client={createRendererQueryClient()}>
-      <Provider store={createStore()}>
+      <Provider store={store}>
         <PluginSettings
           project={project}
           plugins={inventory}
@@ -84,7 +100,13 @@ describe("PluginSettings", () => {
     const check = vi.spyOn(palot, "checkPlugins").mockReturnValue(pending.promise);
     renderPlugins();
     await userEvent.setup().click(screen.getByRole("button", { name: "Check for updates" }));
-    await waitFor(() => expect(check).toHaveBeenCalledWith({ projectID: project.id, ...location }));
+    await waitFor(() =>
+      expect(check).toHaveBeenCalledWith({
+        connectionID: "plugin-owner",
+        projectID: project.id,
+        ...location,
+      }),
+    );
     expect(screen.getByRole("button", { name: "Check for updates" }).hasAttribute("disabled")).toBe(
       true,
     );
@@ -105,6 +127,7 @@ describe("PluginSettings", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Update" }));
     expect(update).toHaveBeenCalledWith({
+      connectionID: "plugin-owner",
       projectID: project.id,
       ...location,
       targets: ["@acme/tools@beta"],

@@ -116,7 +116,13 @@ describe("ContextTab", () => {
     expect(screen.queryByText("message-1")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: /Post-compaction context/ }));
-    await waitFor(() => expect(palotMock.loadSessionContext).toHaveBeenCalledWith(session.id));
+    await waitFor(() =>
+      expect(palotMock.loadSessionContext).toHaveBeenCalledWith(
+        session.id,
+        "connection-1",
+        expect.any(AbortSignal),
+      ),
+    );
     expect(await screen.findByText(/retained-message/)).toBeTruthy();
 
     await userEvent.click(screen.getByRole("button", { name: /Projected message records/ }));

@@ -24,6 +24,59 @@ afterEach(() => {
   Reflect.deleteProperty(window, "palot");
 });
 
+it.each([false, true])(
+  "retains a command's owner across delayed file-location lookup (explicit=%s)",
+  async (explicit) => {
+    setFocusedOpenCodeRuntime(owner);
+    if (explicit)
+      setFocusedOpenCodeRuntime({
+        ...owner,
+        connectionID: "focused",
+        profileID: "focused-profile",
+      });
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const request = vi.fn(async (input: { method: string }) => {
+      if (input.method === "GET") await barrier;
+      return {
+        status: input.method === "GET" ? 200 : 204,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body:
+          input.method === "GET"
+            ? new TextEncoder().encode(JSON.stringify({ data: session })).buffer
+            : null,
+      };
+    });
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: {
+        openCodeRequest: request,
+        runtimeStatus: vi.fn().mockResolvedValue(owner),
+      } as unknown as PalotApi,
+    });
+    const pending = palot.runCommand(
+      {
+        sessionID: session.id,
+        command: "review",
+        fileReferences: [
+          { path: "file.ts", name: "file.ts", mention: { text: "@file.ts", start: 0, end: 8 } },
+        ],
+      },
+      explicit ? owner.connectionID : undefined,
+    );
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    setFocusedOpenCodeRuntime({ ...owner, connectionID: "changed", profileID: "changed-profile" });
+    release();
+    await pending;
+    expect(request).toHaveBeenCalledTimes(2);
+    for (const [input] of request.mock.calls)
+      expect(input).toMatchObject({ connectionID: owner.connectionID, profileID: owner.profileID });
+  },
+);
+
 it.each(["fork", "delete", "export", "copy", "list worktrees", "create worktree"] as const)(
   "%s uses the explicit owner's official client instead of the focused duplicate",
   async (operation) => {

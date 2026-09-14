@@ -21,6 +21,34 @@ describe("openNewWorkbenchTerminal", () => {
       })),
     ).rejects.toThrow("Close a workbench tab");
 
-    expect(remove).toHaveBeenCalledWith({ directory: "/repo" }, "pty-1", "persistent");
+    expect(remove).toHaveBeenCalledWith({ directory: "/repo" }, "pty-1", "persistent", undefined);
+  });
+
+  it("rolls a delayed PTY creation back on its original server after focus changes", async () => {
+    let resolve!: (value: Awaited<ReturnType<typeof palot.createPty>>) => void;
+    const create = vi.spyOn(palot, "createPty").mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const remove = vi.spyOn(palot, "removePty").mockResolvedValue();
+    let focused = "owner";
+    const openTab = vi.fn(() =>
+      focused === "owner" ? undefined : ({ ok: false, reason: "tab-limit" } as const),
+    );
+    const pending = openNewWorkbenchTerminal(
+      "session",
+      { directory: "/repo" },
+      openTab,
+      { pane: "bottom" },
+      focused,
+    );
+    const rejection = expect(pending).rejects.toThrow("Close a workbench tab");
+    focused = "other";
+    resolve({ id: "same-pty", title: "Terminal", status: "running", transport: "persistent" });
+    await rejection;
+    expect(create).toHaveBeenCalledWith("session", { directory: "/repo" }, "owner");
+    expect(remove).toHaveBeenCalledWith({ directory: "/repo" }, "same-pty", "persistent", "owner");
   });
 });

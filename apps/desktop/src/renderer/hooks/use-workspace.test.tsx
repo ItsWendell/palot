@@ -20,6 +20,7 @@ import * as openCodeCatalog from "../services/opencode-catalog";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { attentionSyncStateAtom, sessionCatalogReadyAtom } from "../atoms/inbox";
 import { sidebarModeAtom } from "../atoms/ui";
+import { discoveredProfileIDsAtom, includedProfileIDsAtom } from "../atoms/connections";
 import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { openCodeKeys } from "../lib/opencode-query";
@@ -151,6 +152,35 @@ describe("useWorkspaceController", () => {
     vi.restoreAllMocks();
   });
 
+  it("does not reconnect a disabled focused server after reload even without a cached catalog", async () => {
+    const runtime = profileRuntime("disabled");
+    const store = createStore();
+    const queryClient = createRendererQueryClient();
+    store.set(runtimeAtom, null);
+    store.set(discoveredProfileIDsAtom, [runtime.profileID]);
+    store.set(includedProfileIDsAtom, []);
+    vi.spyOn(palot, "runtimeStatus").mockResolvedValue(runtime);
+    vi.spyOn(palot, "isPreview").mockReturnValue(false);
+    const connect = vi.spyOn(palot, "connectOpenCode");
+    const hydrate = vi.spyOn(palot, "hydratePreview");
+    renderHook(() => useWorkspaceController("selected-task"), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          <Provider store={store}>{children}</Provider>
+        </QueryClientProvider>
+      ),
+    });
+    await waitFor(() => expect(store.get(phaseAtom)).toBe("ready"));
+    expect(store.get(runtimeAtom)).toMatchObject({
+      profileID: runtime.profileID,
+      connected: false,
+      phase: "stopped",
+    });
+    expect(connect).not.toHaveBeenCalled();
+    expect(hydrate).not.toHaveBeenCalled();
+    queryClient.clear();
+  });
+
   it("invalidates attention readiness when the same connection disconnects", async () => {
     const { runtime, store, queryClient, root } = await profileWorkspace();
     await act(async () => {
@@ -166,6 +196,55 @@ describe("useWorkspaceController", () => {
     });
     expect(store.get(attentionSyncStateAtom)).toBe("syncing");
     expect(store.get(sessionCatalogReadyAtom)).toBe(false);
+  });
+
+  it("keeps both owners' in-flight transcript queries through focus and controller unmount", async () => {
+    const { runtime, store, queryClient, hook } = await profileWorkspace();
+    const remote = profileRuntime("remote");
+    const requests = [runtime, remote].map((owner) => {
+      const result = Promise.withResolvers<string>();
+      let signal!: AbortSignal;
+      const queryKey = openCodeKeys.transcript(owner.connectionID, "same-session");
+      const pending = queryClient.fetchQuery({
+        queryKey,
+        queryFn: (context) => {
+          signal = context.signal;
+          return result.promise;
+        },
+      });
+      return { result, pending, queryKey, signal };
+    });
+    act(() => store.set(runtimeAtom, remote));
+    for (const request of requests) expect(request.signal.aborted).toBe(false);
+    hook.unmount();
+    for (const request of requests) {
+      expect(request.signal.aborted).toBe(false);
+      request.result.resolve("completed");
+      await expect(request.pending).resolves.toBe("completed");
+      expect(queryClient.getQueryData(request.queryKey)).toBe("completed");
+    }
+    queryClient.clear();
+  });
+
+  it("cancels an owner's in-flight queries when that same owner disconnects", async () => {
+    const { runtime, store, queryClient } = await profileWorkspace();
+    const result = Promise.withResolvers<string>();
+    let signal!: AbortSignal;
+    const queryKey = openCodeKeys.transcript(runtime.connectionID, "same-session");
+    const pending = queryClient.fetchQuery({
+      queryKey,
+      queryFn: (context) => {
+        signal = context.signal;
+        return result.promise;
+      },
+    });
+    const rejection = expect(pending).rejects.toThrow();
+    act(() => store.set(runtimeAtom, { ...runtime, connected: false, phase: "stopped" }));
+    expect(signal.aborted).toBe(true);
+    await rejection;
+    result.resolve("late response");
+    expect(queryClient.getQueryData(queryKey)).toBeUndefined();
+    queryClient.clear();
   });
 
   it.each(["focus", "unmount"])(
@@ -525,7 +604,7 @@ describe("useWorkspaceController", () => {
     expect(store.get(errorAtom)).toBeNull();
   });
 
-  it("ignores background metadata and activity after focus changes", async () => {
+  it("keeps background activity owner-scoped and ignores stale controller metadata after focus changes", async () => {
     const runtime = profileRuntime("late");
     const store = createStore();
     store.set(runtimeAtom, runtime);
@@ -546,7 +625,8 @@ describe("useWorkspaceController", () => {
       cursor: {},
     });
     vi.spyOn(openCodeCatalog, "listActiveSessionIDs").mockReturnValue(active.promise);
-    const getSession = vi.spyOn(openCodeCatalog, "getSessionInfo");
+    const getSession = vi.spyOn(openCodeCatalog, "getSessionInfo").mockResolvedValue(null);
+    vi.spyOn(openCodeCatalog, "loadSessionLog").mockResolvedValue([]);
     renderHook(() => useWorkspaceController(null), {
       wrapper: ({ children }) => (
         <QueryClientProvider client={queryClient}>
@@ -561,7 +641,11 @@ describe("useWorkspaceController", () => {
       projects.resolve([projectInfoFromPalot(project)]);
       active.resolve(["late-child"]);
     });
-    expect(getSession).not.toHaveBeenCalled();
+    expect(getSession).toHaveBeenCalledExactlyOnceWith(
+      "late-child",
+      expect.any(AbortSignal),
+      runtime.connectionID,
+    );
     expect(openCodeReconciler(queryClient).projects(runtime.connectionID)).toEqual([]);
     expect(sessionCatalogInfo(queryClient, other.connectionID)).toEqual([]);
     expect(store.get(runtimeAtom)).toBe(other);

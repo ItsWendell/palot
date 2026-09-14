@@ -9,6 +9,26 @@ const item = (sessionID: string): TrayTaskItem => ({
 });
 
 describe("tray task menu", () => {
+  it("keeps equal session IDs on different servers while deduplicating the same owner", () => {
+    const a = {
+      ...item("same"),
+      target: { type: "session" as const, sessionID: "same", profileID: "a" },
+    };
+    const b = {
+      ...item("same"),
+      target: { type: "session" as const, sessionID: "same", profileID: "b" },
+    };
+    const result = prioritizeTrayTasks({
+      attention: [a],
+      pinned: [a, b],
+      running: [b],
+      recent: [a, b],
+    });
+    expect(result.attention).toEqual([a]);
+    expect(result.pinned).toEqual([b]);
+    expect(result.running).toEqual([]);
+    expect(result.recent).toEqual([]);
+  });
   it("prioritizes sections, deduplicates tasks, and caps the menu at ten items", () => {
     const result = prioritizeTrayTasks({
       attention: [item("a1"), item("a2"), item("a3"), item("a4")],

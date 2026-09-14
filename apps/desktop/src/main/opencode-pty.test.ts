@@ -88,10 +88,10 @@ describe("preparePtyConnection", () => {
 
 describe("createSessionPty", () => {
   it("lets remote hosts choose their shell without sending local process environment", async () => {
-    const create = vi
+    const create = vi.fn();
+    const persistent = vi
       .fn()
-      .mockResolvedValue({ data: { id: "remote-pty", title: "Terminal", status: "running" } });
-    const persistent = vi.fn();
+      .mockResolvedValue({ id: "remote-pty", title: "Terminal", status: "running" });
     const pty = await createSessionPty(
       {
         sessionID: "remote-task",
@@ -106,13 +106,15 @@ describe("createSessionPty", () => {
         requestConnection: async () => ({ endpoint: { url: "http://127.0.0.1:54321" } }),
       },
     );
-    expect(create).toHaveBeenCalledWith({
-      location: { directory: "/srv/project", workspace: "worktree-1" },
+    expect(persistent).toHaveBeenCalledWith({
+      sessionID: "remote-task",
       cwd: "/srv/project",
       title: "Terminal",
+      args: [],
+      env: {},
     });
-    expect(persistent).not.toHaveBeenCalled();
-    expect(pty.transport).toBe("legacy");
+    expect(create).not.toHaveBeenCalled();
+    expect(pty.transport).toBe("persistent");
   });
   it("creates a session-owned persistent PTY", async () => {
     const create = vi.fn().mockResolvedValue({
@@ -141,55 +143,89 @@ describe("createSessionPty", () => {
     );
   });
 
-  it("falls back to the stable PTY when the persistent daemon is unavailable", async () => {
-    const legacy = vi.fn().mockResolvedValue({
-      data: { id: "pty-legacy", title: "Terminal", status: "running" },
-    });
-    const persistent = vi.fn().mockRejectedValue(new Error("daemon unavailable"));
+  it.each([false, true])(
+    "falls back to the stable PTY when the persistent daemon is unavailable (remote=%s)",
+    async (remote) => {
+      const legacy = vi.fn().mockResolvedValue({
+        data: { id: "pty-legacy", title: "Terminal", status: "running" },
+      });
+      const persistent = vi.fn().mockRejectedValue(new Error("daemon unavailable"));
 
-    await expect(
-      createSessionPty(
-        { sessionID: "session-1", location: { directory: "/repo" } },
-        {
-          withClient: (operation) =>
-            operation(
-              {
-                experimental: { persistentPty: { create: persistent } },
-                pty: { create: legacy },
-              } as never,
-              false,
-            ),
-          requestConnection: async () => ({ endpoint: { url: "http://127.0.0.1" } }),
-        },
-      ),
-    ).resolves.toMatchObject({ id: "pty-legacy", transport: "legacy" });
-  });
+      await expect(
+        createSessionPty(
+          { sessionID: "session-1", location: { directory: "/repo" } },
+          {
+            withClient: (operation) =>
+              operation(
+                {
+                  experimental: { persistentPty: { create: persistent } },
+                  pty: { create: legacy },
+                } as never,
+                remote,
+              ),
+            requestConnection: async () => ({ endpoint: { url: "http://127.0.0.1" } }),
+          },
+        ),
+      ).resolves.toMatchObject({ id: "pty-legacy", transport: "legacy" });
+    },
+  );
 
-  it("does not hide authentication or network failures behind the legacy PTY", async () => {
-    const legacy = vi.fn();
-    const persistent = vi.fn().mockRejectedValue(new Error("Unauthorized"));
+  it.each([
+    { remote: false, message: "Unauthorized" },
+    { remote: true, message: "Unauthorized" },
+    { remote: true, message: "Network connection failed" },
+  ])(
+    "does not hide $message behind the legacy PTY (remote=$remote)",
+    async ({ remote, message }) => {
+      const legacy = vi.fn();
+      const persistent = vi.fn().mockRejectedValue(new Error(message));
 
-    await expect(
-      createSessionPty(
-        { sessionID: "session-1", location: { directory: "/repo" } },
-        {
-          withClient: (operation) =>
-            operation(
-              {
-                experimental: { persistentPty: { create: persistent } },
-                pty: { create: legacy },
-              } as never,
-              false,
-            ),
-          requestConnection: async () => ({ endpoint: { url: "http://127.0.0.1" } }),
-        },
-      ),
-    ).rejects.toThrow("Unauthorized");
-    expect(legacy).not.toHaveBeenCalled();
-  });
+      await expect(
+        createSessionPty(
+          { sessionID: "session-1", location: { directory: "/repo" } },
+          {
+            withClient: (operation) =>
+              operation(
+                {
+                  experimental: { persistentPty: { create: persistent } },
+                  pty: { create: legacy },
+                } as never,
+                remote,
+              ),
+            requestConnection: async () => ({ endpoint: { url: "http://127.0.0.1" } }),
+          },
+        ),
+      ).rejects.toThrow(message);
+      expect(legacy).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("PtyTransport", () => {
+  it("rejects an in-flight scoped ticket when its connection owner is disposed", async () => {
+    let finish!: (value: { url: string; expiresAt: number }) => void;
+    let dispose!: () => void;
+    const unsubscribe = vi.fn();
+    const transport = new PtyTransport(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const connecting = transport.connect(fakeSender(), input(), {
+      withClient: vi.fn(),
+      requestConnection: vi.fn(),
+      onDispose: (observer) => {
+        dispose = observer;
+        return unsubscribe;
+      },
+    });
+    dispose();
+    finish({ url: "ws://old-host/terminal", expiresAt: Date.now() + 10_000 });
+    await expect(connecting).rejects.toThrow("connection was disposed");
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
   it("rejects in-flight tickets when the active profile changes", async () => {
     let finish!: (value: { url: string; expiresAt: number }) => void;
     const createSocket = vi.fn(() => fakeSocket());

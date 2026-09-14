@@ -336,6 +336,12 @@ describe("MultiConnectionSidebar", () => {
     expect(
       within(card!).getByRole("img", { name: "Same server · beta.example · Connected" }),
     ).toBeTruthy();
+    const serverIcon = within(card!).getByRole("img", {
+      name: "Same server · beta.example · Connected",
+    });
+    const projectLabel = within(card!).getByText("Same project");
+    expect(projectLabel.parentElement?.firstElementChild).toBe(serverIcon);
+    expect(within(card!).queryByText("Same server")).toBeNull();
     expect(
       within(card!).getByRole("button", {
         name: "Actions for Same task on Same server · beta.example",
@@ -560,10 +566,10 @@ describe("MultiConnectionSidebar", () => {
     expect(overview.setIncludedProfileIDs).not.toHaveBeenCalled();
     await userEvent.keyboard("{Escape}{Escape}");
     await userEvent.click(screen.getByRole("button", { name: "Inbox options" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "Connections" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Enabled servers" }));
     await userEvent.keyboard("{ArrowRight}");
     await userEvent.click(
-      screen.getByRole("menuitemcheckbox", { name: "Monitor Same server · beta.example" }),
+      screen.getByRole("menuitemcheckbox", { name: "Enable Same server · beta.example" }),
     );
     expect(overview.setIncludedProfileIDs).toHaveBeenCalledWith(["alpha"]);
   });
@@ -574,7 +580,7 @@ describe("MultiConnectionSidebar", () => {
     overview.connections[1]!.error = "Network unavailable";
     renderSidebar();
     await userEvent.click(screen.getByRole("button", { name: "Inbox options" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "Connections" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Enabled servers" }));
     await userEvent.keyboard("{ArrowRight}");
     await userEvent.click(
       screen.getByRole("menuitem", { name: "Retry Same server · beta.example" }),

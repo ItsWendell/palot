@@ -15,8 +15,10 @@ function mapLegacyPty(pty: Pty): PalotPty {
   return { id: pty.id, title: pty.title, status: pty.status, transport: "legacy" };
 }
 
-export async function listPtys(value: LocationRef): Promise<PalotPty[]> {
-  return (await openCodeClient().pty.list({ location: location(value) })).data.map(mapLegacyPty);
+export async function listPtys(value: LocationRef, connectionID?: string): Promise<PalotPty[]> {
+  return (await openCodeClient(connectionID).pty.list({ location: location(value) })).data.map(
+    mapLegacyPty,
+  );
 }
 
 export async function createPty(
@@ -44,16 +46,21 @@ export async function getPty(
   value: LocationRef,
   ptyID: string,
   transport: PalotPtyTransport,
+  connectionID?: string,
 ): Promise<PalotPty> {
   if (transport === "persistent") {
-    const pty = await openCodeClient().experimental.persistentPty.get({ ptyID });
+    const pty = await openCodeClient(connectionID).experimental.persistentPty.get({ ptyID });
     return { id: pty.id, title: pty.title, status: pty.status, transport };
   }
-  return mapLegacyPty((await openCodeClient().pty.get({ ptyID, location: location(value) })).data);
+  return mapLegacyPty(
+    (await openCodeClient(connectionID).pty.get({ ptyID, location: location(value) })).data,
+  );
 }
 
-export async function snapshotPty(ptyID: string): Promise<PalotPtySnapshot> {
-  const snapshot = await openCodeClient().experimental.persistentPty.snapshot({ ptyID });
+export async function snapshotPty(ptyID: string, connectionID?: string): Promise<PalotPtySnapshot> {
+  const snapshot = await openCodeClient(connectionID).experimental.persistentPty.snapshot({
+    ptyID,
+  });
   const checkpoint = new TextDecoder().decode(
     Uint8Array.from(atob(snapshot.checkpoint), (character) => character.charCodeAt(0)),
   );
@@ -76,22 +83,24 @@ export async function resizePty(
   ptyID: string,
   transport: PalotPtyTransport,
   size: { cols: number; rows: number },
+  connectionID?: string,
 ): Promise<void> {
   if (transport === "persistent") {
-    await openCodeClient().experimental.persistentPty.update({ ptyID, size });
+    await openCodeClient(connectionID).experimental.persistentPty.update({ ptyID, size });
     return;
   }
-  await openCodeClient().pty.update({ ptyID, location: location(value), size });
+  await openCodeClient(connectionID).pty.update({ ptyID, location: location(value), size });
 }
 
 export async function removePty(
   value: LocationRef,
   ptyID: string,
   transport: PalotPtyTransport,
+  connectionID?: string,
 ): Promise<void> {
   if (transport === "persistent") {
-    await openCodeClient().experimental.persistentPty.remove({ ptyID });
+    await openCodeClient(connectionID).experimental.persistentPty.remove({ ptyID });
     return;
   }
-  await openCodeClient().pty.remove({ ptyID, location: location(value) });
+  await openCodeClient(connectionID).pty.remove({ ptyID, location: location(value) });
 }

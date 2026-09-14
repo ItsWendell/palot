@@ -1,30 +1,44 @@
 import { createStore } from "jotai";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { persistedStorageKey } from "./persisted";
-import {
-  ONBOARDING_VERSION,
-  onboardingComplete,
-  onboardingCompletedProfilesAtom,
-} from "./onboarding";
 
 describe("onboarding completion", () => {
-  beforeEach(() => window.localStorage.clear());
-
-  it("tracks completion independently for each OpenCode profile", () => {
-    const store = createStore();
-
-    store.set(onboardingCompletedProfilesAtom, { local: ONBOARDING_VERSION });
-
-    expect(onboardingComplete(store.get(onboardingCompletedProfilesAtom), "local")).toBe(true);
-    expect(onboardingComplete(store.get(onboardingCompletedProfilesAtom), "remote")).toBe(false);
-    expect(
-      JSON.parse(
-        window.localStorage.getItem(persistedStorageKey("onboarding.completed-profiles")) ?? "null",
-      ),
-    ).toEqual({ version: 1, value: { local: ONBOARDING_VERSION } });
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.resetModules();
   });
 
-  it("reopens onboarding when its product version advances", () => {
-    expect(onboardingComplete({ local: ONBOARDING_VERSION - 1 }, "local")).toBe(false);
+  it("persists completion for the app across launches", async () => {
+    const { ONBOARDING_VERSION, onboardingCompletedVersionAtom } = await import("./onboarding");
+    createStore().set(onboardingCompletedVersionAtom, ONBOARDING_VERSION);
+    vi.resetModules();
+    const reloaded = await import("./onboarding");
+    expect(
+      reloaded.onboardingComplete(createStore().get(reloaded.onboardingCompletedVersionAtom)),
+    ).toBe(true);
+  });
+
+  it.each(["local", "remote"])(
+    "migrates an existing %s profile completion to the app",
+    async (profileID) => {
+      window.localStorage.setItem(
+        persistedStorageKey("onboarding.completed-profiles"),
+        JSON.stringify({ version: 1, value: { [profileID]: 1 } }),
+      );
+      const { onboardingComplete, onboardingCompletedVersionAtom } = await import("./onboarding");
+      expect(onboardingComplete(createStore().get(onboardingCompletedVersionAtom))).toBe(true);
+      expect(
+        JSON.parse(
+          window.localStorage.getItem(persistedStorageKey("onboarding.completed-version"))!,
+        ),
+      ).toEqual({ version: 1, value: 1 });
+    },
+  );
+
+  it("keeps initial onboarding and version upgrades eligible", async () => {
+    const { ONBOARDING_VERSION, onboardingComplete, onboardingCompletedVersionAtom } =
+      await import("./onboarding");
+    expect(onboardingComplete(createStore().get(onboardingCompletedVersionAtom))).toBe(false);
+    expect(onboardingComplete(ONBOARDING_VERSION - 1)).toBe(false);
   });
 });

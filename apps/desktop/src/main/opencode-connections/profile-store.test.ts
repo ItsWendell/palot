@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   OpenCodeProfileStore,
   isLoopbackOpenCodeUrl,
@@ -45,6 +45,49 @@ describe("OpenCode server URL normalization", () => {
 });
 
 describe("OpenCode profile persistence", () => {
+  it("repairs persisted data once and keeps subsequent reads write-free", () => {
+    const backend = new MemoryStore({ schemaVersion: 0, activeProfileID: "missing", profiles: [] });
+    const set = vi.spyOn(backend, "set");
+    const store = new OpenCodeProfileStore(backend);
+    store.snapshot();
+    expect(set).toHaveBeenCalledTimes(3);
+    set.mockClear();
+    store.snapshot();
+    store.get("local-default");
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("writes only changed connection metadata and persists focus independently", () => {
+    const backend = new MemoryStore({ profiles: [], activeProfileID: "local-default" });
+    const store = new OpenCodeProfileStore(backend);
+    const profile = store.create(
+      {
+        kind: "remote",
+        name: "Remote",
+        urls: ["https://server.example", "https://other.example"],
+        credential: { type: "none" },
+        allowPlainHttp: false,
+      },
+      null,
+    ).profiles[1]!;
+    store.recordConnection(profile.id, "https://server.example", 123);
+    const set = vi.spyOn(backend, "set");
+    store.recordConnection(profile.id, "https://server.example", 123);
+    expect(set).not.toHaveBeenCalled();
+    store.activate(profile.id);
+    expect(set).toHaveBeenCalledExactlyOnceWith("activeProfileID", profile.id);
+    expect(new OpenCodeProfileStore(backend).snapshot().activeProfileID).toBe(profile.id);
+    set.mockClear();
+    store.activate(profile.id);
+    store.recordConnection(profile.id, "https://server.example", 124);
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(store.get(profile.id)).toMatchObject({ lastConnectedAt: 124 });
+    set.mockClear();
+    store.recordConnection(profile.id, "https://other.example", 124);
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(store.get(profile.id)).toMatchObject({ lastSuccessfulUrl: "https://other.example" });
+  });
+
   it("roundtrips only SSH configuration and replaces it on update", () => {
     const backend = new MemoryStore({ profiles: [], activeProfileID: "local-default" });
     const store = new OpenCodeProfileStore(backend);

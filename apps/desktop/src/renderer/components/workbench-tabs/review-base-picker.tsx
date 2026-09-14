@@ -13,11 +13,17 @@ import {
   PopoverDescription,
 } from "../ui/popover";
 
-export function ReviewBasePicker({ location }: { location: LocationRef }) {
+export function ReviewBasePicker({
+  location,
+  active = true,
+}: {
+  location: LocationRef;
+  active?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const base = useReviewBase(location);
-  const branches = useVcsBranches(open ? location : null, search);
+  const base = useReviewBase(location, active);
+  const branches = useVcsBranches(active && open ? location : null, search);
   const label = base.manual ?? base.inferred.data?.name ?? "Choose base";
   function select(value: string | null) {
     base.setManual(value);

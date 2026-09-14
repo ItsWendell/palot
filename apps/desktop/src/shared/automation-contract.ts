@@ -157,6 +157,7 @@ export interface AutomationChangedEvent {
 }
 
 export interface AutomationNotificationTarget {
+  profileID: string;
   automationID: string;
   runID: string;
   sessionID: string | null;

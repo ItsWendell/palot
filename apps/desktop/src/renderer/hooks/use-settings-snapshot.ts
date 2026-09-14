@@ -2,6 +2,7 @@ import { queryOptions, useQueries, useQueryClient } from "@tanstack/react-query"
 import { useAtomValue } from "jotai";
 import type {
   PalotSettingsSnapshot,
+  OpenCodeRuntimeStatus,
   SettingsCapability,
   SettingsLocationInput,
 } from "../../shared";
@@ -18,7 +19,7 @@ export function settingsSnapshotQueryOptions(
 ) {
   return queryOptions({
     queryKey: openCodeKeys.settingsSnapshot(connectionID, input),
-    queryFn: ({ signal }) => palot.loadSettings(input, signal),
+    queryFn: ({ signal }) => palot.loadSettings({ ...input, connectionID }, signal),
     enabled,
     staleTime: Number.POSITIVE_INFINITY,
     refetchOnMount: false,
@@ -27,8 +28,13 @@ export function settingsSnapshotQueryOptions(
   });
 }
 
-export function useSettingsSnapshot(input: SettingsLocationInput | null, enabled = true) {
-  const runtime = useAtomValue(runtimeAtom);
+export function useSettingsSnapshot(
+  input: SettingsLocationInput | null,
+  enabled = true,
+  owner?: OpenCodeRuntimeStatus | null,
+) {
+  const selectedRuntime = useAtomValue(runtimeAtom);
+  const runtime = owner === undefined ? selectedRuntime : owner;
   const capabilities = input ? [...new Set(input.capabilities ?? ALL_SETTINGS_CAPABILITIES)] : [];
   const queries = useQueries({
     queries: capabilities.map((capability) =>
@@ -52,18 +58,25 @@ export function useSettingsSnapshot(input: SettingsLocationInput | null, enabled
   };
 }
 
-export function useCheckPlugins(input: SettingsLocationInput) {
-  const runtime = useAtomValue(runtimeAtom);
+export function useCheckPlugins(
+  input: SettingsLocationInput,
+  owner?: OpenCodeRuntimeStatus | null,
+) {
+  const selectedRuntime = useAtomValue(runtimeAtom);
+  const runtime = owner === undefined ? selectedRuntime : owner;
+  const connectionID = input.connectionID ?? runtime?.connectionID ?? "disconnected";
   const queryClient = useQueryClient();
-  const queryKey = openCodeKeys.settingsSnapshot(runtime?.connectionID ?? "disconnected", {
+  const queryKey = openCodeKeys.settingsSnapshot(connectionID, {
     ...input,
     capabilities: ["plugins"],
   });
   return async () => {
+    if (!canFetchOpenCode(runtime) || runtime?.connectionID !== connectionID)
+      throw new Error("This settings server is disconnected");
     // A list started before this check must not overwrite its update metadata.
     await queryClient.cancelQueries({ queryKey, exact: true });
     const before = queryClient.getQueryState(queryKey);
-    const plugins = await palot.checkPlugins(input);
+    const plugins = await palot.checkPlugins({ ...input, connectionID });
     // Invalidation, refetch, and removal replace the query state even when the
     // inventory data is structurally unchanged. Never replace that newer work.
     if (queryClient.getQueryState(queryKey) !== before || before?.fetchStatus === "fetching")

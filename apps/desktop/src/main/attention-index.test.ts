@@ -4,9 +4,16 @@ import type {
   PermissionRequest,
   SessionInfo,
 } from "@opencode/client";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttentionSnapshotInput, PalotSession } from "../shared";
 import { OpenCodeAttentionIndex } from "./attention-index";
+
+let now = 0;
+beforeEach(() => {
+  now = 1_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+});
+afterEach(() => vi.restoreAllMocks());
 
 function session(): PalotSession {
   return {
@@ -130,6 +137,59 @@ function clientWithRequests(requests: PermissionRequest[] = []) {
 }
 
 describe("OpenCodeAttentionIndex", () => {
+  it("lets a new permission event retry missing lineage without bypassing discovery cooldown", async () => {
+    const client = clientWithRequests([permission("initial", "child")]);
+    client.session.get.mockRejectedValueOnce(new Error("temporarily unavailable"));
+    const source = runtime(client as unknown as OpenCodeClient);
+    const index = new OpenCodeAttentionIndex(source.value);
+    await expect(index.snapshot(input())).resolves.toMatchObject({ complete: false });
+    await index.snapshot(input());
+    expect(client.session.get).toHaveBeenCalledOnce();
+    await source.emit({
+      type: "permission.asked",
+      data: permission("new", "child"),
+    } as OpenCodeEvent);
+    await expect(index.snapshot(input())).resolves.toMatchObject({ sessions: [{ id: "child" }] });
+    expect(client.session.get).toHaveBeenCalledTimes(2);
+    expect(source.client.debug.location.list).toHaveBeenCalledOnce();
+    index.dispose();
+  });
+
+  it("coalesces discovery refreshes and delivers authoritative requests during failure cooldown", async () => {
+    const client = clientWithRequests();
+    const source = runtime(client as unknown as OpenCodeClient);
+    const index = new OpenCodeAttentionIndex(source.value);
+    await index.snapshot(input());
+    await index.snapshot(input());
+    expect(source.client.debug.location.list).toHaveBeenCalledOnce();
+    now += 1_000;
+    vi.mocked(source.client.debug.location.list).mockRejectedValueOnce(
+      new Error("offline discovery"),
+    );
+    await expect(index.snapshot(input())).resolves.toMatchObject({ complete: false });
+    await source.emit({
+      type: "permission.asked",
+      location: { directory: "/repo" },
+      data: permission("urgent", "child"),
+    } as OpenCodeEvent);
+    await expect(index.snapshot(input())).resolves.toMatchObject({
+      complete: false,
+      sessions: [{ id: "child" }],
+      requests: [{ sessionID: "child", value: { permissions: [{ id: "urgent" }] } }],
+    });
+    expect(client.session.get).toHaveBeenCalledOnce();
+    expect(source.client.debug.location.list).toHaveBeenCalledTimes(2);
+    await source.emit({
+      type: "permission.replied",
+      data: { sessionID: "child", requestID: "urgent", reply: "once" },
+    } as OpenCodeEvent);
+    await expect(index.snapshot(input())).resolves.toMatchObject({ requests: [] });
+    now += 5_000;
+    await expect(index.snapshot(input())).resolves.toMatchObject({ complete: true });
+    expect(source.client.debug.location.list).toHaveBeenCalledTimes(3);
+    index.dispose();
+  });
+
   it("does not self-notify into a retry loop when subscription startup fails", async () => {
     const source = runtime(clientWithRequests() as unknown as OpenCodeClient);
     source.client.event.subscribe = () => ({
@@ -224,6 +284,7 @@ describe("OpenCodeAttentionIndex", () => {
       requests: [{ value: { permissions: [], forms: [{ id: "form" }] } }],
     });
     client.form.request.list.mockResolvedValue({ data: [] });
+    now += 5_000;
     await expect(index.snapshot(input())).resolves.toMatchObject({ complete: true, requests: [] });
     index.dispose();
   });
@@ -294,6 +355,7 @@ describe("OpenCodeAttentionIndex", () => {
     const index = new OpenCodeAttentionIndex(source.value);
     await expect(index.snapshot(input())).resolves.toMatchObject({ complete: true });
     vi.mocked(source.client.debug.location.list).mockRejectedValueOnce(new Error("debug missing"));
+    now += 1_000;
     await expect(index.snapshot(input())).resolves.toMatchObject({
       complete: false,
       requests: [{ sessionID: "session-1" }],
@@ -304,11 +366,13 @@ describe("OpenCodeAttentionIndex", () => {
       complete: false,
       requests: [{ sessionID: "session-1" }],
     });
+    now += 5_000;
     await expect(index.snapshot(input())).resolves.toMatchObject({
       complete: true,
       requests: [{ sessionID: "session-1" }],
     });
     vi.mocked(source.client.debug.location.list).mockResolvedValueOnce([]);
+    now += 1_000;
     await expect(index.snapshot(input())).resolves.toMatchObject({ complete: true, requests: [] });
     index.dispose();
   });
@@ -344,6 +408,7 @@ describe("OpenCodeAttentionIndex", () => {
         requests: [{ sessionID: "session-1" }],
       });
       client.permission.request.list.mockResolvedValue({ data: [] });
+      now += 5_000;
       await expect(index.snapshot(input())).resolves.toMatchObject({
         complete: true,
         requests: [],
@@ -361,6 +426,9 @@ describe("OpenCodeAttentionIndex", () => {
     const source = runtime(client as unknown as OpenCodeClient);
     const index = new OpenCodeAttentionIndex(source.value);
     await expect(index.snapshot(input())).resolves.toMatchObject({ complete: false });
+    await expect(index.snapshot(input())).resolves.toMatchObject({ complete: false });
+    expect(client.session.get).toHaveBeenCalledOnce();
+    now += 30_000;
     await expect(index.snapshot(input())).resolves.toMatchObject({
       complete: true,
       sessions: [{ id: "child" }],
@@ -515,6 +583,10 @@ describe("OpenCodeAttentionIndex", () => {
     const index = new OpenCodeAttentionIndex(source.value as never);
 
     await index.snapshot(input());
+    await index.snapshot(input());
+
+    expect(listForms).toHaveBeenCalledTimes(1);
+    now += 5_000;
     await index.snapshot(input());
 
     expect(listForms).toHaveBeenCalledTimes(2);

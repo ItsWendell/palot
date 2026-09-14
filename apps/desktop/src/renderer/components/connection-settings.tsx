@@ -14,14 +14,15 @@ import {
   Server,
   ShieldCheck,
   Trash2,
-  Wifi,
   WifiOff,
 } from "lucide-react";
 import { useClipboardCopy } from "../hooks/use-clipboard-copy";
+import { useConnectionOverview } from "../hooks/use-connection-overview";
 import { useAtom } from "jotai";
 import { runtimeAtom } from "../atoms/workspace";
 import { SharedOpenCodeAction } from "./opencode-connection-alert";
 import { LocalOpenCodeRuntimeSettings } from "./open-code-release-settings";
+import { OpenCodeLoginAutostartSettings } from "./open-code-login-autostart-settings";
 import { useNavigate } from "@tanstack/react-router";
 import QRCode from "qrcode";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -43,6 +44,7 @@ import { SshConnectionDialog } from "./ssh-connection-dialog";
 import { Badge } from "./ui/badge";
 import { Button, buttonVariants } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
+import { Switch } from "./ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -77,6 +79,7 @@ const TAB_ROUTES: Record<ConnectionTab, string> = {
 
 export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
   const navigate = useNavigate();
+  const { connections, includedProfileIDs, setIncludedProfileIDs } = useConnectionOverview();
   const [snapshot, setSnapshot] = useState<OpenCodeProfileSnapshot | null>(null);
   const [webAccess, setWebAccess] = useState<OpenCodeWebAccessInfo | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -96,19 +99,6 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
   useEffect(() => {
     if (tab !== "profiles") void reloadWebAccess().catch(showError);
   }, [tab]);
-
-  const switchProfile = async (profile: OpenCodeProfile) => {
-    setBusyID(profile.id);
-    try {
-      await navigate({ to: "/settings/connections/profiles", search: { profileID: profile.id } });
-      await reload();
-      toast.add({ type: "success", title: `Connected to ${profile.name}` });
-    } catch (error) {
-      showError(error);
-    } finally {
-      setBusyID(null);
-    }
-  };
 
   const removeProfile = async (profile: OpenCodeProfile) => {
     setBusyID(profile.id);
@@ -175,8 +165,8 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
       {tab === "profiles" ? (
         <div className="space-y-8">
           <SettingsSection
-            title="Connection profiles"
-            description="Choose the OpenCode service Palot connects to. Credentials stay in secure desktop storage."
+            title="Servers"
+            description="Enabled servers share one workspace. Opening a task uses its server automatically. Disabling a server only disconnects Palot; it does not stop the server."
             action={
               <div className="flex flex-wrap gap-2">
                 <Button type="button" size="sm" variant="outline" onClick={() => setAddOpen(true)}>
@@ -191,6 +181,8 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
             <SettingsGroup>
               {snapshot?.profiles.map((profile) => {
                 const active = profile.id === snapshot.activeProfileID;
+                const enabled = includedProfileIDs.includes(profile.id);
+                const connection = connections.find((entry) => entry.profile.id === profile.id);
                 return (
                   <div
                     key={profile.id}
@@ -205,7 +197,15 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
                         <h3 className="min-w-0 text-sm font-medium wrap-anywhere">
                           {profile.name}
                         </h3>
-                        {active ? <Badge variant="secondary">Active</Badge> : null}
+                        {enabled && connection ? (
+                          <Badge variant="secondary">
+                            {connection.runtime?.connected
+                              ? "Connected"
+                              : connection.phase === "loading"
+                                ? "Connecting…"
+                                : "Offline"}
+                          </Badge>
+                        ) : null}
                       </div>
                       <p className="mt-1 text-compact leading-relaxed text-muted-foreground wrap-anywhere">
                         {profileDescription(profile)}
@@ -225,22 +225,20 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
                       ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 @lg/settings:justify-end">
-                      {!active ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={busyID !== null}
-                          onClick={() => void switchProfile(profile)}
-                        >
-                          {busyID === profile.id ? (
-                            <LoaderCircle className="size-4 animate-spin" />
-                          ) : (
-                            <Wifi className="size-4" />
-                          )}
-                          Connect
-                        </Button>
-                      ) : null}
+                      <div className="flex items-center gap-2 text-compact text-muted-foreground">
+                        {enabled ? "Enabled" : "Disabled"}
+                        <Switch
+                          aria-label={`Enable ${profile.name}`}
+                          checked={enabled}
+                          onCheckedChange={(checked) =>
+                            setIncludedProfileIDs((current) =>
+                              checked
+                                ? [...new Set([...current, profile.id])]
+                                : current.filter((id) => id !== profile.id),
+                            )
+                          }
+                        />
+                      </div>
                       {profile.id !== "local-default" && !active ? (
                         <Button
                           type="button"
@@ -544,6 +542,7 @@ export function LocalServiceSettings({
   const [runtime, setRuntime] = useAtom(runtimeAtom);
   const [starting, setStarting] = useState(false);
   const [releaseBusy, setReleaseBusy] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
   const startService = async () => {
     setStarting(true);
     try {
@@ -558,7 +557,14 @@ export function LocalServiceSettings({
   };
   return (
     <div className="min-w-0 space-y-8">
-      <LocalOpenCodeRuntimeSettings disabled={busy || starting} onBusyChange={setReleaseBusy} />
+      <LocalOpenCodeRuntimeSettings
+        disabled={busy || starting || loginBusy}
+        onBusyChange={setReleaseBusy}
+      />
+      <OpenCodeLoginAutostartSettings
+        disabled={busy || starting || releaseBusy}
+        onBusyChange={setLoginBusy}
+      />
       <ConnectionCard
         icon={Server}
         title="Shared OpenCode service"
@@ -578,13 +584,13 @@ export function LocalServiceSettings({
         <div className="flex flex-wrap gap-2">
           {!runtime?.connected && runtime?.canStartLocalService ? (
             <SharedOpenCodeAction
-              disabled={busy || starting || releaseBusy}
+              disabled={busy || starting || releaseBusy || loginBusy}
               onConfirm={() => void startService()}
             />
           ) : null}
           <SharedOpenCodeAction
             action="restart"
-            disabled={busy || starting || releaseBusy || !local?.restartAvailable}
+            disabled={busy || starting || releaseBusy || loginBusy || !local?.restartAvailable}
             onConfirm={onRestart}
           />
           <Button type="button" variant="ghost" onClick={onRefresh}>
@@ -594,8 +600,8 @@ export function LocalServiceSettings({
         <p className="text-compact leading-relaxed text-muted-foreground">
           Palot only connects to an existing shared service by default. Starting or recovering it
           requires confirmation and may interrupt other clients. Persistent hostname, port,
-          password, and environment settings remain owned by the official `opencode2 service`
-          commands.
+          password, and environment settings remain owned by OpenCode. Login startup only registers
+          the installed CLI with your user service manager.
         </p>
       </ConnectionCard>
     </div>

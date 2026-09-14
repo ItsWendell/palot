@@ -1,6 +1,6 @@
 import type { PalotProject, PalotSession } from "../../../shared";
 import { createStore } from "jotai";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runtimeAtom } from "../../atoms/workspace";
@@ -40,6 +40,51 @@ afterEach(() => {
 });
 
 describe("WorktreesPage", () => {
+  it.each(["during inspection", "after confirmation opens"] as const)(
+    "abandons old-server worktree removal when focus changes %s",
+    async (when) => {
+      vi.spyOn(palot, "refreshProjectCopies").mockResolvedValue();
+      vi.spyOn(palot, "listProjectDirectories").mockResolvedValue([
+        { directory: project.canonical, strategy: null },
+        { directory: "/worktrees/clean", strategy: "git" },
+      ]);
+      let resolve!: (value: Awaited<ReturnType<typeof opencodeVcs.getOpenCodeVcsStatus>>) => void;
+      const status = vi.spyOn(opencodeVcs, "getOpenCodeVcsStatus").mockImplementation(
+        () =>
+          new Promise((done) => {
+            resolve = done;
+          }),
+      );
+      const remove = vi.spyOn(palot, "removeProjectCopy").mockResolvedValue();
+      const store = createConnectedStore();
+      const queryClient = createRendererQueryClient();
+      for (const connectionID of ["connection", "other"])
+        seedCatalog(queryClient, { projects: [project], sessions: [] }, connectionID);
+      renderWithRouter(<WorktreesPage />, store, "/worktrees?projectID=project-1", queryClient);
+      await userEvent.click(await screen.findByRole("button", { name: "Remove clean" }));
+      expect(status).toHaveBeenCalledWith(
+        { directory: "/worktrees/clean" },
+        undefined,
+        "connection",
+      );
+      if (when === "after confirmation opens") {
+        await act(async () => resolve([]));
+        expect(await screen.findByRole("button", { name: "Remove worktree" })).toBeTruthy();
+      }
+      act(() =>
+        store.set(runtimeAtom, {
+          ...store.get(runtimeAtom)!,
+          profileID: "other-profile",
+          connectionID: "other",
+        }),
+      );
+      if (when === "during inspection") await act(async () => resolve([]));
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: "Remove worktree" })).toBeNull(),
+      );
+      expect(remove).not.toHaveBeenCalled();
+    },
+  );
   it("discloses only tasks attached to that project's worktree and links archived tasks too", async () => {
     vi.spyOn(palot, "refreshProjectCopies").mockResolvedValue(undefined);
     vi.spyOn(palot, "listProjectDirectories").mockResolvedValue([
@@ -129,11 +174,23 @@ describe("WorktreesPage", () => {
     ).toBe(true);
 
     await userEvent.click(screen.getByRole("button", { name: "Remove clean" }));
-    await waitFor(() => expect(status).toHaveBeenCalledWith({ directory: "/worktrees/clean" }));
+    await waitFor(() =>
+      expect(status).toHaveBeenCalledWith(
+        { directory: "/worktrees/clean" },
+        undefined,
+        "connection",
+      ),
+    );
     await userEvent.click(screen.getByRole("button", { name: "Remove worktree" }));
 
     await waitFor(() =>
-      expect(remove).toHaveBeenCalledWith(project.id, project.canonical, "/worktrees/clean", false),
+      expect(remove).toHaveBeenCalledWith(
+        project.id,
+        project.canonical,
+        "/worktrees/clean",
+        false,
+        "connection",
+      ),
     );
   });
 });

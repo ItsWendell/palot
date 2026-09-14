@@ -4,6 +4,8 @@ import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PalotEventBatch } from "../shared/opencode-contract";
 import type { SshConnector } from "./ssh/interaction";
+import type { WebContents } from "electron";
+import { PtyTransport } from "./opencode-pty";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 
@@ -89,6 +91,82 @@ function tunnel(close = vi.fn(async () => {})) {
 }
 
 describe("OpenCode runtime SSH shutdown ownership", () => {
+  it("keeps terminal streams across focus switches and closes only their disposed owner", async () => {
+    const first = addSshProfile("terminal-first");
+    const second = addSshProfile("terminal-second");
+    const firstStatus = await runtime.switchProfile(first.id, async () => tunnel());
+    const secondStatus = await runtime.connectProfile(second.id, async () => tunnel());
+    const sockets = [0, 1].map(() => Object.assign(new EventTarget(), { close: vi.fn() }));
+    let socketIndex = 0;
+    const transport = new PtyTransport(
+      async () => ({ url: "ws://localhost/terminal", expiresAt: Date.now() + 10_000 }),
+      () => sockets[socketIndex++] as unknown as WebSocket,
+    );
+    const sender = {
+      id: 1,
+      once: vi.fn(),
+      isDestroyed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents;
+    for (const status of [firstStatus, secondStatus]) {
+      const scoped = runtime.scopedConnection(status.connectionID);
+      const id = await transport.connect(
+        sender,
+        {
+          ptyID: "terminal",
+          location: { directory: "/repo" },
+          cursor: 0,
+          transport: "legacy",
+        },
+        {
+          ...scoped,
+          withClient: (operation) => scoped.withClient((client) => operation(client, true)),
+          requestConnection: () => runtime.requestConnection({ connectionID: status.connectionID }),
+        },
+      );
+      transport.start(sender, id);
+    }
+    await runtime.switchProfile(second.id);
+    await runtime.switchProfile(first.id);
+    for (const socket of sockets) expect(socket.close).not.toHaveBeenCalled();
+    await runtime.disconnectProfile(second.id);
+    expect(sockets[0]!.close).not.toHaveBeenCalled();
+    expect(sockets[1]!.close).toHaveBeenCalledOnce();
+    await runtime.shutdown();
+    expect(sockets[0]!.close).toHaveBeenCalledOnce();
+  });
+
+  it("publishes background event owners and status changes without changing focus", async () => {
+    const profile = addSshProfile("observed-background");
+    const event = vi.fn();
+    const status = vi.fn();
+    const offEvent = runtime.onScopedEvent(event);
+    const offStatus = runtime.onRuntimeStatus(status);
+    const connection = await runtime.connectProfile(profile.id, async () => tunnel());
+    await vi.waitFor(() =>
+      expect(event).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "server.connected" }),
+        expect.objectContaining({ profileID: profile.id, connectionID: connection.connectionID }),
+      ),
+    );
+    expect(runtime.runtimeStatus().profileID).toBe("local-default");
+    await runtime.disconnectProfile(profile.id);
+    expect(status).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileID: profile.id,
+        connectionID: connection.connectionID,
+        phase: "stopped",
+      }),
+    );
+    offEvent();
+    offStatus();
+    event.mockClear();
+    status.mockClear();
+    await runtime.connectProfile(profile.id, async () => tunnel());
+    expect(event).not.toHaveBeenCalled();
+    expect(status).not.toHaveBeenCalled();
+  });
+
   it("disconnects only a known nonfocused lifecycle and immediately notifies disposal", async () => {
     const profile = addSshProfile("background");
     const closeReady = deferred();
@@ -103,7 +181,6 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
     await expect(runtime.requestConnection({ connectionID: status.connectionID })).rejects.toThrow(
       "stale",
     );
-    await expect(runtime.disconnectProfile("local-default")).rejects.toThrow("focused");
     await expect(runtime.disconnectProfile("unknown")).rejects.toThrow();
     closeReady.resolve();
     await pending;
@@ -124,6 +201,25 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
     await runtime.disconnectProfile(profile.id);
     expect(disposed).toHaveBeenCalledOnce();
     expect(runtime.profileSnapshot().profiles.some((item) => item.id === profile.id)).toBe(true);
+  });
+
+  it("disables the focused connection without switching profiles and can enable it again", async () => {
+    const profile = addSshProfile("focused");
+    const connection = tunnel();
+    const connected = await runtime.switchProfile(profile.id, async () => connection);
+    await runtime.disconnectProfile(profile.id);
+    expect(connection.close).toHaveBeenCalledOnce();
+    expect(runtime.profileSnapshot().activeProfileID).toBe(profile.id);
+    expect(runtime.runtimeStatus()).toMatchObject({
+      profileID: profile.id,
+      connected: false,
+      phase: "stopped",
+    });
+    await expect(runtime.requestConnection()).rejects.toThrow("disposed");
+    const enabled = await runtime.connectProfile(profile.id, async () => tunnel());
+    expect(enabled.connected).toBe(true);
+    expect(enabled.connectionID).not.toBe(connected.connectionID);
+    expect(runtime.runtimeStatus()).toEqual(enabled);
   });
 
   it("disposes cached attention indexes when their lifecycle is disconnected", async () => {

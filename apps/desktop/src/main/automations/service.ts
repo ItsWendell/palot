@@ -16,6 +16,7 @@ import type {
   AutomationSchedulePreview,
   AutomationSnapshot,
   AutomationTrigger,
+  OpenCodeRuntimeStatus,
 } from "../../shared";
 import { IPC_CHANNELS } from "../../shared/opencode-contract";
 import { palotDatabase } from "../database/client";
@@ -47,25 +48,13 @@ export class AutomationService {
     name: "automation-settings",
     defaults: { preventSleepWhileRunning: false },
   });
-  private readonly runner = new AutomationRunner({
-    client: () => this.client(),
-    repository: this.repository,
-    memory: {
-      ensure: (automationID) => this.registry.ensureMemory(automationID),
-    },
-    capabilities: () => ({
-      localPathActions: openCodeRuntime.runtimeStatus().capabilities?.localPathActions ?? true,
-      worktreeCreate: openCodeRuntime.runtimeStatus().capabilities?.worktreeCreate ?? true,
-    }),
-    onChanged: () => this.changed(),
-    onFinished: (run, definition) => this.runFinished(run, definition),
-    onAttention: (run, definition) => void this.runNeedsAttention(run, definition),
-  });
+  private readonly runners = new Map<string, AutomationRunner>();
+  private readonly recoveredConnections = new Set<string>();
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   private scanPromise: Promise<void> | null = null;
   private unsubscribeEvent: (() => void) | null = null;
-  private unsubscribeReconnect: (() => void) | null = null;
-  private unsubscribeBeforeSwitch: (() => void) | null = null;
+  private unsubscribeStatus: (() => void) | null = null;
+  private unsubscribeDisposed: (() => void) | null = null;
   private openTarget: OpenTarget | null = null;
   private pendingNotificationTarget: AutomationNotificationTarget | null = null;
   private readonly attentionNotificationKeys = new Set<string>();
@@ -94,14 +83,28 @@ export class AutomationService {
       errors.map((error) => error.id),
       now,
     );
-    this.unsubscribeEvent = openCodeRuntime.onEvent((event) => this.onOpenCodeEvent(event));
-    this.unsubscribeReconnect = openCodeRuntime.onReconnect(async () => {
-      await this.recoverRuns();
-      this.changed();
-    });
-    this.unsubscribeBeforeSwitch = openCodeRuntime.onBeforeSwitch(() =>
-      this.runner.cancelAll("OpenCode profile changed"),
+    this.unsubscribeEvent = openCodeRuntime.onScopedEvent((event, runtime) =>
+      this.onOpenCodeEvent(event, runtime),
     );
+    this.unsubscribeStatus = openCodeRuntime.onRuntimeStatus((runtime) => {
+      if (!runtime.connected) this.recoveredConnections.delete(runtime.connectionID);
+      if (
+        !runtime.connected ||
+        !runtime.capabilities?.scheduledAutomations ||
+        this.stopping ||
+        this.recoveredConnections.has(runtime.connectionID)
+      )
+        return;
+      this.recoverProfile(runtime);
+      void this.scan();
+      this.changed(runtime.profileID);
+    });
+    this.unsubscribeDisposed = openCodeRuntime.onConnectionDisposed((connectionID) => {
+      const runner = this.runners.get(connectionID);
+      this.runners.delete(connectionID);
+      this.recoveredConnections.delete(connectionID);
+      void runner?.shutdown();
+    });
     powerMonitor.on("resume", this.onResume);
     this.scanTimer = setInterval(() => void this.scan(), SCAN_INTERVAL_MS);
     await this.recoverRuns();
@@ -115,13 +118,15 @@ export class AutomationService {
     if (this.scanTimer) clearInterval(this.scanTimer);
     this.scanTimer = null;
     this.unsubscribeEvent?.();
-    this.unsubscribeReconnect?.();
-    this.unsubscribeBeforeSwitch?.();
+    this.unsubscribeStatus?.();
+    this.unsubscribeDisposed?.();
     this.unsubscribeEvent = null;
-    this.unsubscribeReconnect = null;
-    this.unsubscribeBeforeSwitch = null;
+    this.unsubscribeStatus = null;
+    this.unsubscribeDisposed = null;
     powerMonitor.off("resume", this.onResume);
-    await this.runner.shutdown();
+    await Promise.all([...this.runners.values()].map((runner) => runner.shutdown()));
+    this.runners.clear();
+    this.recoveredConnections.clear();
     await this.scanPromise?.catch(() => undefined);
     this.stopPowerSaveBlocker();
     this.started = false;
@@ -165,12 +170,12 @@ export class AutomationService {
       command.type === "resume" ||
       (command.type === "update" && command.draft.status === "active")
     ) {
-      this.requireScheduledAutomations();
+      this.requireScheduledAutomations(command.profileID);
     }
-    if (command.type === "run-now") this.requireManualAutomations();
+    if (command.type === "run-now") this.requireManualAutomations(command.profileID);
     if (
       (command.type === "create" || command.type === "update") &&
-      !this.destinationSupported(command.draft)
+      !this.destinationSupported(command.profileID, command.draft)
     ) {
       throw new AutomationConfigurationError(
         "This scheduled task uses a workspace mode that is unavailable for the active OpenCode server.",
@@ -190,7 +195,7 @@ export class AutomationService {
     if (command.type === "delete") await this.delete(command.profileID, command.automationID);
     if (command.type === "cancel-run") {
       this.requiredRun(command.runID, command.profileID);
-      await this.runner.cancel(command.runID);
+      await this.runnerFor(command.profileID).cancel(command.runID);
     }
     if (command.type === "mark-read") {
       this.requiredRun(command.runID, command.profileID);
@@ -252,7 +257,7 @@ export class AutomationService {
       const run = this.repository.run(current.activeRunID);
       if (run?.state === "needs-attention" && run.attention?.type === "configuration") {
         this.repository.patchRun(run.id, { state: "pending", attention: null, error: null });
-        void this.runner.execute(run.id);
+        void this.runnerFor(profileID).execute(run.id);
       }
     }
   }
@@ -283,7 +288,11 @@ export class AutomationService {
     this.repository.deleteDefinition(id, Date.now());
     if (!current.activeRunID) return;
     const run = this.repository.run(current.activeRunID);
-    if (run && !isTerminalRun(run) && !this.runner.isExecuting(run.id)) {
+    if (
+      run &&
+      !isTerminalRun(run) &&
+      ![...this.runners.values()].some((runner) => runner.isExecuting(run.id))
+    ) {
       this.repository.finishRun(run.id, id, {
         state: "cancelled",
         completedAt: Date.now(),
@@ -297,7 +306,7 @@ export class AutomationService {
 
   private async runNow(profileID: string, id: string): Promise<void> {
     const record = this.requiredAutomation(id, profileID);
-    if (!this.destinationSupported(record)) {
+    if (!this.destinationSupported(profileID, record)) {
       throw new AutomationConfigurationError(
         "This scheduled task uses a workspace mode that is unavailable for the active OpenCode server.",
       );
@@ -312,7 +321,7 @@ export class AutomationService {
       scheduledFor: Date.now(),
       occurrenceKey: `${definition.id}:manual:${randomUUID()}`,
     });
-    if (run) void this.runner.execute(run.id);
+    if (run) void this.runnerFor(profileID).execute(run.id);
   }
 
   private async scan(): Promise<void> {
@@ -325,9 +334,22 @@ export class AutomationService {
   }
 
   private async performScan(): Promise<void> {
-    if (!openCodeRuntime.runtimeStatus().capabilities?.scheduledAutomations) return;
-    const profileID = openCodeRuntime.runtimeStatus().profileID;
-    const activeCount = this.repository.activeRuns(profileID).length;
+    for (const runtime of openCodeRuntime.listRuntimes()) {
+      if (!runtime.connected || !runtime.capabilities?.scheduledAutomations) continue;
+      this.scanProfile(runtime.profileID);
+    }
+  }
+
+  private scanProfile(profileID: string): void {
+    const supportedProfiles = new Set(
+      openCodeRuntime
+        .listRuntimes()
+        .filter((runtime) => runtime.connected && runtime.capabilities?.scheduledAutomations)
+        .map((runtime) => runtime.profileID),
+    );
+    const activeCount = this.repository
+      .activeRuns()
+      .filter((run) => supportedProfiles.has(run.profileID)).length;
     const capacity = Math.max(0, MAX_CONCURRENT_RUNS - activeCount);
     if (!capacity) return;
     const now = Date.now();
@@ -382,28 +404,66 @@ export class AutomationService {
         if (finished && expiredOneTime) this.runFinished(finished, definitionValue);
         continue;
       }
-      void this.runner.execute(run.id);
+      void this.runnerFor(profileID).execute(run.id);
     }
   }
 
   private async recoverRuns(): Promise<void> {
     if (this.stopping) return;
-    if (!openCodeRuntime.runtimeStatus().capabilities?.scheduledAutomations) return;
-    const profileID = openCodeRuntime.runtimeStatus().profileID;
-    for (const run of this.repository.activeRuns(profileID)) void this.runner.recover(run);
+    for (const runtime of openCodeRuntime.listRuntimes()) {
+      this.recoverProfile(runtime);
+    }
   }
 
-  private onOpenCodeEvent(event: OpenCodeEvent): void {
-    this.runner.onEvent(event);
+  private recoverProfile(runtime: OpenCodeRuntimeStatus): void {
+    if (!runtime.connected || !runtime.capabilities?.scheduledAutomations) return;
+    this.recoveredConnections.add(runtime.connectionID);
+    const runner = this.runnerFor(runtime.profileID);
+    for (const run of this.repository.activeRuns(runtime.profileID)) void runner.recover(run);
+  }
+
+  private onOpenCodeEvent(event: OpenCodeEvent, runtime: OpenCodeRuntimeStatus): void {
+    const runner = this.runners.get(runtime.connectionID);
+    if (!runner) return;
+    runner.onEvent(event);
     const sessionID = eventSessionID(event);
     if (!sessionID) return;
-    const runID = this.runner.runIDForSession(sessionID);
+    const runID = runner.runIDForSession(sessionID);
     const run = runID ? this.repository.run(runID) : null;
     if (run?.state === "needs-attention") this.notifyAttention(run);
   }
 
-  private async client(): Promise<OpenCodeClient> {
-    const client = await openCodeRuntime.withClient(async (value) => value);
+  private runtime(profileID: string): OpenCodeRuntimeStatus {
+    const runtime = openCodeRuntime
+      .listRuntimes()
+      .find((value) => value.profileID === profileID && value.connected);
+    if (!runtime)
+      throw new AutomationConfigurationError("The scheduled task's server is not connected.");
+    return runtime;
+  }
+
+  private runnerFor(profileID: string): AutomationRunner {
+    const runtime = this.runtime(profileID);
+    const existing = this.runners.get(runtime.connectionID);
+    if (existing) return existing;
+    const owner = openCodeRuntime.scopedConnection(runtime.connectionID);
+    const runner = new AutomationRunner({
+      client: () => owner.withClient((client) => this.checkedClient(client)),
+      repository: this.repository,
+      memory: { ensure: (automationID) => this.registry.ensureMemory(automationID) },
+      capabilities: () => ({
+        localPathActions: owner.runtimeStatus().capabilities?.localPathActions ?? false,
+        worktreeCreate: owner.runtimeStatus().capabilities?.worktreeCreate ?? false,
+      }),
+      onChanged: () => this.changed(profileID),
+      onFinished: (run, definition) => this.runFinished(run, definition),
+      onAttention: (run, definition) => void this.runNeedsAttention(run, definition),
+    });
+    this.runners.set(runtime.connectionID, runner);
+    return runner;
+  }
+
+  private async checkedClient(client: OpenCodeClient): Promise<OpenCodeClient> {
     const health = await client.health.get({ signal: AbortSignal.timeout(30_000) });
     if (!isSupportedOpenCodeVersion(health.version)) {
       throw new AutomationConfigurationError(
@@ -413,16 +473,16 @@ export class AutomationService {
     return client;
   }
 
-  private requireScheduledAutomations(): void {
-    if (!openCodeRuntime.runtimeStatus().capabilities?.scheduledAutomations) {
+  private requireScheduledAutomations(profileID: string): void {
+    if (!this.runtime(profileID).capabilities?.scheduledAutomations) {
       throw new AutomationConfigurationError(
         "Scheduled tasks are paused for the active OpenCode server.",
       );
     }
   }
 
-  private requireManualAutomations(): void {
-    if (!openCodeRuntime.runtimeStatus().capabilities?.manualAutomations) {
+  private requireManualAutomations(profileID: string): void {
+    if (!this.runtime(profileID).capabilities?.manualAutomations) {
       throw new AutomationConfigurationError(
         "Manual scheduled-task runs are unavailable for the active OpenCode server.",
       );
@@ -430,9 +490,10 @@ export class AutomationService {
   }
 
   private destinationSupported(
+    profileID: string,
     definition: Pick<AutomationDefinition | AutomationDraft, "destination">,
   ): boolean {
-    const capabilities = openCodeRuntime.runtimeStatus().capabilities;
+    const capabilities = this.runtime(profileID).capabilities;
     if (!capabilities || definition.destination.type === "session") return true;
     if (definition.destination.workspace.type === "new-worktree")
       return capabilities.worktreeCreate;
@@ -535,6 +596,7 @@ export class AutomationService {
       this.repository.patchRun(run.id, { readAt: Date.now() });
       this.changed(run.profileID);
       const target = {
+        profileID: run.profileID,
         automationID: run.automationID,
         runID: run.id,
         sessionID: run.attention?.sessionID ?? run.rootSessionID,
@@ -552,7 +614,7 @@ export class AutomationService {
     notification.show();
   }
 
-  private changed(profileID = openCodeRuntime.runtimeStatus().profileID): void {
+  private changed(profileID: string): void {
     this.syncPowerSaveBlocker();
     const event: AutomationChangedEvent = { profileID };
     for (const window of BrowserWindow.getAllWindows()) {
