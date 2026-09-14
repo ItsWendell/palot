@@ -11,7 +11,7 @@ afterEach(async () => {
 
 async function harness(platform: "linux" | "darwin" = "linux", env: NodeJS.ProcessEnv = {}) {
   await fs.mkdir("/tmp/opencode", { recursive: true });
-  const home = await fs.mkdtemp("/tmp/opencode/login-service-");
+  const home = await fs.mkdtemp(join(await fs.realpath("/tmp/opencode"), "login-service-"));
   roots.push(home);
   const binary = {
     path: join(home, 'bin with spaces/opencode $literal%name"&<>'),
@@ -429,7 +429,7 @@ describe("OpenCode login service", () => {
   );
 
   it("uses XDG_CONFIG_HOME for the user unit", async () => {
-    const base = await fs.mkdtemp("/tmp/opencode/login-xdg-");
+    const base = await fs.mkdtemp(join(await fs.realpath("/tmp/opencode"), "login-xdg-"));
     roots.push(base);
     const h = await harness("linux", { XDG_CONFIG_HOME: base });
     expect((await h.manager.enable(h.binary)).configPath).toBe(
