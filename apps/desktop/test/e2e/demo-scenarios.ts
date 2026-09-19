@@ -180,7 +180,7 @@ export const demoScenarios: Record<
       );
     },
     async run(page, { client, session, projectDirectory, runRoot, llm }) {
-      await client.session.rename({ sessionID: session.id, title: palotTitle });
+      await client.session.update({ sessionID: session.id, title: palotTitle });
       await client.session.prompt({
         sessionID: session.id,
         text: prompts.architecture,
@@ -256,7 +256,7 @@ export const demoScenarios: Record<
 
 async function createTask(client: OpenCodeClient, directory: string, title: string) {
   const session = await client.session.create({ location: { directory } });
-  await client.session.rename({ sessionID: session.id, title });
+  await client.session.update({ sessionID: session.id, title });
   return session;
 }
 

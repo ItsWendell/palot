@@ -115,7 +115,7 @@ async function harness(
   const platform = options.platform ?? "linux";
   const arch = options.arch ?? "x64";
   const filename = `opencode-${platform}-${arch}${arch === "x64" ? "-baseline" : ""}.${platform === "linux" ? "tar.gz" : "zip"}`;
-  let version = options.version ?? "2.0.2";
+  let version = options.version ?? "2.0.7";
   let saved = options.saved;
   let edit: (value: ReturnType<typeof metadata>) => unknown = (value) => value;
   const metadata = (channel: string) => ({
@@ -224,10 +224,10 @@ describe("OpenCode release manager", () => {
     status.offer!.version = "tampered";
     expect(h.manager.status().offer!.version).toBe(SUPPORTED_OPENCODE_VERSION);
     h.manager.setChannel("beta");
-    h.version("2.0.1");
+    h.version("2.0.10");
     expect((await h.manager.check()).offer).toMatchObject({
       channel: "beta",
-      version: "2.0.1",
+      version: "2.0.10",
       tested: false,
       requiresConfirmation: false,
     });
@@ -249,7 +249,7 @@ describe("OpenCode release manager", () => {
     [
       "path version",
       (m: FeedMetadata) => {
-        m.version = "../../2.0.2";
+        m.version = "../../2.0.7";
       },
     ],
     [
@@ -339,7 +339,7 @@ describe("OpenCode release manager", () => {
     h.manager.setChannel("beta");
     await h.manager.check();
     await expect(h.manager.prepare({ version })).rejects.toThrow("consent");
-    await expect(h.manager.prepare({ version: "2.0.2", allowUntested: true })).rejects.toThrow(
+    await expect(h.manager.prepare({ version: "2.0.7", allowUntested: true })).rejects.toThrow(
       "stale",
     );
     expect(h.fetcher).toHaveBeenCalledTimes(1);
@@ -358,7 +358,7 @@ describe("OpenCode release manager", () => {
     await expect(changedSdk.discoverPreparedBinary()).rejects.toThrow("consent expired");
   });
 
-  it.each(["2.0.1", "2.10.7", "0.0.0-beta-19507"])(
+  it.each(["2.0.8", "2.10.7", "2.0.7"])(
     "prepares compatible %s without a confirmation or persisted exception",
     async (version) => {
       const h = await harness({ version });
@@ -387,24 +387,24 @@ describe("OpenCode release manager", () => {
   it("streams, verifies, stages atomically and revalidates on discovery without feed requests", async () => {
     const h = await harness();
     await h.manager.check();
-    expect((await h.manager.prepare({ version: "2.0.2" })).preparedVersion).toBe("2.0.2");
+    expect((await h.manager.prepare({ version: "2.0.7" })).preparedVersion).toBe("2.0.7");
     const prepared = await h.manager.discoverPreparedBinary();
-    expect(prepared?.version).toBe("2.0.2");
+    expect(prepared?.version).toBe("2.0.7");
     expect(await readFile(prepared!.path, "utf8")).toBe("fake executable");
     expect(h.verifyVersion).toHaveBeenCalledTimes(2);
     expect(h.fetcher).toHaveBeenCalledTimes(2);
-    expect(h.manager.acceptsPreparedVersion("2.0.2")).toBe(false);
-    expect(await readdir(h.directory)).toEqual(["2.0.2"]);
+    expect(h.manager.acceptsPreparedVersion("2.0.7")).toBe(false);
+    expect(await readdir(h.directory)).toEqual(["2.0.7"]);
     h.manager.setChannel("beta");
-    expect(h.manager.status()).toMatchObject({ preparedVersion: "2.0.2", offer: null });
-    expect((await h.manager.discoverPreparedBinary())?.version).toBe("2.0.2");
+    expect(h.manager.status()).toMatchObject({ preparedVersion: "2.0.7", offer: null });
+    expect((await h.manager.discoverPreparedBinary())?.version).toBe("2.0.7");
     expect(h.fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("refuses cached binary tampering before executing it", async () => {
     const h = await harness();
     await h.manager.check();
-    await h.manager.prepare({ version: "2.0.2" });
+    await h.manager.prepare({ version: "2.0.7" });
     const prepared = await h.manager.discoverPreparedBinary();
     h.verifyVersion.mockClear();
     await writeFile(prepared!.path, "tampered");
@@ -415,7 +415,7 @@ describe("OpenCode release manager", () => {
   it("refuses a cached symlink even if its target has the expected hash", async () => {
     const h = await harness();
     await h.manager.check();
-    await h.manager.prepare({ version: "2.0.2" });
+    await h.manager.prepare({ version: "2.0.7" });
     const prepared = await h.manager.discoverPreparedBinary();
     const bytes = await readFile(prepared!.path);
     await rm(prepared!.path);
@@ -435,7 +435,7 @@ describe("OpenCode release manager", () => {
       Buffer.concat([h.archive, Buffer.from("extra")]),
     ]) {
       h.fetcher.mockResolvedValueOnce(new Response(new Uint8Array(bytes)));
-      await expect(h.manager.prepare({ version: "2.0.2" })).rejects.toThrow(/checksum|size/);
+      await expect(h.manager.prepare({ version: "2.0.7" })).rejects.toThrow(/checksum|size/);
       expect(await readdir(h.directory)).toEqual([]);
     }
     expect(h.verifyVersion).not.toHaveBeenCalled();
@@ -445,25 +445,25 @@ describe("OpenCode release manager", () => {
   it("retains the previous selection after offline, wrong version, and persistence failures", async () => {
     const h = await harness();
     await h.manager.check();
-    await h.manager.prepare({ version: "2.0.2" });
+    await h.manager.prepare({ version: "2.0.7" });
     h.fetcher.mockRejectedValueOnce(new Error("offline"));
     await expect(h.manager.check()).rejects.toThrow("offline");
-    expect(h.manager.status().preparedVersion).toBe("2.0.2");
+    expect(h.manager.status().preparedVersion).toBe("2.0.7");
     expect(h.manager.status().offer).toBeNull();
-    h.version("2.0.1");
+    h.version("2.0.8");
     await h.manager.check();
     h.verifyVersion.mockResolvedValueOnce("1.0.0");
-    await expect(h.manager.prepare({ version: "2.0.1", allowUntested: true })).rejects.toThrow(
+    await expect(h.manager.prepare({ version: "2.0.8", allowUntested: true })).rejects.toThrow(
       "different OpenCode version",
     );
-    expect(h.manager.status().preparedVersion).toBe("2.0.2");
+    expect(h.manager.status().preparedVersion).toBe("2.0.7");
     h.write.mockImplementationOnce(() => {
       throw new Error("disk full");
     });
-    await expect(h.manager.prepare({ version: "2.0.1", allowUntested: true })).rejects.toThrow(
+    await expect(h.manager.prepare({ version: "2.0.8", allowUntested: true })).rejects.toThrow(
       "disk full",
     );
-    expect(h.manager.status().preparedVersion).toBe("2.0.2");
+    expect(h.manager.status().preparedVersion).toBe("2.0.7");
     expect((await readdir(h.directory)).some((entry) => entry.startsWith(".prepare-"))).toBe(false);
   });
 
@@ -472,8 +472,8 @@ describe("OpenCode release manager", () => {
     const first = h.manager.check();
     expect(h.manager.check()).toBe(first);
     await first;
-    const preparing = h.manager.prepare({ version: "2.0.2" });
-    expect(h.manager.prepare({ version: "2.0.2" })).toBe(preparing);
+    const preparing = h.manager.prepare({ version: "2.0.7" });
+    expect(h.manager.prepare({ version: "2.0.7" })).toBe(preparing);
     await preparing;
     expect(h.fetcher).toHaveBeenCalledTimes(2);
     expect(h.verifyVersion).toHaveBeenCalledTimes(1);
@@ -504,12 +504,12 @@ describe("OpenCode release manager", () => {
           release = resolve;
         });
       });
-      const preparing = h.manager.prepare({ version: "2.0.2" });
+      const preparing = h.manager.prepare({ version: "2.0.7" });
       await verifying;
       if (operation === "channel") h.manager.setChannel("beta");
       else if (operation === "reset") h.manager.reset();
       else await h.manager.check();
-      release("2.0.2");
+      release("2.0.7");
       await expect(preparing).rejects.toThrow("changed during preparation");
       expect(h.manager.status().preparedVersion).toBeNull();
       expect(await readdir(h.directory)).toEqual([]);
@@ -543,7 +543,7 @@ describe("OpenCode release manager", () => {
   ])("refuses %s tar entries before execution", async (_name, entries) => {
     const h = await harness({ archive: tar(entries) });
     await h.manager.check();
-    await expect(h.manager.prepare({ version: "2.0.2" })).rejects.toThrow("Could not prepare");
+    await expect(h.manager.prepare({ version: "2.0.7" })).rejects.toThrow("Could not prepare");
     expect(h.verifyVersion).not.toHaveBeenCalled();
     expect(await readdir(h.directory)).toEqual([]);
   });
@@ -551,7 +551,7 @@ describe("OpenCode release manager", () => {
   it("extracts the inspected regular binary entry from a mac zip", async () => {
     const h = await harness({ archive: zip(), platform: "darwin", arch: "arm64" });
     await h.manager.check();
-    await h.manager.prepare({ version: "2.0.2" });
+    await h.manager.prepare({ version: "2.0.7" });
     const binary = await h.manager.discoverPreparedBinary();
     expect(await readFile(binary!.path, "utf8")).toBe("fake mac executable");
   });
@@ -569,7 +569,7 @@ describe("OpenCode release manager", () => {
         }),
       ),
     );
-    await expect(h.manager.prepare({ version: "2.0.2" })).rejects.toThrow("connection interrupted");
+    await expect(h.manager.prepare({ version: "2.0.7" })).rejects.toThrow("connection interrupted");
     expect(await readdir(h.directory)).toEqual([]);
     expect(h.verifyVersion).not.toHaveBeenCalled();
   });
@@ -579,7 +579,7 @@ describe("OpenCode release manager", () => {
     archive[archive.length - 8] = archive[archive.length - 8]! ^ 0xff;
     const h = await harness({ archive });
     await h.manager.check();
-    await expect(h.manager.prepare({ version: "2.0.2" })).rejects.toThrow("Could not prepare");
+    await expect(h.manager.prepare({ version: "2.0.7" })).rejects.toThrow("Could not prepare");
     expect(h.verifyVersion).not.toHaveBeenCalled();
     expect(await readdir(h.directory)).toEqual([]);
   });
@@ -605,7 +605,7 @@ describe("OpenCode release manager", () => {
   ])("refuses unsafe zip entry %s/%d", async (name, mode) => {
     const h = await harness({ archive: zip(name, mode), platform: "darwin", arch: "arm64" });
     await h.manager.check();
-    await expect(h.manager.prepare({ version: "2.0.2" })).rejects.toThrow("Could not prepare");
+    await expect(h.manager.prepare({ version: "2.0.7" })).rejects.toThrow("Could not prepare");
     expect(h.verifyVersion).not.toHaveBeenCalled();
   });
 

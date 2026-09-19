@@ -18,6 +18,25 @@ import {
 import { projectToolExecution } from "./tool-executions";
 
 describe("needsSessionReconcile", () => {
+  it("uses provider dispatch time for each assistant attempt, including retries", () => {
+    const first = applyOpenCodeEvents([], "session", [
+      event(
+        "session.step.started",
+        { sessionID: "session", assistantMessageID: "message", started: 10 },
+        20,
+      ),
+    ]);
+    expect(first[0]?.createdAt).toBe(10);
+    const retry = applyOpenCodeEvents(first, "session", [
+      event(
+        "session.step.started",
+        { sessionID: "session", assistantMessageID: "message", started: 30 },
+        40,
+      ),
+    ]);
+    expect(retry[0]?.createdAt).toBe(30);
+  });
+
   it("leaves nested form creation refresh to Query", () => {
     expect(
       needsSessionReconcile(

@@ -35,8 +35,8 @@
         "@fontsource-variable/ibm-plex-sans": "5.3.0",
         "@fontsource-variable/inter": "5.3.0",
         "@fontsource-variable/jetbrains-mono": "5.3.0",
-        "@opencode/client": "2.0.3",
-        "@opencode/protocol": "2.0.3",
+        "@opencode/client": "2.0.9",
+        "@opencode/protocol": "2.0.9",
         "@palot/orbits": "workspace:*",
         "@pierre/diffs": "1.4.2",
         "@pierre/theming": "1.0.1",
@@ -458,11 +458,11 @@
 
     "@open-draft/until": ["@open-draft/until@2.1.0", "", {}, "sha512-U69T3ItWHvLwGg5eJ0n3I62nWuE6ilHlmz7zM0npLBRvPRd7e6NYmg54vvRtP5mZG7kZqZCFVdsTWo7BPtBujg=="],
 
-    "@opencode/client": ["@opencode/client@2.0.3", "", { "dependencies": { "@opencode/protocol": "2.0.3", "@opencode/schema": "2.0.3" }, "peerDependencies": { "effect": "4.0.0-rc.112", "solid-js": ">=1.9.0" }, "optionalPeers": ["effect", "solid-js"] }, "sha512-b+LcpMI131fXnGqf+O+9Y33H4XmwAkQibfYvtpEOROftkTpkcMj3R7WW/wGl2VTBNTZECAk2Yd+TACTzzAwk0A=="],
+    "@opencode/client": ["@opencode/client@2.0.9", "", { "dependencies": { "@opencode/protocol": "2.0.9", "@opencode/schema": "2.0.9" }, "peerDependencies": { "effect": "4.0.0-rc.112", "solid-js": ">=1.9.0" }, "optionalPeers": ["effect", "solid-js"] }, "sha512-WQR2mAtVLy8wFncN5tuI7oQDAkANzg215K3CUzrxIwXjdoVSjfF/iIqHZk+CmimQvO+FQQABQULGHzl0TqDzVA=="],
 
-    "@opencode/protocol": ["@opencode/protocol@2.0.3", "", { "dependencies": { "@opencode/schema": "2.0.3", "effect": "4.0.0-rc.112" } }, "sha512-DNHbkLDTuAyMsmVdnjuKulcfoDbllW2dxt4W19r2aJEYvswJpEO9168CSK6Sjbx1FOh/B9yL7SQgoDRMd4K5Vw=="],
+    "@opencode/protocol": ["@opencode/protocol@2.0.9", "", { "dependencies": { "@opencode/schema": "2.0.9", "effect": "4.0.0-rc.112" } }, "sha512-mP4EySNWiQ4SnWXBoeCZ6sCsvK/GEzRJivPRQ9eHLTwP91LX99bk4q02KSTWJIZjasQwabHBmny5kE1IV7gTtg=="],
 
-    "@opencode/schema": ["@opencode/schema@2.0.3", "", { "dependencies": { "@standard-schema/spec": "1.1.0", "effect": "4.0.0-rc.112" } }, "sha512-thPeBbqw4+SkZ/0LOuqfahSRGuWogRa/wwfIVyiQYsoE0vzLx8XUpHQ+FSUWkdz6llDtP0+ZsyBqXUMpXmPgbg=="],
+    "@opencode/schema": ["@opencode/schema@2.0.9", "", { "dependencies": { "@standard-schema/spec": "1.1.0", "effect": "4.0.0-rc.112" } }, "sha512-xSAKHD5D3j5zGPuDYHu4kGy1immmlmzzwImpqfgEAEmnp8jf5312PhG31fcV0VB50YfbP8/uHA+t8zSBkJnrLQ=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 

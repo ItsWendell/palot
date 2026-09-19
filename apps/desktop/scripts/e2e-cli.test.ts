@@ -114,14 +114,14 @@ function runCli(
 }
 
 describe("E2E CLI", () => {
-  it("allows explicit reviewed beta qualification without changing the client pin", () => {
-    const result = runCli(["--opencode-version", "0.0.0-beta-19507", "--help"]);
+  it("allows explicit supported runtime qualification without changing the client pin", () => {
+    const result = runCli(["--opencode-version", version, "--help"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Requires OpenCode 0.0.0-beta-19507");
+    expect(result.stdout).toContain(`Requires OpenCode ${version}`);
     expect(result.stderr).not.toContain("FORBIDDEN");
   });
 
-  it.each(["1.11.0", "3.0.0", "0.0.0-beta-19599", "latest"])(
+  it.each(["1.11.0", "2.0.3", "3.0.0", "0.0.0-beta-19507", "0.0.0-beta-19599", "latest"])(
     "rejects unqualified runtime override %s before starting processes",
     (runtime) => {
       const result = runCli(["--opencode-version", runtime, "--help"]);

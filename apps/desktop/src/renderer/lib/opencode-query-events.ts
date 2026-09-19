@@ -1,10 +1,11 @@
 import type { QueryKey } from "@tanstack/react-query";
-import type { PalotEvent } from "../../shared";
+import type { PalotEvent, PalotMessage } from "../../shared";
 import { openCodeKeys } from "./opencode-query";
 
 const MODEL_CATALOG_EVENTS = new Set<PalotEvent["type"]>([
   "models-dev.refreshed",
-  "catalog.updated",
+  "provider.updated",
+  "model.updated",
   "integration.updated",
   "credential.switched",
 ]);
@@ -15,7 +16,8 @@ const SETTINGS_EVENTS = new Set<PalotEvent["type"]>([
   "integration.updated",
   "credential.updated",
   "credential.switched",
-  "catalog.updated",
+  "provider.updated",
+  "model.updated",
   "models-dev.refreshed",
   "mcp.status.changed",
   "mcp.resources.changed",
@@ -53,7 +55,39 @@ export function sessionStatsShouldRevalidate(event: PalotEvent): boolean {
   return SESSION_STATS_EVENTS.has(event.type);
 }
 
+export function sessionTranscriptShouldRevalidate(
+  event: PalotEvent,
+  messages: readonly PalotMessage[],
+): boolean {
+  if (
+    event.type !== "session.execution.succeeded" &&
+    event.type !== "session.execution.failed" &&
+    event.type !== "session.execution.interrupted"
+  ) {
+    return false;
+  }
+  // Execution can settle without a terminal event for each tool. Read the
+  // authoritative transcript rather than inventing a completed/failed result.
+  return messages.some(
+    (message) =>
+      message.type === "assistant" &&
+      message.content.some((part) => {
+        const state = part.state;
+        return (
+          part.type === "tool" &&
+          state !== null &&
+          typeof state === "object" &&
+          !Array.isArray(state) &&
+          (state.status === "streaming" || state.status === "running")
+        );
+      }),
+  );
+}
+
 export function openCodeInvalidationKeys(connectionID: string, event: PalotEvent): QueryKey[] {
+  // Reload evicts location-owned registries and sessions can move across locations.
+  // Re-read the connection rather than retaining projections of an evicted location.
+  if (event.type === "location.shutdown") return [openCodeKeys.all(connectionID)];
   const keys: QueryKey[] = [];
   if (event.type === "session.inbox.cancelled") {
     keys.push(openCodeKeys.promptIndex(connectionID, event.data.sessionID));

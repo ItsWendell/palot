@@ -9,7 +9,6 @@ import { CommandTab } from "./command-tab";
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   output: vi.fn(),
-  timeout: vi.fn(),
   remove: vi.fn(),
 }));
 vi.mock("../../services/opencode-client", () => ({ openCodeClient: () => ({ shell: mocks }) }));
@@ -51,7 +50,6 @@ async function choose(name: string) {
 }
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.timeout.mockResolvedValue({});
   mocks.remove.mockResolvedValue(undefined);
   mocks.get.mockResolvedValue({ data: { command: "build", cwd: "/repo", status: "running" } });
   mocks.output.mockResolvedValue({ data: { output: "loaded output", cursor: 13, size: 13 } });
@@ -74,23 +72,8 @@ describe("CommandActions", () => {
       fireEvent.click(button);
       expect(screen.queryByRole("menuitem")).toBeNull();
       expect(mocks.remove).not.toHaveBeenCalled();
-      expect(mocks.timeout).not.toHaveBeenCalled();
     },
   );
-  it.each([
-    ["Set timeout to 5 minutes", 300_000],
-    ["Remove timeout", 0],
-  ] as const)("maps %s to the official timeout API", async (label, timeout) => {
-    mount();
-    await choose(label);
-    await waitFor(() =>
-      expect(mocks.timeout).toHaveBeenCalledWith(
-        { id: "shell", location: { directory: "/repo", workspace: "workspace" }, timeout },
-        { signal: expect.any(AbortSignal) },
-      ),
-    );
-    expect(mocks.remove).not.toHaveBeenCalled();
-  });
 
   it("warns that removal kills and deletes output, and cancellation makes no request", async () => {
     vi.mocked(window.confirm).mockReturnValue(false);
@@ -112,7 +95,7 @@ describe("CommandActions", () => {
     await choose("Stop and remove command");
     await waitFor(() => expect(onRemoved).toHaveBeenCalledOnce());
     expect(mocks.remove).toHaveBeenLastCalledWith(
-      { id: "shell", location: { directory: "/repo", workspace: "workspace" } },
+      { id: "shell", location: { directory: "/repo" } },
       { signal: expect.any(AbortSignal) },
     );
   });

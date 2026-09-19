@@ -19,7 +19,7 @@ export function classifyOpenCodeProfile(profile: OpenCodeProfile): OpenCodeRunti
       capabilities: {
         serverFilesystem: true,
         localPathActions: false,
-        localFileAttachments: false,
+        localFileAttachments: true,
         worktreeCreate: true,
         pty: "persistent",
         scheduledAutomations: false,

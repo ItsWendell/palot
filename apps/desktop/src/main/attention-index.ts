@@ -258,11 +258,10 @@ export class OpenCodeAttentionIndex {
     const locationID = locationKey(location);
     const target = {
       directory: location.directory,
-      ...(location.workspaceID ? { workspace: location.workspaceID } : {}),
     };
     const results = await Promise.allSettled([
       client.permission.request.list({ location: target }, { signal: this.#signal() }),
-      client.form.request.list({ location: target }, { signal: this.#signal() }),
+      client.form.list({ location: target }, { signal: this.#signal() }),
     ]);
     if (epoch !== this.#epoch) return false;
 

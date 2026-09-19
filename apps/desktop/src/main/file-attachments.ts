@@ -6,6 +6,8 @@ import { chmod, mkdir, open, readdir, rm, rmdir, stat, writeFile } from "node:fs
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import type { OpenCodeClient } from "@opencode/client";
+import type { AttachmentUploadWriter } from "./attachment-upload";
 import type { PalotFileAttachment, PalotFilePickerResult } from "../shared/opencode-contract";
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -17,6 +19,17 @@ const CLIPBOARD_DIRECTORY = path.join(TEMPORARY_ROOT, `clipboard-attachments-${p
 const previewGrants = new Map<
   string,
   { filePath: string; createdAt: number; device: number; inode: number }
+>();
+// Only objects produced by native inspection can be uploaded. Never trust a renderer URI.
+const uploadSources = new WeakMap<
+  PalotFileAttachment,
+  {
+    filePath: string;
+    device: number;
+    inode: number;
+    size: number;
+    modified: number;
+  }
 >();
 
 const IMAGE_EXTENSIONS = ["gif", "jpeg", "jpg", "png", "webp"];
@@ -93,7 +106,6 @@ const TEXT_AND_SOURCE_EXTENSIONS = [
   "zsh",
 ] as const;
 
-const SUPPORTED_EXTENSIONS = new Set<string>([...IMAGE_EXTENSIONS, ...TEXT_AND_SOURCE_EXTENSIONS]);
 const SUPPORTED_EXTENSIONLESS_NAMES = new Set([
   ".editorconfig",
   ".env",
@@ -125,6 +137,7 @@ const CLIPBOARD_IMAGE_EXTENSIONS: Record<string, string> = {
 };
 
 export const ATTACHMENT_DIALOG_FILTERS = [
+  { name: "All files", extensions: ["*"] },
   {
     name: "Supported images, text, and source files",
     extensions: [...IMAGE_EXTENSIONS, ...TEXT_AND_SOURCE_EXTENSIONS],
@@ -140,21 +153,16 @@ function fileExtension(filePath: string): string {
 function mimeType(filePath: string): string {
   const extension = fileExtension(filePath);
   if (IMAGE_MIME_TYPES[extension]) return IMAGE_MIME_TYPES[extension];
-  if (extension === "json") return "application/json";
-  if (extension === "xml") return "application/xml";
-  if (extension === "yaml" || extension === "yml") return "application/yaml";
-  return "text/plain";
-}
-
-function supportsFile(filePath: string): boolean {
-  const extension = fileExtension(filePath);
-  if (extension) return SUPPORTED_EXTENSIONS.has(extension);
+  if (extension === "pdf") return "application/pdf";
   const filename = path.basename(filePath).toLowerCase();
-  return (
+  if (
+    TEXT_AND_SOURCE_EXTENSIONS.some((value) => value === extension) ||
     SUPPORTED_EXTENSIONLESS_NAMES.has(filename) ||
     filename.startsWith(".env.") ||
     filename.startsWith("dockerfile.")
-  );
+  )
+    return "text/plain";
+  return "application/octet-stream";
 }
 
 function attachmentError(filePath: string, message: string): Error {
@@ -165,15 +173,12 @@ async function inspectAttachment(
   filePath: string,
   createPreviewGrant = true,
 ): Promise<PalotFileAttachment> {
-  const extension = fileExtension(filePath);
-  if (extension === "pdf") throw attachmentError(filePath, "PDF files are not supported.");
-  if (!supportsFile(filePath)) {
-    throw attachmentError(filePath, "this file type is not supported.");
-  }
-
   let details;
   try {
-    const handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const handle = await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
     try {
       details = await handle.stat();
     } finally {
@@ -183,9 +188,6 @@ async function inspectAttachment(
     throw attachmentError(filePath, "the file could not be read.");
   }
   if (!details.isFile()) throw attachmentError(filePath, "the selected item is not a file.");
-  if (details.size > MAX_ATTACHMENT_BYTES) {
-    throw attachmentError(filePath, "the file is larger than the 20 MiB limit.");
-  }
 
   const attachment: PalotFileAttachment = {
     uri: pathToFileURL(filePath).href,
@@ -193,8 +195,16 @@ async function inspectAttachment(
     mime: mimeType(filePath),
     size: details.size,
   };
+  uploadSources.set(attachment, {
+    filePath,
+    device: details.dev,
+    inode: details.ino,
+    size: details.size,
+    modified: details.mtimeMs,
+  });
   if (
     createPreviewGrant &&
+    details.size <= MAX_ATTACHMENT_BYTES &&
     attachment.mime.startsWith("image/") &&
     attachment.mime !== "image/svg+xml"
   ) {
@@ -233,6 +243,144 @@ export async function inspectPickedFiles(filePaths: string[]): Promise<PalotFile
     files: inspected.flatMap((item) => (item.file ? [item.file] : [])),
     errors,
   };
+}
+
+/** Transfer native-inspected selections only; failed files never retain desktop URIs. */
+export async function uploadPickedAttachments(
+  selected: PalotFilePickerResult,
+  client: Pick<OpenCodeClient, "server" | "file">,
+  scope: {
+    signal: AbortSignal;
+    validate(): void;
+    write?: AttachmentUploadWriter;
+    onProgress?(progress: {
+      name: string;
+      loaded: number;
+      total: number;
+      index: number;
+      count: number;
+    }): void;
+  },
+): Promise<PalotFilePickerResult> {
+  const validate = () => {
+    scope.signal.throwIfAborted();
+    scope.validate();
+  };
+  validate();
+  if (!selected.files.length) return selected;
+  const info = await client.server.info({ signal: scope.signal });
+  validate();
+  const temporary = info.paths.tmp;
+  const windows = /^[a-z]:[\\/]/i.test(temporary);
+  const serverPath = windows ? path.win32 : path.posix;
+  if (
+    !serverPath.isAbsolute(temporary) ||
+    (!windows && temporary.includes("\\")) ||
+    temporary.includes("\0")
+  ) {
+    throw new Error("OpenCode returned an invalid temporary directory.");
+  }
+  const files: PalotFileAttachment[] = [];
+  const errors = [...selected.errors];
+  const batch = selected.files.slice(0, MAX_ATTACHMENT_COUNT);
+  for (const [index, attachment] of batch.entries()) {
+    validate();
+    // The official client only accepts buffered Uint8Array payloads. Keep remote
+    // buffering bounded until it exposes streaming writes; local paths need no upload.
+    if (!scope.write && attachment.size != null && attachment.size > MAX_ATTACHMENT_BYTES) {
+      errors.push(`${attachment.name}: remote uploads larger than 20 MiB are not supported yet.`);
+      continue;
+    }
+    try {
+      const source = uploadSources.get(attachment);
+      if (!source) throw new Error("Attachment was not selected natively.");
+      const handle = await open(
+        source.filePath,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      let payload: Buffer;
+      try {
+        const matches = (details: Awaited<ReturnType<typeof handle.stat>>) =>
+          details.isFile() &&
+          details.dev === source.device &&
+          details.ino === source.inode &&
+          details.size === source.size &&
+          details.mtimeMs === source.modified;
+        if (!matches(await handle.stat())) throw new Error("Selected attachment changed.");
+        if (scope.write) {
+          const name = attachment.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100) || "attachment";
+          const destination = serverPath.join(temporary, `palot-${randomUUID()}-${name}`);
+          async function* chunks() {
+            let position = 0;
+            while (position < source!.size) {
+              validate();
+              const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, source!.size - position));
+              const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+              if (!bytesRead) throw new Error("Selected attachment changed.");
+              position += bytesRead;
+              yield buffer.subarray(0, bytesRead);
+            }
+            if (!matches(await handle.stat())) throw new Error("Selected attachment changed.");
+          }
+          const uploaded = await scope.write({
+            path: destination,
+            size: source.size,
+            chunks: chunks(),
+            signal: scope.signal,
+            validate,
+            onProgress: (loaded) =>
+              scope.onProgress?.({
+                name: attachment.name,
+                loaded,
+                total: source.size,
+                index,
+                count: batch.length,
+              }),
+          });
+          validate();
+          if (!matches(await handle.stat())) throw new Error("Selected attachment changed.");
+          if (serverPath.normalize(uploaded) !== destination)
+            throw new Error("Unexpected upload path.");
+          files.push({ ...attachment, uri: pathToFileURL(uploaded, { windows }).href });
+          continue;
+        }
+        if (source.size > MAX_ATTACHMENT_BYTES) throw new Error("Attachment requires streaming.");
+        // Read at most the inspected size plus one byte, even if the file grows concurrently.
+        const buffer = Buffer.alloc(source.size + 1);
+        let length = 0;
+        while (length < buffer.length) {
+          validate();
+          const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+          if (!bytesRead) break;
+          length += bytesRead;
+        }
+        if (length !== source.size || !matches(await handle.stat()))
+          throw new Error("Selected attachment changed.");
+        payload = buffer.subarray(0, length);
+      } finally {
+        await handle.close();
+      }
+      validate();
+      const name = attachment.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100) || "attachment";
+      const destination = serverPath.join(temporary, `palot-${randomUUID()}-${name}`);
+      const written = await client.file.write(
+        { path: destination, payload },
+        { signal: scope.signal },
+      );
+      validate();
+      if (serverPath.normalize(written.data.path) !== destination)
+        throw new Error("Unexpected upload path.");
+      files.push({ ...attachment, uri: pathToFileURL(written.data.path, { windows }).href });
+    } catch {
+      validate();
+      errors.push(
+        `${attachment.name}: the file could not be uploaded to OpenCode. Select it again and retry.`,
+      );
+    }
+  }
+  if (selected.files.length > MAX_ATTACHMENT_COUNT)
+    errors.push(`Attach up to ${MAX_ATTACHMENT_COUNT} files at a time.`);
+  return { files, errors };
 }
 
 export async function stageClipboardImages(

@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { OpenCode } from "@opencode/client";
 import { describe, expect, it } from "vitest";
 import { analyzeOpenCodeUsage, type StaticAnalysis } from "./opencode-coverage-analysis";
 import {
@@ -76,6 +77,10 @@ describe("OpenCode coverage contract", () => {
   it("maps protocol operation IDs to Promise client paths", () => {
     expect(clientPathFromOperationID("v2.fs.read")).toBe("file.read");
     expect(clientPathFromOperationID("v2.session.form.reply")).toBe("form.reply");
+    expect(clientPathFromOperationID("session.form.reply")).toBe("session.form.reply");
+    expect(clientPathFromOperationID("form.list")).toBe("form.list");
+    expect(clientPathFromOperationID("session.permission.reply")).toBe("permission.reply");
+    expect(clientPathFromOperationID("session.message.list")).toBe("message.list");
     expect(clientPathFromOperationID("v2.session.permission.create")).toBe("permission.create");
     expect(clientPathFromOperationID("v2.experimental.integration.wellknown.add")).toBe(
       "integration.wellknown.add",
@@ -92,49 +97,36 @@ describe("OpenCode coverage contract", () => {
       contract.operations.length,
     );
     expect(
-      contract.operations.find((item) => item.operationID === "v2.pty.connect")?.promiseClient,
+      contract.operations.find((item) => item.operationID === "pty.connect")?.promiseClient,
     ).toBe(false);
   });
 
-  it("discovers stable global preferences and shells from the published protocol", () => {
+  it("keeps global and session form evidence in separate client paths", () => {
     const contract = installedContract("test");
-    const config = contract.operations.filter((item) => item.operationID.startsWith("v2.config."));
-    expect(config).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          operationID: "v2.config.preferences",
-          clientPath: "config.preferences",
-          method: "GET",
-          path: "/api/config/preferences",
-          promiseClient: true,
-          experimental: false,
-          inputFields: [],
-        }),
-        expect.objectContaining({
-          operationID: "v2.config.updatePreferences",
-          clientPath: "config.updatePreferences",
-          method: "PATCH",
-          path: "/api/config/preferences",
-          promiseClient: true,
-          experimental: false,
-          inputFields: ["shell", "websearch"],
-          requiredInputFields: [],
-        }),
-        expect.objectContaining({
-          operationID: "v2.config.shells",
-          clientPath: "config.shells",
-          method: "GET",
-          path: "/api/config/shell",
-          promiseClient: true,
-          experimental: false,
-          inputFields: [],
-        }),
-      ]),
+    expect(new Set(contract.operations.map((item) => item.clientPath)).size).toBe(
+      contract.operations.length,
     );
-    expect(contract.operations.find((item) => item.operationID === "v2.fs.read")).toMatchObject({
-      successStatuses: [200],
-      errorStatuses: [400, 401, 404],
-    });
+    expect(contract.operations.find((item) => item.operationID === "form.list")?.clientPath).toBe(
+      "form.list",
+    );
+    expect(
+      contract.operations.find((item) => item.operationID === "session.form.list")?.clientPath,
+    ).toBe("session.form.list");
+  });
+
+  it("maps every Promise operation to the published client without making requests", () => {
+    const client = OpenCode.make({ baseUrl: "http://unused.invalid" });
+    for (const operation of installedContract("test").operations) {
+      if (!operation.promiseClient) continue;
+      let member: unknown = client;
+      for (const key of operation.clientPath.split(".")) {
+        member =
+          member && (typeof member === "object" || typeof member === "function")
+            ? Reflect.get(member, key)
+            : undefined;
+      }
+      expect(typeof member, operation.operationID).toBe("function");
+    }
   });
 
   it("reports added, removed, and changed operations", () => {
@@ -149,6 +141,64 @@ describe("OpenCode coverage contract", () => {
       changed: ["v2.session.list"],
     });
   });
+
+  it("tracks the required raw payload of binary upload operations", () => {
+    const contract = inventoryFromOpenApi(
+      {
+        paths: {
+          "/api/experimental/fs/write": {
+            post: {
+              operationId: "experimental.fs.write",
+              requestBody: {
+                required: true,
+                content: {
+                  "application/octet-stream": { schema: { type: "string", format: "binary" } },
+                },
+              },
+              responses: { "200": {} },
+            },
+          },
+        },
+      },
+      { version: "test", source: "test" },
+    );
+    expect(contract.operations[0]).toMatchObject({
+      inputFields: ["payload"],
+      requiredInputFields: ["payload"],
+    });
+  });
+
+  it.each(["event.subscribe", "v2.event.subscribe"])(
+    "reads event variants from %s OpenAPI streams",
+    (operationId) => {
+      const contract = inventoryFromOpenApi(
+        {
+          paths: {
+            "/api/event": {
+              get: {
+                operationId,
+                responses: {
+                  "200": {
+                    content: {
+                      "text/event-stream": {
+                        schema: {
+                          properties: {
+                            data: { properties: { type: { enum: ["location.shutdown"] } } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        { version: "test", source: "test" },
+      );
+      expect(contract.eventTypes).toEqual(["location.shutdown"]);
+    },
+  );
 
   it("fingerprints schemas reached through OpenAPI references", () => {
     const document = (required: string[]): OpenApiDocument => ({
@@ -208,6 +258,24 @@ describe("OpenCode coverage baseline", () => {
     expect(
       checkCoverage({ ...input, baseline: createBaseline(contract, current, baseline) }),
     ).toEqual([]);
+  });
+
+  it("preserves reviewed notes when recording renamed V2 operation IDs", () => {
+    const previous = inventory("2.0.3", [operation("v2.session.skill"), operation("v2.agent.get")]);
+    const baseline = createBaseline(previous, analysis(previous.operations));
+    for (const record of Object.values(baseline.operations)) {
+      record.disposition = "intentional-omit";
+      record.note = "No product workflow needs this operation.";
+    }
+    const current = inventory("2.0.7", [
+      operation("experimental.session.skill"),
+      operation("agent.get"),
+    ]);
+    const updated = createBaseline(current, analysis(current.operations), baseline);
+    expect(updated.operations["experimental.session.skill"]).toEqual(
+      baseline.operations["v2.session.skill"],
+    );
+    expect(updated.operations["agent.get"]).toEqual(baseline.operations["v2.agent.get"]);
   });
 
   it("fails when reviewed operations or event evidence disappear", () => {

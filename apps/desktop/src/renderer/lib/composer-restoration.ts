@@ -51,7 +51,12 @@ export function composerFilesFromMessage(message: PalotMessage): {
   omitted: string[];
 } {
   const raw = record(message.data);
-  const sources = Array.isArray(raw.files) ? raw.files : (message.files ?? []);
+  const metadata = record(raw.metadata);
+  const referenced =
+    metadata.palotAttachmentPaths === true && Array.isArray(metadata.attachments)
+      ? metadata.attachments
+      : [];
+  const sources = Array.isArray(raw.files) ? [...raw.files, ...referenced] : (message.files ?? []);
   const files: PalotFileAttachment[] = [];
   const omitted: string[] = [];
   for (const [index, item] of sources.entries()) {

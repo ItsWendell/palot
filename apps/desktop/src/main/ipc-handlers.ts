@@ -45,6 +45,10 @@ import {
   stageClipboardImages,
 } from "./file-attachments";
 import { openCodeRuntime } from "./opencode-runtime";
+import { prepareNativeAttachments } from "./native-attachments";
+import { createAttachmentRequests } from "./attachment-requests";
+import { randomUUID } from "node:crypto";
+import type { PalotFilePickerResult } from "../shared/opencode-contract";
 import { getOpenCodeReleaseManager } from "./opencode-release-manager";
 import { getOpenCodeInstallations } from "./opencode-local-installations";
 import { getOpenCodeLoginAutostart } from "./opencode-login-autostart";
@@ -442,6 +446,49 @@ function registerFocusedNative(
     validate();
     return result;
   });
+}
+
+const attachmentRequests = createAttachmentRequests();
+
+async function withAttachmentRequest(
+  event: IpcMainInvokeEvent,
+  input: unknown,
+  select: () => Promise<PalotFilePickerResult>,
+) {
+  if (!input || typeof input !== "object") throw new Error("Attachment request is invalid.");
+  const value = (input as { requestID?: unknown }).requestID;
+  if (value !== undefined && typeof value !== "string")
+    throw new Error("Attachment request is invalid.");
+  const requestID = value ?? randomUUID();
+  const sender = event.sender;
+  const connectionID = openCodeRuntime.runtimeStatus().connectionID;
+  const request = attachmentRequests.start(sender.id, requestID);
+  const onNavigation = (
+    _event: Electron.Event,
+    _url: string,
+    isInPlace: boolean,
+    isMainFrame: boolean,
+  ) => {
+    if (isMainFrame && !isInPlace) request.abort();
+  };
+  sender.once("destroyed", request.abort);
+  sender.once("render-process-gone", request.abort);
+  sender.on("did-start-navigation", onNavigation);
+  try {
+    return await prepareNativeAttachments(openCodeRuntime, select, {
+      signal: request.signal,
+      onProgress: (progress) => {
+        if (!request.signal.aborted && !sender.isDestroyed()) {
+          sender.send(IPC_CHANNELS.attachmentProgress, { ...progress, requestID, connectionID });
+        }
+      },
+    });
+  } finally {
+    request.dispose();
+    sender.removeListener("destroyed", request.abort);
+    sender.removeListener("render-process-gone", request.abort);
+    sender.removeListener("did-start-navigation", onNavigation);
+  }
 }
 
 function focusedPtyRuntime() {
@@ -905,15 +952,17 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     }
     throw new Error("External open resource is unsupported");
   });
-  registerFocusedNative(IPC_CHANNELS.pickFiles, async () => {
+  registerFocusedNative(IPC_CHANNELS.pickFiles, async (event, input) => {
     requireRuntimeCapability("localFileAttachments");
-    const result = await openDesktopDialog("attachment", {
-      title: "Attach files",
-      properties: ["openFile", "multiSelections"],
-      filters: ATTACHMENT_DIALOG_FILTERS,
+    return withAttachmentRequest(event, input, async () => {
+      const result = await openDesktopDialog("attachment", {
+        title: "Attach files",
+        properties: ["openFile", "multiSelections"],
+        filters: ATTACHMENT_DIALOG_FILTERS,
+      });
+      if (result.canceled) return { files: [], errors: [] };
+      return inspectPickedFiles(result.filePaths);
     });
-    if (result.canceled) return { files: [], errors: [] };
-    return inspectPickedFiles(result.filePaths);
   });
   register(IPC_CHANNELS.saveSessionExport, async (event, input: unknown) => {
     assertTrustedMainFrame(event);
@@ -966,29 +1015,38 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     }
     event.sender.downloadURL(url.href);
   });
-  registerFocusedNative(IPC_CHANNELS.attachClipboardImages, async (_event, input: unknown) => {
+  register(IPC_CHANNELS.cancelAttachmentUpload, (event, requestID: unknown) => {
+    assertTrustedMainFrame(event);
+    if (typeof requestID !== "string" || !requestID || requestID.length > 100)
+      throw new Error("Attachment request is invalid.");
+    attachmentRequests.cancel(event.sender.id, requestID);
+  });
+  registerFocusedNative(IPC_CHANNELS.attachClipboardImages, async (event, input: unknown) => {
     requireRuntimeCapability("localFileAttachments");
-    if (!Array.isArray(input)) throw new Error("Clipboard images are invalid.");
-    const images = input.map((value) => {
-      if (!value || typeof value !== "object") throw new Error("Clipboard image is invalid.");
-      const image = value as { mime?: unknown; data?: unknown };
-      if (typeof image.mime !== "string" || !(image.data instanceof ArrayBuffer)) {
-        throw new Error("Clipboard image is invalid.");
+    return withAttachmentRequest(event, input, async () => {
+      const values = (input as { images?: unknown }).images;
+      if (!Array.isArray(values)) throw new Error("Clipboard images are invalid.");
+      const images = values.map((value) => {
+        if (!value || typeof value !== "object") throw new Error("Clipboard image is invalid.");
+        const image = value as { mime?: unknown; data?: unknown };
+        if (typeof image.mime !== "string" || !(image.data instanceof ArrayBuffer)) {
+          throw new Error("Clipboard image is invalid.");
+        }
+        return { mime: image.mime, data: image.data };
+      });
+      if (images.length === 0) {
+        const clipboardItems = await clipboard.read();
+        for (const mime of ["image/png", "image/jpeg"] as const) {
+          const item = clipboardItems.find((candidate) => candidate.types.includes(mime));
+          if (!item) continue;
+          const blob = await item.getType(mime);
+          if (!(blob instanceof Blob)) continue;
+          images.push({ mime, data: await blob.arrayBuffer() });
+          break;
+        }
       }
-      return { mime: image.mime, data: image.data };
+      return images.length ? stageClipboardImages(images) : { files: [], errors: [] };
     });
-    if (images.length === 0) {
-      const clipboardItems = await clipboard.read();
-      for (const mime of ["image/png", "image/jpeg"] as const) {
-        const item = clipboardItems.find((candidate) => candidate.types.includes(mime));
-        if (!item) continue;
-        const blob = await item.getType(mime);
-        if (!(blob instanceof Blob)) continue;
-        images.push({ mime, data: await blob.arrayBuffer() });
-        break;
-      }
-    }
-    return images.length ? stageClipboardImages(images) : { files: [], errors: [] };
   });
   registerFocusedNative(IPC_CHANNELS.attachmentPreview, async (_event, input: unknown) => {
     requireRuntimeCapability("localFileAttachments");

@@ -217,7 +217,7 @@ export const compactWindowsScenario: Scenario = {
     await expect(input).toHaveValue("Edited in the second window");
     await input.fill("");
     await expect(childInput).toHaveValue("");
-    await client.session.rename({ sessionID: session.id, title: "Shared chat in two windows" });
+    await client.session.update({ sessionID: session.id, title: "Shared chat in two windows" });
     await expect(child.locator(".thread-header")).toContainText("Shared chat in two windows");
     await expect(page.locator(".thread-header")).toContainText("Shared chat in two windows");
     await expect(child).toHaveTitle("Shared chat in two windows");

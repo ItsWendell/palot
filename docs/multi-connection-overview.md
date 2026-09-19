@@ -45,6 +45,23 @@ Inbox ordering, attention filters, pinning, settling, snoozing, search, and
 pagination work across the included connections. Actions always target the
 row's owner, not whichever connection happens to be focused when they finish.
 
+## Remote attachments
+
+The composer accepts picked local files and pasted images for remote HTTP and
+SSH connections. Selecting or pasting uploads them to the owning server's
+temporary directory before you send the message. Check the destination badge
+before attaching sensitive files.
+
+Uploads show per-file progress and a **Cancel** action. Sending is disabled while
+an upload is pending. Changing the task or connection cancels the pending upload
+and prevents its results from appearing in another draft. Cancellation does not
+promise removal of bytes already written to the server.
+
+Supported images and PDFs can be sent directly to models that accept them.
+Other files, oversized media, and media the selected model cannot accept are
+passed as server-side file paths for the agent to inspect with tools. Uploading a
+file does not make its format readable by every model.
+
 ## Performance and ownership
 
 - Each monitored profile retains its own runtime, event stream, client, query

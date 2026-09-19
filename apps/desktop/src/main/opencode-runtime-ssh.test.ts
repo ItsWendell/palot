@@ -19,7 +19,7 @@ function fixture(version = SUPPORTED_OPENCODE_VERSION) {
     makeClient: vi.fn(
       () =>
         ({
-          health: { get: vi.fn().mockResolvedValue({ healthy: true, version, pid: 42 }) },
+          server: { info: vi.fn().mockResolvedValue({ version, pid: 42 }) },
           event: {
             subscribe: async function* ({ signal }: { signal: AbortSignal }) {
               await new Promise<void>((resolve) =>
@@ -139,7 +139,7 @@ describe("SSH lifecycle", () => {
     expect(connector).toHaveBeenCalledOnce();
   });
 
-  it("uses the tunneled endpoint without local service ownership or local capabilities", async () => {
+  it("uses the tunneled endpoint with safe attachment uploads but no local path ownership", async () => {
     const { runtime, adapter, connector, endpoint, close } = fixture();
     const status = await runtime.connect({}, connector);
     expect(status).toMatchObject({
@@ -147,7 +147,7 @@ describe("SSH lifecycle", () => {
       source: "network-server",
       topology: "remote-machine",
       managed: false,
-      capabilities: { localPathActions: false, localFileAttachments: false },
+      capabilities: { localPathActions: false, localFileAttachments: true },
     });
     expect(adapter.discoverService).not.toHaveBeenCalled();
     expect(adapter.ensureService).not.toHaveBeenCalled();

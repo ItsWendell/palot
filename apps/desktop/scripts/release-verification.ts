@@ -301,11 +301,11 @@ export async function verifyMacRelease(input: {
         ),
       },
       async ({ home, environment, endpoint, signal }) => {
-        const health = await OpenCode.make({
+        const server = await OpenCode.make({
           baseUrl: endpoint.url,
           headers: Service.headers(endpoint),
-        }).health.get();
-        await smokeMacRelease(executable, home, environment, { version, pid: health.pid }, signal);
+        }).server.info();
+        await smokeMacRelease(executable, home, environment, { version, pid: server.pid }, signal);
       },
     );
   }

@@ -997,7 +997,7 @@ export class OpenCodeReconciler {
   }
 
   #applySessionEvent(session: SessionInfo, event: PalotEvent): SessionInfo {
-    if (event.type === "session.permissions.updated") {
+    if (event.type === "session.permissions") {
       return {
         ...session,
         permissions: event.data.permissions,

@@ -464,6 +464,10 @@ export function sessionActivityQueryOptions(
         ledger.data.statuses,
       );
       reconciler.replaceActivity(connectionID, ledger.data, snapshotToken);
+      // Our intermediate write advances the graph revision. Protect the final
+      // status projection against events arriving during log hydration, not our
+      // own snapshot write, or the UI can retain busy after the query is idle.
+      const activityToken = reconciler.beginSnapshot(connectionID);
       const hydratedExecutionSessionIDs = await hydrateExecutionLogs(
         queryClient,
         connectionID,
@@ -501,7 +505,7 @@ export function sessionActivityQueryOptions(
       }
       ledger.lastReconciledAt = Date.now();
       ledger.selectedSessionID = selectedSessionID;
-      reconciler.replaceActivity(connectionID, ledger.data, snapshotToken);
+      reconciler.replaceActivity(connectionID, ledger.data, activityToken);
       return ledger.data;
     },
     staleTime: 0,

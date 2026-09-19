@@ -3,13 +3,64 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
 import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { PalotProject } from "../../shared";
+import type { OpenCodeRuntimeStatus, PalotProject } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
 import { openCodeKeys } from "../lib/opencode-query";
 import { palot } from "../services/palot";
-import { projectWorktreesQueryOptions, useCreateProjectCopy } from "./use-project-worktrees";
+import {
+  projectWorktreesQueryOptions,
+  useCreateProjectCopy,
+  useProjectWorktrees,
+} from "./use-project-worktrees";
 
 afterEach(cleanup);
+
+it.each([true, false])(
+  "discovers on opening a worktree surface without rediscovering on inventory events (enabled=%s)",
+  async (enabled) => {
+    const refresh = vi.spyOn(palot, "refreshProjectCopies").mockResolvedValue(undefined);
+    const list = vi
+      .spyOn(palot, "listProjectDirectories")
+      .mockResolvedValue([{ directory: "/repo", strategy: null }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const store = createStore();
+    const owner = {
+      connectionID: "local",
+      profileID: "local",
+      connected: true,
+      phase: "connected",
+    } as OpenCodeRuntimeStatus;
+    const project = { id: "project", canonical: "/repo" } as PalotProject;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>
+        <Provider store={store}>{children}</Provider>
+      </QueryClientProvider>
+    );
+    const { result, unmount } = renderHook(() => useProjectWorktrees(project, enabled, owner), {
+      wrapper,
+    });
+    try {
+      if (!enabled)
+        await act(async () => {
+          await result.current.refetch();
+        });
+      await waitFor(() => expect(result.current.isFetching).toBe(false));
+      expect(refresh).toHaveBeenCalledOnce();
+      const reads = list.mock.calls.length;
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: openCodeKeys.worktrees("local", "project") });
+      });
+      await client.fetchQuery(projectWorktreesQueryOptions("local", project));
+      await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(reads));
+      expect(refresh).toHaveBeenCalledOnce();
+    } finally {
+      unmount();
+      client.clear();
+      refresh.mockRestore();
+      list.mockRestore();
+    }
+  },
+);
 
 it("refreshes a worktree list invalidated while the menu was closed", async () => {
   const main = { directory: "/repo", strategy: null };

@@ -144,10 +144,10 @@ describe("automation event session routing", () => {
     );
     const pending = mocks.runnerOptions[0]!.client();
     mocks.runtimes.reverse();
-    const client = { health: { get: vi.fn(async () => ({ version: "test" })) } };
+    const client = { server: { info: vi.fn(async () => ({ version: "test" })) } };
     resolve(client);
     expect(await pending).toBe(client);
-    expect(client.health.get).toHaveBeenCalledOnce();
+    expect(client.server.info).toHaveBeenCalledOnce();
   });
 
   it.each([

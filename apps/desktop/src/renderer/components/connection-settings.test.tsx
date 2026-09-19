@@ -239,12 +239,12 @@ describe("LocalServiceSettings", () => {
     );
     expect(screen.queryByRole("button", { name: "Start OpenCode" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Restart service" }));
-    expect(screen.getByText(/may interrupt other OpenCode clients/)).toBeTruthy();
+    expect(await screen.findByText(/may interrupt other OpenCode clients/)).toBeTruthy();
     expect(onRestart).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onRestart).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Restart service" }));
-    await user.click(screen.getByRole("button", { name: "Restart" }));
+    await user.click(await screen.findByRole("button", { name: "Restart" }));
     expect(onRestart).toHaveBeenCalledOnce();
   });
 

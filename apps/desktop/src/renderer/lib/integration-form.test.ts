@@ -49,6 +49,16 @@ const fields: PalotFormField[] = [
 ];
 
 describe("integration forms", () => {
+  it("hides authentication fields while retaining defaults and supplied values", () => {
+    const field = fields.find((item) => item.type === "boolean")!;
+    const hidden: PalotFormField[] = [{ ...field, hidden: true, required: true }];
+    const defaults = defaultFormAnswers(hidden);
+    expect(formFieldVisible(hidden[0]!, defaults)).toBe(false);
+    expect(integrationFormValid(hidden, {})).toBe(true);
+    expect(visibleAnswers(hidden, defaults)).toEqual({ enterprise: false });
+    expect(visibleAnswers(hidden, { enterprise: true })).toEqual({ enterprise: true });
+  });
+
   it("applies defaults and omits hidden answers", () => {
     const answers = { ...defaultFormAnswers(fields), host: "https://github.example.com" };
 

@@ -200,7 +200,7 @@ export const interactionStreamingPerformanceScenario: Scenario = {
       sessions.push({ id: created.id, label });
     }
     for (const entry of sessions) {
-      await client.session.rename({ sessionID: entry.id, title: title(entry.label) });
+      await client.session.update({ sessionID: entry.id, title: title(entry.label) });
       await client.session.prompt({
         sessionID: entry.id,
         text: `${marker(entry.label)} Warm history.`,

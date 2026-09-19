@@ -126,7 +126,15 @@ export function createBaseline(
     operations: Object.fromEntries(
       contract.operations.map((operation) => {
         const evidence = evidenceByOperation.get(operation.operationID);
-        const old = previous?.operations[operation.operationID];
+        // 2.0.4 dropped the v2 prefix and moved several existing operations to
+        // experimental IDs. Keep reviewed dispositions when recording that migration.
+        const previousIDs = [
+          operation.operationID,
+          `v2.${operation.operationID}`,
+          `v2.${operation.operationID.replace(/^experimental\./, "")}`,
+          ...(operation.operationID === "session.message.get" ? ["v2.session.message"] : []),
+        ];
+        const old = previousIDs.map((id) => previous?.operations[id]).find(Boolean);
         const observed = Boolean(evidence?.productionCalls);
         return [
           operation.operationID,

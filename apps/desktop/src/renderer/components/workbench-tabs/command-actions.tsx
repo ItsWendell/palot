@@ -9,7 +9,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
@@ -27,7 +26,6 @@ export function CommandActions({
   const request = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [notice, setNotice] = useState<string>();
   const available =
     runtime?.connected &&
     runtime.profileID === resource.profileID &&
@@ -49,7 +47,7 @@ export function CommandActions({
     };
   }, [connectionID, resource, store]);
 
-  const run = async (action: "remove" | number) => {
+  const run = async () => {
     const currentServer = () => {
       const value = store.get(runtimeAtom);
       return (
@@ -60,7 +58,6 @@ export function CommandActions({
     };
     if (!currentServer() || request.current) return;
     if (
-      action === "remove" &&
       !window.confirm(
         "Stop and remove this command? This terminates its running process and permanently deletes its stored output. Only output already loaded in this tab will remain.",
       )
@@ -71,7 +68,6 @@ export function CommandActions({
     request.current = controller;
     setBusy(true);
     setError(undefined);
-    setNotice(undefined);
     const current = () => !controller.signal.aborted && currentServer();
     try {
       const client = openCodeClient();
@@ -79,17 +75,10 @@ export function CommandActions({
         id: resource.shellID,
         location: {
           directory: resource.location.directory,
-          ...(resource.location.workspaceID ? { workspace: resource.location.workspaceID } : {}),
         },
       };
-      if (action === "remove") {
-        await client.shell.remove(input, { signal: controller.signal });
-        if (current()) onRemoved();
-      } else {
-        await client.shell.timeout({ ...input, timeout: action }, { signal: controller.signal });
-        if (current())
-          setNotice(action === 0 ? "Timeout removed." : "Timeout set to 5 minutes from now.");
-      }
+      await client.shell.remove(input, { signal: controller.signal });
+      if (current()) onRemoved();
     } catch (cause) {
       if (current()) setError(cause instanceof Error ? cause.message : "Could not update command.");
     } finally {
@@ -114,17 +103,10 @@ export function CommandActions({
           <MoreHorizontal aria-hidden="true" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem disabled={!available || busy} onClick={() => void run(300_000)}>
-            Set timeout to 5 minutes
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled={!available || busy} onClick={() => void run(0)}>
-            Remove timeout
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
             disabled={!available || busy}
-            onClick={() => void run("remove")}
+            onClick={() => void run()}
           >
             Stop and remove command
           </DropdownMenuItem>
@@ -133,11 +115,6 @@ export function CommandActions({
       {error ? (
         <span role="alert" className="basis-full text-meta text-destructive">
           {error}
-        </span>
-      ) : null}
-      {notice ? (
-        <span role="status" className="basis-full text-meta text-muted-foreground">
-          {notice}
         </span>
       ) : null}
     </>

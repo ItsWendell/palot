@@ -212,16 +212,19 @@ describe("OpenCode settings queries", () => {
   );
 
   it.each(["resolve", "reject"] as const)(
-    "publishes documents and plugin diagnostics before activation can %s",
+    "publishes documents and plugin diagnostics before the agent registry can %s",
     async (outcome) => {
       const activation = Promise.withResolvers<void>();
       const location = {
         directory: "/repo",
         project: { id: "project-1", directory: "/repo", canonical: "/repo" },
       };
-      const agents = vi.fn().mockResolvedValue({
-        location,
-        data: [{ id: "build", name: "Build", mode: "primary", hidden: false, permissions: [] }],
+      const agents = vi.fn(async () => {
+        await activation.promise;
+        return {
+          location,
+          data: [{ id: "build", name: "Build", mode: "primary", hidden: false, permissions: [] }],
+        };
       });
       setOpenCodeClientForTest({
         config: {
@@ -230,7 +233,6 @@ describe("OpenCode settings queries", () => {
             .mockResolvedValue([{ type: "document", path: "/repo/opencode.json", info: {} }]),
         },
         plugin: {
-          awaitActivation: vi.fn(() => activation.promise),
           list: vi.fn().mockResolvedValue({
             location,
             data: [
@@ -274,7 +276,7 @@ describe("OpenCode settings queries", () => {
       expect(result.current.pendingCapabilities).toEqual(["agents"]);
       expect(result.current.isPending).toBe(false);
       expect(result.current.isFetching).toBe(true);
-      expect(agents).not.toHaveBeenCalled();
+      expect(agents).toHaveBeenCalledOnce();
 
       await act(async () => {
         if (outcome === "resolve") activation.resolve();
@@ -287,7 +289,7 @@ describe("OpenCode settings queries", () => {
         expect(result.current.data?.errors).toContainEqual(
           expect.objectContaining({ capability: "agents", message: "activation failed" }),
         );
-        expect(agents).not.toHaveBeenCalled();
+        expect(agents).toHaveBeenCalledOnce();
       }
     },
   );

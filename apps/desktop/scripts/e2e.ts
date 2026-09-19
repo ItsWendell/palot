@@ -301,7 +301,7 @@ try {
   });
   const session = await client.session.create({ location: { directory: projectDirectory } });
   const title = `Palot E2E: ${name}`;
-  await client.session.rename({ sessionID: session.id, title });
+  await client.session.update({ sessionID: session.id, title });
   if ("seed" in scenario && scenario.seed) {
     await scenario.seed(client, { projectDirectory, runRoot });
   }

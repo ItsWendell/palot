@@ -28,7 +28,7 @@ export async function controlOpenCodeLoginService(
     manager: getOpenCodeLoginAutostart(),
     discover: () => Service.discover(),
     health: (endpoint) =>
-      OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).health.get({
+      OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).server.info({
         signal: AbortSignal.timeout(5_000),
       }),
     now: Date.now,

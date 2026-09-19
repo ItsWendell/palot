@@ -34,11 +34,13 @@ import { linuxDesktopScenario } from "./linux-desktop-scenario.ts";
 import { compactWindowsScenario } from "./compact-windows-scenario.ts";
 import { sessionWindowDragScenario } from "./session-window-drag-scenario.ts";
 import { sshConnectionScenario } from "./ssh-connection-scenario.ts";
+import { remoteAttachmentsScenario } from "./remote-attachments-scenario.ts";
 import { remoteTerminalScenario } from "./remote-terminal-scenario.ts";
 import { sharedServiceScenario } from "./shared-service-scenario.ts";
 import { openCodeReleaseChannelScenario } from "./opencode-release-channel-scenario.ts";
 import { openCodeRuntimeAcquisitionScenario } from "./opencode-runtime-acquisition-scenario.ts";
 import { openCodeLoginSettingsScenario } from "./opencode-login-settings-scenario.ts";
+import { openCodeApiMigrationScenario } from "./opencode-api-migration-scenario.ts";
 import { shortTranscriptScenario } from "./short-transcript-scenario.ts";
 import { coldSessionNavigationScenario } from "./cold-session-navigation-scenario.ts";
 import { startupAttentionScenario } from "./startup-attention-scenario.ts";
@@ -175,6 +177,7 @@ export const scenarios = {
   "opencode-release-channel": openCodeReleaseChannelScenario,
   "opencode-runtime-acquisition": openCodeRuntimeAcquisitionScenario,
   "opencode-login-settings": openCodeLoginSettingsScenario,
+  "opencode-api-migration": openCodeApiMigrationScenario,
   "short-transcript": shortTranscriptScenario,
   "cold-session-navigation": coldSessionNavigationScenario,
   "linux-desktop": linuxDesktopScenario,
@@ -183,6 +186,7 @@ export const scenarios = {
   ...workflowScenarios,
   "pairing-address": pairingAddressScenario,
   "ssh-connection": sshConnectionScenario,
+  "remote-attachments": remoteAttachmentsScenario,
   "remote-terminal": remoteTerminalScenario,
   "conversation-tools": conversationToolsScenario,
   "transcript-rail": transcriptRailScenario,
@@ -1036,8 +1040,16 @@ export const scenarios = {
         .toSorted((a, b) => b.canonical.length - a.canonical.length)[0]?.canonical;
       if (!mainCheckout) throw new Error("Repository checkout was not resolved");
       expect(mainCheckout).toBe(session.location.directory);
-      await page.getByRole("button", { name: "Show projects", exact: true }).click();
-      const taskRow = page
+      const navigation = page.locator('[data-shell-surface="navigation"][aria-hidden="false"]');
+      const showProjects = async () => {
+        const toggle = page.getByRole("button", { name: /^(Show|Hide) navigation$/ });
+        await expect(toggle).toBeVisible();
+        if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+        await navigation.getByRole("button", { name: "Show projects", exact: true }).click();
+      };
+      await showProjects();
+      // Compact native windows render a navigation sheet alongside an inert inline sidebar.
+      const taskRow = navigation
         .locator("[data-palot-task-row], [data-palot-recent-row]")
         .filter({ hasText: "Palot E2E: worktree-lifecycle" })
         .first();
@@ -1063,7 +1075,10 @@ export const scenarios = {
         )
         .toBe(true);
 
-      const projectRow = page.locator("[data-palot-project-row]").filter({ has: taskRow }).first();
+      const projectRow = navigation
+        .locator("[data-palot-project-row]")
+        .filter({ hasText: "Palot E2E: worktree-lifecycle" })
+        .first();
       await projectRow.locator("[data-palot-project-trigger]").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Manage worktrees" }).click();
       const worktreeName = worktreeDirectory.split("/").at(-1)!;
@@ -1074,8 +1089,7 @@ export const scenarios = {
       });
       const taskLink = attachedTasks.getByRole("link", { name: /Palot E2E: worktree-lifecycle/ });
       await expect(taskLink).toBeVisible();
-      const viewport = page.viewportSize();
-      await page.setViewportSize({ width: 920, height: 640 });
+      // Keep the actual native viewport throughout navigation rather than resizing an open disclosure.
       await page.screenshot({ path: join(runRoot, "worktree-attached-tasks.png") });
       await taskLink.click();
       await expect.poll(() => new URL(page.url()).hash).toBe(`#/sessions/${session.id}`);
@@ -1088,8 +1102,8 @@ export const scenarios = {
       await expect(
         page.getByText("Conversation copied as Markdown", { exact: true }),
       ).toBeVisible();
-      if (viewport) await page.setViewportSize(viewport);
-
+      // Route changes dismiss compact navigation, so reopen it before returning to the task menu.
+      await showProjects();
       await taskRow.click({ button: "right" });
       await page.getByRole("menuitem", { name: "Move to worktree" }).focus();
       await page.keyboard.press("ArrowRight");
@@ -1107,7 +1121,7 @@ export const scenarios = {
         .getByRole("alertdialog")
         .getByRole("button", { name: "Remove worktree" });
       await expect(confirmRemoval).toBeVisible();
-      await confirmRemoval.click({ force: true });
+      await confirmRemoval.click();
       await expect
         .poll(async () =>
           access(worktreeDirectory).then(
@@ -1428,7 +1442,7 @@ export const scenarios = {
       const secondSession = await client.session.create({
         location: { directory: projectDirectory },
       });
-      await client.session.rename({
+      await client.session.update({
         sessionID: secondSession.id,
         title: "Palot E2E: session-switch-performance-beta",
       });
@@ -1728,7 +1742,7 @@ export const scenarios = {
       { projectDirectory, runRoot }: ScenarioSeedContext,
     ): Promise<void> {
       const session = await client.session.create({ location: { directory: projectDirectory } });
-      await client.session.rename({
+      await client.session.update({
         sessionID: session.id,
         title: "Palot E2E: transcript-prepend-restoration-history",
       });
@@ -1920,7 +1934,7 @@ export const scenarios = {
       });
       const alphaTitle = "Palot E2E: render-react-scan";
       const betaTitle = "Palot E2E: render-react-scan-beta";
-      await client.session.rename({ sessionID: beta.id, title: betaTitle });
+      await client.session.update({ sessionID: beta.id, title: betaTitle });
       await page.evaluate(
         ({ alphaSessionID, betaSessionID }) => {
           const browser = globalThis as unknown as {
@@ -2179,7 +2193,7 @@ export const scenarios = {
       const viewingSession = await client.session.create({
         location: { directory: projectDirectory },
       });
-      await client.session.rename({
+      await client.session.update({
         sessionID: viewingSession.id,
         title: "Palot E2E: viewed-unread-current",
       });
@@ -2740,7 +2754,7 @@ function parallelSessionPerformanceScenario(
       ];
       for (const label of labels.slice(1)) {
         const created = await client.session.create({ location: { directory: projectDirectory } });
-        await client.session.rename({
+        await client.session.update({
           sessionID: created.id,
           title: `Palot E2E: parallel-session-${label.toLowerCase()}`,
         });

@@ -28,6 +28,8 @@ import {
 } from "react";
 import type {
   PalotFileAttachment,
+  PalotAttachmentProgress,
+  PalotFilePickerResult,
   PalotAgent,
   PalotMessage,
   PalotModel,
@@ -58,7 +60,7 @@ import { useModelCatalog } from "../hooks/use-model-catalog";
 import { useComposerSelection } from "../hooks/use-composer-selection";
 import { useComposerPermissions } from "../hooks/use-composer-permissions";
 import { useSettingsSnapshot } from "../hooks/use-settings-snapshot";
-import { useCacheSession } from "../hooks/use-session-catalog";
+import { useCacheSession, useProjectCatalog } from "../hooks/use-session-catalog";
 import { getContextUsage } from "../lib/context-usage";
 import { cn } from "../lib/cn";
 import { admitComposerSubmission } from "../lib/composer-admission";
@@ -74,6 +76,7 @@ import {
 import { detectComposerQuery } from "../lib/composer-query";
 import { composerDraftFromMessage } from "../lib/composer-restoration";
 import { formatCommandShortcut } from "../lib/global-commands";
+import { BUILTIN_COMMANDS } from "../lib/builtin-commands";
 import { convergeMessageReceipt } from "../lib/message-reconcile";
 import { modelMatchesRef, resolveModelSelection } from "../lib/model-selection";
 import {
@@ -85,7 +88,7 @@ import {
 import { showErrorToast } from "../lib/toast-error";
 import type { ApprovalPreset } from "../lib/session-permissions";
 import { updateSessionActivity } from "../lib/session-activity-query";
-import type { PendingRequestView } from "../lib/view-models";
+import { projectForSession, type PendingRequestView } from "../lib/view-models";
 import { palot } from "../services/palot";
 import { BackgroundWorkPrompt, type BackgroundWorkItem } from "./subagent-activity";
 import { ComposerDiscovery, type ComposerDiscoveryItem } from "./composer-discovery";
@@ -285,6 +288,32 @@ function ComposerView({
   const cacheSession = useCacheSession();
   const setMessages = useSetAtom(messagesForProfileAtom(runtime?.profileID ?? "unscoped"));
   const [attachmentErrors, setAttachmentErrors] = useState<string[]>([]);
+  const [attachmentUpload, setAttachmentUpload] = useState<{
+    progress: PalotAttachmentProgress | null;
+  } | null>(null);
+  const attachmentRequestRef = useRef<{
+    id: string;
+    unsubscribe: () => void;
+  } | null>(null);
+  const attachmentScope = JSON.stringify([
+    draftScope,
+    session.id,
+    session.parentID,
+    runtime?.connectionID,
+    activePendingInputEdit?.id,
+  ]);
+  const cancelAttachmentUpload = useCallback(() => {
+    const request = attachmentRequestRef.current;
+    if (!request) return;
+    attachmentRequestRef.current = null;
+    request.unsubscribe();
+    setAttachmentUpload(null);
+    void palot.cancelAttachmentUpload(request.id).catch(() => undefined);
+  }, []);
+  useLayoutEffect(() => {
+    setAttachmentErrors([]);
+    return cancelAttachmentUpload;
+  }, [attachmentScope, cancelAttachmentUpload]);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [isComposing, setIsComposing] = useState(false);
   const [discoverySelection, setDiscoverySelection] = useState({ key: "", index: 0 });
@@ -323,9 +352,11 @@ function ComposerView({
     Boolean(onCreateSession) || activeMenu === "agent",
   );
   const catalog = modelCatalogQuery.data ?? EMPTY_MODEL_CATALOG;
+  const projects = useProjectCatalog();
+  const preferenceProject = projectForSession(projects, session);
   const preferenceScope = modelProjectPreferenceKey(
     runtime?.profileID ?? "disconnected",
-    session.projectID,
+    preferenceProject?.id ?? session.projectID,
   );
   const storedPickerPreference = modelPickerPreferences[preferenceScope];
   const pickerPreference = useMemo(
@@ -674,11 +705,16 @@ function ComposerView({
       (!value.trim() && files.length === 0 && submission.skills.length === 0) ||
       currentState.sending ||
       currentState.cancelingID ||
+      attachmentRequestRef.current ||
       composerSelection.blocked ||
       permissionSelection.isBusy()
     )
       return;
-    if (submission.kind === "command" && files.length > 0) {
+    if (
+      submission.kind === "command" &&
+      files.length > 0 &&
+      BUILTIN_COMMANDS.some((command) => command.name === submission.command.toLowerCase())
+    ) {
       setAttachmentErrors(["Remove picked attachments before running a slash command."]);
       return;
     }
@@ -830,6 +866,11 @@ function ComposerView({
     const effectiveDelivery =
       isWorking && !onCreateSession ? (deliveryOverride ?? composerDelivery) : "steer";
     const submittedFiles = files;
+    const modelInput = resolveModelSelection(
+      catalog.models,
+      displayedSession.model,
+      catalog.defaultModel,
+    ).model?.capabilities.input;
     const previousExecution = new Map<string, SessionExecutionState | undefined>();
     await admitComposerSubmission({
       submission,
@@ -858,6 +899,8 @@ function ComposerView({
           ? palot.runCommand({
               sessionID,
               command: submission.command,
+              modelInput,
+              ...(submittedFiles.length ? { files: submittedFiles } : {}),
               ...(submission.arguments ? { arguments: submission.arguments } : {}),
               ...(submission.files.length ? { fileReferences: submission.files } : {}),
               ...(submission.skills.length ? { skillReferences: submission.skills } : {}),
@@ -867,6 +910,7 @@ function ComposerView({
               sessionID,
               id: messageID,
               text: value,
+              modelInput,
               ...(submittedFiles.length ? { files: submittedFiles } : {}),
               ...(submission.files.length ? { fileReferences: submission.files } : {}),
               ...(submission.skills.length ? { skillReferences: submission.skills } : {}),
@@ -1002,25 +1046,54 @@ function ComposerView({
     });
   }
 
-  async function pickFiles() {
-    if (!localAttachments) {
-      setAttachmentErrors(["Local file attachments are unavailable for remote OpenCode servers."]);
-      return;
-    }
+  async function attachFiles(
+    prepare: (requestID: string, isCurrent: () => boolean) => Promise<PalotFilePickerResult | null>,
+  ) {
+    if (attachmentRequestRef.current || sending) return;
+    const request = { id: crypto.randomUUID(), unsubscribe: () => {} };
+    const isCurrent = () => attachmentRequestRef.current === request;
+    attachmentRequestRef.current = request;
+    setAttachmentErrors([]);
+    setAttachmentUpload({ progress: null });
     try {
-      const result = await palot.pickFiles(runtime?.connectionID);
+      request.unsubscribe = palot.onAttachmentProgress((progress) => {
+        if (
+          isCurrent() &&
+          progress.requestID === request.id &&
+          progress.connectionID === runtime?.connectionID
+        ) {
+          setAttachmentUpload({ progress });
+        }
+      });
+      const result = await prepare(request.id, isCurrent);
+      if (!isCurrent() || !result) return;
       setAttachmentErrors(result.errors);
-      if (result.files.length === 0) return;
       setFiles((current) => {
         const byUri = new Map(current.map((item) => [item.uri, item]));
         for (const item of result.files) byUri.set(item.uri, item);
         return [...byUri.values()];
       });
     } catch (error) {
+      if (!isCurrent()) return;
       setAttachmentErrors([
         error instanceof Error ? error.message : "Palot could not attach the selected files.",
       ]);
+    } finally {
+      request.unsubscribe();
+      if (isCurrent()) {
+        attachmentRequestRef.current = null;
+        setAttachmentUpload(null);
+      }
     }
+  }
+
+  async function pickFiles() {
+    if (!localAttachments) {
+      setAttachmentErrors(["Local file attachments are unavailable for remote OpenCode servers."]);
+      return;
+    }
+    const connectionID = runtime?.connectionID;
+    await attachFiles((requestID) => palot.pickFiles(connectionID, requestID));
   }
 
   async function pasteImages(items: DataTransferItemList) {
@@ -1031,27 +1104,17 @@ function ComposerView({
         const file = item.getAsFile();
         return file ? [file] : [];
       });
-    try {
-      const result = await palot.attachClipboardImages(
-        await Promise.all(
-          images.map(async (image) => ({ mime: image.type, data: await image.arrayBuffer() })),
-        ),
-        connectionID,
+    await attachFiles(async (requestID, isCurrent) => {
+      const prepared = await Promise.all(
+        images.map(async (image) => ({ mime: image.type, data: await image.arrayBuffer() })),
       );
-      setAttachmentErrors(result.errors);
-      setFiles((current) => {
-        const byUri = new Map(current.map((item) => [item.uri, item]));
-        for (const item of result.files) byUri.set(item.uri, item);
-        return [...byUri.values()];
-      });
-    } catch (error) {
-      setAttachmentErrors([
-        error instanceof Error ? error.message : "Palot could not paste the screenshot.",
-      ]);
-    }
+      if (!isCurrent()) return null;
+      return palot.attachClipboardImages(prepared, connectionID, requestID);
+    });
   }
 
   const canSubmit =
+    !attachmentUpload &&
     !composerSelection.blocked &&
     !permissionSelection.busy &&
     !requestBody &&
@@ -1280,6 +1343,23 @@ function ComposerView({
               {composerSelection.error}
             </p>
           ) : null}
+          {!requestBody && attachmentUpload ? (
+            <div className="flex min-w-0 items-center gap-2 px-3 py-1 text-compact text-muted-foreground">
+              <span role="status" className="min-w-0 flex-1 truncate">
+                {attachmentUpload.progress
+                  ? `Uploading ${attachmentUpload.progress.name} (${attachmentUpload.progress.index + 1}/${attachmentUpload.progress.count}) · ${Math.round((attachmentUpload.progress.loaded / Math.max(1, attachmentUpload.progress.total)) * 100)}%`
+                  : "Preparing attachments…"}
+              </span>
+              <InputGroupButton
+                type="button"
+                size="sm"
+                onClick={cancelAttachmentUpload}
+                aria-label="Cancel attachment upload"
+              >
+                Cancel
+              </InputGroupButton>
+            </div>
+          ) : null}
           {!requestBody && attachmentErrors.length > 0 ? (
             <div className="px-4 py-1 text-xs text-destructive" role="alert">
               {attachmentErrors.map((error) => (
@@ -1323,7 +1403,7 @@ function ComposerView({
                       type="button"
                       size="icon-sm"
                       aria-label="Attach files"
-                      disabled={sending || !localAttachments}
+                      disabled={sending || Boolean(attachmentUpload) || !localAttachments}
                       onClick={() => void pickFiles()}
                     />
                   }

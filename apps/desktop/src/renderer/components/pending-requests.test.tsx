@@ -52,7 +52,7 @@ describe("PendingRequests", () => {
     (window as unknown as { palot?: PalotApi }).palot = bridge({});
     setOpenCodeClientForTest(
       client({
-        form: { reply: replyForm, cancel: cancelForm },
+        session: { form: { reply: replyForm, cancel: cancelForm } },
         permission: { reply: replyPermission },
       }),
     );
@@ -105,7 +105,7 @@ describe("PendingRequests", () => {
     expect(replyPermission).toHaveBeenCalledWith({
       sessionID: "child-c",
       requestID: "same-id",
-      reply: "once",
+      decision: "once",
     });
   });
 
@@ -113,7 +113,7 @@ describe("PendingRequests", () => {
     const user = userEvent.setup();
     const replyForm = vi.fn().mockResolvedValue(undefined);
     (window as unknown as { palot?: PalotApi }).palot = bridge({});
-    setOpenCodeClientForTest(client({ form: { reply: replyForm } }));
+    setOpenCodeClientForTest(client({ session: { form: { reply: replyForm } } }));
 
     render(
       <PendingRequests
@@ -181,7 +181,7 @@ describe("PendingRequests", () => {
     const user = userEvent.setup();
     const replyForm = vi.fn().mockResolvedValue(undefined);
     (window as unknown as { palot?: PalotApi }).palot = bridge({});
-    setOpenCodeClientForTest(client({ form: { reply: replyForm } }));
+    setOpenCodeClientForTest(client({ session: { form: { reply: replyForm } } }));
     render(
       <PendingRequests
         sessionID="ses_1"
@@ -238,7 +238,7 @@ describe("PendingRequests", () => {
         }),
     );
     (window as unknown as { palot?: PalotApi }).palot = bridge({});
-    setOpenCodeClientForTest(client({ form: { cancel: cancelForm } }));
+    setOpenCodeClientForTest(client({ session: { form: { cancel: cancelForm } } }));
 
     render(
       <PendingRequests
@@ -307,7 +307,7 @@ describe("PendingRequests", () => {
     (window as unknown as { palot?: PalotApi }).palot = bridge({});
     setOpenCodeClientForTest(
       client({
-        session: { inbox: { steer: updatePending, queue: updatePending, cancel: updatePending } },
+        session: { inbox: { update: updatePending, cancel: updatePending } },
       }),
     );
 
@@ -352,6 +352,7 @@ describe("PendingRequests", () => {
       expect(updatePending).toHaveBeenNthCalledWith(1, {
         sessionID: "ses_1",
         inboxID: "msg_1",
+        delivery: "steer",
       });
       expect(updatePending).toHaveBeenNthCalledWith(2, {
         sessionID: "ses_1",
@@ -366,7 +367,7 @@ describe("PendingRequests", () => {
     (window as unknown as { palot?: PalotApi }).palot = bridge({});
     setOpenCodeClientForTest(
       client({
-        session: { inbox: { steer: updatePending, queue: updatePending, cancel: updatePending } },
+        session: { inbox: { update: updatePending, cancel: updatePending } },
       }),
     );
 
@@ -399,6 +400,7 @@ describe("PendingRequests", () => {
       expect(updatePending).toHaveBeenCalledWith({
         sessionID: "ses_1",
         inboxID: "msg_2",
+        delivery: "queue",
       }),
     );
   });
@@ -450,16 +452,16 @@ describe("PendingRequests", () => {
       expect(replyPermission).toHaveBeenCalledExactlyOnceWith({
         sessionID: "ses_1",
         requestID: "per_1",
-        reply,
+        decision: reply,
       }),
     );
   });
 
-  it("submits form values with conditional and custom fields", async () => {
+  it("submits visible fields and hidden defaults without exposing hidden prompts", async () => {
     const user = userEvent.setup();
     const replyForm = vi.fn().mockResolvedValue(undefined);
     (window as unknown as { palot?: PalotApi }).palot = bridge({});
-    setOpenCodeClientForTest(client({ form: { reply: replyForm } }));
+    setOpenCodeClientForTest(client({ session: { form: { reply: replyForm } } }));
 
     render(
       <PendingRequests
@@ -475,6 +477,17 @@ describe("PendingRequests", () => {
             questions: [],
             delivery: undefined,
             fields: [
+              {
+                key: "token",
+                type: "string",
+                title: "Internal token",
+                hidden: true,
+                defaultValue: "server-default",
+                required: true,
+                options: [],
+                custom: false,
+                when: [],
+              },
               {
                 key: "regions",
                 type: "multiselect",
@@ -509,6 +522,7 @@ describe("PendingRequests", () => {
     );
 
     const form = within(screen.getByRole("region", { name: "Configure deployment" }));
+    expect(form.queryByText("Internal token")).toBeNull();
     const submit = form.getByRole<HTMLButtonElement>("button", { name: "Submit" });
     expect(submit.disabled).toBe(true);
     await user.click(form.getByText("Europe"));
@@ -529,7 +543,12 @@ describe("PendingRequests", () => {
       expect(replyForm).toHaveBeenCalledWith({
         sessionID: "ses_1",
         formID: "form_1",
-        answer: { regions: ["eu"], notes: "Primary region", notify: false },
+        answer: {
+          regions: ["eu"],
+          notes: "Primary region",
+          notify: false,
+          token: "server-default",
+        },
       }),
     );
   });
@@ -544,7 +563,7 @@ describe("PendingRequests", () => {
         }),
     );
     (window as unknown as { palot?: PalotApi }).palot = bridge({});
-    setOpenCodeClientForTest(client({ form: { cancel: cancelForm } }));
+    setOpenCodeClientForTest(client({ session: { form: { cancel: cancelForm } } }));
 
     render(
       <PendingRequests

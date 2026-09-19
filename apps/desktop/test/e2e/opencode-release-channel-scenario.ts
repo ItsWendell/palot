@@ -14,15 +14,13 @@ export const openCodeReleaseChannelScenario: Scenario = {
   async run() {},
   async assert(page, { client, llm, runRoot, session, visible }) {
     await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeVisible();
-    const original = await client.health.get();
-    expect(original.healthy).toBe(true);
+    const original = await client.server.info();
     expect(original.pid).toBeGreaterThan(0);
 
     async function unchangedService() {
       // Read the real service, not just a cached renderer connection indicator.
-      const health = await client.health.get();
-      expect(health).toMatchObject({
-        healthy: true,
+      const info = await client.server.info();
+      expect(info).toMatchObject({
         pid: original.pid,
         version: original.version,
       });

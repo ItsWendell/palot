@@ -25,7 +25,7 @@ describe("explicit Palot bundled runtime selection", () => {
     async (override) => {
       vi.stubEnv("OPENCODE_BIN", override);
       vi.stubGlobal("process", { ...process, resourcesPath: "/palot/resources" });
-      const binary = { path: "/palot/resources/opencode/opencode2", version: "2.0.2" };
+      const binary = { path: "/palot/resources/opencode/opencode2", version: "2.0.7" };
       const verify = vi
         .spyOn(runtimeRelease, "verifyBundledOpenCodeBinary")
         .mockResolvedValue(binary);
@@ -51,7 +51,7 @@ const managedEndpoint = { url: "http://127.0.0.1:4097" } as Endpoint;
 
 function client(version: string, pid = 42): OpenCodeClient {
   return {
-    health: { get: vi.fn().mockResolvedValue({ healthy: true, version, pid }) },
+    server: { info: vi.fn().mockResolvedValue({ version, pid, urls: [], paths: { tmp: "/tmp" } }) },
     event: {
       subscribe: async function* ({ signal }: { signal?: AbortSignal }) {
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve()));
@@ -103,7 +103,7 @@ function lifecycle(input: {
 
 describe("login service lifecycle routing", () => {
   it("keeps normal connections read-only and routes explicit restart through the OS manager", async () => {
-    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.2" });
+    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.7" });
     adapter.controlLoginService = vi.fn().mockResolvedValue(managedEndpoint);
     await runtime.connect();
     expect(adapter.controlLoginService).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ describe("login service lifecycle routing", () => {
   });
 
   it("uses the OS manager for confirmed startup but never as recovery", async () => {
-    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.2" });
+    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.7" });
     vi.mocked(adapter.discoverService).mockResolvedValue(undefined);
     adapter.controlLoginService = vi.fn().mockResolvedValue(managedEndpoint);
     await expect(runtime.connect()).rejects.toThrow("No reachable local");
@@ -128,7 +128,7 @@ describe("login service lifecycle routing", () => {
   });
 
   it("does not bypass a manager conflict with an SDK stop or spawn", async () => {
-    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.2" });
+    const { runtime, adapter } = lifecycle({ discoveredVersion: "2.0.7" });
     adapter.controlLoginService = vi.fn().mockRejectedValue(new Error("Different login binary"));
     await runtime.connect();
     await expect(runtime.restartLocalService()).rejects.toThrow("Different login binary");
@@ -139,7 +139,20 @@ describe("login service lifecycle routing", () => {
 });
 
 describe("OpenCodeRuntimeLifecycle version mismatch", () => {
-  it.each(["2.0.0", "2.0.1", "2.1.0"])(
+  it.each(["2.0.0", "2.0.3", "2.0.6"])(
+    "refuses incompatible stable %s even with explicit continuation",
+    async (version) => {
+      const { runtime, adapter } = lifecycle({ discoveredVersion: version, allowed: true });
+      await expect(
+        runtime.connect({ versionMismatch: "continue", approvedVersion: version }),
+      ).rejects.toThrow("not supported");
+      expect(runtime.status().versionMismatch?.canContinue).toBe(false);
+      expect(adapter.ensureService).not.toHaveBeenCalled();
+      expect(adapter.stopService).not.toHaveBeenCalled();
+      await runtime.stop();
+    },
+  );
+  it.each(["2.0.7", "2.0.8", "2.1.0"])(
     "connects stable %s without override or service replacement",
     async (version) => {
       const { runtime, ensureService } = lifecycle({ discoveredVersion: version });
@@ -173,13 +186,12 @@ describe("OpenCodeRuntimeLifecycle version mismatch", () => {
     expect(runtime.status().versionMismatch?.canContinue).toBe(false);
   });
 
-  it("reuses the reviewed beta with the stable client without starting or replacing it", async () => {
+  it("requires fresh consent for the beta reviewed against an older contract", async () => {
     const { runtime, ensureService } = lifecycle({ discoveredVersion: "0.0.0-beta-19507" });
-    await expect(runtime.connect()).resolves.toMatchObject({
-      connected: true,
-      version: "0.0.0-beta-19507",
-      contractVersion: SUPPORTED_OPENCODE_VERSION,
-      versionMismatch: null,
+    await expect(runtime.connect()).rejects.toThrow("does not match");
+    expect(runtime.status().versionMismatch).toMatchObject({
+      detectedVersion: "0.0.0-beta-19507",
+      canContinue: true,
     });
     expect(ensureService).not.toHaveBeenCalled();
     await runtime.stop();
@@ -237,7 +249,7 @@ describe("OpenCodeRuntimeLifecycle version mismatch", () => {
   it("rechecks the approved version against the final health response", async () => {
     const accepted = vi.fn();
     const changingClient = client("0.0.0-beta-19598");
-    vi.mocked(changingClient.health.get)
+    vi.mocked(changingClient.server.info)
       .mockResolvedValueOnce({ healthy: true, version: "0.0.0-beta-19598", pid: 42 } as never)
       .mockResolvedValueOnce({ healthy: true, version: "0.0.0-beta-19599", pid: 43 } as never);
     const runtime = new OpenCodeRuntimeLifecycle({
@@ -398,7 +410,7 @@ describe("OpenCodeRuntimeLifecycle local service controls", () => {
     const discoverBinary = vi.fn();
     const discoverLocalBinary = vi.fn().mockResolvedValue({
       path: "/private/runtime-cache/opencode2",
-      version: "0.0.0-beta-19507",
+      version: "2.0.7",
     });
     const ensureService = vi.fn().mockResolvedValue(managedEndpoint);
     const runtime = new OpenCodeRuntimeLifecycle({
@@ -407,7 +419,7 @@ describe("OpenCodeRuntimeLifecycle local service controls", () => {
         discoverService: vi.fn().mockResolvedValue(undefined),
         ensureService,
         stopService: vi.fn(),
-        makeClient: () => client("0.0.0-beta-19507"),
+        makeClient: () => client("2.0.7"),
         discoverBinary,
         wait: vi.fn(),
         now: () => 100,
@@ -686,7 +698,7 @@ describe("OpenCodeRuntimeLifecycle discovery-only connection", () => {
           }),
       });
       await runtime.connect();
-      if (!healthy) vi.mocked(api.health.get).mockRejectedValue(new Error("offline"));
+      if (!healthy) vi.mocked(api.server.info).mockRejectedValue(new Error("offline"));
       now = 21_000;
       runtime.recoverEventStream("focus");
       await expect(runtime.connect()).rejects.toThrow("OpenCode event stream stale");
@@ -731,7 +743,7 @@ describe("OpenCodeRuntimeLifecycle discovery-only connection", () => {
       onStatus,
     );
     await runtime.connect();
-    vi.mocked(api.health.get).mockRejectedValue(new Error("offline"));
+    vi.mocked(api.server.info).mockRejectedValue(new Error("offline"));
     now = 21_000;
     runtime.recoverEventStream("focus");
     await vi.waitFor(() => expect(wait).toHaveBeenCalledTimes(2));
@@ -782,7 +794,7 @@ describe("OpenCodeRuntimeLifecycle discovery-only connection", () => {
         endpoint === discoveredEndpoint ? api : client(SUPPORTED_OPENCODE_VERSION),
     });
     await runtime.connect();
-    vi.mocked(api.health.get).mockRejectedValue(new Error("offline"));
+    vi.mocked(api.server.info).mockRejectedValue(new Error("offline"));
     now = 21_000;
     runtime.recoverEventStream("focus");
     await vi.waitFor(() => expect(discoverService).toHaveBeenCalledTimes(2));
@@ -895,8 +907,8 @@ function streamClient(
   }) => AsyncIterable<OpenCodeEvent>,
 ): OpenCodeClient {
   return {
-    health: {
-      get: vi.fn().mockResolvedValue({
+    server: {
+      info: vi.fn().mockResolvedValue({
         healthy: true,
         version: SUPPORTED_OPENCODE_VERSION,
         pid: 42,

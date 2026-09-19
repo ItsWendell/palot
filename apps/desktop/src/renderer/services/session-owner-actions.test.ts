@@ -89,7 +89,10 @@ it.each(["fork", "delete", "export", "copy", "list worktrees", "create worktree"
           : operation === "list worktrees"
             ? []
             : operation === "create worktree"
-              ? { directory: "/worktrees/new" }
+              ? {
+                  directory: "/worktrees/new",
+                  project: { id: "project", directory: "/repo", canonical: "/repo" },
+                }
               : operation === "delete"
                 ? undefined
                 : session;
@@ -137,7 +140,7 @@ it.each(["fork", "delete", "export", "copy", "list worktrees", "create worktree"
     if (operation === "create worktree")
       await palot.createProjectCopy(session.projectID, "/repo", undefined, owner.connectionID);
 
-    expect(request).toHaveBeenCalledTimes(operation === "create worktree" ? 2 : 1);
+    expect(request).toHaveBeenCalledTimes(operation === "create worktree" ? 3 : 1);
     for (const [input] of request.mock.calls) {
       expect(input).toMatchObject({ connectionID: owner.connectionID, profileID: owner.profileID });
     }

@@ -281,7 +281,10 @@ function assistant(event: PalotEvent): PalotMessage | null {
   return {
     id,
     type: "assistant",
-    createdAt: event.createdAt,
+    createdAt:
+      event.type === "session.step.started"
+        ? (event.data.started ?? event.createdAt)
+        : event.createdAt,
     completedAt: null,
     text: null,
     agent: agent ?? null,
@@ -783,6 +786,7 @@ export function applyOpenCodeEvents(
             ...current,
             streamedAt: undefined,
             firstTokenAt: undefined,
+            createdAt: event.data.started ?? event.createdAt,
             content: current.content.map((part) =>
               part.streaming ? { ...part, streaming: false } : part,
             ),

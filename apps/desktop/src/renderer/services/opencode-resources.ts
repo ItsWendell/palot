@@ -14,6 +14,7 @@ import type {
 } from "../../shared";
 import { workspaceFileAttachments } from "../lib/workspace-references";
 import { openCodeClient } from "./opencode-client";
+import { attachmentPrompt, type AttachmentDeliveryInput } from "./opencode-attachment-delivery";
 import {
   mapCommand,
   mapModel,
@@ -252,7 +253,7 @@ export async function listRequests(
   const options = { signal: openCodeRequestSignal(requestSignal) };
   const values = await Promise.allSettled([
     client.permission.list({ sessionID }, options),
-    client.form.list({ sessionID }, options),
+    client.session.form.list({ sessionID }, options),
     client.session.inbox.list({ sessionID }, options),
   ]);
   const errors = values.flatMap((result, index) =>
@@ -442,18 +443,21 @@ export function promptFiles(
   return workspaceFileAttachments(directory, references);
 }
 
-export async function sendPrompt(input: PromptInput): Promise<PromptReceipt> {
+export async function sendPrompt(
+  input: PromptInput & AttachmentDeliveryInput,
+): Promise<PromptReceipt> {
   const client = openCodeClient();
+  const { inlineFiles, ...delivery } = attachmentPrompt(input.text, input);
   const session = input.fileReferences?.length ? await sessionLocation(input.sessionID) : null;
   const files = [
-    ...(input.files?.map((file) => ({ uri: file.uri, name: file.name })) ?? []),
+    ...inlineFiles.map((file) => ({ uri: file.uri, name: file.name })),
     ...(session ? promptFiles(session.directory, input.fileReferences ?? []) : []),
   ];
   const pending = await client.session.prompt(
     {
       sessionID: input.sessionID,
       ...(input.id ? { id: input.id } : {}),
-      text: input.text,
+      ...delivery,
       ...(files.length ? { files } : {}),
       ...(input.skillReferences?.length
         ? {
@@ -473,6 +477,6 @@ export async function sendPrompt(input: PromptInput): Promise<PromptReceipt> {
     sessionID: pending.sessionID,
     type: pending.type,
     delivery: pending.type === "user" ? pending.delivery : null,
-    createdAt: pending.timeCreated ?? null,
+    createdAt: pending.time.created ?? null,
   };
 }

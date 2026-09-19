@@ -466,6 +466,7 @@ export class OpenCodeInstallations {
     const channel = this.deps.releaseStatus().offer!.channel;
     if (
       !snapshot.installation.compatible &&
+      !isStableOpenCodeV2(snapshot.installation.version) &&
       !this.accepted(snapshot.installation.id, snapshot.installation.version)
     )
       throw new Error(

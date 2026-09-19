@@ -209,7 +209,7 @@ export function useSessionProcesses(
           openCodeClient().shell.get(
             {
               id: row.id,
-              location: { directory: row.location.directory, workspace: row.location.workspaceID },
+              location: { directory: row.location.directory },
             },
             { signal },
           ),

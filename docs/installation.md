@@ -66,6 +66,12 @@ your installed OpenCode, or let you explicitly download a verified fallback from
 opencode.ai in **OpenCode release settings**. Starting or restarting the shared
 service is a separate confirmation. See [runtime management](opencode-runtime.md).
 
+Palot 0.14.0 requires stable OpenCode **2.0.7 or later in the 2.x series** and uses
+the **2.0.9** client. Earlier stable services are refused; V2 betas require explicit
+consent. Update an older service separately before connecting. Updating Palot does
+not upgrade or restart OpenCode. See [compatibility](opencode-runtime.md#compatibility)
+for configuration changes to check when upgrading the service itself.
+
 To update, quit that Palot channel and install the newer package using the same
 method. To remove DEB/RPM installations, use `sudo apt remove palot` or
 `sudo dnf remove palot` (`palot-nightly` for Nightly). Package removal leaves your

@@ -1,6 +1,6 @@
 {
   "name": "@palot/desktop",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
   "description": "Palot 2 desktop client for OpenCode 2",
   "homepage": "https://github.com/ItsWendell/palot",
@@ -83,8 +83,8 @@
     "@fontsource-variable/ibm-plex-sans": "5.3.0",
     "@fontsource-variable/inter": "5.3.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
-    "@opencode/client": "2.0.3",
-    "@opencode/protocol": "2.0.3",
+    "@opencode/client": "2.0.9",
+    "@opencode/protocol": "2.0.9",
     "@palot/orbits": "workspace:*",
     "@pierre/diffs": "1.4.2",
     "@pierre/theming": "1.0.1",

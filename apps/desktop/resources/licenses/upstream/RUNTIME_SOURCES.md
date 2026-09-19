@@ -27,18 +27,32 @@ sections. Their presence here does not identify those test assets as shipped.
 `z2d-pixman.NOTICE.txt` additionally retains the complete radial-gradient
 file-level notice from z2d's `src/gradient.zig`, lines 565–589.
 
-## OpenCode 2.0.3 and Bun 1.4.2
+## OpenCode 2.0.9 and Bun 1.4.2
 
 The OpenCode executable is acquired separately from its official distributor,
 not included in Palot's desktop installers. These references identify the runtime
 pinned for Palot's integration checks.
 
 - OpenCode publication source:
-  <https://github.com/anomalyco/opencode/tree/9c8a4ea4ffae6ab53be4b19a3e88ff966e882221>
+  <https://github.com/anomalyco/opencode/tree/e50d845451afd5f584e6bf38300657e39bbaa25a>
 - Bun runtime source:
   <https://github.com/oven-sh/bun/tree/744846f844374847c902b5e7fd59b4342a51ef99>
 - Bun's pinned WebKit/JavaScriptCore source:
   <https://github.com/oven-sh/WebKit/tree/2e2aa2290fac856d6f451ceacb58f7f5b44dd057>
+
+The [official publish run](https://github.com/anomalyco/opencode/actions/runs/35422009377)
+(run number 19844) records OpenCode 2.0.9 and Bun 1.4.2 (`744846f84`), with
+`BUN_COMPILE_RELEASE=bun-v1.4.2` for the CLI build.
+
+The previous OpenCode 2.0.8 source remains available at
+<https://github.com/anomalyco/opencode/tree/0a6111291ece96af55b3f4d503822ba6a856791d>.
+Its [publish run](https://github.com/anomalyco/opencode/actions/runs/35325251492)
+(run number 19776) used the same Bun release.
+
+The previous OpenCode 2.0.7 source remains available at
+<https://github.com/anomalyco/opencode/tree/37ff501cc6a3e16682d7a398a68aa35157c9bc24>.
+Its [publish run](https://github.com/anomalyco/opencode/actions/runs/35261101487)
+(run number 19756) used the same Bun release.
 
 `bun-1.4.2.LICENSE.md` is Bun's unchanged upstream licensing document, including
 its linked-library list and build/relink instructions.

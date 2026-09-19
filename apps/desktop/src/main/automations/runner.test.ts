@@ -19,7 +19,7 @@ import {
 
 describe("automation worktree location", () => {
   it.each(["create", "existing", "reconcile"] as const)(
-    "uses server-selected directories and location-scoped Git %s",
+    "uses server-selected directories and project-scoped Git %s",
     async (mode) => {
       const sqlite = new DatabaseSync(":memory:");
       const database = drizzle({ client: sqlite });
@@ -45,6 +45,7 @@ describe("automation worktree location", () => {
       if (mode === "reconcile") create.mockRejectedValueOnce(new Error("response lost"));
       const client = {
         worktree: { list, create },
+        location: { get: vi.fn().mockResolvedValue({ project: { id: "project-1" } }) },
         agent: { list: vi.fn().mockRejectedValue(new Error("Stop after location resolution")) },
         model: { list: vi.fn().mockResolvedValue({ data: [] }) },
         skill: { list: vi.fn().mockResolvedValue({ data: [] }) },
@@ -60,11 +61,11 @@ describe("automation worktree location", () => {
       });
       await runner.execute("run-worktree");
       expect(repository.run("run-worktree")?.worktreeDirectory).toBe(directory);
-      expect(list).toHaveBeenCalledWith({ location: { directory: "/project" } }, expect.anything());
+      expect(list).toHaveBeenCalledWith({ projectID: "project-1" }, expect.anything());
       if (mode === "existing") expect(create).not.toHaveBeenCalled();
       else
         expect(create).toHaveBeenCalledWith(
-          { location: { directory: "/project" }, strategy: "git", name },
+          { projectID: "project-1", from: "/project", name },
           expect.anything(),
         );
       if (mode === "reconcile") expect(list).toHaveBeenCalledTimes(2);
@@ -299,11 +300,11 @@ describe("AutomationRunner admission", () => {
       const putInstruction = vi.fn().mockResolvedValue(undefined);
       const client = {
         permission: { list: vi.fn().mockResolvedValue([]) },
-        form: { list: vi.fn().mockResolvedValue([]) },
         message: {
           list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
         },
         session: {
+          form: { list: vi.fn().mockResolvedValue([]) },
           get: vi.fn().mockResolvedValue({ id: "session-1", time: { created: 1, updated: 1 } }),
           prompt,
           instructions: { entry: { put: putInstruction } },
@@ -357,11 +358,11 @@ describe("AutomationRunner admission", () => {
         model: { list: vi.fn().mockResolvedValue({ data: [] }) },
         skill: { list: vi.fn().mockResolvedValue({ data: [] }) },
         permission: { list: vi.fn().mockResolvedValue([]), reply },
-        form: { list: vi.fn().mockResolvedValue([]) },
         message: {
           list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
         },
         session: {
+          form: { list: vi.fn().mockResolvedValue([]) },
           create: vi.fn().mockResolvedValue({ id: "session-1" }),
           get: vi.fn().mockRejectedValue(new Error("not found")),
           list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
@@ -407,7 +408,7 @@ describe("AutomationRunner admission", () => {
             {
               sessionID: "session-1",
               requestID: "permission-1",
-              reply: "once",
+              decision: "once",
             },
             expect.anything(),
           ),
@@ -579,6 +580,7 @@ describe("AutomationRunner worktrees", () => {
     const sessionCreate = vi.fn();
     const client = {
       worktree: { list, create },
+      location: { get: vi.fn().mockResolvedValue({ project: { id: "current-project" } }) },
       agent: { list: agents },
       model: { list: vi.fn().mockResolvedValue({ data: [] }) },
       skill: { list: vi.fn().mockResolvedValue({ data: [] }) },
@@ -602,13 +604,13 @@ describe("AutomationRunner worktrees", () => {
       await test.runner.execute("run-worktree");
 
       expect(test.list).toHaveBeenCalledExactlyOnceWith(
-        { location: { directory: "/server/repo/nested" } },
+        { projectID: "current-project" },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(test.create).toHaveBeenCalledExactlyOnceWith(
         {
-          location: { directory: "/server/repo/nested" },
-          strategy: "git",
+          projectID: "current-project",
+          from: "/server/repo/nested",
           name: "palot-auto-automati-1000",
         },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -637,7 +639,7 @@ describe("AutomationRunner worktrees", () => {
       expect(test.create).toHaveBeenCalledTimes(1);
       expect(test.list).toHaveBeenCalledTimes(2);
       expect(test.list).toHaveBeenLastCalledWith(
-        { location: { directory: "/server/repo/nested" } },
+        { projectID: "current-project" },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(test.repository.run("run-worktree")).toMatchObject({

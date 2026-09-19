@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import {
   openCodeInvalidationKeys,
   sessionStatsShouldRevalidate,
+  sessionTranscriptShouldRevalidate,
 } from "../lib/opencode-query-events";
 import { openCodeKeys } from "../lib/opencode-query";
 import {
@@ -89,6 +90,23 @@ export function useOpenCodeQueryEvents(): void {
             event.type === "session.execution.interrupted"
           ) {
             terminalSessionIDs.add(event.data.sessionID);
+            if (
+              sessionTranscriptShouldRevalidate(
+                event,
+                openCodeReconciler(queryClient).messages(batch.connectionID, event.data.sessionID),
+              )
+            ) {
+              const queryKey = openCodeKeys.transcript(batch.connectionID, event.data.sessionID);
+              const pending = queryClient.getQueryCache().find({ queryKey, exact: true })?.promise;
+              // The queue reuses in-flight reads. A pre-settlement read can still
+              // return running tools, so enqueue the repair only after it settles.
+              if (pending) {
+                void pending.then(
+                  () => invalidate(queryKey),
+                  () => invalidate(queryKey),
+                );
+              } else invalidate(queryKey);
+            }
           }
           for (const queryKey of openCodeInvalidationKeys(batch.connectionID, event)) {
             invalidate(queryKey);

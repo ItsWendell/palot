@@ -129,13 +129,15 @@ export const startupAttentionScenario: Scenario = {
         location: { directory },
       });
       sessionID = idle.id;
-      const form = await client.form.create({
+      const form = await client.session.form.create({
         sessionID: idle.id,
         title: "External decision without model execution",
         fields: [{ key: "decision", type: "string", title: "Decision", required: true }],
       });
       formID = form.id;
-      expect(await client.form.state({ sessionID: idle.id, formID: form.id })).toEqual({
+      expect(
+        (await client.session.form.get({ sessionID: idle.id, formID: form.id })).state,
+      ).toEqual({
         status: "pending",
       });
       // Keep both the idle owner and the harness's selected task outside the
@@ -227,7 +229,7 @@ export const startupAttentionScenario: Scenario = {
       const metadata = await fetch(`http://127.0.0.1:${address.port}/api/project`);
       expect((await metadata.json()).length).toBe(realProjects.length + historicalCount);
       expect((await snapshot()).complete).toBe(true);
-      await client.form.cancel({ sessionID: idle.id, formID: form.id });
+      await client.session.form.cancel({ sessionID: idle.id, formID: form.id });
       formID = undefined;
       await expect
         .poll(async () => {
@@ -252,7 +254,7 @@ export const startupAttentionScenario: Scenario = {
           ),
         )
         .toBe(false);
-      const offlineForm = await client.form.create({
+      const offlineForm = await client.session.form.create({
         sessionID: idle.id,
         title: "Decision created while disconnected",
         fields: [{ key: "decision", type: "string", title: "Decision", required: true }],
@@ -309,7 +311,7 @@ export const startupAttentionScenario: Scenario = {
             2,
           ),
         );
-        if (sessionID && formID) await client.form.cancel({ sessionID, formID });
+        if (sessionID && formID) await client.session.form.cancel({ sessionID, formID });
         if (profileID)
           await page.evaluate(
             async ({ id, original }) => {

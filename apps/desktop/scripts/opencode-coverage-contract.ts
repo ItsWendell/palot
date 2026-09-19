@@ -34,6 +34,7 @@ interface OpenApiOperation {
   description?: string;
   parameters?: Array<{ name?: string; in?: string; required?: boolean; schema?: JsonSchema }>;
   requestBody?: {
+    required?: boolean;
     content?: Record<string, { schema?: JsonSchema }>;
   };
   responses?: Record<
@@ -159,6 +160,7 @@ function referencedSchemas(document: OpenApiDocument, value: unknown): Record<st
 }
 
 export function clientPathFromOperationID(operationID: string): string {
+  if (operationID === "session.message.list") return "message.list";
   if (operationID.startsWith("server.experimental.")) {
     return operationID.replace(/^server\./, "");
   }
@@ -166,7 +168,10 @@ export function clientPathFromOperationID(operationID: string): string {
     .replace(/^v2\./, "")
     .replace(/^experimental\./, "")
     .split(".");
-  if (segments[0] === "session" && (segments[1] === "form" || segments[1] === "permission")) {
+  if (
+    segments[0] === "session" &&
+    (segments[1] === "permission" || (operationID.startsWith("v2.") && segments[1] === "form"))
+  ) {
     segments.shift();
   }
   if (segments[0] === "fs") segments[0] = "file";
@@ -215,7 +220,9 @@ function isStreaming(operation: OpenApiOperation): boolean {
 function contractEventTypes(document: OpenApiDocument): string[] {
   const eventOperation = Object.values(document.paths ?? {})
     .flatMap((item) => Object.values(item))
-    .find((operation) => operation.operationId === "v2.event.subscribe");
+    .find((operation) =>
+      ["v2.event.subscribe", "event.subscribe"].includes(operation.operationId ?? ""),
+    );
   const response = eventOperation?.responses?.["200"];
   const stream = response?.content?.["text/event-stream"]?.schema;
   const data = stream?.properties?.data;
@@ -272,6 +279,11 @@ export function inventoryFromOpenApi(
       );
       for (const field of body.fields) inputFields.add(field);
       for (const field of body.required) required.add(field);
+      if (operation.requestBody?.content?.["application/octet-stream"]) {
+        // The generated Promise client passes a raw binary body as input.payload.
+        inputFields.add("payload");
+        if (operation.requestBody.required) required.add("payload");
+      }
       if (operationPath.includes("*")) {
         inputFields.add("path");
         required.add("path");
