@@ -730,6 +730,7 @@ function SettingsContent({
     );
   }
   if (category === "about") return <AboutSettings snapshot={snapshot} />;
+  if (category === "config") return <ConfigSettings snapshot={snapshot} refresh={refresh} />;
   if (!project) return null;
   if (category === "project") return <ProjectSettings project={project} />;
   if (category === "models") return <ModelSettings project={project} snapshot={snapshot} />;
@@ -766,7 +767,6 @@ function SettingsContent({
       />
     );
   }
-  if (category === "config") return <ConfigSettings snapshot={snapshot} />;
   return null;
 }
 
@@ -4361,16 +4361,60 @@ function PermissionSettings({
   );
 }
 
-function ConfigSettings({ snapshot }: { snapshot: PalotSettingsSnapshot | null }) {
+function ConfigSettings({
+  snapshot,
+  refresh,
+}: {
+  snapshot: PalotSettingsSnapshot | null;
+  refresh(): Promise<void>;
+}) {
+  const owner = useSettingsOwner();
+  const queryClient = useQueryClient();
+  const [reloading, setReloading] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
+  const reload = async () => {
+    if (!owner?.connected || reloading) return;
+    setReloading(true);
+    setReloadError(null);
+    try {
+      await palot.reloadConfiguration(owner.connectionID);
+      await queryClient.invalidateQueries({ queryKey: openCodeKeys.all(owner.connectionID) });
+      await refresh();
+    } catch (cause) {
+      setReloadError(cause instanceof Error ? cause.message : "Could not reload configuration.");
+    } finally {
+      setReloading(false);
+    }
+  };
   const inventory = configInventory(snapshot);
   return (
     <>
       <SettingsSection
         title="Configuration sources"
-        description="OpenCode returns discovery entries from lowest to highest priority. The V2 client currently has no config update endpoint."
+        description="OpenCode returns discovery entries from lowest to highest priority. After editing a source file, reload the server's configuration to apply it."
         icon={FileCog}
       >
         <SettingsGroup>
+          <SettingsRow
+            title="Reload configuration"
+            description="Reload configuration and plugins for all locations on this server. Pending approvals and questions are cancelled."
+            control={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!owner?.connected || reloading}
+                onClick={() => void reload()}
+              >
+                {reloading ? "Reloading…" : "Reload configuration"}
+              </Button>
+            }
+          />
+          {reloadError ? (
+            <p role="alert" className="px-4 pb-3 text-compact text-destructive">
+              {reloadError}
+            </p>
+          ) : null}
           <InventoryState
             title="Configuration sources"
             state={inventoryState(snapshot, "config")}

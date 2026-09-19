@@ -29,7 +29,16 @@ describe("connection-scoped native wrappers", () => {
       args: ["session", "owner"],
     },
     { method: "pickDirectory", run: () => palot.pickDirectory("owner"), args: ["owner"] },
-    { method: "pickFiles", run: () => palot.pickFiles("owner"), args: ["owner"] },
+    {
+      method: "pickFiles",
+      run: () => palot.pickFiles("owner", "upload"),
+      args: ["owner", "upload"],
+    },
+    {
+      method: "cancelAttachmentUpload",
+      run: () => palot.cancelAttachmentUpload("upload"),
+      args: ["upload"],
+    },
     {
       method: "revealFileInFinder",
       run: () => palot.revealFileInFinder("/repo/file", "owner"),
@@ -51,8 +60,8 @@ describe("connection-scoped native wrappers", () => {
     },
     {
       method: "attachClipboardImages",
-      run: () => palot.attachClipboardImages([], "owner"),
-      args: [[], "owner"],
+      run: () => palot.attachClipboardImages([], "owner", "upload"),
+      args: [[], "owner", "upload"],
     },
     {
       method: "attachmentPreview",
@@ -85,6 +94,15 @@ describe("connection-scoped native wrappers", () => {
     status.resolve({ connectionID: "original" } as OpenCodeRuntimeStatus);
     await pending;
     expect(runtimeStatus).toHaveBeenCalledOnce();
-    expect(pickFiles).toHaveBeenCalledWith("original");
+    expect(pickFiles).toHaveBeenCalledWith("original", undefined);
+  });
+
+  it("returns the native progress subscription cleanup", () => {
+    const unsubscribe = vi.fn();
+    const onAttachmentProgress = vi.fn().mockReturnValue(unsubscribe);
+    window.palot = { onAttachmentProgress, runtimeStatus: vi.fn() } as unknown as PalotApi;
+    const listener = vi.fn();
+    expect(palot.onAttachmentProgress(listener)).toBe(unsubscribe);
+    expect(onAttachmentProgress).toHaveBeenCalledWith(listener);
   });
 });

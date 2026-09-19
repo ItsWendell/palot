@@ -54,7 +54,7 @@ export const sessionWindowDragScenario: Scenario = {
     try {
       await expect(page.getByText("Session drag ready.", { exact: true })).toBeVisible();
       const other = await client.session.create({ location: session.location });
-      await client.session.rename({ sessionID: other.id, title: "Other current task" });
+      await client.session.update({ sessionID: other.id, title: "Other current task" });
       await page.evaluate((id) => {
         location.hash = `#/sessions/${id}`;
       }, other.id);

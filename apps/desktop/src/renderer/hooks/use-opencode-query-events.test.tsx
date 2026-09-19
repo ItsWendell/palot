@@ -2,7 +2,7 @@ import { QueryClientProvider, QueryObserver } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PalotEventBatch } from "../../shared";
+import type { PalotEvent, PalotEventBatch, PalotMessage } from "../../shared";
 import { phaseAtom, runtimeAtom } from "../atoms/workspace";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { openCodeKeys } from "../lib/opencode-query";
@@ -58,6 +58,169 @@ describe("useOpenCodeQueryEvents", () => {
     mocks.getSessionInfo.mockResolvedValue(null);
     mocks.listActiveSessionIDs.mockResolvedValue([]);
     mocks.loadRequests.mockResolvedValue({ permissions: [], forms: [], inbox: [], errors: [] });
+  });
+
+  it.each([
+    ["session.execution.succeeded", "running"],
+    ["session.execution.failed", "streaming"],
+    ["session.execution.interrupted", "running"],
+    ["session.execution.succeeded", "completed"],
+  ] as const)(
+    "reconciles %s with a %s tool from the authoritative transcript",
+    async (type, status) => {
+      const queryClient = createRendererQueryClient();
+      const reconciler = openCodeReconciler(queryClient);
+      const message: PalotMessage = {
+        id: "assistant",
+        type: "assistant",
+        createdAt: 1,
+        completedAt: null,
+        text: "",
+        agent: "build",
+        model: null,
+        tokens: null,
+        finish: null,
+        content: [{ type: "tool", id: "call", name: "execute", state: { status } }],
+        data: null,
+      };
+      reconciler.setTranscriptSnapshot("connection", "session", [message], "rooted");
+      reconciler.setTranscriptSnapshot("other", "session", [message], "rooted");
+      const settled = {
+        ...message,
+        completedAt: 2,
+        content: [{ type: "tool", id: "call", name: "execute", state: { status: "completed" } }],
+      };
+      const refresh = vi.fn(async () => {
+        reconciler.setTranscriptSnapshot("connection", "session", [settled], "rooted");
+        return [settled];
+      });
+      const unsubscribe = new QueryObserver(queryClient, {
+        queryKey: openCodeKeys.transcript("connection", "session"),
+        queryFn: refresh,
+        initialData: [message],
+        staleTime: Infinity,
+      }).subscribe(() => {});
+      const { unmount } = renderHook(() => useOpenCodeQueryEvents(), {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        ),
+      });
+      act(() => {
+        for (const listener of mocks.listeners) {
+          listener(
+            batch(1, [
+              {
+                id: "settled",
+                type,
+                createdAt: 2,
+                receiveSequence: 1,
+                data: { sessionID: "session", reason: "user" },
+              } as PalotEvent,
+            ]),
+          );
+        }
+      });
+      if (status === "completed") {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(refresh).not.toHaveBeenCalled();
+      } else {
+        await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+        expect(reconciler.messages("connection", "session")[0]?.content[0]?.state).toEqual({
+          status: "completed",
+        });
+      }
+      expect(reconciler.messages("other", "session")[0]?.content[0]?.state).toEqual({ status });
+      unmount();
+      unsubscribe();
+      queryClient.clear();
+    },
+  );
+
+  it("reads settled tool state after an in-flight pre-settlement transcript fetch", async () => {
+    vi.useFakeTimers();
+    const queryClient = createRendererQueryClient();
+    const reconciler = openCodeReconciler(queryClient);
+    const message: PalotMessage = {
+      id: "assistant",
+      type: "assistant",
+      createdAt: 1,
+      completedAt: null,
+      text: "",
+      agent: "build",
+      model: null,
+      tokens: null,
+      finish: null,
+      content: [{ type: "tool", id: "call", name: "execute", state: { status: "running" } }],
+      data: null,
+    };
+    const settled: PalotMessage = {
+      ...message,
+      completedAt: 2,
+      content: [{ type: "tool", id: "call", name: "execute", state: { status: "completed" } }],
+    };
+    reconciler.setTranscriptSnapshot("connection", "session", [message], "rooted");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requests = 0;
+    const refresh = vi.fn(async () => {
+      const token = reconciler.beginSnapshot("connection");
+      const snapshot = ++requests === 1 ? message : settled;
+      if (requests === 1) await gate;
+      reconciler.setTranscriptSnapshot("connection", "session", [snapshot], "rooted", token);
+      return [snapshot];
+    });
+    const observer = new QueryObserver(queryClient, {
+      queryKey: openCodeKeys.transcript("connection", "session"),
+      queryFn: refresh,
+      initialData: [message],
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const staleFetch = observer.refetch();
+    expect(refresh).toHaveBeenCalledOnce();
+    const { unmount } = renderHook(() => useOpenCodeQueryEvents(), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      ),
+    });
+    try {
+      act(() => {
+        for (const listener of mocks.listeners) {
+          listener(
+            batch(1, [
+              {
+                id: "interrupted",
+                type: "session.execution.interrupted",
+                createdAt: 2,
+                receiveSequence: 1,
+                data: { sessionID: "session", reason: "user" },
+              } as PalotEvent,
+            ]),
+          );
+        }
+      });
+      // Let the invalidation queue encounter the still-running stale fetch.
+      await act(() => vi.advanceTimersByTimeAsync(200));
+      await act(async () => {
+        release();
+        await staleFetch;
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      expect(reconciler.messages("connection", "session")[0]?.content[0]?.state).toEqual({
+        status: "completed",
+      });
+      expect(observer.getCurrentResult().data?.[0]?.content[0]?.state).toEqual({
+        status: "completed",
+      });
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      unmount();
+      unsubscribe();
+      queryClient.clear();
+    }
   });
 
   it("does not duplicate initial hydration and repairs reconnects and later batch gaps", async () => {

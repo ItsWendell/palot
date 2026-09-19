@@ -113,7 +113,7 @@ function rootSession(session: PalotSession, sessionByID: Map<string, PalotSessio
 
 function requestCreatedAtByID(requests: SessionRequestSnapshot): Map<string, number> {
   return new Map([
-    ...requests.inbox.map((value) => [value.id, value.timeCreated] as const),
+    ...requests.inbox.map((value) => [value.id, value.time.created] as const),
     ...Object.entries(requests.requestCreatedAtByID ?? {}),
   ]);
 }

@@ -574,7 +574,7 @@ export function applyOpenCodeCatalogEvent(
     }));
     return;
   }
-  if (event.type === "session.permissions.updated") {
+  if (event.type === "session.permissions") {
     patchSession(queryClient, connectionID, event.data.sessionID, (session) => ({
       ...session,
       permissions: event.data.permissions,

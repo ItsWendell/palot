@@ -295,8 +295,8 @@ export async function connectSsh(input: {
     const healthSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
     for (;;) {
       healthSignal.throwIfAborted();
-      const health = await client.health
-        .get({
+      const health = await client.server
+        .info({
           signal: AbortSignal.any([healthSignal, AbortSignal.timeout(2_000)]),
         })
         .catch(() => undefined);

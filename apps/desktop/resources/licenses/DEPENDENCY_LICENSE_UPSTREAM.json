@@ -25,8 +25,8 @@
   },
   {
     "repository": "anomalyco/opencode",
-    "commit": "9c8a4ea4ffae6ab53be4b19a3e88ff966e882221",
-    "release": "GitHub publish run 34724917068, v2 branch, run_number 19541, attempt 1; version/publish logs record 2.0.3; source version 2.0.2 rewritten by script/publish.ts.",
+    "commit": "e50d845451afd5f584e6bf38300657e39bbaa25a",
+    "release": "GitHub publish run 35422009377, run_number 19844, patch release; version/publish logs record 2.0.9; source version 2.0.8 rewritten by script/publish.ts.",
     "files": [
       {
         "source": "LICENSE",
@@ -37,33 +37,121 @@
     "packages": [
       {
         "name": "@opencode/client",
-        "version": "2.0.3",
+        "version": "2.0.9",
         "license": "MIT",
         "sourceManifest": "packages/client/package.json",
-        "sourceManifestSha256": "abca85178c43b6fb4dc050634f10364818d953c02e2ceabeaf7ab554e5110189",
-        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.0.3.tgz",
-        "integrity": "sha512-b+LcpMI131fXnGqf+O+9Y33H4XmwAkQibfYvtpEOROftkTpkcMj3R7WW/wGl2VTBNTZECAk2Yd+TACTzzAwk0A==",
-        "manifestSha256": "5f37689cd75e59d98f0c093ca686160f858774649b4a88533da10d5523d487f4"
+        "sourceManifestSha256": "298dd7e8f14d2af40e0b087f5c870c959181a106841d7a54a7a294abd6549f4f",
+        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.0.9.tgz",
+        "integrity": "sha512-WQR2mAtVLy8wFncN5tuI7oQDAkANzg215K3CUzrxIwXjdoVSjfF/iIqHZk+CmimQvO+FQQABQULGHzl0TqDzVA==",
+        "manifestSha256": "8fa467016092aa5d2d8342b129dc4fbabf21aabc1c537623df244b0efb4843ab"
       },
       {
         "name": "@opencode/protocol",
-        "version": "2.0.3",
+        "version": "2.0.9",
         "license": "MIT",
         "sourceManifest": "packages/protocol/package.json",
-        "sourceManifestSha256": "cdd8b9a477192a1763fe90f66e38876aa87a94612b563e0fded8f5b3c43001cd",
-        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.3.tgz",
-        "integrity": "sha512-DNHbkLDTuAyMsmVdnjuKulcfoDbllW2dxt4W19r2aJEYvswJpEO9168CSK6Sjbx1FOh/B9yL7SQgoDRMd4K5Vw==",
-        "manifestSha256": "76e870aa3877458481a356720ea2ba14b1b381496008215177c808c222acc85c"
+        "sourceManifestSha256": "2fd5cd647c8cae1b34821ab7275d3f886e0a8a550ba0931aa7e28412f7971d75",
+        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.9.tgz",
+        "integrity": "sha512-mP4EySNWiQ4SnWXBoeCZ6sCsvK/GEzRJivPRQ9eHLTwP91LX99bk4q02KSTWJIZjasQwabHBmny5kE1IV7gTtg==",
+        "manifestSha256": "60614e14592e81001d9223d5562020f1170239956d5bb3a4c5915c1ebecf009e"
       },
       {
         "name": "@opencode/schema",
-        "version": "2.0.3",
+        "version": "2.0.9",
         "license": "MIT",
         "sourceManifest": "packages/schema/package.json",
-        "sourceManifestSha256": "aa8e95cfbd82b46dd065fa722ea5acb97edf6e3bd452b42aa19d5596726b8aad",
-        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.3.tgz",
-        "integrity": "sha512-thPeBbqw4+SkZ/0LOuqfahSRGuWogRa/wwfIVyiQYsoE0vzLx8XUpHQ+FSUWkdz6llDtP0+ZsyBqXUMpXmPgbg==",
-        "manifestSha256": "8095036cb791c86bb02dbd5aef3e78643c33c3dc902ca318164436a9fdd77c3a"
+        "sourceManifestSha256": "67e0e04ddba54e740e351d317587214239442d61bb156e1c39e0562742832a7b",
+        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.9.tgz",
+        "integrity": "sha512-xSAKHD5D3j5zGPuDYHu4kGy1immmlmzzwImpqfgEAEmnp8jf5312PhG31fcV0VB50YfbP8/uHA+t8zSBkJnrLQ==",
+        "manifestSha256": "eb07a1838bb23b10acfe8cb71b5672c4cb8a2d3e1059ddb72d90753d2231f002"
+      }
+    ]
+  },
+  {
+    "repository": "anomalyco/opencode",
+    "commit": "0a6111291ece96af55b3f4d503822ba6a856791d",
+    "release": "GitHub publish run 35325251492, run_number 19776, patch release; version/publish logs record 2.0.8; source version 2.0.7 rewritten by script/publish.ts.",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "opencode.LICENSE.txt",
+        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@opencode/client",
+        "version": "2.0.8",
+        "license": "MIT",
+        "sourceManifest": "packages/client/package.json",
+        "sourceManifestSha256": "e2b13ff4a04985699f3aec9592b9c798b3e8671cccf2eb5430e0c1e0c080d682",
+        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.0.8.tgz",
+        "integrity": "sha512-JHyDdDkiKOtR/Psmai+CO+w0KQ/iObcVIYQpG2iYRrGDBOQDpK4Y/BO5tvo6TBqd4ztNYSYGrpn+ftDsf8Gvzg==",
+        "manifestSha256": "beb21263b3cde6cad069166ff252eed0b3d1c7afbb72b34b372a91c3c346b826"
+      },
+      {
+        "name": "@opencode/protocol",
+        "version": "2.0.8",
+        "license": "MIT",
+        "sourceManifest": "packages/protocol/package.json",
+        "sourceManifestSha256": "cf12336882aaa1edea5305625c94d9ba3a7796b1f8e2e5be42ae9770e22c9894",
+        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.8.tgz",
+        "integrity": "sha512-X9aCZP91brEPFig5CInMzm4HUcC/dfMvI4IOF3OCY9xBk149oGA8PFKtb+TS/OFV1J37Wp+Pwb6HBANL37pMZQ==",
+        "manifestSha256": "2cc260d1d71b62c9deed3f0e22a08a2ceb02d974c9e4dabbec056def39a0a882"
+      },
+      {
+        "name": "@opencode/schema",
+        "version": "2.0.8",
+        "license": "MIT",
+        "sourceManifest": "packages/schema/package.json",
+        "sourceManifestSha256": "7262df9296eadb70ff5cbdf24cf813c03b159f6f866894aec36a254f45f6e562",
+        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.8.tgz",
+        "integrity": "sha512-nZdh0zA1AGUT2Mp9s0zuWpIcQkBL6zuz52EY80Yxfk3VPq9UgMaJb3Y5bJUSaxsw6BijJm8/xosWdEz1+1votA==",
+        "manifestSha256": "09d8e00c0885e21275a96f1de66d3672e869707562367ca28472880c3f957b6a"
+      }
+    ]
+  },
+  {
+    "repository": "anomalyco/opencode",
+    "commit": "37ff501cc6a3e16682d7a398a68aa35157c9bc24",
+    "release": "GitHub publish run 35261101487, run_number 19756, patch release; version/publish logs record 2.0.7; source version 2.0.6 rewritten by script/publish.ts.",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "opencode.LICENSE.txt",
+        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@opencode/client",
+        "version": "2.0.7",
+        "license": "MIT",
+        "sourceManifest": "packages/client/package.json",
+        "sourceManifestSha256": "5709b8247acd1e15933aeafc36bfa389a8ca6795021ef6d6af7d5d823a6e4cc0",
+        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.0.7.tgz",
+        "integrity": "sha512-Latj3gobO+J3872bisjDNc449Rfy1ADZCIKnXJzcuJWTYGWp/EmDMLCRnnrxoUREcbeNCFqMCLLTbrB0/RtOyA==",
+        "manifestSha256": "0e366c33224a87f269f7cb1796c73b2a88391205c7adc725064ade856845c706"
+      },
+      {
+        "name": "@opencode/protocol",
+        "version": "2.0.7",
+        "license": "MIT",
+        "sourceManifest": "packages/protocol/package.json",
+        "sourceManifestSha256": "0756be2c16ecf5aba7566f862e4de0d37f882796b6f30a84137610272b3664c9",
+        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.7.tgz",
+        "integrity": "sha512-VmpG4EKM/VyMgVsjxY3LRl8lPtrtunlwX13fYDfmus44jg2wDdv36pbi/JhnN3yWYt5NPaMA6KFqTdBM//QDvw==",
+        "manifestSha256": "33c483872cc3ac6b653121ea78f78a024cd97a700bc9f3ef1450ad31e7b85df2"
+      },
+      {
+        "name": "@opencode/schema",
+        "version": "2.0.7",
+        "license": "MIT",
+        "sourceManifest": "packages/schema/package.json",
+        "sourceManifestSha256": "c83f4e1deacde206391b03b6908bde1dc097fcddc796cc06c8b936549fea9de8",
+        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.7.tgz",
+        "integrity": "sha512-LUEZTMYRuEqgiL9CiUo607OrjvG/euIDjoP9kDg4sfac/lA2UmFjjrT/KXatVydJq8C1uqLVxwDRYMstwapM+A==",
+        "manifestSha256": "16eb2ca4925a60bb5a8717d88489bc5ab694052a174b60144b50498e5d63ea05"
       }
     ]
   },

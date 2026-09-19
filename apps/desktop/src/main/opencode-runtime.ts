@@ -420,7 +420,7 @@ export class OpenCodeRuntime {
     if (status.capabilities?.pairing !== "show")
       throw new Error("Pairing is unavailable for this profile");
     const [server, connection] = await Promise.all([
-      this.withClient((client) => client.server.get()),
+      this.withClient((client) => client.server.info()),
       this.requestConnection(),
     ]);
     const auth = connection.endpoint.auth;

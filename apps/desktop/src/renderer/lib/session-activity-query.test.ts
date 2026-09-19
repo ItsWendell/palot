@@ -3,6 +3,7 @@ import type { SessionInfo, SessionLogOutput } from "@opencode/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PalotEvent } from "../../shared";
 import { openCodeKeys } from "./opencode-query";
+import { openCodeReconciler } from "./open-code-reconciler";
 import { openCodeInvalidationKeys } from "./opencode-query-events";
 import { seedSessionDetails } from "./session-catalog-query";
 import {
@@ -81,6 +82,42 @@ describe("session activity query", () => {
     expect(second.statuses).toBe(first.statuses);
   });
 
+  it("keeps a newer live execution when an inactive confirmation finishes hydrating logs", async () => {
+    const queryClient = new QueryClient();
+    const connectionID = "connection-hydration-race";
+    const sessionID = "session";
+    mocks.listActiveSessionIDs.mockResolvedValue([]);
+    const logs = Promise.withResolvers<SessionLogOutput[]>();
+    mocks.loadSessionLog.mockReturnValue(logs.promise);
+    updateSessionActivity(queryClient, connectionID, () => ({
+      activeIDs: new Set([sessionID]),
+      execution: new Map([[sessionID, { status: "running", startedAt: 1, completedAt: null }]]),
+      statuses: new Map([[sessionID, { type: "busy" }]]),
+    }));
+    const pending = queryClient.fetchQuery(
+      sessionActivityQueryOptions(queryClient, connectionID, false, sessionID),
+    );
+    await vi.waitFor(() => expect(mocks.loadSessionLog).toHaveBeenCalled());
+    const started = event("session.execution.started", sessionID, 30);
+    openCodeReconciler(queryClient).applyBatch({
+      connectionID,
+      contractVersion: "2.0.7",
+      streamEpoch: 1,
+      batchSequence: 1,
+      receivedAt: 30,
+      sentAt: 30,
+      events: [started],
+    });
+    applySessionActivityEvents(queryClient, connectionID, [started]);
+    logs.resolve([synced(sessionID)]);
+    await pending;
+    const visible = openCodeReconciler(queryClient).activity(connectionID);
+    expect(visible.activeIDs.has(sessionID)).toBe(true);
+    expect(visible.execution.get(sessionID)?.status).toBe("running");
+    expect(visible.statuses.get(sessionID)).toEqual({ type: "busy" });
+    queryClient.clear();
+  });
+
   it("skips durable reconciliation for an unchanged synchronized snapshot", async () => {
     const queryClient = new QueryClient();
     mocks.listActiveSessionIDs.mockResolvedValue(["session-active"]);
@@ -108,6 +145,9 @@ describe("session activity query", () => {
     const settled = await queryClient.fetchQuery(options);
 
     expect(settled.execution.get("session-active")?.status).toBe("inactive");
+    expect(
+      openCodeReconciler(queryClient).activity(connectionID).statuses.get("session-active"),
+    ).toEqual({ type: "idle" });
     expect(settled.statuses.get("session-active")).toEqual({ type: "idle" });
   });
 

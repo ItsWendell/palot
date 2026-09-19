@@ -252,7 +252,7 @@ describe("session process scope", () => {
     expect(hook.result.current.commands).toBe(0);
     expect(hook.result.current.rows).toHaveLength(3);
     expect(mocks.get).toHaveBeenCalledWith(
-      { id: "b", location: { directory: "/child", workspace: "child-workspace" } },
+      { id: "b", location: { directory: "/child" } },
       { signal: expect.any(AbortSignal) },
     );
     mocks.terminals.mockRejectedValue(new Error("Daemon unavailable"));

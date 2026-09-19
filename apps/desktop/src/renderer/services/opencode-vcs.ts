@@ -67,7 +67,7 @@ export async function listOpenCodeVcsBranches(
   requestSignal?: AbortSignal,
   connectionID?: string,
 ): Promise<string[]> {
-  const response = await openCodeClient(connectionID).vcs.branches(
+  const response = await openCodeClient(connectionID).vcs.branch.list(
     {
       location: {
         directory: location.directory,

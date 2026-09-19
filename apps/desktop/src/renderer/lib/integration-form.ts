@@ -16,6 +16,14 @@ export function formFieldVisible(
   answers: Record<string, FormValue>,
 ): boolean {
   if (field.type === "external") return true;
+  if (field.hidden) return false;
+  return formFieldEnabled(field, answers);
+}
+
+function formFieldEnabled(
+  field: Exclude<PalotFormField, { type: "external" }>,
+  answers: Record<string, FormValue>,
+): boolean {
   return field.when.every((condition) => {
     const matches = answers[condition.key] === condition.value;
     return condition.op === "eq" ? matches : !matches;
@@ -28,7 +36,7 @@ export function visibleAnswers(
 ): Record<string, FormValue> {
   return Object.fromEntries(
     fields.flatMap((field) => {
-      if (field.type === "external" || !formFieldVisible(field, answers)) return [];
+      if (field.type === "external" || !formFieldEnabled(field, answers)) return [];
       const value = answers[field.key];
       return value === undefined ? [] : [[field.key, value]];
     }),

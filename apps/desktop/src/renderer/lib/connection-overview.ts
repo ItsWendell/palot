@@ -615,7 +615,7 @@ export class ConnectionOverviewController {
     const runtime = this.connected(profileID);
     const generation = this.generation;
     const epoch = this.epoch(profileID);
-    await openCodeClient(runtime.connectionID).session.rename({ sessionID, title });
+    await openCodeClient(runtime.connectionID).session.update({ sessionID, title });
     if (!this.current(profileID, runtime.connectionID, generation, epoch)) return;
     const session = await openCodeClient(runtime.connectionID).session.get({ sessionID });
     if (!this.current(profileID, runtime.connectionID, generation, epoch)) return;

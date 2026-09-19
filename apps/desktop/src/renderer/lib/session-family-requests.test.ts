@@ -24,7 +24,7 @@ const snapshot = (sessionID: string): SessionRequestSnapshot => ({
       id: "queued",
       sessionID,
       type: "user",
-      timeCreated: 1,
+      time: { created: 1 },
       payload: { text: "Later" },
       delivery: "queue",
     },

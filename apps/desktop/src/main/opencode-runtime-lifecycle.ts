@@ -417,7 +417,7 @@ export class OpenCodeRuntimeLifecycle {
           await withAbort(
             this.adapter
               .makeClient(this.endpointValue, this.options.headers, false)
-              .health.get({ signal: probeSignal }),
+              .server.info({ signal: probeSignal }),
             probeSignal,
           );
           signal.throwIfAborted();
@@ -452,7 +452,7 @@ export class OpenCodeRuntimeLifecycle {
       );
       const healthSignal = requestSignal(signal);
       const health = await withAbort(
-        candidate.health.get({ signal: healthSignal }),
+        candidate.server.info({ signal: healthSignal }),
         healthSignal,
       ).catch((error: unknown) => {
         if (profile.kind === "local" && !this.stopped && !signal.aborted) {
@@ -547,7 +547,7 @@ export class OpenCodeRuntimeLifecycle {
       profile.kind !== "local",
     );
     const healthSignal = requestSignal(signal);
-    const health = await withAbort(client.health.get({ signal: healthSignal }), healthSignal);
+    const health = await withAbort(client.server.info({ signal: healthSignal }), healthSignal);
     signal.throwIfAborted();
     if (!isSupportedOpenCodeVersion(health.version)) {
       const mismatch = this.versionMismatch(health.version);
@@ -609,7 +609,7 @@ export class OpenCodeRuntimeLifecycle {
       try {
         const endpoint = { url } satisfies Endpoint;
         const client = this.adapter.makeClient(endpoint, this.options.headers, true);
-        await client.health.get({ signal: requestSignal() });
+        await client.server.info({ signal: requestSignal() });
         return endpoint;
       } catch (error) {
         lastError = error;

@@ -25,8 +25,7 @@ import type {
   PluginInfo,
   PromptMention,
   SessionInboxInfo,
-  ServerGetOutput,
-  ServiceHealth,
+  ServerInfo,
   TokenUsageInfo,
 } from "@opencode/client";
 import type {
@@ -126,13 +125,13 @@ export interface OpenCodeProfileSnapshot {
 
 export interface OpenCodeProfileTestResult {
   url: string;
-  version: ServiceHealth["version"];
-  pid: ServiceHealth["pid"] | null;
+  version: ServerInfo["version"];
+  pid: ServerInfo["pid"] | null;
   secure: boolean;
 }
 
 export interface OpenCodePairPayload {
-  urls: ServerGetOutput["urls"];
+  urls: ServerInfo["urls"];
   username: string;
   password: string;
 }
@@ -425,6 +424,7 @@ export interface PalotFormOption {
 
 interface PalotFormFieldBase {
   key: string;
+  hidden?: boolean;
   title: string | null;
   description: string | null;
   required: boolean;
@@ -464,6 +464,7 @@ export type PalotFormField =
   | {
       key: string;
       type: "external";
+      hidden?: boolean;
       url: string;
       title: string | null;
       description: string | null;
@@ -734,6 +735,16 @@ export interface PalotFileAttachment {
 export interface PalotFilePickerResult {
   files: PalotFileAttachment[];
   errors: string[];
+}
+
+export interface PalotAttachmentProgress {
+  requestID: string;
+  connectionID: string;
+  name: string;
+  loaded: number;
+  total: number;
+  index: number;
+  count: number;
 }
 
 export interface SessionExportFileInput {
@@ -1168,6 +1179,8 @@ export const IPC_CHANNELS = {
   pickSessionImport: "palot:system:pick-session-import",
   writeClipboardText: "palot:system:write-clipboard-text",
   attachClipboardImages: "palot:system:attach-clipboard-images",
+  attachmentProgress: "palot:system:attachment-progress",
+  cancelAttachmentUpload: "palot:system:cancel-attachment-upload",
   attachmentPreview: "palot:system:attachment-preview",
   downloadUrl: "palot:system:download-url",
   performanceSnapshot: "palot:system:performance-snapshot",
@@ -1285,14 +1298,17 @@ export interface PalotApi {
     input: import("./external-open-contract").ExternalOpenInput,
     connectionID?: string,
   ): Promise<import("./external-open-contract").ExternalOpenResult>;
-  pickFiles(connectionID?: string): Promise<PalotFilePickerResult>;
+  pickFiles(connectionID?: string, requestID?: string): Promise<PalotFilePickerResult>;
   saveSessionExport(input: SessionExportFileInput): Promise<string | null>;
   pickSessionImport(): Promise<SessionImportFile | null>;
   writeClipboardText(value: string): Promise<void>;
   attachClipboardImages(
     images: PalotClipboardImage[],
     connectionID?: string,
+    requestID?: string,
   ): Promise<PalotFilePickerResult>;
+  cancelAttachmentUpload(requestID: string): Promise<void>;
+  onAttachmentProgress(listener: (progress: PalotAttachmentProgress) => void): () => void;
   attachmentPreview(grant: string, connectionID?: string): Promise<PalotAttachmentPreview | null>;
   downloadUrl(url: string): Promise<void>;
   performanceSnapshot(): Promise<PalotPerformanceSnapshot>;

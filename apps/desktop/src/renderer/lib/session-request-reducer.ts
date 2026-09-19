@@ -104,7 +104,7 @@ export function updateSessionRequests(
           {
             id: event.data.inboxID,
             sessionID: event.data.sessionID,
-            timeCreated: event.createdAt,
+            time: { created: event.createdAt },
             ...event.data.item,
           },
         ];

@@ -328,7 +328,7 @@ export class AutomationRunner {
         }
         const [permissions, forms] = await Promise.all([
           client.permission.list({ sessionID: session.id }, { signal: requestSignal(signal) }),
-          client.form.list({ sessionID: session.id }, { signal: requestSignal(signal) }),
+          client.session.form.list({ sessionID: session.id }, { signal: requestSignal(signal) }),
         ]);
         if (permissions.length || forms.length) {
           throw new AutomationConfigurationError("The target task already needs attention.");
@@ -551,7 +551,7 @@ export class AutomationRunner {
     signal: AbortSignal,
   ): Promise<void> {
     await client.permission.reply(
-      { sessionID: request.sessionID, requestID: request.id, reply: "once" },
+      { sessionID: request.sessionID, requestID: request.id, decision: "once" },
       { signal: requestSignal(signal) },
     );
   }
@@ -565,7 +565,7 @@ export class AutomationRunner {
     for (const sessionID of sessionIDs) {
       const [permissions, forms] = await Promise.all([
         client.permission.list({ sessionID }, { signal: requestSignal(signal) }),
-        client.form.list({ sessionID }, { signal: requestSignal(signal) }),
+        client.session.form.list({ sessionID }, { signal: requestSignal(signal) }),
       ]);
       const permission = permissions[0];
       if (permission) {
@@ -635,8 +635,12 @@ export class AutomationRunner {
     }
     const name = `palot-auto-${definition.id.slice(0, 8)}-${run.scheduledFor}`;
     if (run.worktreeDirectory) return run.worktreeDirectory;
-    const location = { directory: destination.sourceDirectory };
-    const existing = await client.worktree.list({ location }, { signal: requestSignal(signal) });
+    const { project } = await client.location.get(
+      { location: { directory: destination.sourceDirectory } },
+      { signal: requestSignal(signal) },
+    );
+    const projectID = project.id;
+    const existing = await client.worktree.list({ projectID }, { signal: requestSignal(signal) });
     const matchesRun = (item: { directory: string; strategy?: string }) =>
       item.strategy === "git" && item.directory.split(/[\\/]/).at(-1) === name;
     const reconciled = existing.find(matchesRun);
@@ -645,15 +649,15 @@ export class AutomationRunner {
       : await client.worktree
           .create(
             {
-              location,
-              strategy: "git",
+              projectID,
+              from: destination.sourceDirectory,
               name,
             },
             { signal: requestSignal(signal) },
           )
           .catch(async (error) => {
             const values = await client.worktree.list(
-              { location },
+              { projectID },
               { signal: requestSignal(signal) },
             );
             const value = values.find(matchesRun);
@@ -738,7 +742,7 @@ export class AutomationRunner {
       ).filter(({ sessionID, inbox }) =>
         sessionID === rootSessionID
           ? inbox.some((item) => "id" in item && item.id === run?.inboxID)
-          : inbox.some((item) => item.timeCreated >= startedAt),
+          : inbox.some((item) => item.time.created >= startedAt),
       );
       if (activeSessions.length) {
         await Promise.all(

@@ -20,25 +20,44 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot supports stable OpenCode **2.x**, starting at 2.0.0, without a patch-version
-override. The generated client and isolated release-smoke runtime remain pinned to
-2.0.3 for repeatable checks. The previously tested beta `0.0.0-beta-19507` is also accepted.
-Other recognized V2 beta versions require explicit consent; V1, unknown majors
-and malformed versions are refused. Palot's own Stable/Nightly channel does not
-change this policy.
+Palot supports stable OpenCode **2.x starting at 2.0.7**, without a patch-version
+override. The generated client and isolated release-smoke runtime are pinned to
+2.0.9 for repeatable checks. Earlier stable releases use incompatible API contracts
+and are refused. The previously tested beta `0.0.0-beta-19507` is no longer accepted
+automatically. Recognized V2 beta versions require explicit consent; V1, unknown
+majors and malformed versions are refused. Palot's own Stable/Nightly channel does
+not change this policy.
 
 This is Palot's compatibility policy, not a claim of a formal upstream warranty.
 The official client documentation [demonstrates a 2.x compatibility predicate](https://github.com/anomalyco/opencode/blob/cf4f1fb45e2695d86a4ef8c20a3883f4ac79935a/services/www/src/docs/content/build/client/index.mdx#L162-L174).
 The published 2.0.0 client, protocol and schema have the same code and contracts
 as beta19507, apart from package version/dependency pins. The 2.0.2 review found
 three additive config operations and an additional typed filesystem 404 error,
-with no changes to existing event contracts. The new config operations are not
-yet used by Palot. The 2.0.3 contract adds `session.diff` and projected `idle`
+with no changes to existing event contracts. Palot now uses `location.reload`
+from Settings; shell listing and shell configuration updates remain unused.
+The 2.0.3 contract adds `session.diff` and projected `idle`
 messages that mark completed, failed or interrupted turns. Palot retains those
 markers in hydrated history without displaying extra transcript rows; it does not
-yet use the turn-diff operation. Existing event contracts are unchanged. Gate a
-future feature on verified API availability rather than blocking the whole
-connection or assuming every Beta has extra features.
+yet use the turn-diff operation. Those changes left existing event contracts intact.
+
+The 2.0.7 migration changes existing API contracts, including server health,
+location/worktree management and session form operations. Palot uses the new
+contracts rather than maintaining adapters for older runtimes, so 2.0.7 is now
+the connection minimum. Gate future additive features on verified API availability
+rather than assuming every Beta has extra features. Retained beta publication and
+license evidence describes the historical build, not current compatibility.
+
+The 2.0.8 client adds the `permission` action to generated experimental policy
+types without removing operations or changing event contracts. The connection
+minimum remains 2.0.7; the newer client pin does not require replacing a compatible
+running service.
+
+The 2.0.9 contract moves provider transport and compaction into provider settings,
+and model compaction into model settings. Compaction policies now use
+`{ type: "summary" }` or `{ type: "native" }`. Palot's catalog adapters do not
+consume the removed top-level fields, so the connection minimum remains 2.0.7.
+Plugins or user configurations that set those policies must migrate before their
+service moves to 2.0.9; updating the client alone does not migrate server config.
 
 ## Preferred release and local startup
 

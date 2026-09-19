@@ -17,7 +17,7 @@ describe("classifyOpenCodeProfile", () => {
       topology: "remote-machine",
       capabilities: {
         localPathActions: false,
-        localFileAttachments: false,
+        localFileAttachments: true,
         worktreeCreate: true,
         pty: "persistent",
         scheduledAutomations: false,
@@ -60,7 +60,7 @@ describe("classifyOpenCodeProfile", () => {
       topology: "remote-machine",
       capabilities: {
         localPathActions: false,
-        localFileAttachments: false,
+        localFileAttachments: true,
         worktreeCreate: true,
         pty: "persistent",
         scheduledAutomations: false,

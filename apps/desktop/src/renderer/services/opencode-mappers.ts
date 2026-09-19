@@ -255,8 +255,37 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
       text = message.text;
       break;
     case "user":
-      text = message.text;
+      text =
+        message.metadata?.palotAttachmentPaths === true &&
+        typeof message.metadata.displayText === "string"
+          ? message.metadata.displayText
+          : message.text;
       files = mapFiles(message.files);
+      if (
+        message.metadata?.palotAttachmentPaths === true &&
+        Array.isArray(message.metadata.attachments)
+      ) {
+        const references = message.metadata.attachments.flatMap((entry) => {
+          if (
+            !entry ||
+            typeof entry !== "object" ||
+            Array.isArray(entry) ||
+            typeof entry.uri !== "string" ||
+            typeof entry.name !== "string" ||
+            typeof entry.mime !== "string"
+          )
+            return [];
+          return [
+            {
+              uri: entry.uri,
+              name: entry.name,
+              mime: entry.mime,
+              size: typeof entry.size === "number" ? entry.size : null,
+            },
+          ];
+        });
+        files = { ...files, files: [...(files.files ?? []), ...references] };
+      }
       skillReferences = message.skills?.flatMap((skill) =>
         skill.mention
           ? [
@@ -361,8 +390,8 @@ export function mapSkill(skill: SkillInfo): PalotSkill {
     id: skill.id,
     name: skill.name,
     description: skill.description ?? null,
-    location: skill.location,
-    slash: skill.slash ?? false,
+    location: skill.path,
+    slash: true,
     autoinvoke: skill.autoinvoke ?? false,
   };
 }

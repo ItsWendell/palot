@@ -253,7 +253,7 @@ describe("pendingRequestViews", () => {
         {
           id: "msg_1",
           sessionID: "ses_1",
-          timeCreated: 123,
+          time: { created: 123 },
           type: "user",
           delivery: "queue",
           payload: { text: "Run the full test suite after this change" },
@@ -367,7 +367,7 @@ describe("pendingRequestViews", () => {
           sessionID: "ses_1",
           type: "user",
           delivery: "queue",
-          timeCreated: 123,
+          time: { created: 123 },
           payload: { text: "Run the full test suite after this change" },
         },
       ],
@@ -423,7 +423,7 @@ describe("pendingRequestViews", () => {
         {
           id: "cmp_1",
           sessionID: "ses_1",
-          timeCreated: 1,
+          time: { created: 1 },
           type: "compaction",
           payload: {},
           delivery: "queue",
@@ -443,7 +443,7 @@ describe("pendingRequestViews", () => {
         {
           id: "synthetic",
           sessionID: "ses_1",
-          timeCreated: 1,
+          time: { created: 1 },
           type: "synthetic",
           payload: { text: "Internal" },
           delivery: "queue",
@@ -451,7 +451,7 @@ describe("pendingRequestViews", () => {
         {
           id: "move",
           sessionID: "ses_1",
-          timeCreated: 2,
+          time: { created: 2 },
           type: "move",
           payload: { location: { directory: "/tmp" }, projectID: "project" },
           delivery: "queue",

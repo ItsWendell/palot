@@ -131,7 +131,7 @@ function metadata(id: string, parentID?: string): SessionInfo {
 function clientWithRequests(requests: PermissionRequest[] = []) {
   return {
     permission: { request: { list: vi.fn().mockResolvedValue({ data: requests }) } },
-    form: { request: { list: vi.fn().mockResolvedValue({ data: [] }) } },
+    form: { list: vi.fn().mockResolvedValue({ data: [] }) },
     session: { get: vi.fn(async ({ sessionID }: { sessionID: string }) => metadata(sessionID)) },
   };
 }
@@ -219,7 +219,7 @@ describe("OpenCodeAttentionIndex", () => {
     let peakLists = 0;
     let activeMetadata = 0;
     let peakMetadata = 0;
-    client.form.request.list.mockImplementation(async () => {
+    client.form.list.mockImplementation(async () => {
       peakLists = Math.max(peakLists, ++activeLists);
       await Promise.resolve();
       activeLists -= 1;
@@ -270,7 +270,7 @@ describe("OpenCodeAttentionIndex", () => {
 
   it("retains forms when only their list fails while applying authoritative permission results", async () => {
     const client = clientWithRequests([permission()]);
-    client.form.request.list.mockResolvedValue({
+    client.form.list.mockResolvedValue({
       data: [{ id: "form", sessionID: "session-1" }],
     } as never);
     const source = runtime(client as unknown as OpenCodeClient);
@@ -278,12 +278,12 @@ describe("OpenCodeAttentionIndex", () => {
     await index.snapshot(input());
     source.reconnect();
     client.permission.request.list.mockResolvedValue({ data: [] });
-    client.form.request.list.mockRejectedValueOnce(new Error("forms down"));
+    client.form.list.mockRejectedValueOnce(new Error("forms down"));
     await expect(index.snapshot(input())).resolves.toMatchObject({
       complete: false,
       requests: [{ value: { permissions: [], forms: [{ id: "form" }] } }],
     });
-    client.form.request.list.mockResolvedValue({ data: [] });
+    client.form.list.mockResolvedValue({ data: [] });
     now += 5_000;
     await expect(index.snapshot(input())).resolves.toMatchObject({ complete: true, requests: [] });
     index.dispose();
@@ -419,7 +419,7 @@ describe("OpenCodeAttentionIndex", () => {
 
   it("does not hydrate unowned global forms and retries missing lineage", async () => {
     const client = clientWithRequests([permission("child", "child")]);
-    client.form.request.list.mockResolvedValue({
+    client.form.list.mockResolvedValue({
       data: [{ id: "global-form", sessionID: "global" }],
     } as never);
     client.session.get.mockRejectedValueOnce(new Error("metadata unavailable"));
@@ -437,22 +437,22 @@ describe("OpenCodeAttentionIndex", () => {
     index.dispose();
   });
 
-  it("keeps workspace refs distinct and preserves a new location event during enumeration", async () => {
+  it("keeps directory refs distinct and preserves a new location event during enumeration", async () => {
     const client = clientWithRequests();
     const source = runtime(client as unknown as OpenCodeClient);
     vi.mocked(source.client.debug.location.list).mockResolvedValue([
-      { directory: "/repo", workspaceID: "a" },
-      { directory: "/repo", workspaceID: "b" },
+      { directory: "/repo/a" },
+      { directory: "/repo/b" },
     ]);
     const index = new OpenCodeAttentionIndex(source.value);
     await index.snapshot(input());
     expect(client.permission.request.list).toHaveBeenCalledTimes(2);
     expect(client.permission.request.list).toHaveBeenCalledWith(
-      { location: { directory: "/repo", workspace: "a" } },
+      { location: { directory: "/repo/a" } },
       expect.anything(),
     );
     expect(client.permission.request.list).toHaveBeenCalledWith(
-      { location: { directory: "/repo", workspace: "b" } },
+      { location: { directory: "/repo/b" } },
       expect.anything(),
     );
     const locations = deferred<[]>();
@@ -488,7 +488,7 @@ describe("OpenCodeAttentionIndex", () => {
               }),
             },
           },
-          form: { request: { list: vi.fn().mockResolvedValue({ data: [] }) } },
+          form: { list: vi.fn().mockResolvedValue({ data: [] }) },
         } as unknown as OpenCodeClient,
         connectionID,
       );
@@ -514,7 +514,7 @@ describe("OpenCodeAttentionIndex", () => {
     const listForms = vi.fn().mockResolvedValue({ data: [] });
     const source = runtime({
       permission: { request: { list: listPermissions } },
-      form: { request: { list: listForms } },
+      form: { list: listForms },
     } as unknown as OpenCodeClient);
     const index = new OpenCodeAttentionIndex(source.value as never);
 
@@ -545,7 +545,7 @@ describe("OpenCodeAttentionIndex", () => {
     const permissions = deferred<{ data: PermissionRequest[] }>();
     const source = runtime({
       permission: { request: { list: vi.fn(() => permissions.promise) } },
-      form: { request: { list: vi.fn().mockResolvedValue({ data: [] }) } },
+      form: { list: vi.fn().mockResolvedValue({ data: [] }) },
     } as unknown as OpenCodeClient);
     const index = new OpenCodeAttentionIndex(source.value as never);
 
@@ -578,7 +578,7 @@ describe("OpenCodeAttentionIndex", () => {
       .mockResolvedValue({ data: [] });
     const source = runtime({
       permission: { request: { list: vi.fn().mockResolvedValue({ data: [] }) } },
-      form: { request: { list: listForms } },
+      form: { list: listForms },
     } as unknown as OpenCodeClient);
     const index = new OpenCodeAttentionIndex(source.value as never);
 

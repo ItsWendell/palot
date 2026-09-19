@@ -96,16 +96,26 @@ export const composerSelectionMemoryScenario: Scenario = {
   },
   async seed(client, { projectDirectory }) {
     const location = { directory: projectDirectory };
-    await client.plugin.awaitActivation({ location });
-    const models = await client.model.list({ location });
     for (const id of [MODEL, OTHER_MODEL]) {
-      const model = models.data.find((entry) => entry.providerID === "test" && entry.id === id);
-      expect(model, `Missing deterministic model test/${id}`).toBeDefined();
-      expect(model?.variants.map((variant) => variant.id).sort()).toEqual(["high", "low"]);
+      await expect
+        .poll(
+          async () => {
+            const model = (await client.model.list({ location })).data.find(
+              (entry) => entry.providerID === "test" && entry.id === id,
+            );
+            return model?.variants.map((variant) => variant.id).sort();
+          },
+          { timeout: 30_000, message: `Wait for deterministic model test/${id} variants` },
+        )
+        .toEqual(["high", "low"]);
     }
-    const agents = await client.agent.list({ location });
     for (const id of [ALPHA, BETA]) {
-      expect(agents.data.find((agent) => agent.id === id)).toMatchObject({ mode: "primary" });
+      await expect
+        .poll(
+          async () => (await client.agent.list({ location })).data.find((agent) => agent.id === id),
+          { timeout: 30_000, message: `Wait for deterministic agent ${id}` },
+        )
+        .toMatchObject({ mode: "primary" });
     }
   },
   async run(page, { client, session, projectDirectory, runRoot, llm }) {

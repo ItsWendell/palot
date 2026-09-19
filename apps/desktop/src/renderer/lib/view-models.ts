@@ -51,6 +51,7 @@ export interface PendingQuestionView {
 
 export interface PendingFormFieldView {
   key: string;
+  hidden?: boolean;
   type: "string" | "number" | "integer" | "boolean" | "multiselect" | "external";
   title: string;
   description?: string;
@@ -253,6 +254,7 @@ function formFieldView(field: FormField): PendingFormFieldView {
     title: field.title ?? field.key,
     description: field.description,
     required: "required" in field && field.required === true,
+    ...("hidden" in field && field.hidden ? { hidden: true } : {}),
     options: "options" in field ? optionViews(field.options) : [],
     custom: "custom" in field && field.custom === true,
     when:
@@ -302,7 +304,7 @@ function formFieldView(field: FormField): PendingFormFieldView {
 
 function formView(value: FormInfo, index: number): PendingRequestView {
   const fields = value.fields.map(formFieldView);
-  const question = value.metadata?.kind === "question";
+  const question = value.metadata?.kind === "question" && !fields.some((field) => field.hidden);
   const questions = question
     ? fields
         .filter((field) => field.type === "string" || field.type === "multiselect")
@@ -334,7 +336,7 @@ function inputView(value: SessionInboxUser, index: number): PendingRequestView {
     fields: [],
     delivery: value.delivery,
     ownerMessageID: ownerMessageID(value.payload.metadata),
-    createdAt: value.timeCreated,
+    createdAt: value.time.created,
   };
 }
 

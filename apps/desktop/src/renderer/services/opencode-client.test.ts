@@ -66,10 +66,10 @@ describe("renderer OpenCode client transport", () => {
     await Promise.all(pending);
   });
 
-  it("runs official health.get and session.list through relative IPC requests", async () => {
+  it("runs official server.info and session.list through relative IPC requests", async () => {
     const openCodeRequest = vi.fn(async (request: { path: string }) => {
       const body =
-        request.path === "/api/health"
+        request.path === "/api/info"
           ? { version: "0.0.0-beta-19507", pid: 42 }
           : { data: [], cursor: {} };
       return {
@@ -87,11 +87,11 @@ describe("renderer OpenCode client transport", () => {
       } as unknown as PalotApi,
     });
 
-    await openCodeClient().health.get();
+    await openCodeClient().server.info();
     await openCodeClient().session.list({ limit: 50, parentID: null, order: "desc" });
 
     expect(openCodeRequest.mock.calls.map(([request]) => request.path)).toEqual([
-      "/api/health",
+      "/api/info",
       "/api/session?limit=50&order=desc&parentID=null",
     ]);
   });
@@ -105,7 +105,7 @@ describe("renderer OpenCode client transport", () => {
     });
     const controller = new AbortController();
 
-    const pending = openCodeClient().health.get({ signal: controller.signal });
+    const pending = openCodeClient().server.info({ signal: controller.signal });
     const rejected = expect(pending).rejects.toThrow();
     await vi.waitFor(() => expect(openCodeRequest).toHaveBeenCalledOnce());
     controller.abort();
@@ -133,7 +133,7 @@ describe("renderer OpenCode client transport", () => {
       configurable: true,
       value: { openCodeRequest, cancelOpenCodeRequest },
     });
-    const pending = openCodeFetch("https://opencode.invalid/api/health");
+    const pending = openCodeFetch("https://opencode.invalid/api/info");
     const rejected = expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
     await vi.advanceTimersByTimeAsync(30_000);
     await rejected;

@@ -31,7 +31,7 @@ describe("renderer OpenCode worktree service", () => {
       directory: "/srv/worktrees/new",
     });
     expect(create).toHaveBeenCalledWith(
-      { location: { directory: "/srv/repo" }, branch: "feature" },
+      { projectID: "/srv/repo", branch: "feature" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(get).toHaveBeenCalledWith(
@@ -63,32 +63,32 @@ describe("renderer OpenCode worktree service", () => {
     await removeWorktree("/repo/source", "/worktree/dirty", true);
 
     expect(refresh).toHaveBeenCalledWith(
-      { location: { directory: "/repo/source" } },
+      { projectID: "/repo/source" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(list).toHaveBeenCalledWith(
-      { location: { directory: "/repo/source" } },
+      { projectID: "/repo/source" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(create).toHaveBeenCalledWith(
-      { location: { directory: "/repo/source" } },
+      { projectID: "/repo/source" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
     await createWorktree("/repo/source", "release");
     expect(create).toHaveBeenLastCalledWith(
       {
-        location: { directory: "/repo/source" },
+        projectID: "/repo/source",
         branch: "release",
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(remove).toHaveBeenCalledWith(
-      { location: { directory: "/repo/source" }, directory: "/worktree/new", force: false },
+      { projectID: "/repo/source", directory: "/worktree/new", force: false },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(remove).toHaveBeenCalledWith(
-      { location: { directory: "/repo/source" }, directory: "/worktree/dirty", force: true },
+      { projectID: "/repo/source", directory: "/worktree/dirty", force: true },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });

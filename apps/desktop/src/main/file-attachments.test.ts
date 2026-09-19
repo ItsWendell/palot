@@ -27,6 +27,17 @@ afterEach(async () => {
 });
 
 describe("file attachments", () => {
+  test.each(["json", "xml", "yaml", "yml"])(
+    "normalizes %s source attachment MIME types",
+    async (extension) => {
+      const directory = await temporaryDirectory();
+      const file = path.join(directory, `source.${extension}`);
+      await writeFile(file, "source content");
+      const result = await inspectPickedFiles([file]);
+      expect(result.errors).toEqual([]);
+      expect(result.files[0]).toMatchObject({ mime: "text/plain", size: 14 });
+    },
+  );
   test("accepts supported source and image files", async () => {
     const directory = await temporaryDirectory();
     const source = path.join(directory, "example.ts");
@@ -53,7 +64,7 @@ describe("file attachments", () => {
     ]);
   });
 
-  test("returns clear PDF, unsupported type, and size errors", async () => {
+  test("accepts PDF and oversized files by path without buffering their contents", async () => {
     const directory = await temporaryDirectory();
     const pdf = path.join(directory, "paper.pdf");
     const binary = path.join(directory, "archive.zip");
@@ -65,12 +76,45 @@ describe("file attachments", () => {
 
     const result = await inspectPickedFiles([pdf, binary, large]);
 
-    expect(result.files).toEqual([]);
-    expect(result.errors).toEqual([
-      "paper.pdf: PDF files are not supported.",
-      "archive.zip: this file type is not supported.",
-      "large.txt: the file is larger than the 20 MiB limit.",
+    expect(result.files).toEqual([
+      { uri: pathToFileURL(pdf).href, name: "paper.pdf", mime: "application/pdf", size: 3 },
+      {
+        uri: pathToFileURL(binary).href,
+        name: "archive.zip",
+        mime: "application/octet-stream",
+        size: 3,
+      },
+      {
+        uri: pathToFileURL(large).href,
+        name: "large.txt",
+        mime: "text/plain",
+        size: MAX_ATTACHMENT_BYTES + 1,
+      },
     ]);
+    expect(result.errors).toEqual([]);
+  });
+
+  test("does not create a buffered preview grant for oversized images", async () => {
+    const directory = await temporaryDirectory();
+    const image = path.join(directory, "large.png");
+    const handle = await open(image, "w");
+    await handle.truncate(MAX_ATTACHMENT_BYTES + 1);
+    await handle.close();
+    const result = await inspectPickedFiles([image]);
+    expect(result.errors).toEqual([]);
+    expect(result.files[0]).toMatchObject({ mime: "image/png", size: MAX_ATTACHMENT_BYTES + 1 });
+    expect(result.files[0]?.previewGrant).toBeUndefined();
+  });
+
+  test("rejects directories and symlinks for arbitrary attachment types", async () => {
+    const directory = await temporaryDirectory();
+    const binary = path.join(directory, "archive.zip");
+    const link = path.join(directory, "linked.zip");
+    await writeFile(binary, "zip");
+    await symlink(binary, link);
+    const result = await inspectPickedFiles([directory, link]);
+    expect(result.files).toEqual([]);
+    expect(result.errors).toHaveLength(2);
   });
 
   test("stages pasted screenshots as validated image attachments", async () => {

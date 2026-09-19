@@ -4,24 +4,24 @@ import { openCodeClient } from "./opencode-client";
 import { openCodeRequestSignal } from "./opencode-request";
 
 export async function refreshWorktrees(
-  sourceDirectory: string,
+  projectID: string,
   requestSignal?: AbortSignal,
   connectionID?: string,
 ): Promise<void> {
   await openCodeClient(connectionID).worktree.refresh(
-    { location: { directory: sourceDirectory } },
+    { projectID },
     { signal: openCodeRequestSignal(requestSignal) },
   );
 }
 
 export async function listWorktrees(
-  sourceDirectory: string,
+  projectID: string,
   requestSignal?: AbortSignal,
   connectionID?: string,
 ): Promise<PalotProjectDirectory[]> {
   return (
     await openCodeClient(connectionID).worktree.list(
-      { location: { directory: sourceDirectory } },
+      { projectID },
       { signal: openCodeRequestSignal(requestSignal) },
     )
   ).map((item) => ({
@@ -31,14 +31,28 @@ export async function listWorktrees(
 }
 
 export async function createWorktree(
-  sourceDirectory: string,
+  projectID: string,
   branch?: string,
   requestSignal?: AbortSignal,
   connectionID?: string,
+  sourceDirectory?: string,
 ): Promise<WorktreeInfo> {
   const client = openCodeClient(connectionID);
+  // A directory can discover a project that was not in the cached project inventory.
+  const resolvedProjectID = sourceDirectory
+    ? (
+        await client.location.get(
+          { location: { directory: sourceDirectory } },
+          { signal: openCodeRequestSignal(requestSignal) },
+        )
+      ).project.id
+    : projectID;
   const worktree = await client.worktree.create(
-    { location: { directory: sourceDirectory }, ...(branch ? { branch } : {}) },
+    {
+      projectID: resolvedProjectID,
+      ...(sourceDirectory ? { from: sourceDirectory } : {}),
+      ...(branch ? { branch } : {}),
+    },
     // Creation runs the project's setup command before responding (often dependency installs).
     { signal: openCodeRequestSignal(requestSignal, 10 * 60_000) },
   );
@@ -50,13 +64,13 @@ export async function createWorktree(
 }
 
 export async function removeWorktree(
-  sourceDirectory: string,
+  projectID: string,
   directory: string,
   force = false,
   connectionID?: string,
 ): Promise<void> {
   await openCodeClient(connectionID).worktree.remove(
-    { location: { directory: sourceDirectory }, directory, force },
+    { projectID, directory, force },
     { signal: openCodeRequestSignal() },
   );
 }

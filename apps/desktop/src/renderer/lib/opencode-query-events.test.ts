@@ -6,6 +6,35 @@ import { openCodeKeys } from "./opencode-query";
 import { openCodeInvalidationKeys, sessionStatsShouldRevalidate } from "./opencode-query-events";
 
 describe("OpenCode query event routing", () => {
+  it.each(["provider.updated", "model.updated"] as const)(
+    "invalidates model and settings inventories after %s",
+    (type) => {
+      const location = { directory: "/repo" };
+      expect(
+        openCodeInvalidationKeys("connection", { type, location, data: {} } as PalotEvent),
+      ).toEqual([
+        openCodeKeys.modelsLocation("connection", location),
+        openCodeKeys.settingsLocation("connection", location),
+      ]);
+    },
+  );
+
+  it("invalidates the evicted connection after location shutdown without touching another server", async () => {
+    const client = new QueryClient();
+    const target = openCodeKeys.settings("connection");
+    const other = openCodeKeys.settings("other");
+    client.setQueryData(target, {});
+    client.setQueryData(other, {});
+    for (const queryKey of openCodeInvalidationKeys("connection", {
+      type: "location.shutdown",
+      data: {},
+    } as PalotEvent))
+      await client.invalidateQueries({ queryKey });
+    expect(client.getQueryState(target)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(other)?.isInvalidated).toBe(false);
+    client.clear();
+  });
+
   it.each(["filesystem.changed", "vcs.branch.updated"])(
     "keeps other checkouts' branch caches fresh after a scoped %s",
     async (type) => {

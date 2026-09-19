@@ -49,17 +49,6 @@ export const ALL_SETTINGS_CAPABILITIES: SettingsCapability[] = [
   "references",
   "websearchProviders",
 ];
-const PLUGIN_BACKED_SETTINGS_CAPABILITIES = new Set<SettingsCapability>([
-  "catalog",
-  "agents",
-  "integrations",
-  "mcp",
-  "mcpResources",
-  "skills",
-  "commands",
-  "references",
-  "websearchProviders",
-]);
 const settingsLocation = (input: { directory: string; workspaceID?: string }) => ({
   directory: input.directory,
   ...(input.workspaceID ? { workspace: input.workspaceID } : {}),
@@ -102,7 +91,6 @@ export async function updatePlugins(
     { ...locationRequest(input), targets: input.targets },
     { signal: requestSignal() },
   );
-  await client.plugin.awaitActivation(locationRequest(input), { signal: requestSignal() });
 }
 
 async function settleCapability<T>(
@@ -262,6 +250,7 @@ function mapFormField(field: FormField): PalotFormField {
   if (field.type === "external") return { ...base, type: "external", url: field.url };
   const conditional = {
     ...base,
+    ...(field.hidden ? { hidden: true } : {}),
     required: field.required ?? false,
     when: (field.when ?? []).map((item) => ({ ...item })),
   };
@@ -351,16 +340,8 @@ export async function loadSettings(
   const client = openCodeClient(input.connectionID);
   const request = locationRequest(input);
   const requested = new Set(input.capabilities ?? ALL_SETTINGS_CAPABILITIES);
-  let activation: Promise<void> | undefined;
   const settle = <T>(capability: SettingsCapability, load: (signal: AbortSignal) => Promise<T>) =>
     settleCapability(requested.has(capability), async () => {
-      // Documents and plugin diagnostics remain readable while registries activate.
-      if (PLUGIN_BACKED_SETTINGS_CAPABILITIES.has(capability)) {
-        activation ??= client.plugin.awaitActivation(request, {
-          signal: requestSignal(outerSignal),
-        });
-        await activation;
-      }
       return load(requestSignal(outerSignal));
     });
   let resolvedLocation: ReturnType<typeof resolveSettingsLocation> | null = null;
@@ -821,7 +802,6 @@ export async function updateCredential(input: UpdateCredentialInput): Promise<vo
   await client.credential.update(
     {
       credentialID: input.credentialID,
-      location: settingsLocation(input),
       label: input.label,
     },
     { signal: requestSignal() },
@@ -833,7 +813,7 @@ export async function activateCredential(input: ActivateCredentialInput): Promis
   await resolveSettingsLocation(client, input);
   await assertCredential(client, input);
   await client.credential.activate(
-    { credentialID: input.credentialID, location: settingsLocation(input) },
+    { credentialID: input.credentialID },
     { signal: requestSignal() },
   );
 }
@@ -842,8 +822,5 @@ export async function removeCredential(input: RemoveCredentialInput): Promise<vo
   const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
   await assertCredential(client, input);
-  await client.credential.remove(
-    { credentialID: input.credentialID, location: settingsLocation(input) },
-    { signal: requestSignal() },
-  );
+  await client.credential.remove({ credentialID: input.credentialID }, { signal: requestSignal() });
 }

@@ -20,7 +20,7 @@ describe("renderer OpenCode VCS service", () => {
         project: { id: "project-1", directory: "/repo", canonical: "/repo" },
       },
     });
-    setOpenCodeClientForTest({ vcs: { branches } } as unknown as OpenCodeClient);
+    setOpenCodeClientForTest({ vcs: { branch: { list: branches } } } as unknown as OpenCodeClient);
 
     await expect(listOpenCodeVcsBranches({ directory: "/repo" }, "release")).resolves.toEqual([
       "main",

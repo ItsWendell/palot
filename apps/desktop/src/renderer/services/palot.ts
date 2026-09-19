@@ -2,11 +2,11 @@ import { isSessionNotFoundError } from "@opencode/client";
 import type {
   FileDiffInfo,
   FileSystemEntry,
-  FormCancelInput,
-  FormReplyInput,
+  SessionFormCancelInput,
+  SessionFormReplyInput,
   LocationRef,
   PermissionReplyInput,
-  PermissionRulesInput,
+  SessionUpdateInput,
   PermissionRuleset,
   SessionMessagesResponse,
   SessionStatsInput,
@@ -45,6 +45,7 @@ import type {
   OpenCodeProfileUpdateInput,
   OpenCodeWebAccessInfo,
   PalotApi,
+  PalotAttachmentProgress,
   PalotAttentionSnapshot,
   PalotComposerCatalog,
   PalotEventBatch,
@@ -71,6 +72,7 @@ import {
 } from "../../shared";
 import { mergeBuiltinCommands } from "../lib/builtin-commands";
 import { openCodeClient } from "./opencode-client";
+import { attachmentPrompt, type AttachmentDeliveryInput } from "./opencode-attachment-delivery";
 import { mapSession } from "./opencode-mappers";
 import { openCodeRequestSignal } from "./opencode-request";
 import {
@@ -363,7 +365,7 @@ const previewRequests: SessionRequestSnapshot = {
     {
       id: "msg_pending_preview",
       sessionID: "first-shell",
-      timeCreated: now,
+      time: { created: now },
       type: "user",
       payload: { text: "Run the full test suite after the current turn." },
       delivery: "queue",
@@ -375,7 +377,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "0.0.0-beta-19507",
+  contractVersion: "2.0.9",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -392,7 +394,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.0.0",
+  version: "2.0.9",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,
@@ -454,6 +456,7 @@ const previewSettings: PalotSettingsSnapshot = {
   savedPermissions: [
     {
       id: "permission-preview",
+      time: { created: now, updated: now },
       projectID: previewProject.id,
       action: "shell",
       resource: "git status *",
@@ -1127,12 +1130,15 @@ export const palot = {
   },
 
   async renameSession(sessionID: string, title: string) {
-    if (apiAvailable()) await openCodeClient().session.rename({ sessionID, title });
+    if (apiAvailable()) await openCodeClient().session.update({ sessionID, title });
   },
 
-  async setSessionPermissions(input: PermissionRulesInput, connectionID?: string): Promise<void> {
+  async setSessionPermissions(
+    input: Pick<SessionUpdateInput, "sessionID" | "permissions">,
+    connectionID?: string,
+  ): Promise<void> {
     if (!apiAvailable()) throw new Error("Connect to OpenCode to change session permissions.");
-    await openCodeClient(connectionID).permission.rules(input, {
+    await openCodeClient(connectionID).session.update(input, {
       signal: openCodeRequestSignal(),
     });
   },
@@ -1159,31 +1165,28 @@ export const palot = {
     return mapSession(
       await openCodeClient(connectionID).session.fork({
         sessionID: input.sessionID,
-        boundary: input.beforeMessageID
-          ? { type: "before", messageID: input.beforeMessageID }
-          : { type: "through" },
+        ...(input.beforeMessageID ? { before: input.beforeMessageID } : {}),
       }),
     );
   },
 
   async refreshProjectCopies(
-    _projectID: string,
+    projectID: string,
     sourceDirectory: string,
     requestSignal?: AbortSignal,
     connectionID?: string,
   ) {
-    if (apiAvailable())
-      await refreshOpenCodeWorktrees(sourceDirectory, requestSignal, connectionID);
+    if (apiAvailable()) await refreshOpenCodeWorktrees(projectID, requestSignal, connectionID);
   },
 
   async listProjectDirectories(
-    _projectID: string,
+    projectID: string,
     sourceDirectory: string,
     requestSignal?: AbortSignal,
     connectionID?: string,
   ) {
     if (!apiAvailable()) return [{ directory: sourceDirectory, strategy: null }];
-    const worktrees = await listOpenCodeWorktrees(sourceDirectory, requestSignal, connectionID);
+    const worktrees = await listOpenCodeWorktrees(projectID, requestSignal, connectionID);
     return [
       { directory: sourceDirectory, strategy: null },
       ...worktrees.filter((item) => item.directory !== sourceDirectory),
@@ -1198,19 +1201,18 @@ export const palot = {
   ) {
     if (!apiAvailable())
       return { directory: `/tmp/opencode/worktree/${projectID.slice(0, 6)}/preview` };
-    return createOpenCodeWorktree(sourceDirectory, branch, undefined, connectionID);
+    return createOpenCodeWorktree(projectID, branch, undefined, connectionID, sourceDirectory);
   },
 
   async removeProjectCopy(
-    _projectID: string,
+    projectID: string,
     sourceDirectory: string,
     directory: string,
     force = false,
     connectionID?: string,
   ) {
     if (directory === sourceDirectory) throw new Error("The main checkout cannot be removed");
-    if (apiAvailable())
-      await removeOpenCodeWorktree(sourceDirectory, directory, force, connectionID);
+    if (apiAvailable()) await removeOpenCodeWorktree(projectID, directory, force, connectionID);
   },
 
   async sendComposerPrompt(input: Parameters<typeof sendOpenCodePrompt>[0]) {
@@ -1218,21 +1220,28 @@ export const palot = {
     return sendOpenCodePrompt(input);
   },
 
-  async runCommand(input: RunCommandInput, connectionID?: string) {
+  async runCommand(input: RunCommandInput & AttachmentDeliveryInput, connectionID?: string) {
     if (!apiAvailable()) return undefined;
     const client = openCodeClient(connectionID);
+    const delivery = attachmentPrompt(
+      `/${input.command}${input.arguments ? ` ${input.arguments}` : ""}`,
+      input,
+    );
     const signal = openCodeRequestSignal();
     const location = input.fileReferences?.length
       ? (await client.session.get({ sessionID: input.sessionID }, { signal })).location
       : null;
+    const files = [
+      ...delivery.inlineFiles.map(({ uri, name }) => ({ uri, name })),
+      ...(location ? promptFiles(location.directory, input.fileReferences ?? []) : []),
+    ];
     await client.session.command(
       {
         sessionID: input.sessionID,
-        command: input.command,
-        text: `/${input.command}${input.arguments ? ` ${input.arguments}` : ""}`,
-        ...(input.fileReferences?.length
-          ? { files: promptFiles(location!.directory, input.fileReferences) }
-          : {}),
+        name: input.command,
+        // The command API has no metadata/displayText field; retain fallback paths in its text.
+        text: delivery.text,
+        ...(files.length ? { files } : {}),
         ...(input.skillReferences?.length
           ? {
               skills: input.skillReferences.map((skill) => ({
@@ -1344,6 +1353,11 @@ export const palot = {
       };
     }
     return listOpenCodeModels(input, requestSignal, connectionID);
+  },
+
+  async reloadConfiguration(connectionID: string): Promise<void> {
+    if (!apiAvailable()) throw new Error("Connect to OpenCode to reload configuration.");
+    await openCodeClient(connectionID).location.reload({ signal: openCodeRequestSignal() });
   },
 
   async loadSettings(
@@ -1570,15 +1584,21 @@ export const palot = {
   },
 
   async replyPermission(
-    input: Pick<PermissionReplyInput, "sessionID" | "requestID" | "reply" | "message">,
+    input: Omit<PermissionReplyInput, "decision"> & { reply: PermissionReplyInput["decision"] },
   ): Promise<void> {
-    if (apiAvailable()) await openCodeClient().permission.reply(input);
+    if (apiAvailable()) {
+      const { reply, ...request } = input;
+      await openCodeClient().permission.reply({ ...request, decision: reply });
+    }
   },
 
   async replyQuestion(input: ReplyQuestionInput): Promise<void> {
     if (!apiAvailable()) return;
     const client = openCodeClient();
-    const form = await client.form.get({ sessionID: input.sessionID, formID: input.requestID });
+    const form = await client.session.form.get({
+      sessionID: input.sessionID,
+      formID: input.requestID,
+    });
     const answer = Object.fromEntries(
       input.answers.flatMap((answers, index) => {
         const field = form.fields[index];
@@ -1586,21 +1606,28 @@ export const palot = {
         return [[field.key, field.type === "multiselect" ? answers : (answers[0] ?? "")]];
       }),
     );
-    await client.form.reply({ sessionID: input.sessionID, formID: input.requestID, answer });
+    await client.session.form.reply({
+      sessionID: input.sessionID,
+      formID: input.requestID,
+      answer,
+    });
   },
 
   async rejectQuestion(input: RejectQuestionInput): Promise<void> {
     if (apiAvailable()) {
-      await openCodeClient().form.cancel({ sessionID: input.sessionID, formID: input.requestID });
+      await openCodeClient().session.form.cancel({
+        sessionID: input.sessionID,
+        formID: input.requestID,
+      });
     }
   },
 
-  async replyForm(input: FormReplyInput): Promise<void> {
-    if (apiAvailable()) await openCodeClient().form.reply(input);
+  async replyForm(input: SessionFormReplyInput): Promise<void> {
+    if (apiAvailable()) await openCodeClient().session.form.reply(input);
   },
 
-  async cancelForm(input: FormCancelInput): Promise<void> {
-    if (apiAvailable()) await openCodeClient().form.cancel(input);
+  async cancelForm(input: SessionFormCancelInput): Promise<void> {
+    if (apiAvailable()) await openCodeClient().session.form.cancel(input);
   },
 
   async updatePending(input: UpdatePendingInput): Promise<void> {
@@ -1610,7 +1637,8 @@ export const palot = {
       await client.session.inbox.cancel({ sessionID: input.sessionID, inboxID: input.inputID });
       return;
     }
-    await client.session.inbox[input.action]({
+    await client.session.inbox.update({
+      delivery: input.action,
       sessionID: input.sessionID,
       inboxID: input.inputID,
     });
@@ -1715,22 +1743,34 @@ export const palot = {
         ) ?? Promise.reject(new Error("External open is unavailable")))
       : Promise.resolve({ openedTargetID: input.targetID ?? ("finder" as const) }),
 
-  pickFiles: async (connectionID?: string) =>
+  pickFiles: async (connectionID?: string, requestID?: string) =>
     apiAvailable()
-      ? (getApi()?.pickFiles(connectionID ?? (await palot.runtimeStatus()).connectionID) ??
-        Promise.resolve({ files: [], errors: [] }))
+      ? (getApi()?.pickFiles(
+          connectionID ?? (await palot.runtimeStatus()).connectionID,
+          requestID,
+        ) ?? Promise.resolve({ files: [], errors: [] }))
       : Promise.resolve({ files: [], errors: [] }),
 
   attachClipboardImages: async (
     images: Array<{ mime: string; data: ArrayBuffer }>,
     connectionID?: string,
+    requestID?: string,
   ) =>
     apiAvailable()
       ? (getApi()?.attachClipboardImages(
           images,
           connectionID ?? (await palot.runtimeStatus()).connectionID,
+          requestID,
         ) ?? Promise.resolve({ files: [], errors: [] }))
       : Promise.resolve({ files: [], errors: [] }),
+
+  cancelAttachmentUpload: async (requestID: string) =>
+    apiAvailable() ? getApi()?.cancelAttachmentUpload(requestID) : undefined,
+
+  onAttachmentProgress: (listener: (progress: PalotAttachmentProgress) => void): (() => void) =>
+    apiAvailable()
+      ? (getApi()?.onAttachmentProgress(listener) ?? (() => undefined))
+      : () => undefined,
 
   attachmentPreview: async (grant: string, connectionID?: string) =>
     apiAvailable()

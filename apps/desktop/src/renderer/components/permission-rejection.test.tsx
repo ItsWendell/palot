@@ -65,7 +65,7 @@ it("cancels without answering and sends the trimmed reason through the official 
     path: "/api/session/permission-reason/permission/request-reason/reply",
   });
   expect(JSON.parse(new TextDecoder().decode(request.body!))).toEqual({
-    reply: "reject",
+    decision: "reject",
     message: "Use a read-only command",
   });
 });

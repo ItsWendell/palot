@@ -258,7 +258,7 @@ describe("projectSessionInbox", () => {
           {
             id: "input",
             sessionID: root.id,
-            timeCreated: 10,
+            time: { created: 10 },
             type: "user",
             payload: { text: "continue" },
             delivery: "queue",

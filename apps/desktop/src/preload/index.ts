@@ -153,12 +153,21 @@ const api: PalotApi = {
     ipcRenderer.invoke(IPC_CHANNELS.externalOpenTargets, sessionID, connectionID),
   externalOpen: (input, connectionID) =>
     ipcRenderer.invoke(IPC_CHANNELS.externalOpen, input, connectionID),
-  pickFiles: (connectionID) => ipcRenderer.invoke(IPC_CHANNELS.pickFiles, undefined, connectionID),
+  pickFiles: (connectionID, requestID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.pickFiles, { requestID }, connectionID),
   saveSessionExport: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveSessionExport, input),
   pickSessionImport: () => ipcRenderer.invoke(IPC_CHANNELS.pickSessionImport),
   writeClipboardText: (value) => ipcRenderer.invoke(IPC_CHANNELS.writeClipboardText, value),
-  attachClipboardImages: (images, connectionID) =>
-    ipcRenderer.invoke(IPC_CHANNELS.attachClipboardImages, images, connectionID),
+  attachClipboardImages: (images, connectionID, requestID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.attachClipboardImages, { images, requestID }, connectionID),
+  cancelAttachmentUpload: (requestID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.cancelAttachmentUpload, requestID),
+  onAttachmentProgress: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) =>
+      listener(progress);
+    ipcRenderer.on(IPC_CHANNELS.attachmentProgress, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.attachmentProgress, handler);
+  },
   attachmentPreview: (grant, connectionID) =>
     ipcRenderer.invoke(IPC_CHANNELS.attachmentPreview, grant, connectionID),
   downloadUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.downloadUrl, url),

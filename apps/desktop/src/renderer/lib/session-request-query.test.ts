@@ -33,7 +33,7 @@ describe("session request timestamps", () => {
         {
           id: "queued",
           sessionID: "session",
-          timeCreated: 1,
+          time: { created: 1 },
           type: "user",
           payload: { text: "Continue" },
           delivery: "queue",
@@ -137,7 +137,7 @@ describe("session request timestamps", () => {
         {
           id: "input",
           sessionID: "session",
-          timeCreated: 10,
+          time: { created: 10 },
           delivery: "queue",
         },
       ],

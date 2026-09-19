@@ -55,7 +55,7 @@ beforeEach(async () => {
   const { openCodeRuntimeLifecycleAdapter: adapter } = await import("./opencode-runtime-lifecycle");
   const { SUPPORTED_OPENCODE_VERSION: version } = await import("./opencode-version");
   const client = {
-    health: { get: vi.fn().mockResolvedValue({ healthy: true, version, pid: 42 }) },
+    server: { info: vi.fn().mockResolvedValue({ version, pid: 42 }) },
     event: {
       subscribe: async function* ({ signal }: { signal: AbortSignal }) {
         yield { id: "same-event", type: "server.connected", data: {} } as OpenCodeEvent;

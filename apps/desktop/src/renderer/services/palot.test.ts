@@ -11,11 +11,11 @@ import { palot } from "./palot";
 const connectedRuntime: OpenCodeRuntimeStatus = {
   connectionID: "test",
   profileID: "test-profile",
-  contractVersion: "0.0.0-beta-19507",
+  contractVersion: "2.0.7",
   phase: "connected",
   connected: true,
   binaryPath: "/usr/local/bin/opencode",
-  version: "0.0.0-beta-19507",
+  version: "2.0.7",
   pid: 42,
   managed: false,
   lastConnectedAt: 1,
@@ -89,7 +89,7 @@ describe("palot over the official OpenCode client", () => {
     const rules = vi.fn().mockReturnValue(ack.promise);
     const reply = vi.fn();
     const get = vi.fn();
-    setOpenCodeClientForTest(client({ permission: { rules, reply }, session: { get } }));
+    setOpenCodeClientForTest(client({ permission: { reply }, session: { get, update: rules } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
     const input = { sessionID: session.id, permissions: [] };
     const settled = vi.fn();
@@ -106,7 +106,7 @@ describe("palot over the official OpenCode client", () => {
 
   it("propagates permission update failures", async () => {
     const rules = vi.fn().mockRejectedValue(new Error("Permission update failed"));
-    setOpenCodeClientForTest(client({ permission: { rules } }));
+    setOpenCodeClientForTest(client({ session: { update: rules } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
     await expect(
       palot.setSessionPermissions({ sessionID: session.id, permissions: [] }),
@@ -169,7 +169,7 @@ describe("palot over the official OpenCode client", () => {
       expect.objectContaining({
         connectionID: connectedRuntime.connectionID,
         profileID: connectedRuntime.profileID,
-        method: "PUT",
+        method: "PATCH",
       }),
     );
   });
@@ -414,9 +414,21 @@ describe("palot over the official OpenCode client", () => {
     );
   });
 
-  it("renames a session through client.session.rename", async () => {
+  it("awaits configuration reload on its captured owner and propagates failure", async () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    setOpenCodeClientForTest(client({ location: { reload } }));
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
+    await palot.reloadConfiguration("connection");
+    expect(reload).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    reload.mockRejectedValueOnce(new Error("Could not load configuration"));
+    await expect(palot.reloadConfiguration("connection")).rejects.toThrow(
+      "Could not load configuration",
+    );
+  });
+
+  it("renames a session through client.session.update", async () => {
     const rename = vi.fn().mockResolvedValue(undefined);
-    setOpenCodeClientForTest(client({ session: { rename } }));
+    setOpenCodeClientForTest(client({ session: { update: rename } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
 
     await palot.renameSession("session-1", "Renamed task");
@@ -452,11 +464,10 @@ describe("palot over the official OpenCode client", () => {
 
     expect(fork).toHaveBeenNthCalledWith(1, {
       sessionID: session.id,
-      boundary: { type: "through" },
     });
     expect(fork).toHaveBeenNthCalledWith(2, {
       sessionID: session.id,
-      boundary: { type: "before", messageID: "next-user" },
+      before: "next-user",
     });
   });
 
@@ -474,7 +485,7 @@ describe("palot over the official OpenCode client", () => {
     const create = vi
       .fn()
       .mockResolvedValue({ directory: "/data/opencode/worktree/projec/quiet-river" });
-    const get = vi.fn().mockResolvedValue({});
+    const get = vi.fn().mockResolvedValue({ project: { id: "project-1" } });
     setOpenCodeClientForTest(client({ worktree: { create }, location: { get } }));
     Object.defineProperty(window, "palot", {
       configurable: true,
@@ -487,13 +498,14 @@ describe("palot over the official OpenCode client", () => {
 
     expect(create).toHaveBeenCalledWith(
       {
-        location: { directory: "/repo" },
+        projectID: "project-1",
+        from: "/repo",
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledTimes(2);
     expect(get).toHaveBeenNthCalledWith(
-      1,
+      2,
       { location: { directory: "/data/opencode/worktree/projec/quiet-river" } },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
@@ -501,7 +513,7 @@ describe("palot over the official OpenCode client", () => {
 
   it("lets the server resolve a nested source even when the cached project is global", async () => {
     const create = vi.fn().mockResolvedValue({ directory: "/data/worktrees/repo/quiet-river" });
-    const get = vi.fn().mockResolvedValue({});
+    const get = vi.fn().mockResolvedValue({ project: { id: "discovered-project" } });
     const list = vi.fn();
     setOpenCodeClientForTest(
       client({ worktree: { create }, location: { get }, project: { list } }),
@@ -515,7 +527,7 @@ describe("palot over the official OpenCode client", () => {
 
     expect(list).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith(
-      { location: { directory: "/repo/nested" }, branch: "release" },
+      { projectID: "discovered-project", from: "/repo/nested", branch: "release" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -533,7 +545,7 @@ describe("palot over the official OpenCode client", () => {
       { directory: "/worktree/one", strategy: "git" },
     ]);
     expect(list).toHaveBeenCalledWith(
-      { location: { directory: "/repo" } },
+      { projectID: "project-1" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -551,11 +563,11 @@ describe("palot over the official OpenCode client", () => {
     );
 
     expect(refresh).toHaveBeenCalledWith(
-      { location: { directory: "/repo" } },
+      { projectID: "project-1" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(remove).toHaveBeenCalledExactlyOnceWith(
-      { location: { directory: "/repo" }, directory: "/copies/dirty", force: true },
+      { projectID: "project-1", directory: "/copies/dirty", force: true },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -570,13 +582,53 @@ describe("palot over the official OpenCode client", () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
-  it("sends picked attachments through client.session.prompt", async () => {
+  it("delivers binary server paths in prompt and command text instead of silently dropping attachments", async () => {
+    const prompt = vi.fn().mockResolvedValue({
+      id: "input",
+      sessionID: "session-1",
+      type: "user",
+      delivery: null,
+      time: { created: 1 },
+    });
+    const command = vi.fn().mockResolvedValue(undefined);
+    setOpenCodeClientForTest(client({ session: { prompt, command } }));
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
+    const files = [
+      {
+        uri: "file:///server/uploads/archive.zip",
+        name: "archive.zip",
+        mime: "application/zip",
+        size: 20,
+      },
+    ];
+    await palot.sendComposerPrompt({ sessionID: "session-1", text: "Inspect", files });
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Inspect\nAttached file: "/server/uploads/archive.zip"',
+        metadata: expect.objectContaining({
+          displayText: "Inspect",
+          attachments: [expect.objectContaining({ name: "archive.zip" })],
+        }),
+      }),
+      expect.anything(),
+    );
+    await palot.runCommand({ sessionID: "session-1", command: "review", files });
+    expect(command).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "review",
+        text: '/review\nAttached file: "/server/uploads/archive.zip"',
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("sends picked text paths without shifting skill mentions or losing display metadata", async () => {
     const prompt = vi.fn().mockResolvedValue({
       id: "message-1",
       sessionID: "session-1",
       type: "user",
       delivery: "queue",
-      timeCreated: 10,
+      time: { created: 10 },
     });
     setOpenCodeClientForTest(client({ session: { prompt } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
@@ -607,8 +659,21 @@ describe("palot over the official OpenCode client", () => {
       {
         sessionID: "session-1",
         id: "msg_client",
-        text: "Review this $skill-1",
-        files: [{ uri: "file:///tmp/example.ts", name: "example.ts" }],
+        text: 'Review this $skill-1\nAttached file: "/tmp/example.ts"',
+        metadata: {
+          displayText: "Review this $skill-1",
+          comments: [],
+          attachments: [
+            {
+              uri: "file:///tmp/example.ts",
+              path: "/tmp/example.ts",
+              name: "example.ts",
+              mime: "text/plain",
+              size: 5,
+            },
+          ],
+          palotAttachmentPaths: true,
+        },
         skills: [
           {
             id: "skill-1",
@@ -646,7 +711,7 @@ describe("palot over the official OpenCode client", () => {
     expect(command).toHaveBeenCalledWith(
       {
         sessionID: "session-1",
-        command: "review",
+        name: "review",
         text: "/review auth",
         skills: [
           {
@@ -773,7 +838,7 @@ describe("palot over the official OpenCode client", () => {
       ],
     });
     const reply = vi.fn().mockResolvedValue(undefined);
-    setOpenCodeClientForTest(client({ form: { get, reply } }));
+    setOpenCodeClientForTest(client({ session: { form: { get, reply } } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
 
     await palot.replyQuestion({
@@ -803,16 +868,16 @@ describe("palot over the official OpenCode client", () => {
     }
 
     expect(reply.mock.calls.map(([input]) => input)).toEqual([
-      { sessionID: "session-1", requestID: "permission-once", reply: "once" },
-      { sessionID: "session-1", requestID: "permission-always", reply: "always" },
-      { sessionID: "session-1", requestID: "permission-reject", reply: "reject" },
+      { sessionID: "session-1", requestID: "permission-once", decision: "once" },
+      { sessionID: "session-1", requestID: "permission-always", decision: "always" },
+      { sessionID: "session-1", requestID: "permission-reject", decision: "reject" },
     ]);
   });
 
   it("forwards form cancellation aliases and session interruption", async () => {
     const cancel = vi.fn().mockResolvedValue(undefined);
     const interrupt = vi.fn().mockResolvedValue(undefined);
-    setOpenCodeClientForTest(client({ form: { cancel }, session: { interrupt } }));
+    setOpenCodeClientForTest(client({ session: { interrupt, form: { cancel } } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
 
     await palot.rejectQuestion({ sessionID: "session-1", requestID: "question-1" });
@@ -885,9 +950,10 @@ describe("palot over the official OpenCode client", () => {
     setOpenCodeClientForTest(
       client({
         permission: { list: permissions },
-        form: { list: vi.fn().mockResolvedValue([]) },
-        question: { list: vi.fn().mockResolvedValue([]) },
-        session: { inbox: { list: vi.fn().mockResolvedValue([]) } },
+        session: {
+          form: { list: vi.fn().mockResolvedValue([]) },
+          inbox: { list: vi.fn().mockResolvedValue([]) },
+        },
       }),
     );
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
@@ -924,8 +990,7 @@ describe("palot over the official OpenCode client", () => {
     setOpenCodeClientForTest(
       client({
         permission: { list: permissions },
-        form: { list: forms },
-        session: { inbox: { list: inbox } },
+        session: { form: { list: forms }, inbox: { list: inbox } },
       }),
     );
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });

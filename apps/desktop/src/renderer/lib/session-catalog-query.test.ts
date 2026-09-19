@@ -45,7 +45,7 @@ describe("official session catalog cache", () => {
     for (const [index, permissions] of rulesets.entries()) {
       applyOpenCodeCatalogEvent(queryClient, "connection", {
         id: `permissions-${index}`,
-        type: "session.permissions.updated",
+        type: "session.permissions",
         created: index + 2,
         createdAt: index + 2,
         receiveSequence: index + 1,

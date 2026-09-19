@@ -74,7 +74,8 @@ export const conversationToolsScenario: Scenario = {
       await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeVisible();
       await expect(page.locator('[data-message-id="msg_history_user_16"]')).toBeVisible();
       await page.getByRole("textbox", { name: "Message Palot" }).fill(SOURCE_DRAFT);
-      await page.getByRole("button", { name: "Timeline", exact: true }).click();
+      await page.getByRole("button", { name: "Task actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Prompt timeline", exact: true }).click();
       const dialog = page.getByRole("dialog");
       await expect(dialog.getByRole("status")).toContainText(
         "Earlier history is not searched yet.",
@@ -97,16 +98,19 @@ export const conversationToolsScenario: Scenario = {
           return row && viewport ? Math.abs(row.y - viewport.y) : Number.POSITIVE_INFINITY;
         })
         .toBeLessThan(8);
-      await page.getByRole("button", { name: "Next user turn", exact: true }).click();
+      await page.getByRole("button", { name: "Task actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Next user turn", exact: true }).click();
       await expect(page.locator('[data-message-id="msg_history_user_03"]')).toBeVisible();
-      await page.getByRole("button", { name: "Previous user turn", exact: true }).click();
+      await page.getByRole("button", { name: "Task actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Previous user turn", exact: true }).click();
       await expect(target).toBeVisible();
 
-      await page.getByRole("button", { name: "Fork from prompt…", exact: true }).click();
+      await page.getByRole("button", { name: "Task actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Fork from prompt…", exact: true }).click();
       await dialog.getByRole("textbox", { name: "Search prompts" }).fill("History prompt 02");
       await dialog.getByRole("button", { name: new RegExp(SELECTED_TEXT) }).click();
       await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(RESTORED_TEXT);
-      forkID = new URL(page.url()).hash.slice("#/sessions/".length);
+      forkID = new URL(page.url()).hash.split("?")[0]!.slice("#/sessions/".length);
       expect(forkID).not.toBe(source.id);
       const forked = await client.session.get({ sessionID: forkID });
       expect(forked.fork).toEqual({
@@ -170,11 +174,15 @@ export const conversationPermissionScenario: Scenario = {
   },
   async run(page, { client, session, projectDirectory, llm, runRoot }) {
     const location = { directory: projectDirectory };
-    await client.plugin.awaitActivation({ location });
-    const agent = (await client.agent.list({ location })).data.find(
-      (agent) => agent.id === PERMISSION_AGENT,
-    );
-    expect(agent?.permissions).toContainEqual({ action: "shell", resource: "*", effect: "ask" });
+    await expect
+      .poll(
+        async () =>
+          (await client.agent.list({ location })).data.find(
+            (agent) => agent.id === PERMISSION_AGENT,
+          )?.permissions,
+        { timeout: 30_000, message: "Wait for the protected-command agent permissions" },
+      )
+      .toContainEqual({ action: "shell", resource: "*", effect: "ask" });
     await client.session.switchAgent({ sessionID: session.id, agent: PERMISSION_AGENT });
     await client.session.prompt({
       sessionID: session.id,

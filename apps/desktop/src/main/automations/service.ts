@@ -464,10 +464,10 @@ export class AutomationService {
   }
 
   private async checkedClient(client: OpenCodeClient): Promise<OpenCodeClient> {
-    const health = await client.health.get({ signal: AbortSignal.timeout(30_000) });
+    const health = await client.server.info({ signal: AbortSignal.timeout(30_000) });
     if (!isSupportedOpenCodeVersion(health.version)) {
       throw new AutomationConfigurationError(
-        "Scheduled tasks require Palot's exact OpenCode version.",
+        "Scheduled tasks require stable OpenCode 2.0.7 or newer within 2.x.",
       );
     }
     return client;

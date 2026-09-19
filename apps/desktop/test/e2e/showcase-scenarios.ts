@@ -101,7 +101,7 @@ export const showcaseScenarios = {
     async run(page: Page, context: ShowcaseContext) {
       const { client, llm, session: selected, projectDirectory, runRoot } = context;
       const openCodeDirectory = join(runRoot, "opencode");
-      await client.session.rename({
+      await client.session.update({
         sessionID: selected.id,
         title: "Match OpenCode tool rendering",
       });
@@ -141,7 +141,7 @@ export const showcaseScenarios = {
         text: "Review OpenCode desktop navigation.",
       });
       await llm.waitForCalls(7);
-      await client.session.rename({
+      await client.session.update({
         sessionID: navigation.id,
         title: "Review desktop navigation",
       });
@@ -207,7 +207,7 @@ async function createCompletedTask(
   acknowledge = true,
 ): Promise<SessionInfo> {
   const session = await client.session.create({ location: { directory } });
-  await client.session.rename({ sessionID: session.id, title });
+  await client.session.update({ sessionID: session.id, title });
   await promptAndWait(client, session.id, text, acknowledge);
   return session;
 }

@@ -47,7 +47,6 @@ function client(overrides: Record<string, unknown> = {}): OpenCodeClient {
     permission: { saved: { list: vi.fn().mockResolvedValue([]) } },
     plugin: {
       list: vi.fn().mockResolvedValue({ location, data: [] }),
-      awaitActivation: vi.fn().mockResolvedValue(undefined),
       check: vi.fn().mockResolvedValue({ location, data: [] }),
       update: vi.fn().mockResolvedValue(undefined),
     },
@@ -65,11 +64,9 @@ afterEach(() => {
 });
 
 describe("renderer OpenCode settings service", () => {
-  it("keeps catalog reads on the settings owner after plugin activation and a focus change", async () => {
-    const activation = Promise.withResolvers<void>();
+  it("keeps catalog reads on the settings owner rather than the focused server", async () => {
     const owner = client();
     const focused = client();
-    vi.mocked(owner.plugin.awaitActivation).mockReturnValue(activation.promise);
     vi.spyOn(clients, "openCodeClient").mockImplementation((connectionID) =>
       connectionID === "server-a" ? owner : focused,
     );
@@ -79,8 +76,6 @@ describe("renderer OpenCode settings service", () => {
       projectID: "project-1",
       capabilities: ["catalog", "agents"],
     });
-    expect(owner.model.list).not.toHaveBeenCalled();
-    activation.resolve();
     await loading;
     expect(owner.model.list).toHaveBeenCalledOnce();
     expect(owner.agent.list).toHaveBeenCalledOnce();
@@ -99,7 +94,6 @@ describe("renderer OpenCode settings service", () => {
     await updatePlugins({ ...input, targets: ["plugin-a"] });
     expect(owner.plugin.check).toHaveBeenCalledOnce();
     expect(owner.plugin.update).toHaveBeenCalledOnce();
-    expect(owner.plugin.awaitActivation).toHaveBeenCalledOnce();
     expect(focused.plugin.check).not.toHaveBeenCalled();
     expect(focused.plugin.update).not.toHaveBeenCalled();
   });
@@ -156,7 +150,6 @@ describe("renderer OpenCode settings service", () => {
       list: vi.fn().mockResolvedValue({ location, data }),
       check: vi.fn(),
       update: vi.fn(),
-      awaitActivation: vi.fn(),
     };
     setOpenCodeClientForTest(client({ plugin }));
     const result = await loadSettings({
@@ -173,7 +166,6 @@ describe("renderer OpenCode settings service", () => {
     });
     expect(plugin.check).not.toHaveBeenCalled();
     expect(plugin.update).not.toHaveBeenCalled();
-    expect(plugin.awaitActivation).not.toHaveBeenCalled();
   });
 
   it("checks package updates explicitly in the selected workspace without installing", async () => {
@@ -192,15 +184,12 @@ describe("renderer OpenCode settings service", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("updates the exact package target and waits for activation before completing", async () => {
+  it("updates the exact package target before completing", async () => {
     const order: string[] = [];
     const update = vi.fn().mockImplementation(async () => {
       order.push("update");
     });
-    const awaitActivation = vi.fn().mockImplementation(async () => {
-      order.push("activation");
-    });
-    setOpenCodeClientForTest(client({ plugin: { update, awaitActivation } }));
+    setOpenCodeClientForTest(client({ plugin: { update } }));
     await updatePlugin({
       projectID: "project-1",
       directory: "/repo",
@@ -211,22 +200,16 @@ describe("renderer OpenCode settings service", () => {
       { location: { directory: "/repo", workspace: "workspace-1" }, targets: ["@acme/tools@beta"] },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(awaitActivation).toHaveBeenCalledWith(
-      { location: { directory: "/repo", workspace: "workspace-1" } },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(order).toEqual(["update", "activation"]);
+    expect(order).toEqual(["update"]);
   });
 
-  it("propagates package update and activation failures", async () => {
+  it("propagates package update failures", async () => {
     const update = vi.fn().mockRejectedValue(new Error("Registry unavailable"));
-    const awaitActivation = vi.fn().mockRejectedValue(new Error("Activation timed out"));
-    setOpenCodeClientForTest(client({ plugin: { update, awaitActivation } }));
+    setOpenCodeClientForTest(client({ plugin: { update } }));
     const input = { projectID: "project-1", directory: "/repo", target: "tools" };
     await expect(updatePlugin(input)).rejects.toThrow("Registry unavailable");
-    expect(awaitActivation).not.toHaveBeenCalled();
     update.mockResolvedValue(undefined);
-    await expect(updatePlugin(input)).rejects.toThrow("Activation timed out");
+    await expect(updatePlugin(input)).resolves.toBeUndefined();
   });
 
   it.each(["disable", "notify", "auto", undefined] as const)(
@@ -257,7 +240,7 @@ describe("renderer OpenCode settings service", () => {
     vi.mocked(value.config.get).mockResolvedValue([
       { type: "document", path: "/repo/opencode.json", info: { default_agent: "build" } },
     ]);
-    vi.mocked(value.plugin.awaitActivation).mockRejectedValue(new Error("activation unavailable"));
+    vi.mocked(value.agent.list).mockRejectedValue(new Error("activation unavailable"));
     vi.mocked(value.plugin.list).mockResolvedValue({
       location,
       data: [
@@ -284,7 +267,7 @@ describe("renderer OpenCode settings service", () => {
         expect.objectContaining({ capability: "plugins", message: "setup failed" }),
       ]),
     );
-    expect(value.agent.list).not.toHaveBeenCalled();
+    expect(value.agent.list).toHaveBeenCalledOnce();
   });
 
   it("keeps successful capabilities when one request times out", async () => {
@@ -512,7 +495,6 @@ describe("renderer OpenCode settings service", () => {
     setOpenCodeClientForTest(
       client({
         plugin: {
-          awaitActivation: vi.fn().mockResolvedValue(undefined),
           list: vi.fn().mockResolvedValue({
             location,
             data: [
@@ -576,8 +558,7 @@ describe("renderer OpenCode settings service", () => {
       ],
     });
     const update = vi.fn().mockResolvedValue(undefined);
-    const awaitActivation = vi.fn().mockResolvedValue(undefined);
-    setOpenCodeClientForTest(client({ plugin: { list: vi.fn(), awaitActivation, check, update } }));
+    setOpenCodeClientForTest(client({ plugin: { list: vi.fn(), check, update } }));
 
     await expect(
       checkPlugins({ projectID: "project-1", directory: "/repo", workspaceID: "workspace-1" }),
@@ -608,11 +589,6 @@ describe("renderer OpenCode settings service", () => {
         location: { directory: "/repo", workspace: "workspace-1" },
         targets: ["@example/opencode-plugin@latest"],
       },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(awaitActivation).toHaveBeenCalledOnce();
-    expect(awaitActivation).toHaveBeenLastCalledWith(
-      { location: { directory: "/repo", workspace: "workspace-1" } },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -671,7 +647,7 @@ describe("renderer OpenCode settings service", () => {
     });
 
     expect(activate).toHaveBeenCalledWith(
-      { credentialID: "credential-1", location: { directory: "/repo" } },
+      { credentialID: "credential-1" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });

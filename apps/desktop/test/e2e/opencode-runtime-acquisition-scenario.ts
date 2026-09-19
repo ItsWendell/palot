@@ -22,16 +22,14 @@ export const openCodeRuntimeAcquisitionScenario: Scenario = {
   async run() {},
   async assert(page, { client, llm, runRoot }) {
     await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeVisible();
-    const original = await client.health.get();
-    expect(original.healthy).toBe(true);
+    const original = await client.server.info();
     expect(original.pid).toBeGreaterThan(0);
     const status = () =>
       page.evaluate(() =>
         (globalThis as unknown as { palot: PalotApi }).palot.openCodeReleaseStatus(),
       );
     async function unchangedService() {
-      expect(await client.health.get()).toMatchObject({
-        healthy: true,
+      expect(await client.server.info()).toMatchObject({
         pid: original.pid,
         version: original.version,
       });

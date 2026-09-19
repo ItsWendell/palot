@@ -41,11 +41,18 @@ export const composerPermissionsScenario: Scenario = {
   },
   async seed(client, { projectDirectory, runRoot }) {
     const location = { directory: projectDirectory };
-    await client.plugin.awaitActivation({ location });
-    const model = (await client.model.list({ location })).data.find(
-      (entry) => entry.providerID === "test" && entry.id === "test-model",
-    );
-    expect(model?.variants.map((variant) => variant.id).sort()).toEqual(["high", "low"]);
+    // Cold locations populate catalogs asynchronously; wait for this fixture, not plugin inventory.
+    await expect
+      .poll(
+        async () => {
+          const model = (await client.model.list({ location })).data.find(
+            (entry) => entry.providerID === "test" && entry.id === "test-model",
+          );
+          return model?.variants.map((variant) => variant.id).sort();
+        },
+        { timeout: 30_000, message: "Wait for test/test-model reasoning variants" },
+      )
+      .toEqual(["high", "low"]);
     const session = await client.session.create({ location: { directory: projectDirectory } });
     const created = Date.now() - 10_000;
     const messages: SessionMessageInfo[] = [
@@ -76,7 +83,7 @@ export const composerPermissionsScenario: Scenario = {
       messages,
       location: session.location,
     });
-    await client.permission.rules({ sessionID: source.id, permissions: CUSTOM });
+    await client.session.update({ sessionID: source.id, permissions: CUSTOM });
     // The official create API evaluates a request without executing a tool or calling a model.
     const pending = await client.permission.create({
       sessionID: source.id,
@@ -84,7 +91,7 @@ export const composerPermissionsScenario: Scenario = {
       resources: ["printf 'COMPOSER_PERMISSION_FIXTURE'"],
     });
     expect(pending.effect).toBe("ask");
-    await client.permission.rules({ sessionID: source.id, permissions: [] });
+    await client.session.update({ sessionID: source.id, permissions: [] });
     expect(
       await client.permission.get({ sessionID: source.id, requestID: pending.id }),
     ).toMatchObject({
@@ -145,7 +152,7 @@ export const composerPermissionsScenario: Scenario = {
     await expect(confirmation).toHaveCount(0);
 
     // External official-client writes must reconcile through service events without a reload.
-    await client.permission.rules({ sessionID, permissions: CUSTOM });
+    await client.session.update({ sessionID, permissions: CUSTOM });
     await expectApprovals(page, "Custom");
     await page.getByRole("button", { name: "Approvals: Custom", exact: true }).click();
     await expect(page.getByRole("menuitemradio", { name: /^Defaults\b/ })).not.toBeChecked();
@@ -154,13 +161,13 @@ export const composerPermissionsScenario: Scenario = {
     await expectRules(client, sessionID, CUSTOM);
     await page.reload({ waitUntil: "domcontentloaded" });
     await expectApprovals(page, "Custom");
-    await client.permission.rules({ sessionID, permissions: [] });
+    await client.session.update({ sessionID, permissions: [] });
     await expectApprovals(page, "Defaults");
     await expectRules(client, sessionID, []);
     await expectPending(client, sessionID, requestID);
     await expect(pendingCard).toBeVisible();
     // Only an explicit reply settles the existing request. Then inspect the ordinary toolbar.
-    await client.permission.reply({ sessionID, requestID, reply: "reject" });
+    await client.permission.reply({ sessionID, requestID, decision: "reject" });
     await expect(pendingCard).toHaveCount(0);
     const modelTrigger = page.getByRole("button", { name: "Model: Test Model", exact: true });
     await expect(page.getByRole("button", { name: /^Reasoning:/ })).toHaveCount(0);
@@ -171,7 +178,7 @@ export const composerPermissionsScenario: Scenario = {
     await expect
       .poll(async () => (await client.session.get({ sessionID })).model?.variant)
       .toBe("high");
-    await client.permission.rules({ sessionID, permissions: FULL_ACCESS });
+    await client.session.update({ sessionID, permissions: FULL_ACCESS });
     await expectApprovals(page, "Full access");
     await captureLayout(page, runRoot);
     await page.emulateMedia({ colorScheme: "dark" });
@@ -192,7 +199,7 @@ export const composerPermissionsScenario: Scenario = {
       await page.screenshot({ path: join(runRoot, "composer-permissions-menu-dark.png") });
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
-      await client.permission.rules({ sessionID, permissions: [] });
+      await client.session.update({ sessionID, permissions: [] });
       await expectApprovals(page, "Defaults");
       await openFullAccessConfirmation(page);
       await page.screenshot({ path: join(runRoot, "composer-permissions-confirm-dark.png") });

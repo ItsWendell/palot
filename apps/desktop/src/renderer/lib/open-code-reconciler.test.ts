@@ -81,7 +81,7 @@ describe("OpenCodeReconciler", () => {
     for (const [index, permissions] of rulesets.entries()) {
       reconciler.applyBatch(
         batch(index + 2, [
-          event("session.permissions.updated", index + 2, {
+          event("session.permissions", index + 2, {
             sessionID: "session",
             permissions,
           }),
@@ -111,7 +111,7 @@ describe("OpenCodeReconciler", () => {
       durable: { aggregateID: "session", seq: 1, version: 1 },
     } as SessionLogOutput;
     const normal = {
-      ...event("session.permissions.updated", 2, { sessionID: "session", permissions: [] }),
+      ...event("session.permissions", 2, { sessionID: "session", permissions: [] }),
       durable: { aggregateID: "session", seq: 2, version: 1 },
     } as SessionLogOutput;
     reconciler.applyReplay("connection", "session", [
@@ -124,7 +124,7 @@ describe("OpenCodeReconciler", () => {
     reconciler.applyBatch(
       batch(1, [
         {
-          ...event("session.permissions.updated", 3, { sessionID: "session", permissions: custom }),
+          ...event("session.permissions", 3, { sessionID: "session", permissions: custom }),
           durable: { aggregateID: "session", seq: 3, version: 1 },
         } as PalotEvent,
       ]),

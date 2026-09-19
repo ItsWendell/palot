@@ -73,11 +73,11 @@ export const subagentRequestsScenario: Scenario = {
     const child = await onlyChild(client, session.id);
     const grandchild = await onlyChild(client, child.id);
     await expect
-      .poll(async () => (await client.form.list({ sessionID: grandchild.id })).length, {
+      .poll(async () => (await client.session.form.list({ sessionID: grandchild.id })).length, {
         timeout: TIMEOUT,
       })
       .toBe(1);
-    const [question] = await client.form.list({ sessionID: grandchild.id });
+    const [question] = await client.session.form.list({ sessionID: grandchild.id });
     expect(question!.metadata?.kind).toBe("question");
     const delegatedCard = requestCard(page, grandchild.id, question!.id, "question");
     await expect(delegatedCard).toBeVisible({ timeout: TIMEOUT });
@@ -92,7 +92,7 @@ export const subagentRequestsScenario: Scenario = {
 
     // session.create has no parentID in beta-19507. The actual nested subagent
     // tools above create the hierarchy; only extra pending requests are seeded.
-    const extra = await client.form.create({
+    const extra = await client.session.form.create({
       sessionID: child.id,
       title: "Optional coordinator decision",
       metadata: { kind: "question" },
@@ -107,7 +107,7 @@ export const subagentRequestsScenario: Scenario = {
         },
       ],
     });
-    await client.permission.rules({
+    await client.session.update({
       sessionID: child.id,
       permissions: [{ action: "shell", resource: "*", effect: "ask" }],
     });
@@ -125,7 +125,7 @@ export const subagentRequestsScenario: Scenario = {
     await expect(permissionCard).toContainText(`Subagent · ${child.title}`);
     await expectPendingQuestion(client, grandchild.id, question!.id);
     await expectPendingQuestion(client, child.id, extra.id);
-    expect(await client.form.list({ sessionID: session.id })).toEqual([]);
+    expect(await client.session.form.list({ sessionID: session.id })).toEqual([]);
     expect(llm.scriptedCalls()).toBe(3);
 
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -150,7 +150,10 @@ export const subagentRequestsScenario: Scenario = {
     await extraCard.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect(extraCard).toHaveCount(0);
     await expect
-      .poll(() => client.form.state({ sessionID: child.id, formID: extra.id }))
+      .poll(
+        async () =>
+          (await client.session.form.get({ sessionID: child.id, formID: extra.id })).state,
+      )
       .toEqual({ status: "cancelled" });
     await expectPendingQuestion(client, grandchild.id, question!.id);
     expect(
@@ -172,7 +175,10 @@ export const subagentRequestsScenario: Scenario = {
     await delegatedCard.getByRole("button", { name: "Send", exact: true }).click();
     await expect(delegatedCard).toHaveCount(0);
     await expect
-      .poll(() => client.form.state({ sessionID: grandchild.id, formID: question!.id }))
+      .poll(
+        async () =>
+          (await client.session.form.get({ sessionID: grandchild.id, formID: question!.id })).state,
+      )
       .toEqual({ status: "answered", answer: { q0: ANSWER } });
     await client.session.wait({ sessionID: session.id }, { signal: AbortSignal.timeout(TIMEOUT) });
     await expect(page.getByText(PARENT_DONE, { exact: true })).toBeVisible({ timeout: TIMEOUT });
@@ -199,7 +205,7 @@ export const subagentRequestsScenario: Scenario = {
     );
     await expectAssistantText(client, grandchild.id, GRANDCHILD_DONE);
     await expectAssistantText(client, child.id, CHILD_DONE);
-    expect(await client.form.list({ sessionID: session.id })).toEqual([]);
+    expect(await client.session.form.list({ sessionID: session.id })).toEqual([]);
     await page.screenshot({ path: join(runRoot, "subagent-requests-completed.png") });
   },
   async assert(page, { llm }) {
@@ -237,8 +243,12 @@ async function assertParentSelected(page: Page, hash: string, prompt: string) {
 }
 
 async function expectPendingQuestion(client: OpenCodeClient, sessionID: string, formID: string) {
-  expect(await client.form.state({ sessionID, formID })).toEqual({ status: "pending" });
-  expect((await client.form.list({ sessionID })).map((entry) => entry.id)).toContain(formID);
+  expect((await client.session.form.get({ sessionID, formID })).state).toEqual({
+    status: "pending",
+  });
+  expect((await client.session.form.list({ sessionID })).map((entry) => entry.id)).toContain(
+    formID,
+  );
 }
 
 async function expectAssistantText(client: OpenCodeClient, sessionID: string, text: string) {

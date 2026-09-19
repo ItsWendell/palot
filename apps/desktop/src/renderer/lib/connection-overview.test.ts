@@ -119,7 +119,7 @@ function client(profileID: string, connectionID = `${profileID}-1`) {
       log: vi.fn(async function* () {
         yield { type: "log.synced", created: 1, cursor: 0 };
       }),
-      rename: vi.fn().mockResolvedValue(undefined),
+      update: vi.fn().mockResolvedValue(undefined),
       remove: vi.fn().mockResolvedValue(undefined),
     },
     message: { list: vi.fn() },

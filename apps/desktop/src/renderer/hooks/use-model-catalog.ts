@@ -8,7 +8,8 @@ import { palot } from "../services/palot";
 
 export const MODEL_CATALOG_EVENTS = new Set([
   "models-dev.refreshed",
-  "catalog.updated",
+  "provider.updated",
+  "model.updated",
   "integration.updated",
 ]);
 

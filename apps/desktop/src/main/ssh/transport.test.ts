@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn, default: { spawn: mocks.spawn } }));
 vi.mock("@opencode/client", () => ({
-  OpenCode: { make: () => ({ health: { get: mocks.health } }) },
+  OpenCode: { make: () => ({ server: { info: mocks.health } }) },
 }));
 vi.mock("./askpass", () => ({
   createAskpass: async () => ({ env: {}, close: mocks.askpassClose }),

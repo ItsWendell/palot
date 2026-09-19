@@ -100,7 +100,7 @@ export const reviewBaseScenario: Scenario = {
     const emptyDirectory = join(runRoot, "review-unborn");
     expect((await client.vcs.base({ location: { directory: emptyDirectory } })).data).toBeNull();
     const emptySession = await client.session.create({ location: { directory: emptyDirectory } });
-    await client.session.rename({
+    await client.session.update({
       sessionID: emptySession.id,
       title: "Review base isolated checkout",
     });

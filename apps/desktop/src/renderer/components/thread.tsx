@@ -4070,7 +4070,8 @@ function FormRequestCard({
   const [answers, setAnswers] = useState<Record<string, FormValue>>(() =>
     initialFormAnswers(request.fields),
   );
-  const visibleFields = request.fields.filter((field) => formFieldVisible(field, answers));
+  const enabledFields = request.fields.filter((field) => formFieldVisible(field, answers));
+  const visibleFields = enabledFields.filter((field) => !field.hidden);
   const valid = visibleFields.every((field) => formFieldValid(field, answers[field.key]));
 
   function setAnswer(key: string, value: FormValue | undefined) {
@@ -4083,7 +4084,7 @@ function FormRequestCard({
   }
 
   const submittedAnswers = Object.fromEntries(
-    visibleFields.flatMap((field) => {
+    enabledFields.flatMap((field) => {
       const value = answers[field.key];
       return value === undefined || field.type === "external" ? [] : [[field.key, value]];
     }),

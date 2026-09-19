@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import type {
   PalotApi,
+  PalotAttachmentProgress,
+  PalotFilePickerResult,
   PalotFileAttachment,
   PalotMessage,
   PalotModel,
@@ -47,19 +49,21 @@ function bridge(overrides: Record<string, unknown>): PalotApi {
   return {
     runtimeStatus: vi.fn(),
     onOpenCodeEvents: vi.fn(() => () => undefined),
+    onAttachmentProgress: vi.fn(() => () => undefined),
+    cancelAttachmentUpload: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as PalotApi;
 }
 
 function client(overrides: Record<string, unknown> = {}): OpenCodeClient {
   return {
+    project: { list: vi.fn().mockResolvedValue([]) },
     model: {
       list: vi.fn().mockResolvedValue({ data: [] }),
       default: vi.fn().mockResolvedValue({ data: null }),
     },
     provider: { list: vi.fn().mockResolvedValue({ data: [] }) },
     agent: { list: vi.fn().mockResolvedValue({ data: [] }) },
-    plugin: { awaitActivation: vi.fn().mockResolvedValue(undefined) },
     command: { list: vi.fn().mockResolvedValue({ data: [] }) },
     skill: { list: vi.fn().mockResolvedValue({ data: [] }) },
     file: { find: vi.fn().mockResolvedValue({ data: [] }) },
@@ -119,6 +123,150 @@ afterEach(() => {
 });
 
 describe("Composer discovery", () => {
+  it("blocks sending during attachment selection, shows progress, and cancels without losing the draft", async () => {
+    let complete!: (result: PalotFilePickerResult) => void;
+    let progress!: (value: PalotAttachmentProgress) => void;
+    const unsubscribe = vi.fn();
+    vi.spyOn(palot, "onAttachmentProgress").mockImplementation((listener) => {
+      progress = listener;
+      return unsubscribe;
+    });
+    const pick = vi.spyOn(palot, "pickFiles").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const cancel = vi.spyOn(palot, "cancelAttachmentUpload").mockResolvedValue(undefined);
+    const send = vi.spyOn(palot, "sendComposerPrompt");
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole("textbox", { name: "Message Palot" });
+    await userEvent.type(input, "Keep this draft");
+    await userEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    expect(screen.getByRole("status").textContent).toBe("Preparing attachments…");
+    expect(screen.getByRole("button", { name: "Send message" }).hasAttribute("disabled")).toBe(
+      true,
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(send).not.toHaveBeenCalled();
+    const requestID = pick.mock.calls[0]![1]!;
+    act(() =>
+      progress({
+        requestID,
+        connectionID: "test",
+        name: "large.png",
+        loaded: 50,
+        total: 100,
+        index: 0,
+        count: 1,
+      }),
+    );
+    expect(screen.getByRole("status").textContent).toContain("50%");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel attachment upload" }));
+    expect(cancel).toHaveBeenCalledWith(requestID);
+    expect(unsubscribe).toHaveBeenCalled();
+    await act(async () => complete({ files: [], errors: ["Stale error"] }));
+    expect(screen.queryByText("Stale error")).toBeNull();
+    expect((input as HTMLTextAreaElement).value).toBe("Keep this draft");
+  });
+
+  it("cancels an old scope's upload and ignores its late completion", async () => {
+    let complete!: (result: PalotFilePickerResult) => void;
+    vi.spyOn(palot, "pickFiles").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    vi.spyOn(palot, "onAttachmentProgress").mockReturnValue(() => undefined);
+    const cancel = vi.spyOn(palot, "cancelAttachmentUpload").mockResolvedValue(undefined);
+    const store = createStore();
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    await userEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    act(() =>
+      store.set(runtimeAtom, {
+        ...store.get(runtimeAtom)!,
+        profileID: "other-profile",
+        connectionID: "other",
+      }),
+    );
+    expect(cancel).toHaveBeenCalledOnce();
+    await act(async () =>
+      complete({
+        files: [
+          { uri: "attachment:stale", name: "stale.png", mime: "image/png" } as PalotFileAttachment,
+        ],
+        errors: ["Old error"],
+      }),
+    );
+    expect(screen.queryByText("stale.png")).toBeNull();
+    expect(screen.queryByText("Old error")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel attachment upload" })).toBeNull();
+  });
+
+  it("blocks sending during clipboard preparation and never uploads after unmount", async () => {
+    const prepared = Promise.withResolvers<ArrayBuffer>();
+    const attach = vi.spyOn(palot, "attachClipboardImages");
+    const send = vi.spyOn(palot, "sendComposerPrompt");
+    const cancel = vi.spyOn(palot, "cancelAttachmentUpload").mockResolvedValue(undefined);
+    vi.spyOn(palot, "onAttachmentProgress").mockReturnValue(() => undefined);
+    const view = renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole("textbox", { name: "Message Palot" });
+    await userEvent.type(input, "Keep the screenshot");
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => ({ type: "image/png", arrayBuffer: () => prepared.promise }),
+          },
+        ],
+        getData: () => "",
+      },
+    });
+    expect(screen.getByRole("status").textContent).toBe("Preparing attachments…");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(send).not.toHaveBeenCalled();
+    view.unmount();
+    expect(cancel).toHaveBeenCalledOnce();
+    await act(async () => prepared.resolve(new ArrayBuffer(1)));
+    expect(attach).not.toHaveBeenCalled();
+  });
+
+  it("pastes images with captured request ownership and leaves plain text paste alone", async () => {
+    const attach = vi
+      .spyOn(palot, "attachClipboardImages")
+      .mockResolvedValue({ files: [], errors: [] });
+    vi.spyOn(palot, "onAttachmentProgress").mockReturnValue(() => undefined);
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole("textbox", { name: "Message Palot" });
+    const data = new ArrayBuffer(2);
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => ({ type: "image/png", arrayBuffer: async () => data }),
+          },
+        ],
+        getData: () => "",
+      },
+    });
+    await waitFor(() =>
+      expect(attach).toHaveBeenCalledWith(
+        [{ mime: "image/png", data }],
+        "test",
+        expect.any(String),
+      ),
+    );
+    expect(
+      fireEvent.paste(input, { clipboardData: { items: [], getData: () => "plain text" } }),
+    ).toBe(true);
+    expect(attach).toHaveBeenCalledOnce();
+  });
+
   it("passes confirmed draft approvals into creation and resets the next draft to Defaults", async () => {
     const createSession = vi.fn().mockResolvedValue(session);
     const send = vi.spyOn(palot, "sendComposerPrompt").mockResolvedValue({
@@ -588,50 +736,74 @@ describe("Composer discovery", () => {
     ).toBe("Reasoning: High");
   });
 
-  it("uses project visibility and order preferences in the model picker", async () => {
-    const models: PalotModel[] = ["fast", "balanced", "deep"].map((id) => ({
-      id,
-      modelID: id,
-      providerID: "openai",
-      name: id[0]!.toUpperCase() + id.slice(1),
-      family: null,
-      variants: [],
-      inputLimit: null,
-      contextLimit: 100_000,
-      outputLimit: 10_000,
-      releasedAt: 0,
-      capabilities: { tools: true, input: ["text"], output: ["text"] },
-      status: "active",
-    }));
-    const store = createStore();
-    store.set(modelPickerPreferencesAtom, {
-      [modelProjectPreferenceKey("test-profile", session.projectID)]: {
-        hidden: ["openai/fast"],
-        order: ["openai/deep", "openai/balanced", "openai/fast"],
-      },
-    });
-    vi.spyOn(palot, "listModels").mockResolvedValue({
-      models,
-      defaultModel: models[0]!,
-      providers: [
-        {
-          id: "openai",
-          name: "OpenAI",
-          integrationID: null,
-          package: "openai",
-          disabled: false,
+  it.each(["project-1", "global"])(
+    "uses repository visibility and order for a %s session",
+    async (projectID) => {
+      setOpenCodeClientForTest(
+        client({
+          project: {
+            list: vi.fn().mockResolvedValue([
+              { id: "global", canonical: "/", sandboxes: [], time: { created: 1, updated: 1 } },
+              {
+                id: "project-1",
+                canonical: "/workspace",
+                sandboxes: [],
+                time: { created: 1, updated: 1 },
+              },
+            ]),
+          },
+        }),
+      );
+      const models: PalotModel[] = ["fast", "balanced", "deep"].map((id) => ({
+        id,
+        modelID: id,
+        providerID: "openai",
+        name: id[0]!.toUpperCase() + id.slice(1),
+        family: null,
+        variants: [],
+        inputLimit: null,
+        contextLimit: 100_000,
+        outputLimit: 10_000,
+        releasedAt: 0,
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        status: "active",
+      }));
+      const store = createStore();
+      store.set(modelPickerPreferencesAtom, {
+        [modelProjectPreferenceKey("test-profile", session.projectID)]: {
+          hidden: ["openai/fast"],
+          order: ["openai/deep", "openai/balanced", "openai/fast"],
         },
-      ],
-      errors: [],
-    });
+      });
+      vi.spyOn(palot, "listModels").mockResolvedValue({
+        models,
+        defaultModel: models[0]!,
+        providers: [
+          {
+            id: "openai",
+            name: "OpenAI",
+            integrationID: null,
+            package: "openai",
+            disabled: false,
+          },
+        ],
+        errors: [],
+      });
 
-    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
-    await userEvent.click(await screen.findByRole("button", { name: "Model: Fast" }));
+      renderComposer(
+        <Composer session={{ ...session, projectID }} messages={[]} isWorking={false} />,
+        store,
+      );
+      await userEvent.click(await screen.findByRole("button", { name: "Model: Fast" }));
 
-    const options = screen.getAllByRole("option").map((option) => option.textContent);
-    expect(options).toEqual([expect.stringContaining("Deep"), expect.stringContaining("Balanced")]);
-    expect(screen.queryByRole("option", { name: /Fast/ })).toBeNull();
-  });
+      const options = screen.getAllByRole("option").map((option) => option.textContent);
+      expect(options).toEqual([
+        expect.stringContaining("Deep"),
+        expect.stringContaining("Balanced"),
+      ]);
+      expect(screen.queryByRole("option", { name: /Fast/ })).toBeNull();
+    },
+  );
 
   it.each([
     { profileID: "server-a", model: "deep", hidden: "Fast" },
@@ -803,7 +975,7 @@ describe("Composer discovery", () => {
       expect(runCommand).toHaveBeenCalledWith(
         {
           sessionID: session.id,
-          command: "review",
+          name: "review",
           text: "/review auth",
           delivery: "steer",
         },
@@ -818,7 +990,6 @@ describe("Composer discovery", () => {
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     setOpenCodeClientForTest(
       client({
-        plugin: { awaitActivation: vi.fn().mockResolvedValue(undefined) },
         agent: {
           list: vi.fn().mockResolvedValue({
             data: [
@@ -983,7 +1154,7 @@ describe("Composer discovery", () => {
       sessionID: session.id,
       type: "user",
       delivery: null,
-      timeCreated: 3,
+      time: { created: 3 },
     });
     const get = vi.fn().mockResolvedValue({
       id: session.id,
@@ -1322,7 +1493,7 @@ describe("Composer text entry", () => {
       id: "message-multiline",
       sessionID: session.id,
       type: "user" as const,
-      timeCreated: 10_000,
+      time: { created: 10_000 },
     });
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     setOpenCodeClientForTest(client({ session: { prompt } }));
@@ -1357,7 +1528,7 @@ describe("Composer steering", () => {
       sessionID: session.id,
       type: "user" as const,
       delivery: "queue" as const,
-      timeCreated: 10_000,
+      time: { created: 10_000 },
     });
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     setOpenCodeClientForTest(client({ session: { prompt } }));
@@ -1401,7 +1572,7 @@ describe("Composer steering", () => {
       sessionID: session.id,
       type: "user" as const,
       delivery: "steer" as const,
-      timeCreated: 10_000,
+      time: { created: 10_000 },
     });
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     setOpenCodeClientForTest(client({ session: { prompt } }));
@@ -1451,7 +1622,7 @@ describe("Composer steering", () => {
         sessionID: session.id,
         type: "user" as const,
         delivery: "steer" as const,
-        timeCreated: 10_000,
+        time: { created: 10_000 },
       };
     });
     const store = createStore();
@@ -1526,7 +1697,7 @@ describe("Composer steering", () => {
         sessionID: session.id,
         type: "user" as const,
         delivery: "steer" as const,
-        timeCreated: 10_000,
+        time: { created: 10_000 },
       };
     });
     Object.defineProperty(window, "palot", {
@@ -1586,7 +1757,7 @@ describe("Composer steering", () => {
       sessionID: session.id,
       type: "user" as const,
       delivery: "steer" as const,
-      timeCreated: 10_000,
+      time: { created: 10_000 },
     });
     Object.defineProperty(window, "palot", {
       configurable: true,
@@ -1653,7 +1824,7 @@ describe("Composer steering", () => {
         sessionID: session.id,
         type: "user" as const,
         delivery: "steer" as const,
-        timeCreated: 10_000,
+        time: { created: 10_000 },
       };
     });
     const store = createStore();

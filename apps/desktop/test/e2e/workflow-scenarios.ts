@@ -272,20 +272,21 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
     },
     async seed(client, { projectDirectory }) {
       const location = { directory: projectDirectory };
-      // The official wait settles even for failed plugins. Endpoint rejection is
-      // covered in opencode-settings.test.ts, not manufactured with browser IPC stubs.
-      await client.plugin.awaitActivation({ location });
-      const plugins = await client.plugin.list({ location });
-      expect(plugins.data).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            state: expect.objectContaining({
-              status: "failed",
-              error: expect.stringContaining(PLUGIN_FAILURE),
+      await expect
+        .poll(async () => (await client.plugin.list({ location })).data, {
+          timeout: 30_000,
+          message: "Wait for the fixture plugin failure to reach the inventory",
+        })
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              state: expect.objectContaining({
+                status: "failed",
+                error: expect.stringContaining(PLUGIN_FAILURE),
+              }),
             }),
-          }),
-        ]),
-      );
+          ]),
+        );
     },
     async run(page) {
       await openSettings(page);
@@ -493,15 +494,16 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
     },
     async seed(client, { projectDirectory }) {
       const location = { directory: projectDirectory };
-      // Configured providers are registered during location activation, not session creation.
-      await client.plugin.awaitActivation({ location });
-      const models = await client.model.list({ location });
-      expect(
-        models.data
-          .filter((model) => model.id === "workflow-shared")
-          .map((model) => model.providerID)
-          .sort(),
-      ).toEqual(["workflow-alpha", "workflow-beta"]);
+      await expect
+        .poll(
+          async () =>
+            (await client.model.list({ location })).data
+              .filter((model) => model.id === "workflow-shared")
+              .map((model) => model.providerID)
+              .sort(),
+          { timeout: 30_000, message: "Wait for both deterministic provider catalogs" },
+        )
+        .toEqual(["workflow-alpha", "workflow-beta"]);
     },
     async run(page, { client, session }) {
       for (const provider of ["Alpha", "Beta"]) {

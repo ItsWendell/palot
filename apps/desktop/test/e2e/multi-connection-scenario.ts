@@ -489,7 +489,7 @@ export const multiConnectionScenario: Scenario = {
       });
       const remote = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) });
       proxy = await startLoopbackServiceProxy(endpoint);
-      await client.session.rename({ sessionID: session.id, title: localTitle });
+      await client.session.update({ sessionID: session.id, title: localTitle });
       // The public create contract accepts an explicit ID: identical IDs on two
       // databases catch accidental active-client and unscoped-cache fallbacks.
       const collision = await remote.session.create({
@@ -756,7 +756,7 @@ export const multiConnectionScenario: Scenario = {
       await assertOwner(page, session.id, original.activeProfileID);
 
       const backgroundTitle = "Overview background event received";
-      await remote.session.rename({ sessionID: session.id, title: backgroundTitle });
+      await remote.session.update({ sessionID: session.id, title: backgroundTitle });
       const backgroundRow = page.getByRole("button", {
         name: new RegExp(`^${backgroundTitle} · ${remoteName}`),
       });
