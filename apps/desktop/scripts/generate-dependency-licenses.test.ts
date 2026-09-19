@@ -362,47 +362,64 @@ describe("dependency license inventory", () => {
     ).rejects.toThrow("inventory issues");
   });
 
-  it("inherits only the explicitly reviewed physical workspace's matching repository license", async () => {
-    await writeFile(
-      path.join(fixture, "package.json"),
-      JSON.stringify({ name: "palot-2", license: "MIT", workspaces: ["apps/desktop"] }),
-    );
-    await writeFile(path.join(fixture, "LICENSE"), reviewedText);
-    const workspace = await packageAt(
-      path.join(fixture, "apps/desktop"),
-      "@palot/desktop",
-      "MIT",
-      null,
-    );
-    await symlink(workspace, path.join(nodeModules, "desktop"), "dir");
-    expect((await collectDependencyLicenses(nodeModules)).issues).toEqual([]);
-    await packageAt(path.join(nodeModules, "pretender"), "@palot/desktop", "MIT", null);
-    let inventory = await collectDependencyLicenses(nodeModules);
-    expect(
-      inventory.entries.find((entry) => entry.location === "pretender")?.reviewedLicense,
-    ).toBeUndefined();
-    expect(inventory.issues).toContainEqual({
-      location: "pretender",
-      reason: "Reviewed workspace license ownership does not match.",
-    });
-    await rm(path.join(nodeModules, "pretender"), { recursive: true });
-    await writeFile(
-      path.join(fixture, "package.json"),
-      JSON.stringify({ name: "palot-2", license: "MIT", workspaces: ["apps/*"] }),
-    );
-    inventory = await collectDependencyLicenses(nodeModules);
-    expect(inventory.issues).toContainEqual({
-      location: "../apps/desktop",
-      reason: "Reviewed workspace license ownership does not match.",
-    });
-    await writeFile(
-      path.join(fixture, "package.json"),
-      JSON.stringify({ name: "unrelated", license: "MIT", workspaces: ["apps/desktop"] }),
-    );
-    expect(
-      (await collectDependencyLicenses(nodeModules)).entries[0]?.reviewedLicense,
-    ).toBeUndefined();
-  });
+  it.each(["1.0.0", "1.1.0", "1.1.1-nightly.20260919"])(
+    "inherits only the reviewed physical workspace's repository license at version %s",
+    async (version) => {
+      await writeFile(
+        path.join(fixture, "package.json"),
+        JSON.stringify({ name: "palot-2", license: "MIT", workspaces: ["apps/desktop"] }),
+      );
+      await writeFile(path.join(fixture, "LICENSE"), reviewedText);
+      const workspace = await packageAt(
+        path.join(fixture, "apps/desktop"),
+        "@palot/desktop",
+        "MIT",
+        null,
+      );
+      await writeFile(
+        path.join(workspace, "package.json"),
+        JSON.stringify({ name: "@palot/desktop", version, license: "MIT" }),
+      );
+      const output = path.join(fixture, "artifact-licenses.md");
+      await generateDependencyLicenses({
+        nodeModules,
+        output,
+        check: true,
+        packageDirectories: [workspace],
+      });
+      const report = await readFile(output, "utf8");
+      expect(report).toContain(`## @palot/desktop@${version}`);
+      expect(report).toContain("Full reviewed grant");
+      await symlink(workspace, path.join(nodeModules, "desktop"), "dir");
+      expect((await collectDependencyLicenses(nodeModules)).issues).toEqual([]);
+      await packageAt(path.join(nodeModules, "pretender"), "@palot/desktop", "MIT", null);
+      let inventory = await collectDependencyLicenses(nodeModules);
+      expect(
+        inventory.entries.find((entry) => entry.location === "pretender")?.reviewedLicense,
+      ).toBeUndefined();
+      expect(inventory.issues).toContainEqual({
+        location: "pretender",
+        reason: "Reviewed workspace license ownership does not match.",
+      });
+      await rm(path.join(nodeModules, "pretender"), { recursive: true });
+      await writeFile(
+        path.join(fixture, "package.json"),
+        JSON.stringify({ name: "palot-2", license: "MIT", workspaces: ["apps/*"] }),
+      );
+      inventory = await collectDependencyLicenses(nodeModules);
+      expect(inventory.issues).toContainEqual({
+        location: "../apps/desktop",
+        reason: "Reviewed workspace license ownership does not match.",
+      });
+      await writeFile(
+        path.join(fixture, "package.json"),
+        JSON.stringify({ name: "unrelated", license: "MIT", workspaces: ["apps/desktop"] }),
+      );
+      expect(
+        (await collectDependencyLicenses(nodeModules)).entries[0]?.reviewedLicense,
+      ).toBeUndefined();
+    },
+  );
 
   it.each(["root declaration", "workspace declaration", "root text", "external workspace"])(
     "rejects workspace inheritance with changed %s",

@@ -318,8 +318,10 @@ export async function collectDependencyLicenses(
   }
 
   async function collectReviewedText(directory: string, entry: LicenseEntry): Promise<boolean> {
+    // First-party workspace grants are bound to physical ownership and the root
+    // license hash below, not the app release version. Registry evidence stays exact-version.
     const evidence = reviewedEvidence.find(
-      (item) => item.name === entry.name && item.version === entry.version,
+      (item) => item.name === entry.name && (item.workspace || item.version === entry.version),
     );
     if (!evidence) return false;
     if (entry.license !== "Not declared" && entry.license !== evidence.license) {
