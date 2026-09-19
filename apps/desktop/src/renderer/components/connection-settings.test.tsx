@@ -244,7 +244,7 @@ describe("LocalServiceSettings", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onRestart).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Restart service" }));
-    await user.click(await screen.findByRole("button", { name: "Restart", exact: true }));
+    await user.click(await screen.findByRole("button", { name: "Restart" }));
     expect(onRestart).toHaveBeenCalledOnce();
   });
 
