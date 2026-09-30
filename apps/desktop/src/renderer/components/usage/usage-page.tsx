@@ -1,4 +1,5 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import type { SessionStatsInfo, SessionStatsModelUsage } from "@opencode/client";
 import type { PalotModel, PalotProvider } from "../../../shared";
 import { BarChart3, RefreshCw, TriangleAlert } from "lucide-react";
@@ -9,13 +10,18 @@ import { usageRangeAtom, usageToolDetailsOpenAtom } from "../../atoms/ui";
 import { useModelCatalog } from "../../hooks/use-model-catalog";
 import { useSessionStats } from "../../hooks/use-session-stats";
 import { useProjectCatalogState } from "../../hooks/use-session-catalog";
+import { openCodeKeys } from "../../lib/opencode-query";
 import {
   isUsageRangeDays,
   USAGE_RANGE_OPTIONS,
   validateUsageSearch,
   type UsageRangeDays,
 } from "../../lib/route-search";
-import { formatUsageDateRange, usageDateRange } from "../../lib/session-stats-range";
+import {
+  formatUsageDateRange,
+  previousUsageDateRange,
+  usageDateRange,
+} from "../../lib/session-stats-range";
 import { orderProjects, projectLocation, visibleProjects } from "../../lib/view-models";
 import { ProjectSelect } from "../project-select";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
@@ -38,6 +44,7 @@ export function UsagePage() {
     select: (state) => validateUsageSearch(state.location.search as Record<string, unknown>),
   });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const runtime = useAtomValue(runtimeAtom);
   const setUsageRange = useSetAtom(usageRangeAtom);
   const projectCatalog = useProjectCatalogState();
@@ -52,11 +59,13 @@ export function UsagePage() {
   const [freshnessNowMs, setFreshnessNowMs] = useState(() => Date.now());
   const [lastSuccessfulUpdateAt, setLastSuccessfulUpdateAt] = useState(0);
   const [modelSort, setModelSort] = useState<ModelSort>("cost");
+  const [compareOpen, setCompareOpen] = useState(false);
   const [toolDetailsOpen, setToolDetailsOpen] = useAtom(usageToolDetailsOpenAtom);
   const range = useMemo(
     () => usageDateRange(search.days, rangeAnchorMs),
     [rangeAnchorMs, search.days],
   );
+  const previousRange = useMemo(() => previousUsageDateRange(range), [range]);
   const projectScopeReady = !search.projectID || (projectCatalog.ready && Boolean(selectedProject));
   const summaryInput = useMemo(
     () => ({
@@ -72,8 +81,13 @@ export function UsagePage() {
     () => ({ ...summaryInput, tools: "detail" as const }),
     [summaryInput],
   );
+  const previousInput = useMemo(
+    () => ({ ...summaryInput, from: previousRange.from, to: previousRange.to }),
+    [summaryInput, previousRange.from, previousRange.to],
+  );
   const summary = useSessionStats(summaryInput, projectScopeReady);
   const details = useSessionStats(detailInput, toolDetailsOpen && projectScopeReady);
+  const previous = useSessionStats(previousInput, compareOpen && projectScopeReady);
   const data = summary.data;
   const projectScopeError = search.projectID ? projectCatalog.error : null;
   const displayedUpdateAt = summary.dataUpdatedAt || lastSuccessfulUpdateAt;
@@ -154,19 +168,42 @@ export function UsagePage() {
                   <ToggleGroupItem
                     key={days}
                     value={String(days)}
-                    aria-label={days === 1 ? "24 hours" : `${days} days`}
+                    aria-label={days === 1 ? "Today" : `${days} days`}
                   >
-                    {days === 1 ? "24h" : `${days}d`}
+                    {days === 1 ? "Today" : `${days}d`}
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
               <Button
                 type="button"
+                variant={compareOpen ? "secondary" : "outline"}
+                size="sm"
+                aria-pressed={compareOpen}
+                onClick={() => setCompareOpen((open) => !open)}
+              >
+                Compare periods
+              </Button>
+              <Button
+                type="button"
                 variant="ghost"
                 size="icon-sm"
                 aria-label="Refresh usage"
-                disabled={runtime?.connected !== true || summary.isFetching}
-                onClick={() => void summary.refetch()}
+                disabled={
+                  runtime?.connected !== true ||
+                  summary.isFetching ||
+                  (compareOpen && previous.isFetching) ||
+                  (toolDetailsOpen && details.isFetching)
+                }
+                onClick={() => {
+                  void summary.refetch();
+                  if (compareOpen) void previous.refetch();
+                  if (toolDetailsOpen) void details.refetch();
+                  else if (runtime?.connectionID)
+                    void queryClient.invalidateQueries({
+                      queryKey: openCodeKeys.sessionStats(runtime.connectionID, detailInput),
+                      refetchType: "none",
+                    });
+                }}
               >
                 <RefreshCw className={summary.isFetching ? "animate-spin" : undefined} />
               </Button>
@@ -201,6 +238,19 @@ export function UsagePage() {
                 catalogModels={modelCatalog.data?.models ?? []}
                 catalogProviders={modelCatalog.data?.providers ?? []}
                 timezone={range.timezone}
+                compareOpen={compareOpen}
+                previousRange={previousRange}
+                previousData={
+                  summary.isPlaceholderData || previous.isPlaceholderData
+                    ? null
+                    : (previous.data ?? null)
+                }
+                previousLoading={
+                  runtime?.connected !== false && (previous.isFetching || summary.isPlaceholderData)
+                }
+                previousError={previous.error?.message ?? null}
+                previousOffline={runtime?.connected === false}
+                retryPrevious={() => void previous.refetch()}
                 modelSort={modelSort}
                 onModelSortChange={setModelSort}
                 toolDetailsOpen={toolDetailsOpen}
@@ -239,6 +289,13 @@ function UsageContent({
   catalogModels,
   catalogProviders,
   timezone,
+  compareOpen,
+  previousRange,
+  previousData,
+  previousLoading,
+  previousError,
+  previousOffline,
+  retryPrevious,
   modelSort,
   onModelSortChange,
   toolDetailsOpen,
@@ -255,6 +312,13 @@ function UsageContent({
   catalogModels: readonly PalotModel[];
   catalogProviders: readonly PalotProvider[];
   timezone: string;
+  compareOpen: boolean;
+  previousRange: { from: number; to: number; timezone: string };
+  previousData: SessionStatsInfo | null;
+  previousLoading: boolean;
+  previousError: string | null;
+  previousOffline: boolean;
+  retryPrevious(): void;
   modelSort: ModelSort;
   onModelSortChange(value: ModelSort): void;
   toolDetailsOpen: boolean;
@@ -321,6 +385,18 @@ function UsageContent({
           <UsageValue label="Steps" value={NUMBER.format(data.steps)} compact />
         </div>
       </section>
+
+      {compareOpen ? (
+        <UsagePeriodComparison
+          current={data}
+          previous={previousData}
+          range={previousRange}
+          loading={previousLoading}
+          error={previousError}
+          offline={previousOffline}
+          retry={retryPrevious}
+        />
+      ) : null}
 
       <section className="grid gap-5 @min-[52rem]/usage:grid-cols-[minmax(15rem,0.72fr)_minmax(0,1.4fr)]">
         <div className="min-w-0 rounded-xl border border-border/75 p-5">
@@ -533,6 +609,98 @@ function UsageContent({
       </section>
     </div>
   );
+}
+
+function UsagePeriodComparison({
+  current,
+  previous,
+  range,
+  loading,
+  error,
+  offline,
+  retry,
+}: {
+  current: SessionStatsInfo;
+  previous: SessionStatsInfo | null;
+  range: { from: number; to: number; timezone: string };
+  loading: boolean;
+  error: string | null;
+  offline: boolean;
+  retry(): void;
+}) {
+  const metrics = previous
+    ? [
+        {
+          label: "Reported cost",
+          current: current.cost,
+          previous: previous.cost,
+          format: CURRENCY,
+        },
+        {
+          label: "Model tokens",
+          current: modelTokenTotal(current.tokens),
+          previous: modelTokenTotal(previous.tokens),
+          format: COMPACT,
+        },
+        { label: "Prompts", current: current.prompts, previous: previous.prompts, format: NUMBER },
+        { label: "Steps", current: current.steps, previous: previous.steps, format: NUMBER },
+      ]
+    : [];
+
+  return (
+    <section
+      className="min-w-0 rounded-xl border border-border/75 p-5"
+      aria-label="Period comparison"
+    >
+      <UsageSectionHeading
+        title="Compared with previous period"
+        description={`Previous: ${formatUsageDateRange(range)}. Today is still in progress; the previous period is complete.`}
+      />
+      {previous ? (
+        <div className="mt-5 grid grid-cols-2 gap-4 @min-[42rem]/usage:grid-cols-4">
+          {metrics.map((metric) => (
+            <div key={metric.label} className="min-w-0">
+              <div className="text-meta text-muted-foreground">{metric.label}</div>
+              <div className="mt-1 text-xl font-medium tracking-tight tabular-nums">
+                {metric.format.format(metric.current)}
+              </div>
+              <div className="text-meta text-muted-foreground tabular-nums">
+                {metric.format.format(metric.previous)} before
+              </div>
+              <div className="mt-1 text-meta font-medium tabular-nums">
+                {periodChange(metric.current, metric.previous)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : loading ? (
+        <Skeleton className="mt-5 h-24 w-full" />
+      ) : offline ? (
+        <p className="mt-4 text-sm text-muted-foreground">
+          Reconnect OpenCode to load the previous period.
+        </p>
+      ) : error ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-destructive">
+          <span>Could not load the previous period.</span>
+          <Button type="button" variant="outline" size="sm" onClick={retry}>
+            Retry comparison
+          </Button>
+        </div>
+      ) : null}
+      {previous && error ? (
+        <p className="mt-3 text-meta text-muted-foreground">
+          The previous period is cached because its latest refresh failed.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function periodChange(current: number, previous: number): string {
+  if (current === previous) return "No change";
+  if (previous === 0) return "New activity";
+  const change = (current - previous) / previous;
+  return `${change > 0 ? "+" : ""}${PERCENT.format(change)} vs previous`;
 }
 
 function ModelUsageRow({

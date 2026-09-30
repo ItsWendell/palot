@@ -1,11 +1,13 @@
 import type { SessionStatsInfo } from "@opencode/client";
 import type { PalotProject } from "../../../shared";
 import { createStore } from "jotai";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runtimeAtom } from "../../atoms/workspace";
+import { usageToolDetailsOpenAtom } from "../../atoms/ui";
 import { createRendererQueryClient } from "../../lib/query-client";
+import { previousUsageDateRange, usageDateRange } from "../../lib/session-stats-range";
 import { palot } from "../../services/palot";
 import { renderWithRouter, seedCatalog } from "../../test-utils/render-with-router";
 import { UsagePage } from "./usage-page";
@@ -174,5 +176,90 @@ describe("UsagePage", () => {
         screen.queryByText("Showing the previous selection while this usage scope updates."),
       ).toBeNull(),
     );
+  });
+
+  it("loads the selected project's previous calendar period only when comparison is enabled", async () => {
+    const prior = { ...stats, cost: 8, prompts: 24, steps: 60 };
+    const expected = previousUsageDateRange(usageDateRange(7));
+    const sessionStats = vi
+      .spyOn(palot, "sessionStats")
+      .mockImplementation((input) => Promise.resolve(input.to === expected.to ? prior : stats));
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, { projects: [project] }, "connection");
+    renderWithRouter(
+      <UsagePage />,
+      connectedStore(),
+      "/usage?days=7&projectID=project-1",
+      queryClient,
+    );
+
+    expect(await screen.findByText("$12.34")).toBeTruthy();
+    expect(sessionStats).toHaveBeenCalledTimes(1);
+    const compare = screen.getByRole("button", { name: "Compare periods" });
+    expect(compare.getAttribute("aria-pressed")).toBe("false");
+    await userEvent.click(compare);
+
+    await waitFor(() => expect(sessionStats).toHaveBeenCalledTimes(2));
+    expect(sessionStats).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: expected.from,
+        to: expected.to,
+        timezone: expected.timezone,
+        tools: "summary",
+        project: "project-1",
+      }),
+      expect.any(AbortSignal),
+      "connection",
+    );
+    expect(compare.getAttribute("aria-pressed")).toBe("true");
+    expect(await screen.findByRole("region", { name: "Period comparison" })).toBeTruthy();
+    expect(await screen.findByText("+54% vs previous")).toBeTruthy();
+    await userEvent.click(compare);
+    expect(screen.queryByRole("region", { name: "Period comparison" })).toBeNull();
+  });
+
+  it("refreshes open tool details and invalidates closed details for the next expansion", async () => {
+    const sessionStats = vi
+      .spyOn(palot, "sessionStats")
+      .mockImplementation((input) =>
+        Promise.resolve(input.tools === "detail" ? detailStats : stats),
+      );
+    const store = connectedStore();
+    store.set(usageToolDetailsOpenAtom, false);
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, { projects: [project] }, "connection");
+    renderWithRouter(<UsagePage />, store, "/usage?days=7", queryClient);
+
+    await screen.findByText("$12.34");
+    await userEvent.click(screen.getByRole("button", { name: "Show details" }));
+    await screen.findByText("Tool details loaded for 1 tool.");
+    expect(sessionStats.mock.calls.filter(([input]) => input.tools === "detail")).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh usage" }));
+    await waitFor(() =>
+      expect(sessionStats.mock.calls.filter(([input]) => input.tools === "detail")).toHaveLength(2),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Hide details" }));
+    await userEvent.click(screen.getByRole("button", { name: "Refresh usage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show details" }));
+    await waitFor(() =>
+      expect(sessionStats.mock.calls.filter(([input]) => input.tools === "detail")).toHaveLength(3),
+    );
+  });
+
+  it("shows a reconnect prompt instead of loading indefinitely for an uncached comparison", async () => {
+    vi.spyOn(palot, "sessionStats").mockResolvedValue(stats);
+    const store = connectedStore();
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, { projects: [project] }, "connection");
+    renderWithRouter(<UsagePage />, store, "/usage?days=7", queryClient);
+
+    await screen.findByText("$12.34");
+    await userEvent.click(screen.getByRole("button", { name: "Compare periods" }));
+    await screen.findByRole("region", { name: "Period comparison" });
+    act(() => store.set(runtimeAtom, { ...store.get(runtimeAtom)!, connected: false }));
+    await userEvent.click(screen.getByRole("button", { name: "30 days" }));
+
+    expect(await screen.findByText("Reconnect OpenCode to load the previous period.")).toBeTruthy();
   });
 });

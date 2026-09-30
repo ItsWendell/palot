@@ -26,6 +26,15 @@ export function usageDateRange(
   return { days, from: fromDate.getTime(), to: toDate.getTime(), timezone };
 }
 
+export function previousUsageDateRange(range: UsageDateRange): UsageDateRange {
+  const start = toZonedTime(range.from, range.timezone);
+  const from = fromZonedTime(
+    new Date(start.getFullYear(), start.getMonth(), start.getDate() - range.days),
+    range.timezone,
+  );
+  return { ...range, from: from.getTime(), to: range.from };
+}
+
 export function formatUsageDateRange(
   range: Pick<UsageDateRange, "from" | "to" | "timezone">,
 ): string {
