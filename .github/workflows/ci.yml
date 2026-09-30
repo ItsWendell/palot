@@ -147,7 +147,7 @@ jobs:
       - name: Run deterministic smoke scenario
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' bun run test:e2e -- smoke
+            dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' bun run test:e2e -- smoke --display=desktop
           else
             bun run test:e2e -- smoke
           fi

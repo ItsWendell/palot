@@ -22,6 +22,12 @@ import { TestLLMServer } from "../test/e2e/test-llm-server.ts";
 import { assertVideoPrerequisites, startVideoCapture } from "../test/e2e/video.ts";
 import { captureShowcaseAssets } from "./showcase-assets.ts";
 import { E2ERun } from "./e2e-lifecycle.ts";
+import {
+  findWestonBinary,
+  privateElectronEnvironment,
+  selectDisplay,
+  startPrivateDisplay,
+} from "./e2e-display.ts";
 import { seedDemoAppearance } from "./demo-appearance.ts";
 import type {} from "../src/preload/api";
 
@@ -30,6 +36,7 @@ const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const WORKSPACE_ROOT = path.resolve(APP_ROOT, "../..");
 const allScenarios = { ...scenarios, ...showcaseScenarios, ...demoScenarios };
 const { values: options, positionals } = parseCommandLine();
+const display = selectDisplay(options.display);
 const EXPECTED_OPENCODE_VERSION =
   options["opencode-version"] ?? packageJson.devDependencies["@opencode/client"];
 if (!isSupportedOpenCodeVersion(EXPECTED_OPENCODE_VERSION))
@@ -37,16 +44,17 @@ if (!isSupportedOpenCodeVersion(EXPECTED_OPENCODE_VERSION))
 if (options.help) {
   console.log(`Usage: bun run test:e2e -- [scenario] [options]
 
-Run an isolated native desktop scenario. Defaults to smoke, hidden, with
+Run an isolated native desktop scenario. Defaults to smoke, with
 successful artifacts removed. Requires OpenCode ${EXPECTED_OPENCODE_VERSION}.
 
 Options:
   --help                      Show this help without building or launching
   --list                      List scenarios without building or launching
-  --visible                   Show an inactive window on your desktop
+  --display <private|desktop>  Linux defaults to private Weston; other platforms to desktop
+  --visible                   Show an inactive window on the selected display
   --executable <path>         Test an already-packaged executable without rebuilding
   --opencode-version <version> Test a compatible runtime rather than the pinned baseline
-  --focus                     Show and focus the window
+  --focus                     Show and focus on the selected display
   --keep                      Keep successful run artifacts
   --inspect                   Wait after success for inspection; Ctrl-C stops
   --inspect-on-failure        Keep an attachable failed app until Ctrl-C; exits nonzero
@@ -66,7 +74,8 @@ Options:
 Only one of --trace, --app-trace, and --css-selector-stats may be used.
 --renderer-opaque and --renderer-glass cannot be combined.
 Set OPENCODE_BIN to the exact-version OpenCode executable if needed.
-Uses the host display; visible windows may reflow a tiling desktop.
+--display=desktop uses the host display; visible windows may reflow a tiling desktop.
+Private display uses headless Weston with pixman software rendering.
 Video captures renderer content only (no desktop/audio), adds measurement overhead,
 and is retained as video.mp4 beside video.json. It is not compositor/FPS evidence.
 
@@ -98,7 +107,9 @@ const glass = Boolean(options.glass || showcase);
 const rendererOpaque = options["renderer-opaque"] ?? false;
 const rendererGlass = options["renderer-glass"] ?? false;
 const disableComposerBackdrop = options["disable-composer-backdrop"] ?? false;
-const visible = Boolean(options.visible || profile || focus || showcase || video);
+const visible = Boolean(
+  display === "private" || options.visible || profile || focus || showcase || video,
+);
 const inactive = visible && !focus && !showcase;
 const keep = Boolean(options.keep || profile || reactScan || showcase || video);
 const inspect = options.inspect ?? false;
@@ -145,6 +156,7 @@ const finalizeVideo = (capture: VideoCapture) =>
   })());
 const llm = new TestLLMServer();
 const lifecycle = new E2ERun(name, {
+  privateDisplay: display === "private",
   hidden: !visible,
   inactive,
   profile,
@@ -165,10 +177,12 @@ try {
   await lifecycle.initialize(path.join(primaryCheckout, ".local/desktop-e2e"));
   runRoot = lifecycle.root;
   lifecycle.phase("prerequisites");
+  const weston = display === "private" ? await findWestonBinary() : null;
   const binary = await findOpenCodeBinary();
   if (video) await assertVideoPrerequisites();
   lifecycle.check();
   const electronPath = packagedExecutable ?? (createRequire(import.meta.url)("electron") as string);
+  const privateDisplay = weston ? await startPrivateDisplay(lifecycle, weston) : null;
   lifecycle.phase("build");
   if (packagedExecutable) await access(packagedExecutable, constants.X_OK);
   else await runBuild();
@@ -326,14 +340,24 @@ try {
       : {}),
   });
   delete electronEnvironment.ELECTRON_RUN_AS_NODE;
+  const displayEnvironment = privateDisplay
+    ? privateElectronEnvironment(
+        electronEnvironment,
+        privateDisplay.runtimeDirectory,
+        privateDisplay.socket,
+      )
+    : electronEnvironment;
   lifecycle.phase("electron");
   const { child: electronProcess } = lifecycle.spawn(
     "electron",
     electronPath,
-    packagedExecutable ? [`--remote-debugging-port=${cdpPort}`] : ["."],
+    [
+      ...(packagedExecutable ? [`--remote-debugging-port=${cdpPort}`] : ["."]),
+      ...(privateDisplay ? ["--ozone-platform=wayland"] : []),
+    ],
     {
       cwd: APP_ROOT,
-      env: electronEnvironment,
+      env: displayEnvironment,
     },
   );
   await waitForCdp(cdpPort, electronProcess);
@@ -554,6 +578,7 @@ function parseCommandLine() {
         "inspect-on-failure": { type: "boolean" },
         executable: { type: "string" },
         "opencode-version": { type: "string" },
+        display: { type: "string" },
       },
     });
     const { values, positionals } = result;

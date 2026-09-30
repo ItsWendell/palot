@@ -22,7 +22,7 @@ Do not use `npx`, `pnpm dlx`, `bunx`, or an `@latest` CLI. Preserve the reposito
 - Unclear APIs or upstream behavior: use `vp exec -- shadcn docs <component>` and fetch the relevant returned documentation. Reconcile it with the local source before applying it to customized components.
 - Upstream component updates: follow the preview workflow below.
 
-Inspect changed imports and CSS where applicable, then run `vp check --fix <touched-files>` and the smallest checks warranted by the changed behavior.
+Inspect changed imports and CSS where applicable, then follow the formatting and validation workflow in [the development guide](../../../docs/agent-development.md#choose-verification-by-the-change). Shadcn CLI edits bypass OpenCode's native formatter hook, so format those files explicitly while respecting the repository's exclusions.
 
 ## Updating components
 

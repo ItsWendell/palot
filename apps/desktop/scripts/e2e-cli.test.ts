@@ -149,7 +149,7 @@ describe("E2E CLI", () => {
   });
 
   it("checks video prerequisites before build and records visible capture intent", async () => {
-    const result = runCli(["smoke", "--video"], {
+    const result = runCli(["smoke", "--video", "--display=desktop"], {
       version: `opencode2 v${version}`,
       videoMissing: true,
     });
@@ -184,7 +184,7 @@ describe("E2E CLI", () => {
   });
 
   it("rejects a version prefix match before Electron or build", () => {
-    const result = runCli(["smoke"], { version: `opencode2 v${version}0` });
+    const result = runCli(["smoke", "--display=desktop"], { version: `opencode2 v${version}0` });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(`OpenCode ${version} is required`);
     expect(result.stderr).toContain("OPENCODE_BIN");
@@ -192,7 +192,7 @@ describe("E2E CLI", () => {
   });
 
   it("accepts the real CLI's version output before resolving Electron", () => {
-    const result = runCli([], { version: `opencode2 v${version}` });
+    const result = runCli(["--display=desktop"], { version: `opencode2 v${version}` });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("FORBIDDEN: electron");
     expect(result.stderr).not.toContain("FORBIDDEN: spawn");
@@ -208,7 +208,9 @@ describe("E2E CLI", () => {
   ])(
     "records host-window visibility for $args without a display subprocess",
     async ({ args, hidden, inactive }) => {
-      const result = runCli(["smoke", ...args], { version: `opencode2 v${version}` });
+      const result = runCli(["smoke", "--display=desktop", ...args], {
+        version: `opencode2 v${version}`,
+      });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("FORBIDDEN: electron");
       expect(result.stderr).not.toContain("FORBIDDEN: spawn");
@@ -223,7 +225,7 @@ describe("E2E CLI", () => {
   );
 
   it("retains early build failure metadata and both console streams without launching a service", async () => {
-    const result = runCli(["smoke", "--inspect-on-failure"], {
+    const result = runCli(["smoke", "--inspect-on-failure", "--display=desktop"], {
       version: `opencode2 v${version}`,
       buildFailure: true,
     });
@@ -262,7 +264,7 @@ describe("E2E CLI", () => {
   });
 
   it("reports uncertain cleanup after ensure rejects even when registered-service stop succeeds", async () => {
-    const result = runCli(["smoke", "--inspect-on-failure"], {
+    const result = runCli(["smoke", "--inspect-on-failure", "--display=desktop"], {
       version: `opencode2 v${version}`,
       serviceFailure: true,
     });

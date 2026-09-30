@@ -160,7 +160,7 @@ jobs:
           test -x "/opt/$product/$package"
           # Non-root, real installed executable; no --no-sandbox or global policy changes.
           dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' \
-            bun run test:e2e -- smoke --executable "/opt/$product/$package"
+            bun run test:e2e -- smoke --display=desktop --executable "/opt/$product/$package"
           cleanup
           trap - EXIT
           test ! -e "/opt/$product"

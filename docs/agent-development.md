@@ -53,10 +53,13 @@ interrupt other tasks. E2E uses a separate service and never needs to replace it
 | Visual layout, keyboard or focus             | Matching visible E2E or native inspection              |
 | Build configuration or preload bundling      | Build plus relevant bundle-contract tests              |
 
-Run commands from the repository root unless noted:
+Finish the planned file edits before running routine validation. Pass all touched
+files to one lint invocation and one final formatting check, rather than running
+them separately after each file. Run commands from the repository root unless noted:
 
 ```sh
-vp check --fix apps/desktop/path/to/changed-file.ts
+vp check --no-fmt apps/desktop/path/to/changed-file.ts
+vp fmt --check --ignore-path .formatignore apps/desktop/path/to/changed-file.ts
 bun run --cwd apps/desktop test src/path/to/affected.test.ts
 bun run typecheck
 bun run test:e2e --help
@@ -67,6 +70,32 @@ bun run test:e2e -- smoke
 Don't use `bun test` here. The test script runs Vitest with the renderer aliases,
 build constants, and DOM environment. Don't default to `bun run check` during each
 edit either; it includes repository-wide checks and the whole unit suite.
+
+The root `opencode.json` enables OpenCode's native formatter hook for this repo.
+After `write`, `edit`, or `patch`, matching files run through
+`vp fmt --ignore-path .formatignore <file>`. Start the session at the repo root and
+keep `vp` on the OpenCode service's PATH. Other JS formatter definitions are
+disabled so they cannot bypass Vite+.
+
+- After the planned edits are complete, use `vp check --no-fmt <files>` once for
+  lint diagnostics across all touched files without another formatting pass.
+- When lint autofixes are needed, run `vp check --fix <files>`. A formatting pass
+  during autofixing is fine; keep the output visible to the agent.
+- Shell commands, generators and other CLI edits bypass the hook. Format their
+  changed files together with `vp fmt --ignore-path .formatignore <files>` after
+  the edits are complete.
+  Do the same if the hook is unavailable or fails.
+- Before finishing, run the non-mutating formatting check above on changed files
+  covered by the formatter, plus the typechecks and tests warranted by the change.
+  Keep `.formatignore` exclusions; auto-formatting does not replace validation.
+
+If validation needs further edits, finish those fixes and rerun only the affected
+checks. Earlier checks are useful for a specific debugging question or risky
+change, not as a default after every edit. Native auto-formatting still runs
+after each matching edit; this batching applies to agent-triggered validation.
+
+Keep linting out of the automatic formatter hook: OpenCode discards its command
+output and does not include formatter success or failure in the patch reply.
 
 Keep tests that catch a realistic behavioral regression. Tests that search source
 text for classes or restate constants don't prove rendering or runtime behavior.
@@ -87,10 +116,12 @@ Use that exact renderer target. Electron doesn't support the
 new-target command that browser-level CDP connections may issue. Add `--visible`
 to show the window without taking focus. Stop the retained command with Ctrl-C.
 
-E2E uses the host display with a hidden window by default; it does not start a
-private display server. `--visible` shows an inactive window and `--focus` also
-requests keyboard focus. Visible windows may reflow a tiling desktop. Performance
-and showcase modes also show the window; see [desktop testing](desktop-testing.md).
+Linux E2E defaults to a private headless Weston display and shows the app there,
+without touching your desktop. Install Weston before running it. Use
+`--display=desktop --visible` explicitly for a window on your actual desktop;
+`--focus` also requests keyboard focus on the selected display. Other platforms
+retain the hidden host-display default. Private runs use software compositor
+rendering, not representative GPU performance; see [desktop testing](desktop-testing.md).
 
 Failed runs and `--keep` runs retain artifacts under the primary checkout:
 

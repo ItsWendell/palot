@@ -58,7 +58,8 @@ export class E2ERun {
     processes: ProcessInfo[];
     failure?: Failure;
   } & Discovery;
-  private releases: Array<{ resource: string; close: () => Promise<void> }> = [];
+  private releases: Array<{ resource: string; close: () => Promise<void>; cleanupStage: number }> =
+    [];
   private closing?: Promise<void>;
   private stopRequested = false;
   private inspecting = false;
@@ -157,6 +158,7 @@ export class E2ERun {
     resource: string,
     start: () => Promise<T>,
     stop: (value: T | undefined) => Promise<void>,
+    cleanupStage = 0,
   ): Promise<T> {
     this.check();
     const pending = Promise.resolve().then(() => {
@@ -166,6 +168,7 @@ export class E2ERun {
     let released: Promise<void> | undefined;
     this.releases.push({
       resource,
+      cleanupStage,
       close: () =>
         (released ??= (async () => {
           const value = await pending.catch(() => undefined);
@@ -183,6 +186,7 @@ export class E2ERun {
     command: string,
     args: string[],
     options: SpawnOptions = {},
+    cleanupStage = 0,
   ): {
     child: ChildProcess;
     completed: Promise<void>;
@@ -230,6 +234,7 @@ export class E2ERun {
     void completed.catch(() => undefined);
     this.releases.push({
       resource: `${name} process group (leader PID ${child.pid ?? "unavailable"})`,
+      cleanupStage,
       close: async () => {
         let stopping = false;
         let forced = false;
@@ -297,17 +302,27 @@ export class E2ERun {
     this.state.phase = "cleanup";
     this.state.cleanup.status = "running";
     this.publish();
-    const results = await Promise.all(
-      this.releases.map(async (release) => {
-        try {
-          await release.close();
-          return [];
-        } catch (error) {
-          return [{ resource: release.resource, ...cleanupError(error) }];
-        }
-      }),
+    // Most resources close concurrently. Display teardown is ordered: Electron must
+    // exit before Weston, and Weston before its socket directory is removed.
+    const stages = [...new Set(this.releases.map((release) => release.cleanupStage))].sort(
+      (a, b) => a - b,
     );
-    this.state.cleanup.errors = results.flat();
+    this.state.cleanup.errors = [];
+    for (const stage of stages) {
+      const results = await Promise.all(
+        this.releases
+          .filter((release) => release.cleanupStage === stage)
+          .map(async (release) => {
+            try {
+              await release.close();
+              return [];
+            } catch (error) {
+              return [{ resource: release.resource, ...cleanupError(error) }];
+            }
+          }),
+      );
+      this.state.cleanup.errors.push(...results.flat());
+    }
     if (this.publicationError)
       this.state.cleanup.errors.push({
         resource: "instance manifest",
