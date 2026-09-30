@@ -134,9 +134,10 @@ bun run test:e2e -- usage --keep
 
 `browser-native` enables Experimental Browser in an isolated Palot profile, attaches the real
 OpenCode 2.0.19 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
-It checks the returned snapshot, the session workbench address bar, rejection of an out-of-root
-`file://` URL, and tab-URL restoration after detach/reattach when the setting changes. It does not
-test an external server, service reconnect, or a packaged Lighthouse dependency.
+It checks the returned snapshot, Lighthouse category scores and JSON/HTML reports, the session
+workbench address bar, rejection of an out-of-root `file://` URL, and tab-URL restoration after
+detach/reattach when the setting changes. Use `--executable` to exercise the packaged Lighthouse
+dependency. It does not test an external server or service reconnect.
 
 The scenario also checks hidden page state, absence of the app bridge/Node globals, stable guest
 IDs through settings and session switches, browser/menu hit-testing, resizing and page zoom,

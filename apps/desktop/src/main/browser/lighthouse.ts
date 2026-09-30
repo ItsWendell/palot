@@ -16,12 +16,22 @@ export async function audit(
     targetInfo: { targetId: string };
   };
   const sessions = new Map<string, ReturnType<typeof session>>();
-  function session(id: string) {
+  function session(id: string, root = false) {
     const emitter = new EventEmitter();
     const value = Object.assign(emitter, {
       id: () => id,
-      send: (method: string, params?: object) =>
-        cdp.send(method as Parameters<Cdp["send"]>[0], params, id),
+      send: async (method: string, params?: object) => {
+        const result = await cdp.send(method as Parameters<Cdp["send"]>[0], params, id);
+        // Electron exposes the audited guest as a webview. Lighthouse accepts
+        // page targets but otherwise uses the same page-domain CDP commands.
+        // Normalize only this guest's root, not arbitrary attached targets.
+        if (root && method === "Target.getTargetInfo") {
+          const info = result as { targetInfo: { type: string } };
+          if (info.targetInfo.type === "webview")
+            return { ...info, targetInfo: { ...info.targetInfo, type: "page" } };
+        }
+        return result;
+      },
       detach: async () => {
         sessions.delete(id);
         await contents.debugger.sendCommand("Target.detachFromTarget", { sessionId: id });
@@ -46,7 +56,7 @@ export async function audit(
       targetId: info.targetInfo.targetId,
       flatten: true,
     })) as { sessionId: string };
-    const root = session(attached.sessionId);
+    const root = session(attached.sessionId, true);
     // Lighthouse's snapshot driver uses only url() and target().createCDPSession().
     // Adapt that narrow boundary to Electron instead of exposing a browser-wide
     // Puppeteer connection or emulating unsupported Browser/Target commands.

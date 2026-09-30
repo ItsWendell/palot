@@ -36,9 +36,9 @@ This remains an experimental pre-release, not a supported stable release.
 ### Testing
 
 - Added isolated native scenarios for workspace previews, review comments and
-  turn changes, workbench resizing, browser popups/recovery and HTTP profiles,
+  turn changes, workbench resizing, browser audits/popups/recovery and HTTP profiles,
   plus usage-comparison assertions. Linux E2E defaults to a private Weston display.
-- Browser scenarios do not qualify packaged Lighthouse, SSH browser transport,
+- Browser scenarios do not qualify SSH browser transport,
   external-network OAuth/HTTPS login or cross-window stress behavior.
 
 ## 0.12.0 rewrite baseline

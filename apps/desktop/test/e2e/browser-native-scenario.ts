@@ -71,7 +71,8 @@ export function createBrowserNativeScenario(transport: "local" | "http"): Scenar
         await tools.browser.tabs.focus({tabID:hidden.id});
         await tools.browser.tabs.focus({tabID:tab.id});
         const retained = await tools.browser.evaluate({tabID:hidden.id,script:'({marker:globalThis.__palotRetention,bridge:typeof globalThis.palot,node:typeof globalThis.require})'});
-        return {snapshot:await tools.browser.snapshot({tabID: tab.id}),retained};`,
+        const audit = await tools.browser.lighthouse({tabID: tab.id});
+        return {snapshot:await tools.browser.snapshot({tabID: tab.id}),retained,audit};`,
       });
       llm.text("Browser inspection complete.");
       llm.tool("execute", {
@@ -173,6 +174,19 @@ export function createBrowserNativeScenario(transport: "local" | "http"): Scenar
           bridge: "undefined",
           node: "undefined",
         });
+        expect(JSON.parse(output.text).audit.scores).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: "accessibility", score: expect.any(Number) }),
+            expect.objectContaining({ id: "seo", score: expect.any(Number) }),
+            expect.objectContaining({ id: "best-practices", score: expect.any(Number) }),
+          ]),
+        );
+        expect(JSON.parse(output.text).audit.files).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name: "lighthouse.json" }),
+            expect.objectContaining({ name: "lighthouse.html" }),
+          ]),
+        );
         expect(llm.scriptedCalls()).toBe(2);
         const addressBar = page.getByRole("textbox", { name: "Browser address" });
         await expect(addressBar).toHaveValue(address);
