@@ -107,6 +107,27 @@ describe("workbench persistence", () => {
     });
   });
 
+  it("restores one files browser per workspace across panes", () => {
+    const tab = {
+      id: "files",
+      kind: "workspace-files",
+      pinned: true,
+      resource: { profileID: "profile", location: { directory: "/repo", workspaceID: "ws" } },
+    };
+    const parsed = parseWorkbenchState({
+      version: 1,
+      scopes: {
+        "profile\u0000session": {
+          updatedAt: 5,
+          right: { requestedOpen: true, activeTabID: "files", tabs: [tab] },
+          bottom: { requestedOpen: true, activeTabID: "copy", tabs: [{ ...tab, id: "copy" }] },
+        },
+      },
+    });
+    expect(parsed.scopes["profile\u0000session"]?.right.tabs).toEqual([tab]);
+    expect(parsed.scopes["profile\u0000session"]?.bottom.tabs).toEqual([]);
+  });
+
   it("collapses persisted working and branch reviews into one changes tab", () => {
     const parsed = parseWorkbenchState({
       version: 1,
@@ -153,5 +174,54 @@ describe("workbench persistence", () => {
         }),
       ],
     });
+  });
+
+  it("restores distinct turn diffs and rejects turns without a user message", () => {
+    const resource = {
+      profileID: "profile",
+      location: { directory: "/repo" },
+      sessionID: "session",
+      userMessageID: "user-1",
+    };
+    const parsed = parseWorkbenchState({
+      version: 1,
+      scopes: {
+        "profile\u0000session": {
+          updatedAt: 7,
+          right: {
+            requestedOpen: true,
+            activeTabID: "turn-1",
+            tabs: [
+              { id: "turn-1", kind: "turn-diff", pinned: false, resource },
+              {
+                id: "bad",
+                kind: "turn-diff",
+                pinned: false,
+                resource: { ...resource, userMessageID: "" },
+              },
+            ],
+          },
+          bottom: {
+            requestedOpen: true,
+            activeTabID: "turn-2",
+            tabs: [
+              {
+                id: "turn-2",
+                kind: "turn-diff",
+                pinned: false,
+                resource: { ...resource, userMessageID: "user-2" },
+              },
+              { id: "duplicate", kind: "turn-diff", pinned: false, resource },
+            ],
+          },
+        },
+      },
+    });
+    expect(parsed.scopes["profile\u0000session"]?.right.tabs.map((tab) => tab.id)).toEqual([
+      "turn-1",
+    ]);
+    expect(parsed.scopes["profile\u0000session"]?.bottom.tabs.map((tab) => tab.id)).toEqual([
+      "turn-2",
+    ]);
   });
 });

@@ -18,7 +18,7 @@ const project = (id: string, name = id): Project => ({
   canonical: `/repos/${id}`,
   name,
   sandboxes: [],
-  time: { created: 1, updated: 1 },
+  time: { created: 1, updated: 1, active: 1 },
 });
 
 const projectRecord = (id: string, name = id): OpenCodeProjectRecord => ({

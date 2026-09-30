@@ -1,5 +1,5 @@
 import type { FileDiffInfo } from "@opencode/client";
-import type { CodeViewItem } from "@pierre/diffs";
+import type { CodeViewItem, SelectedLineRange } from "@pierre/diffs";
 import type { GitStatusEntry } from "@pierre/trees";
 import { CodeView, type CodeViewHandle } from "@pierre/diffs/react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
@@ -38,6 +38,7 @@ import { useVcsInfo } from "../../hooks/use-vcs-info";
 import { useWorkbenchCommands } from "../../atoms/workbench";
 import type { WorkbenchScope } from "../../lib/workbench-tabs";
 import { resolveFileDiff } from "../../lib/file-diffs";
+import { canCommentOnRange } from "../../lib/review-comments";
 import { cn } from "../../lib/cn";
 import { writeClipboardText } from "../../lib/clipboard";
 import { pierreReviewTheme, pierreViewerStyle } from "../file-viewer-theme";
@@ -47,6 +48,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ReviewBasePicker, ReviewBaseStatus } from "./review-base-picker";
+import { ReviewCommentEditor, useReviewComments } from "../review-comment-editor";
 
 const treeStyle = {
   height: "100%",
@@ -83,6 +85,8 @@ export function ChangesTab({
   active?: boolean;
 }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
+  const review = useReviewComments(tab.resource.profileID, tab.resource.sourceSessionID);
+  const [selection, setSelection] = useState<{ id: string; range: SelectedLineRange } | null>(null);
   const [expandUnchanged, setExpandUnchanged] = useState(false);
   const modeLabel = tab.resource.mode === "branch" ? "branch" : "working";
   const query = useLocationDiffs(
@@ -389,6 +393,20 @@ export function ChangesTab({
             ref={codeViewRef}
             containerRef={setCodeViewContainer}
             items={items}
+            selectedLines={review.enabled ? selection : undefined}
+            onSelectedLinesChange={
+              review.enabled
+                ? (next) => {
+                    setSelection(
+                      next &&
+                        canCommentOnRange(next.range) &&
+                        items.some((item) => item.id === next.id && item.type === "diff")
+                        ? next
+                        : null,
+                    );
+                  }
+                : undefined
+            }
             options={{
               ...pierreReviewTheme,
               theme: appearance.codeThemePair,
@@ -403,6 +421,7 @@ export function ChangesTab({
               lineDiffType: "word",
               lineHoverHighlight: "line",
               stickyHeaders: true,
+              enableLineSelection: review.enabled,
             }}
             className="size-full overflow-auto"
             style={pierreViewerStyle}
@@ -525,6 +544,18 @@ export function ChangesTab({
           />
         </div>
       </div>
+      {review.enabled && selection && diffByPath.has(selection.id) ? (
+        <ReviewCommentEditor
+          key={`${selection.id}:${selection.range.start}:${selection.range.end}:${selection.range.side}`}
+          path={selection.id}
+          range={selection.range}
+          onSave={(text) => {
+            review.add(selection.id, selection.range, text);
+            setSelection(null);
+          }}
+          onCancel={() => setSelection(null)}
+        />
+      ) : null}
     </div>
   );
 }

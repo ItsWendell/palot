@@ -34,6 +34,20 @@ const api: PalotApi = {
   hasStoredAppearancePreferences: hasStoredAppearancePreferencesArgument(process.argv),
   reducedTransparency: process.argv.includes(REDUCED_TRANSPARENCY_ARGUMENT),
   chromeTier: initialChromeTier(),
+  browserRegister: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserRegister, input),
+  browserLayout: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserLayout, input),
+  browserCommand: (bindingID, command, pane) =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserCommand, bindingID, command, pane),
+  browserPageControl: (bindingID, tabID, control) =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserPageControl, bindingID, tabID, control),
+  browserClearData: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserClearData, input),
+  browserClose: (bindingID) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, bindingID),
+  onBrowserEvent: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) =>
+      listener(value);
+    ipcRenderer.on(IPC_CHANNELS.browserEvent, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.browserEvent, handler);
+  },
   loadAppearance: () => ipcRenderer.invoke(IPC_CHANNELS.appearanceLoad),
   updateAppearance: (input) => ipcRenderer.invoke(IPC_CHANNELS.appearanceUpdate, input),
   onAppearanceChanged: (listener) => {

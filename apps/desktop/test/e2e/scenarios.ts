@@ -19,6 +19,8 @@ import {
 } from "./streaming-stability.ts";
 import { processPickerScenario } from "./process-picker-scenario.ts";
 import { reviewBaseScenario } from "./review-base-scenario.ts";
+import { reviewCommentsScenario } from "./review-comments-scenario.ts";
+import { browserNativeHttpScenario, browserNativeScenario } from "./browser-native-scenario.ts";
 import { projectSettingsScenario } from "./project-settings-scenario.ts";
 import { streamingPatchScenario } from "./streaming-patch-scenario.ts";
 import type { TestLLMServer } from "./test-llm-server";
@@ -29,9 +31,11 @@ import { composerPermissionsScenario } from "./composer-permissions-scenario.ts"
 import { composerContextScenario } from "./composer-context-scenario.ts";
 import { themePresetsScenario } from "./theme-presets-scenario.ts";
 import { markdownRichScenario } from "./markdown-rich-scenario.ts";
+import { workspacePreviewScenario } from "./workspace-preview-scenario.ts";
 import { assertCommandPaletteMaterial } from "./appearance-accessibility.ts";
 import { linuxDesktopScenario } from "./linux-desktop-scenario.ts";
 import { compactWindowsScenario } from "./compact-windows-scenario.ts";
+import { workbenchResizeScenario } from "./workbench-resize-scenario.ts";
 import { sessionWindowDragScenario } from "./session-window-drag-scenario.ts";
 import { sshConnectionScenario } from "./ssh-connection-scenario.ts";
 import { remoteAttachmentsScenario } from "./remote-attachments-scenario.ts";
@@ -169,6 +173,7 @@ export const scenarios = {
   "settings-source-updates": sourceUpdatesScenario,
   "theme-presets": themePresetsScenario,
   "markdown-rich": markdownRichScenario,
+  "workspace-preview": workspacePreviewScenario,
   "composer-context": composerContextScenario,
   "beacon-motion": beaconMotionScenario,
   "startup-attention": startupAttentionScenario,
@@ -182,6 +187,7 @@ export const scenarios = {
   "cold-session-navigation": coldSessionNavigationScenario,
   "linux-desktop": linuxDesktopScenario,
   "compact-windows": compactWindowsScenario,
+  "workbench-resize": workbenchResizeScenario,
   "session-window-drag": sessionWindowDragScenario,
   ...workflowScenarios,
   "pairing-address": pairingAddressScenario,
@@ -198,6 +204,9 @@ export const scenarios = {
   "subagent-requests": subagentRequestsScenario,
   "process-picker": processPickerScenario,
   "review-base": reviewBaseScenario,
+  "review-comments": reviewCommentsScenario,
+  "browser-native": browserNativeScenario,
+  "browser-native-http": browserNativeHttpScenario,
   "project-settings": projectSettingsScenario,
   "streaming-patch": streamingPatchScenario,
   "accessibility-keyboard": {
@@ -780,7 +789,7 @@ export const scenarios = {
         .getByText(/ to .*Updated/);
       await rangeDescription.waitFor();
       const initialRangeDescription = await rangeDescription.textContent();
-      await page.getByText("Reported model cost", { exact: true }).waitFor();
+      await page.getByText("Reported cost", { exact: true }).waitFor();
       await page.getByText("Daily activity", { exact: true }).waitFor();
       await page.getByText("Models", { exact: true }).waitFor();
       await page.getByText("Tool reliability", { exact: true }).waitFor();
@@ -806,12 +815,20 @@ export const scenarios = {
         .toMatch(/[1-9]/);
       await page.screenshot({ path: join(runRoot, "usage-dashboard.png") });
 
+      await page.getByRole("button", { name: "Compare periods" }).click();
+      const comparison = page.getByRole("region", { name: "Period comparison" });
+      await expect(comparison.getByText("Compared with previous period")).toBeVisible();
+      await expect(comparison.getByText("New activity").first()).toBeVisible();
+      await page.screenshot({ path: join(runRoot, "usage-comparison.png") });
+      await page.getByRole("button", { name: "Compare periods" }).click();
+      await expect(comparison).toHaveCount(0);
+
       await page.getByRole("button", { name: "Show details" }).click();
       await page.getByText("No per-tool usage in this range.", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Hide details" }).click();
 
-      await page.getByRole("button", { name: "7 days" }).click();
-      await expect(page.getByText("Reported model cost", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "30 days" }).click();
+      await expect(page.getByText("Reported cost", { exact: true })).toBeVisible();
       await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0);
       await expect
         .poll(() =>
@@ -819,7 +836,7 @@ export const scenarios = {
             () => (globalThis as unknown as { location: { hash: string } }).location.hash,
           ),
         )
-        .toContain("days=7");
+        .toContain("days=30");
       await expect
         .poll(async () => {
           const description = await rangeDescription.textContent();
@@ -834,7 +851,7 @@ export const scenarios = {
       await page.getByLabel("Current task").waitFor();
       await page.getByRole("button", { name: "Open Palot menu" }).click();
       await page.getByRole("menuitem", { name: "Usage" }).click();
-      await page.getByText("Reported model cost", { exact: true }).waitFor();
+      await page.getByText("Reported cost", { exact: true }).waitFor();
       await expect(page.getByRole("menuitem", { name: "Usage" })).toHaveCount(0);
       await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0);
 
@@ -842,6 +859,11 @@ export const scenarios = {
       await expect(page.getByRole("heading", { name: "Usage", level: 1 })).toBeVisible();
       await expect(page.getByRole("button", { name: "Refresh usage" })).toBeVisible();
       await page.screenshot({ path: join(runRoot, "usage-dashboard-minimum.png") });
+      await page.getByRole("button", { name: "Compare periods" }).click();
+      const compactComparison = page.getByRole("region", { name: "Period comparison" });
+      await expect(compactComparison.getByText("New activity").first()).toBeVisible();
+      await compactComparison.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(runRoot, "usage-comparison-minimum.png") });
 
       await page.getByRole("button", { name: "Open Palot menu" }).click();
       await page.getByRole("menuitem", { name: "Settings" }).click();

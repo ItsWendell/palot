@@ -1,6 +1,12 @@
-import type { ModelInfo, ProviderInfo, SessionInfo, SessionMessageInfo } from "@opencode/client";
+import type {
+  ModelInfo,
+  Project,
+  ProviderInfo,
+  SessionInfo,
+  SessionMessageInfo,
+} from "@opencode/client";
 import { describe, expect, it } from "vitest";
-import { mapMessage, mapModel, mapProvider, mapSession } from "./opencode-mappers";
+import { mapMessage, mapModel, mapProject, mapProvider, mapSession } from "./opencode-mappers";
 
 describe("OpenCode session mapping", () => {
   it("preserves default, full, and custom session rules without sharing mutable rules", () => {
@@ -43,6 +49,20 @@ describe("OpenCode session mapping", () => {
     expect(mapSession({ ...session })).not.toBe(mapSession(session));
   });
 
+  it("keeps session metadata through the renderer projection", () => {
+    const source: SessionInfo = {
+      id: "session-metadata",
+      projectID: "project-1",
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: 1, updated: 2 },
+      location: { directory: "/repo" },
+      metadata: { label: "review" },
+    };
+    expect(mapSession(source).metadata).toEqual({ label: "review" });
+    expect(mapSession(source).metadata).not.toBe(source.metadata);
+  });
+
   it("preserves staged revert state and file changes", () => {
     const session = {
       id: "session-1",
@@ -71,6 +91,18 @@ describe("OpenCode session mapping", () => {
       snapshot: "snapshot-1",
       files: [{ file: "src/app.ts", additions: 1, deletions: 1 }],
     });
+  });
+});
+
+describe("OpenCode project mapping", () => {
+  it("projects recent activity separately from updated time", () => {
+    const project: Project = {
+      id: "project-1",
+      canonical: "/repo",
+      sandboxes: [],
+      time: { created: 1, updated: 2, active: 3 },
+    };
+    expect(mapProject(project)).toMatchObject({ updatedAt: 2, activeAt: 3 });
   });
 });
 

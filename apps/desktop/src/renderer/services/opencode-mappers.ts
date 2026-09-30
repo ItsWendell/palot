@@ -75,6 +75,7 @@ export function mapProject(project: Project): PalotProject {
     sandboxes: [...project.sandboxes],
     vcs: project.vcs ? json(project.vcs) : null,
     updatedAt: typeof project.time.updated === "number" ? project.time.updated : null,
+    activeAt: project.time.active,
   };
   projectCache.set(project, mapped);
   return mapped;
@@ -90,6 +91,7 @@ export function mapSession(session: SessionInfo): PalotSession {
     title: session.title ?? null,
     agent: session.agent ?? null,
     model: session.model ? { ...session.model } : null,
+    ...(session.metadata === undefined ? {} : { metadata: { ...session.metadata } }),
     ...(session.permissions === undefined
       ? {}
       : { permissions: mapPermissions(session.permissions) }),

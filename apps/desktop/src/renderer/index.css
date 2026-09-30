@@ -619,6 +619,17 @@
   background-color: var(--background);
 }
 
+.palot-workbench-splitter::before {
+  position: absolute;
+  top: calc(var(--shell-header-height) - 1px);
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+  content: "";
+}
+
 :root[data-platform="linux"][data-linux-translucent="true"]:not([data-reduced-transparency="true"])
   :is(body, #root, [data-shell-panel="center"]) {
   background: transparent;
@@ -690,9 +701,70 @@
   -webkit-mask-image: linear-gradient(to top, black, transparent);
 }
 
+.palot-workbench-tab-separator::before {
+  position: absolute;
+  top: 25%;
+  left: -3px;
+  width: 1px;
+  height: 50%;
+  background: var(--border);
+  content: "";
+}
+
+.group\/tab button:focus-visible svg:not(:last-child) {
+  opacity: 0;
+}
+
+.group\/tab button:focus-visible svg:last-child {
+  opacity: 1;
+}
+
+.palot-workbench-tab-fade {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.palot-workbench-tab-fade-left {
+  left: 0;
+  background: linear-gradient(to right, var(--content-header-background-opaque), transparent);
+}
+
+.palot-workbench-tab-fade-right {
+  right: 0;
+  background: linear-gradient(to left, var(--content-header-background-opaque), transparent);
+}
+
+[data-scroll-left="true"] > .palot-workbench-tab-fade-left,
+[data-scroll-right="true"] > .palot-workbench-tab-fade-right {
+  opacity: 1;
+}
+
+:root:is(
+    [data-chrome-tier="liquid-glass"],
+    [data-chrome-tier="vibrancy"]
+  )[data-content-translucent="true"]:not([data-reduced-transparency="true"])
+  .palot-workbench-tab-fade-left {
+  background: linear-gradient(to right, var(--content-header-background-translucent), transparent);
+}
+
+:root:is(
+    [data-chrome-tier="liquid-glass"],
+    [data-chrome-tier="vibrancy"]
+  )[data-content-translucent="true"]:not([data-reduced-transparency="true"])
+  .palot-workbench-tab-fade-right {
+  background: linear-gradient(to left, var(--content-header-background-translucent), transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .palot-onboarding-surface,
-  .palot-scroll-fade {
+  .palot-scroll-fade,
+  .palot-workbench-tab-fade {
     transition: none;
   }
 

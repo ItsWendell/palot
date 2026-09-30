@@ -264,7 +264,9 @@ export function OpenCodeReleaseSettings({
                 </div>
               ) : status.checkedAt ? (
                 <p className="text-compact text-muted-foreground">
-                  No release offered for this channel.
+                  {status.channel === "beta"
+                    ? "No compatible Beta available. The official Beta release is older than Palot supports. Check Stable or try again later."
+                    : "No compatible Stable release available. The official Stable release is older than Palot supports. Try again later."}
                 </p>
               ) : null}
               <p className="text-meta text-muted-foreground">

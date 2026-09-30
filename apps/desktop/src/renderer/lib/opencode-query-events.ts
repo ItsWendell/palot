@@ -174,6 +174,9 @@ export function openCodeInvalidationKeys(connectionID: string, event: PalotEvent
     keys.push(openCodeKeys.transcript(connectionID, event.data.sessionID));
     keys.push(openCodeKeys.sessionActivity(connectionID));
   }
+  if (event.type === "session.metadata.updated") {
+    keys.push(openCodeKeys.session(connectionID, event.data.sessionID));
+  }
   if (event.type === "session.instructions.updated") {
     keys.push(openCodeKeys.sessionInstructionEntries(connectionID, event.data.sessionID));
     keys.push(openCodeKeys.sessionContext(connectionID, event.data.sessionID));

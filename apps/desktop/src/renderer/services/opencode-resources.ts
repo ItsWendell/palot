@@ -300,6 +300,19 @@ export async function listDiffs(
   return response.data;
 }
 
+/** `from` identifies the user message starting this turn; omitting `to` stops at the next turn. */
+export async function listTurnDiffs(
+  sessionID: string,
+  userMessageID: string,
+  requestSignal?: AbortSignal,
+  connectionID?: string,
+) {
+  return openCodeClient(connectionID).session.diff(
+    { sessionID, from: userMessageID },
+    { signal: openCodeRequestSignal(requestSignal) },
+  );
+}
+
 export async function listModels(
   input: ListModelsInput,
   requestSignal?: AbortSignal,
@@ -448,10 +461,25 @@ export async function sendPrompt(
 ): Promise<PromptReceipt> {
   const client = openCodeClient();
   const { inlineFiles, ...delivery } = attachmentPrompt(input.text, input);
-  const session = input.fileReferences?.length ? await sessionLocation(input.sessionID) : null;
+  const session =
+    input.fileReferences?.length || input.comments?.length
+      ? await sessionLocation(input.sessionID)
+      : null;
   const files = [
     ...inlineFiles.map((file) => ({ uri: file.uri, name: file.name })),
     ...(session ? promptFiles(session.directory, input.fileReferences ?? []) : []),
+    ...(session
+      ? (input.comments ?? []).map((comment) => {
+          const path = comment.path.startsWith("/")
+            ? comment.path
+            : `${session.directory.replace(/\/+$/, "")}/${comment.path}`;
+          const { startLine, endLine } = comment.selection;
+          return {
+            uri: `file://${path.split("/").map(encodeURIComponent).join("/")}?start=${startLine}&end=${endLine}`,
+            name: comment.path.split("/").at(-1) ?? comment.path,
+          };
+        })
+      : []),
   ];
   const pending = await client.session.prompt(
     {

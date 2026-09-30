@@ -10,6 +10,7 @@ import {
   nativeImage,
   nativeTheme,
   shell,
+  webContents,
   type WebContents,
   type IpcMainInvokeEvent,
 } from "electron";
@@ -80,6 +81,8 @@ import {
 } from "./data-recovery";
 import { closePalotDatabase } from "./database/client";
 import { tailscaleService } from "./tailscale-service";
+import type { PalotBrowserLayout, PalotBrowserRegistration } from "../shared/browser-contract";
+import { createBrowserPane, parseBrowserUserCommand } from "./browser-pane";
 
 let performanceTraceActive = false;
 const requestProxy = new OpenCodeRequestProxy({
@@ -257,6 +260,14 @@ function parsePairPayload(input: unknown): OpenCodePairPayload {
 function parsePairImport(input: unknown): OpenCodePairImportInput {
   if (!input || typeof input !== "object") throw new Error("OpenCode pairing import is invalid");
   const value = input as Record<string, unknown>;
+  if (value.link !== undefined) {
+    if (value.payload !== undefined)
+      throw new Error("Use a pairing link or reusable credentials, not both");
+    return {
+      link: v.parse(v.pipe(v.string(), v.minLength(1), v.maxLength(2_048)), value.link),
+      allowPlainHttp: v.parse(v.boolean(), value.allowPlainHttp),
+    };
+  }
   return {
     payload: parsePairPayload(value.payload),
     allowPlainHttp: v.parse(v.boolean(), value.allowPlainHttp),
@@ -449,6 +460,13 @@ function registerFocusedNative(
 }
 
 const attachmentRequests = createAttachmentRequests();
+const browserPane = createBrowserPane();
+
+function browserWindow(event: IpcMainInvokeEvent): BrowserWindow {
+  const window = BrowserWindow.fromWebContents(assertTrustedMainFrame(event));
+  if (!window) throw new Error("Browser window is unavailable");
+  return window;
+}
 
 async function withAttachmentRequest(
   event: IpcMainInvokeEvent,
@@ -506,6 +524,127 @@ function focusedPtyRuntime() {
 
 export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void {
   ipcTrust = options;
+  register(IPC_CHANNELS.browserRegister, (event, value: unknown) => {
+    const win = browserWindow(event);
+    const input = v.parse(
+      v.strictObject({
+        sessionID: identifier,
+        profileID: identifier,
+        connectionID: identifier,
+      }),
+      value,
+    ) as PalotBrowserRegistration;
+    const status =
+      options.sessionWindowScope(win)?.runtimeStatus() ?? openCodeRuntime.runtimeStatus();
+    if (
+      !status.connected ||
+      status.profileID !== input.profileID ||
+      status.connectionID !== input.connectionID
+    ) {
+      throw new Error("Browser registration requires the window's connected OpenCode profile");
+    }
+    const ownsConnection = () => {
+      try {
+        const current =
+          options.sessionWindowScope(win)?.runtimeStatus() ?? openCodeRuntime.runtimeStatus();
+        return (
+          !win.isDestroyed() &&
+          current.connected &&
+          current.profileID === input.profileID &&
+          current.connectionID === input.connectionID
+        );
+      } catch {
+        return false;
+      }
+    };
+    return browserPane.register(win, input, ownsConnection);
+  });
+  register(IPC_CHANNELS.browserLayout, (event, value: unknown) => {
+    const input = v.parse(
+      v.strictObject({
+        bindingID: identifier,
+        tabID: identifier,
+        visible: v.boolean(),
+        bounds: v.optional(
+          v.strictObject({
+            x: v.pipe(v.number(), v.finite()),
+            y: v.pipe(v.number(), v.finite()),
+            width: v.pipe(v.number(), v.finite()),
+            height: v.pipe(v.number(), v.finite()),
+          }),
+        ),
+        background: v.optional(v.string()),
+        radius: v.optional(v.pipe(v.number(), v.finite())),
+      }),
+      value,
+    ) as PalotBrowserLayout;
+    return browserPane.layout(browserWindow(event), input);
+  });
+  register(
+    IPC_CHANNELS.browserCommand,
+    (event, bindingID: unknown, value: unknown, pane: unknown) => {
+      const win = browserWindow(event);
+      const id = v.parse(identifier, bindingID);
+      const command = parseBrowserUserCommand(value);
+      const placement = v.parse(
+        v.optional(v.union([v.literal("right"), v.literal("bottom")])),
+        pane,
+      );
+      if (placement && command.type !== "tabs.open")
+        throw new Error("Browser placement is only valid when opening a page");
+      return browserPane.command(win, id, command, placement);
+    },
+  );
+  register(
+    IPC_CHANNELS.browserPageControl,
+    (event, bindingID: unknown, tabID: unknown, value: unknown) => {
+      const control = v.parse(
+        v.variant("type", [
+          v.strictObject({
+            type: v.literal("find"),
+            query: v.pipe(v.string(), v.maxLength(2_048)),
+            forward: v.optional(v.boolean()),
+            next: v.optional(v.boolean()),
+          }),
+          v.strictObject({ type: v.literal("find.stop") }),
+          v.strictObject({
+            type: v.literal("zoom"),
+            direction: v.union([v.literal(-1), v.literal(0), v.literal(1)]),
+          }),
+        ]),
+        value,
+      );
+      return browserPane.pageControl(
+        browserWindow(event),
+        v.parse(identifier, bindingID),
+        v.parse(identifier, tabID) as import("@opencode/plugin-browser/rpc").Browser.TabID,
+        control,
+      );
+    },
+  );
+  register(IPC_CHANNELS.browserClose, (event, bindingID: unknown) => {
+    browserPane.close(browserWindow(event), v.parse(identifier, bindingID));
+  });
+  register(IPC_CHANNELS.browserClearData, (event, value: unknown) => {
+    const win = browserWindow(event);
+    const input = v.parse(
+      v.strictObject({
+        sessionID: identifier,
+        profileID: identifier,
+        connectionID: identifier,
+      }),
+      value,
+    ) as PalotBrowserRegistration;
+    const status =
+      options.sessionWindowScope(win)?.runtimeStatus() ?? openCodeRuntime.runtimeStatus();
+    if (
+      !status.connected ||
+      status.profileID !== input.profileID ||
+      status.connectionID !== input.connectionID
+    )
+      throw new Error("Browser data can only be cleared for the window's connected profile");
+    return browserPane.clearData(win, input);
+  });
   register(IPC_CHANNELS.appearanceLoad, () => ({
     preferences: appearanceService().preferences(),
     hasStoredPreferences: appearanceService().hasStoredPreferences(),
@@ -1075,6 +1214,13 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
           }
         : null,
       openCodeTransport: openCodeRuntime.performanceMetrics(),
+      // Map only this renderer's guests, without URLs or page contents. This
+      // lets diagnostics attribute retained-page cost to Electron processes.
+      guests: webContents
+        .getAllWebContents()
+        .filter((contents) => !contents.isDestroyed() && contents.hostWebContents === event.sender)
+        .map((contents) => ({ webContentsID: contents.id, processID: contents.getOSProcessId() })),
+      hostProcessID: event.sender.getOSProcessId(),
       processes: app.getAppMetrics().map((metric) => ({
         pid: metric.pid,
         type: metric.type,
@@ -1181,4 +1327,8 @@ export function unregisterIpcHandlers(): void {
       ipcMain.removeHandler(channel);
     }
   }
+}
+
+export function shutdownBrowserPane(): Promise<void> {
+  return browserPane.dispose();
 }

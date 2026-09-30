@@ -5,6 +5,13 @@
  */
 
 import type { OpenCodeReleaseChannel, OpenCodeReleaseStatus } from "./opencode-release-contract";
+import type {
+  PalotBrowserEvent,
+  PalotBrowserLayout,
+  PalotBrowserPageControl,
+  PalotBrowserRegistration,
+  PalotBrowserUserCommand,
+} from "./browser-contract";
 import type { OpenCodeLoginStatus, OpenCodeLoginUpdateInput } from "./opencode-login-contract";
 import type {
   OpenCodeInstallationStatus,
@@ -136,17 +143,25 @@ export interface OpenCodePairPayload {
   password: string;
 }
 
-export interface OpenCodePairImportInput {
-  payload: OpenCodePairPayload;
-  allowPlainHttp: boolean;
-}
+export type OpenCodePairImportInput =
+  | { payload: OpenCodePairPayload; link?: never; allowPlainHttp: boolean }
+  | { link: string; payload?: never; allowPlainHttp: boolean };
 
-export interface OpenCodePairingInfo {
-  urls: string[];
-  username: string;
-  password: string;
-  payload: string;
-}
+export type OpenCodePairingInfo =
+  | {
+      mode: "link";
+      urls: string[];
+      code: string;
+      expiresIn: number;
+      payload: string;
+    }
+  | {
+      mode: "credentials";
+      urls: string[];
+      username: string;
+      password: string;
+      payload: string;
+    };
 
 export interface LocalOpenCodeServiceInfo {
   available: boolean;
@@ -278,6 +293,7 @@ export interface PalotProject {
   sandboxes: string[];
   vcs: JsonValue | null;
   updatedAt: number | null;
+  activeAt?: number;
 }
 
 export interface PalotModel {
@@ -880,6 +896,12 @@ export interface PromptInput {
   sessionID: string;
   id?: string;
   text: string;
+  comments?: {
+    path: string;
+    comment: string;
+    selection: { startLine: number; startChar: number; endLine: number; endChar: number };
+    origin: "review";
+  }[];
   files?: PalotFileAttachment[];
   fileReferences?: PalotPromptFileReference[];
   skillReferences?: PalotPromptSkillReference[];
@@ -1168,6 +1190,13 @@ export const IPC_CHANNELS = {
   ptyDisconnect: "palot:opencode:pty-disconnect",
   ptyEvents: "palot:opencode:pty-events",
   request: "palot:opencode:request",
+  browserRegister: "palot:browser:register",
+  browserLayout: "palot:browser:layout",
+  browserCommand: "palot:browser:command",
+  browserPageControl: "palot:browser:page-control",
+  browserClearData: "palot:browser:clear-data",
+  browserClose: "palot:browser:close",
+  browserEvent: "palot:browser:event",
   cancelRequest: "palot:opencode:cancel-request",
   pickDirectory: "palot:system:pick-directory",
   openExternalUrl: "palot:system:open-external-url",
@@ -1222,6 +1251,22 @@ export interface PalotApi {
   readonly hasStoredAppearancePreferences: boolean;
   readonly reducedTransparency: boolean;
   readonly chromeTier: WindowChromeTier;
+  browserRegister(input: PalotBrowserRegistration): Promise<string>;
+  browserLayout(input: PalotBrowserLayout): Promise<void>;
+  /** tabs.open returns its page ID so the initiating pane can place it. */
+  browserCommand(
+    bindingID: string,
+    command: PalotBrowserUserCommand,
+    pane?: "right" | "bottom",
+  ): Promise<string | void>;
+  browserPageControl(
+    bindingID: string,
+    tabID: string,
+    control: PalotBrowserPageControl,
+  ): Promise<number | void>;
+  browserClearData(input: PalotBrowserRegistration): Promise<void>;
+  browserClose(bindingID: string): Promise<void>;
+  onBrowserEvent(listener: (event: PalotBrowserEvent) => void): () => void;
   loadAppearance(): Promise<{
     preferences: AppearancePreferences;
     hasStoredPreferences: boolean;

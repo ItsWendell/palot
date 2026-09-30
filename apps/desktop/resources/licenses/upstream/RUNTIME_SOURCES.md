@@ -1,6 +1,6 @@
 # Runtime component sources
 
-Source locations for the pinned runtime artifacts and their retained notices.
+Source locations for bundled runtime artifacts and historical external-runtime notice evidence.
 
 ## Ghostty terminal WebAssembly
 
@@ -27,22 +27,33 @@ sections. Their presence here does not identify those test assets as shipped.
 `z2d-pixman.NOTICE.txt` additionally retains the complete radial-gradient
 file-level notice from z2d's `src/gradient.zig`, lines 565–589.
 
-## OpenCode 2.0.9 and Bun 1.4.2
+## OpenCode 2.0.14 and Bun 1.4.2
 
 The OpenCode executable is acquired separately from its official distributor,
-not included in Palot's desktop installers. These references identify the runtime
-pinned for Palot's integration checks.
+not included in Palot's desktop installers. These references identify retained
+OpenCode 2.0.14 artifact evidence, not the current integration-test runtime.
+The current client and release-smoke runtime are pinned in `apps/desktop/package.json`.
 
 - OpenCode publication source:
-  <https://github.com/anomalyco/opencode/tree/e50d845451afd5f584e6bf38300657e39bbaa25a>
+  <https://github.com/anomalyco/opencode/tree/e0ddc47aa4119707f35e97447aa58acb28915e51>
 - Bun runtime source:
   <https://github.com/oven-sh/bun/tree/744846f844374847c902b5e7fd59b4342a51ef99>
 - Bun's pinned WebKit/JavaScriptCore source:
   <https://github.com/oven-sh/WebKit/tree/2e2aa2290fac856d6f451ceacb58f7f5b44dd057>
 
-The [official publish run](https://github.com/anomalyco/opencode/actions/runs/35422009377)
-(run number 19844) records OpenCode 2.0.9 and Bun 1.4.2 (`744846f84`), with
+The [official publish run](https://github.com/anomalyco/opencode/actions/runs/35728129096)
+(run number 19988) records OpenCode 2.0.14 and Bun 1.4.2 (`744846f84`), with
 `BUN_COMPILE_RELEASE=bun-v1.4.2` for the CLI build.
+
+The previous OpenCode 2.0.11 source remains available at
+<https://github.com/anomalyco/opencode/tree/1464545665ba892c2d2886f4456acc9a584aa156>.
+Its [publish run](https://github.com/anomalyco/opencode/actions/runs/35499592616)
+(run number 19899) used the same Bun release.
+
+The previous OpenCode 2.0.9 source remains available at
+<https://github.com/anomalyco/opencode/tree/e50d845451afd5f584e6bf38300657e39bbaa25a>.
+Its [publish run](https://github.com/anomalyco/opencode/actions/runs/35422009377)
+(run number 19844) used the same Bun release.
 
 The previous OpenCode 2.0.8 source remains available at
 <https://github.com/anomalyco/opencode/tree/0a6111291ece96af55b3f4d503822ba6a856791d>.

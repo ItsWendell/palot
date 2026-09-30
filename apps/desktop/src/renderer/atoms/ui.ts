@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import type { ModelRef } from "@opencode/client";
 import type { SidebarMode } from "../../shared";
+import type { BrowserSearchEngine } from "../lib/browser-address";
 import {
   emptyComposerDraft,
   normalizeComposerDraft,
@@ -56,6 +57,33 @@ export const navigationOpenAtom = persistedAtom({
   initialValue: true,
   validate: (value): value is boolean => typeof value === "boolean",
   legacyKeys: ["palot.ui.navigation-open.v1"],
+});
+export const experimentalBrowserAtom = persistedAtom({
+  key: "experimental.browser",
+  initialValue: false,
+  validate: (value): value is boolean => typeof value === "boolean",
+});
+export const browserSearchEngineAtom = persistedAtom({
+  key: "browser.search-engine",
+  initialValue: "google" as BrowserSearchEngine,
+  validate: (value): value is BrowserSearchEngine =>
+    value === "google" || value === "duckduckgo" || value === "bing",
+});
+export type BrowserLinkDestination = "external" | "browser";
+export const browserWebLinksAtom = persistedAtom({
+  key: "browser.web-links",
+  initialValue: "external" as BrowserLinkDestination,
+  validate: (value): value is BrowserLinkDestination => value === "external" || value === "browser",
+});
+export const browserLocalLinksAtom = persistedAtom({
+  key: "browser.local-links",
+  initialValue: "browser" as BrowserLinkDestination,
+  validate: (value): value is BrowserLinkDestination => value === "external" || value === "browser",
+});
+export const browserShowFullURLAtom = persistedAtom({
+  key: "browser.show-full-url",
+  initialValue: false,
+  validate: (value): value is boolean => typeof value === "boolean",
 });
 export const commandPaletteOpenAtom = atom(false);
 export const commandPaletteReturnFocusAtom = atom<HTMLElement | null>(null);

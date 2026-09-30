@@ -9,6 +9,27 @@ beforeEach(() => {
 });
 
 describe("composer contents persistence", () => {
+  it("retains a session's unsent line comments without copying them to another session", async () => {
+    const { composerStateAtomFamily } = await import("./composer-state");
+    const scope = composerScope("profile-a", "session:one");
+    const comment = {
+      id: "c1",
+      path: "src/a.ts",
+      comment: "Handle null",
+      selection: { startLine: 2, startChar: 0, endLine: 4, endChar: 0 },
+    };
+    const store = createStore();
+    store.set(composerStateAtomFamily(scope), (current) => ({ ...current, comments: [comment] }));
+    window.dispatchEvent(new Event("pagehide"));
+    vi.resetModules();
+    const reloaded = await import("./composer-state");
+    const nextStore = createStore();
+    expect(nextStore.get(reloaded.composerStateAtomFamily(scope)).comments).toEqual([comment]);
+    expect(
+      nextStore.get(reloaded.composerStateAtomFamily(composerScope("profile-a", "session:two")))
+        .comments,
+    ).toEqual([]);
+  });
   it.each(["session:duplicate", "new:project:/repo:workspace"])(
     "persists independent profile contents for %s",
     async (localScope) => {
@@ -31,10 +52,12 @@ describe("composer contents persistence", () => {
           delivery: "queue" as const,
           draft: { ...emptyComposerDraft(), text: `${profileID} edit` },
           files,
+          comments: [],
         };
         store.set(composerDraftAtomFamily(scope), draft);
         store.set(composerStateAtomFamily(scope), () => ({
           files,
+          comments: [],
           edit,
           sending: true,
           cancelingID: "same-pending-input",
@@ -50,6 +73,7 @@ describe("composer contents persistence", () => {
         expect(nextStore.get(reloadedUI.composerDraftAtomFamily(scope))).toEqual(draft);
         expect(nextStore.get(reloaded.composerStateAtomFamily(scope))).toEqual({
           files,
+          comments: [],
           edit,
           sending: false,
           cancelingID: null,
@@ -73,6 +97,7 @@ describe("composer contents persistence", () => {
           delivery: "queue",
           draft: { ...emptyComposerDraft(), text: `edit ${index}` },
           files: [],
+          comments: [],
         },
       }));
     }
@@ -118,10 +143,12 @@ describe("composer contents persistence", () => {
         command: null,
       },
       files: [{ ...file, uri: "file:///edited.txt", name: "edited.txt" }],
+      comments: [],
     };
     store.set(composerDraftAtomFamily(scope), original);
     store.set(composerStateAtomFamily(scope), () => ({
       files: [file],
+      comments: [],
       edit,
       sending: true,
       cancelingID: "canceling",
@@ -136,6 +163,7 @@ describe("composer contents persistence", () => {
     expect(nextStore.get(reloadedUI.composerDraftAtomFamily(scope))).toEqual(original);
     expect(nextStore.get(nextState)).toEqual({
       files: [file],
+      comments: [],
       edit,
       sending: false,
       cancelingID: null,
@@ -147,6 +175,7 @@ describe("composer contents persistence", () => {
     const afterDiscard = await import("./composer-state");
     expect(createStore().get(afterDiscard.composerStateAtomFamily(scope))).toEqual({
       files: [file],
+      comments: [],
       edit: null,
       sending: false,
       cancelingID: null,

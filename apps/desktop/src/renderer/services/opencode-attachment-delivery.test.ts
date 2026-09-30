@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { composerDraftFromMessage } from "../lib/composer-restoration";
 import { mapMessage } from "./opencode-mappers";
 import { attachmentPrompt } from "./opencode-attachment-delivery";
+import { reviewCommentsFromMessage } from "../lib/review-comments";
 
 const binary = {
   uri: "file:///server/uploads/archive%20%22one%22.zip",
@@ -11,6 +12,33 @@ const binary = {
 };
 
 describe("attachment delivery", () => {
+  it("delivers a comment-only prompt as an explicit note with structured metadata", () => {
+    const comments = [
+      {
+        path: "src/a b.ts",
+        comment: "Handle null.",
+        selection: { startLine: 2, startChar: 0, endLine: 4, endChar: 0 },
+        origin: "review" as const,
+      },
+    ];
+    const delivered = attachmentPrompt("", { comments });
+    expect(delivered.text).toBe(
+      "The user made the following comment regarding lines 2 through 4 of src/a b.ts: Handle null.",
+    );
+    expect(delivered.metadata?.comments).toEqual(comments);
+    expect(delivered.metadata?.displayText).toBe("");
+    const message = mapMessage({
+      id: "comment-only",
+      type: "user",
+      time: { created: 1 },
+      text: delivered.text,
+      metadata: delivered.metadata,
+    });
+    expect(composerDraftFromMessage(message).text).toBe("");
+    expect(reviewCommentsFromMessage(message)).toMatchObject([
+      { path: "src/a b.ts", comment: "Handle null." },
+    ]);
+  });
   it("delivers unsupported bytes as a quoted server path while retaining display and attachment history", () => {
     const delivered = attachmentPrompt("Inspect this", { files: [binary] });
     expect(delivered.text).toBe(

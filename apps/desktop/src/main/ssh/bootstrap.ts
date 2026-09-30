@@ -6,8 +6,11 @@ export function quote(value: string) {
 }
 
 export function requireVersion(version: string) {
-  if (!/^0\.0\.0-beta-\d+(?:\.\d+)?$/.test(version)) {
-    throw new Error("SSH requires an exact published OpenCode beta version");
+  if (
+    version.trim() !== version ||
+    !/^(?:2\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)|0\.0\.0-beta-\d+(?:\.\d+)?)$/.test(version)
+  ) {
+    throw new Error("SSH requires an exact published OpenCode 2.x or V2 beta version");
   }
   return version;
 }

@@ -107,6 +107,9 @@ export interface PalotPerformanceSnapshot {
     minimized: boolean;
   } | null;
   processes: PalotPerformanceProcessMetric[];
+  /** Guests belonging to the requesting app window only; no URLs or page data. */
+  guests?: Array<{ webContentsID: number; processID: number }>;
+  hostProcessID?: number;
   openCodeTransport: {
     receivedEvents: number;
     bufferedEvents: number;

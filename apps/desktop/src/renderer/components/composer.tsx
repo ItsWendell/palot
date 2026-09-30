@@ -75,6 +75,7 @@ import {
 } from "../lib/composer-draft";
 import { detectComposerQuery } from "../lib/composer-query";
 import { composerDraftFromMessage } from "../lib/composer-restoration";
+import { reviewCommentsFromMessage, type ReviewComment } from "../lib/review-comments";
 import { formatCommandShortcut } from "../lib/global-commands";
 import { BUILTIN_COMMANDS } from "../lib/builtin-commands";
 import { convergeMessageReceipt } from "../lib/message-reconcile";
@@ -234,6 +235,9 @@ function ComposerView({
   const { edit: activePendingInputEdit, sending, cancelingID: pendingInputEditID } = composerState;
   const draft = activePendingInputEdit?.draft ?? originalDraft;
   const files = activePendingInputEdit?.files ?? composerState.files;
+  const comments = activePendingInputEdit?.comments ?? composerState.comments;
+  const [editingCommentID, setEditingCommentID] = useState<string | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState("");
 
   function setDraft(update: ComposerDraft | ((current: ComposerDraft) => ComposerDraft)) {
     if (!activePendingInputEdit) {
@@ -263,16 +267,42 @@ function ComposerView({
     setComposerState((current) => ({ ...current, sending: value }));
   }
 
+  function setComments(update: (current: ReviewComment[]) => ReviewComment[]) {
+    setComposerState((current) => {
+      if (!activePendingInputEdit) return { ...current, comments: update(current.comments) };
+      if (current.edit?.id !== activePendingInputEdit.id) return current;
+      return { ...current, edit: { ...current.edit, comments: update(current.edit.comments) } };
+    });
+  }
+
   // Only retire the exact contents submitted. Typing and navigation can continue during dispatch.
   function clearSubmittedContents() {
     const current = store.get(stateAtom);
     if (activePendingInputEdit) {
       if (current.edit === activePendingInputEdit) {
         setComposerState((value) => ({ ...value, edit: null }));
+      } else if (current.edit?.id === activePendingInputEdit.id) {
+        setComposerState((value) =>
+          value.edit
+            ? {
+                ...value,
+                edit: {
+                  ...value.edit,
+                  comments: value.edit.comments.filter((item) => !comments.includes(item)),
+                },
+              }
+            : value,
+        );
       }
     } else if (store.get(draftAtom) === draft && current.files === files) {
       setOriginalDraft(emptyComposerDraft());
       setComposerState((value) => ({ ...value, files: [] }));
+    }
+    if (!activePendingInputEdit) {
+      setComposerState((value) => ({
+        ...value,
+        comments: value.comments.filter((item) => !comments.includes(item)),
+      }));
     }
   }
   const permissionSelection = useComposerPermissions(session, Boolean(onCreateSession), draftScope);
@@ -587,6 +617,7 @@ function ComposerView({
           delivery: request.delivery ?? "queue",
           draft: restoredDraft,
           files: message.files ?? [],
+          comments: reviewCommentsFromMessage(message) ?? [],
         },
       }));
       if (activeDraftScopeRef.current === draftScope) {
@@ -702,7 +733,10 @@ function ComposerView({
     const value = submission.text;
     const currentState = store.get(stateAtom);
     if (
-      (!value.trim() && files.length === 0 && submission.skills.length === 0) ||
+      (!value.trim() &&
+        files.length === 0 &&
+        submission.skills.length === 0 &&
+        comments.length === 0) ||
       currentState.sending ||
       currentState.cancelingID ||
       attachmentRequestRef.current ||
@@ -710,6 +744,10 @@ function ComposerView({
       permissionSelection.isBusy()
     )
       return;
+    if (submission.kind === "command" && comments.length > 0) {
+      setAttachmentErrors(["Remove line comments before running a slash command."]);
+      return;
+    }
     if (
       submission.kind === "command" &&
       files.length > 0 &&
@@ -798,6 +836,7 @@ function ComposerView({
             if (updated) cacheSession(updated);
             setDraft(composerDraftWithRetainedFiles(target));
             setFiles(target.files ?? []);
+            setComments(() => reviewCommentsFromMessage(target) ?? []);
           } catch (error) {
             if (activeDraftScopeRef.current === draftScope) {
               setAttachmentErrors([error instanceof Error ? error.message : "Revert failed"]);
@@ -834,6 +873,7 @@ function ComposerView({
           if (updated) cacheSession(updated);
           setDraft(target ? composerDraftWithRetainedFiles(target) : emptyComposerDraft());
           setFiles(target?.files ?? []);
+          setComments(() => (target ? (reviewCommentsFromMessage(target) ?? []) : []));
         } catch (error) {
           if (activeDraftScopeRef.current === draftScope) {
             setAttachmentErrors([error instanceof Error ? error.message : "Redo failed"]);
@@ -866,6 +906,12 @@ function ComposerView({
     const effectiveDelivery =
       isWorking && !onCreateSession ? (deliveryOverride ?? composerDelivery) : "steer";
     const submittedFiles = files;
+    const submittedComments = comments.map(({ path, comment, selection }) => ({
+      path,
+      comment,
+      selection,
+      origin: "review" as const,
+    }));
     const modelInput = resolveModelSelection(
       catalog.models,
       displayedSession.model,
@@ -875,6 +921,7 @@ function ComposerView({
     await admitComposerSubmission({
       submission,
       files: submittedFiles,
+      comments: submittedComments,
       delivery: effectiveDelivery,
       optimistic: submission.kind !== "command",
       createTarget: async () => {
@@ -910,6 +957,7 @@ function ComposerView({
               sessionID,
               id: messageID,
               text: value,
+              ...(submittedComments.length ? { comments: submittedComments } : {}),
               modelInput,
               ...(submittedFiles.length ? { files: submittedFiles } : {}),
               ...(submission.files.length ? { fileReferences: submission.files } : {}),
@@ -1118,7 +1166,7 @@ function ComposerView({
     !composerSelection.blocked &&
     !permissionSelection.busy &&
     !requestBody &&
-    (Boolean(draft.text.trim()) || files.length > 0) &&
+    (Boolean(draft.text.trim()) || files.length > 0 || comments.length > 0) &&
     !sending &&
     !pendingInputEditID &&
     runtime?.connected !== false;
@@ -1227,6 +1275,78 @@ function ComposerView({
                 Discard edit and restore draft
               </button>
             </div>
+          ) : null}
+          {!requestBody && comments.length > 0 ? (
+            <section
+              aria-label="Pending line comments"
+              className="relative z-10 max-h-32 space-y-1 overflow-y-auto border-b border-border px-3 py-2"
+            >
+              {comments.map((item) => (
+                <div key={item.id} className="flex min-w-0 items-center gap-1 text-meta">
+                  {editingCommentID === item.id ? (
+                    <form
+                      className="flex min-w-0 flex-1 gap-1"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        if (!editingCommentText.trim()) return;
+                        setComments((current) =>
+                          current.map((comment) =>
+                            comment.id === item.id
+                              ? { ...comment, comment: editingCommentText.trim() }
+                              : comment,
+                          ),
+                        );
+                        setEditingCommentID(null);
+                      }}
+                    >
+                      <input
+                        aria-label={`Comment on ${item.path} line ${item.selection.startLine}`}
+                        className="min-w-0 flex-1 rounded border border-border bg-card px-1 text-foreground"
+                        value={editingCommentText}
+                        onChange={(event) => setEditingCommentText(event.target.value)}
+                      />
+                      <button type="submit" disabled={!editingCommentText.trim()}>
+                        Save
+                      </button>
+                      <button type="button" onClick={() => setEditingCommentID(null)}>
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <span className="min-w-0 flex-1 truncate" title={item.comment}>
+                        {item.path}:{item.selection.startLine}
+                        {item.selection.endLine !== item.selection.startLine
+                          ? `–${item.selection.endLine}`
+                          : ""}{" "}
+                        · {item.comment}
+                      </span>
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
+                        aria-label={`Edit comment on ${item.path} line ${item.selection.startLine}`}
+                        onClick={() => {
+                          setEditingCommentID(item.id);
+                          setEditingCommentText(item.comment);
+                        }}
+                      >
+                        Edit
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label={`Remove comment on ${item.path} line ${item.selection.startLine}`}
+                    onClick={() =>
+                      setComments((current) => current.filter((comment) => comment.id !== item.id))
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </section>
           ) : null}
           {requestBody ? (
             <div data-palot-composer-request className="px-2 pt-1">

@@ -17,6 +17,7 @@ import type {
 } from "../shared/opencode-release-contract";
 import {
   canContinueOpenCodeVersionMismatch,
+  isStableOpenCodeV2,
   isSupportedOpenCodeVersion,
   isTestedOpenCodeVersion,
   parseOpenCodeVersionOutput,
@@ -88,19 +89,25 @@ function parseOffer(
   value: unknown,
   channel: OpenCodeReleaseChannel,
   filename: string,
-): CheckedOffer {
+): CheckedOffer | null {
   const data = record(value);
   const feed = channel === "stable" ? "latest" : "beta";
   if (data.channel !== feed || data.name !== "cli" || data.distribution !== "opencode") {
     throw new Error("The official update feed returned the wrong release channel or distribution.");
   }
-  if (!supportedVersion(data.version)) {
+  const version = data.version;
+  const incompatibleStable =
+    typeof version === "string" &&
+    version.length < 80 &&
+    isStableOpenCodeV2(version) &&
+    !isSupportedOpenCodeVersion(version);
+  if (typeof version !== "string" || (!supportedVersion(version) && !incompatibleStable)) {
     throw new Error(
       "This release is not a supported OpenCode 2 version. V1 and unknown majors are refused.",
     );
   }
   const file = record(record(record(data.metadata).files)[filename]);
-  const url = `https://opencode.ai/files/bin/${data.version}/${filename}`;
+  const url = `https://opencode.ai/files/bin/${version}/${filename}`;
   if (
     file.url !== url ||
     typeof file.sha256 !== "string" ||
@@ -111,11 +118,14 @@ function parseOffer(
   ) {
     throw new Error("Invalid official OpenCode binary URL, SHA-256 checksum, or archive size.");
   }
+  // A channel may lag behind the connection minimum. A successful feed check
+  // with no compatible offer must never become an untested-download override.
+  if (incompatibleStable) return null;
   return {
     channel,
-    version: data.version,
-    tested: isTestedOpenCodeVersion(data.version),
-    requiresConfirmation: !isSupportedOpenCodeVersion(data.version),
+    version,
+    tested: isTestedOpenCodeVersion(version),
+    requiresConfirmation: !isSupportedOpenCodeVersion(version),
     filename,
     url,
     sha256: file.sha256,

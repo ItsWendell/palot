@@ -6,6 +6,30 @@ import { openCodeKeys } from "./opencode-query";
 import { openCodeInvalidationKeys, sessionStatsShouldRevalidate } from "./opencode-query-events";
 
 describe("OpenCode query event routing", () => {
+  it("invalidates only the session whose metadata changed", async () => {
+    const client = new QueryClient();
+    const target = openCodeKeys.session("connection-a", "session");
+    const otherSession = openCodeKeys.session("connection-a", "other");
+    const otherConnection = openCodeKeys.session("connection-b", "session");
+    for (const key of [target, otherSession, otherConnection]) client.setQueryData(key, {});
+    const event = {
+      id: "metadata",
+      created: 2,
+      createdAt: 2,
+      receiveSequence: 1,
+      type: "session.metadata.updated",
+      durable: { aggregateID: "session", seq: 2, version: 1 },
+      data: { sessionID: "session", metadata: { label: "new" } },
+    } satisfies PalotEvent;
+    for (const queryKey of openCodeInvalidationKeys("connection-a", event)) {
+      await client.invalidateQueries({ queryKey });
+    }
+    expect(client.getQueryState(target)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(otherSession)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(otherConnection)?.isInvalidated).toBe(false);
+    client.clear();
+  });
+
   it.each(["provider.updated", "model.updated"] as const)(
     "invalidates model and settings inventories after %s",
     (type) => {
@@ -269,7 +293,7 @@ describe("OpenCode query event routing", () => {
         id: "project-1",
         canonical: "/repo",
         sandboxes: [],
-        time: { created: 1, updated: 1 },
+        time: { created: 1, updated: 1, active: 1 },
       },
     } as PalotEvent;
 

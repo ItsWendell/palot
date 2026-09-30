@@ -104,6 +104,10 @@ import type {
 } from "../../shared";
 import {
   autoBackgroundOnSteerAtom,
+  browserLocalLinksAtom,
+  browserSearchEngineAtom,
+  browserShowFullURLAtom,
+  browserWebLinksAtom,
   defaultDeliveryAtom,
   defaultModelsAtom,
   modelPickerPreferencesAtom,
@@ -112,6 +116,7 @@ import {
   defaultSidebarModeAtom,
   defaultWorktreeBaseAtom,
   defaultWorkspaceModeAtom,
+  experimentalBrowserAtom,
   sessionProjectionPreferenceAtom,
 } from "../atoms/ui";
 import {
@@ -122,6 +127,7 @@ import {
 import { MarkdownCodeBlock } from "./markdown-code-block";
 import { runtimeAtom } from "../atoms/workspace";
 import { cn } from "../lib/cn";
+import { showErrorToast } from "../lib/toast-error";
 import { openCodeKeys } from "../lib/opencode-query";
 import { isAppearanceFontAvailable } from "../lib/font-loading";
 import {
@@ -199,6 +205,10 @@ const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: stri
     title: "General",
     description: "Choose how new tasks start and how much activity Palot shows.",
   },
+  browser: {
+    title: "Browser",
+    description: "Control browser access, search, link destinations, and address display.",
+  },
   project: {
     title: "Project",
     description: "Manage project details, worktree startup, and the main checkout directory.",
@@ -252,6 +262,7 @@ const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: stri
 const SETTINGS_APP_ICONS: Record<SettingsCategory, AppIconName> = {
   project: "config",
   general: "settings",
+  browser: "search",
   appearance: "appearance",
   notifications: "notifications",
   connections: "servers",
@@ -632,6 +643,7 @@ export function Settings({
             {!project &&
             ![
               "general",
+              "browser",
               "appearance",
               "notifications",
               "connections",
@@ -713,6 +725,7 @@ function SettingsContent({
 }) {
   if (loading && !snapshot && category !== "tools") return <SettingsSkeleton />;
   if (category === "general") return <GeneralSettings />;
+  if (category === "browser") return <BrowserSettings />;
   if (category === "appearance") return <AppearanceSettings />;
   if (category === "notifications") return <NotificationSettings />;
   if (category === "connections") {
@@ -835,6 +848,177 @@ const DELIVERY_LABELS = {
   steer: "Steer",
   queue: "Queue",
 } as const;
+
+function BrowserSettings() {
+  const runtime = useAtomValue(runtimeAtom);
+  const selectedSession = useSelectedSession();
+  const [experimentalBrowser, setExperimentalBrowser] = useAtom(experimentalBrowserAtom);
+  const [searchEngine, setSearchEngine] = useAtom(browserSearchEngineAtom);
+  const [webLinks, setWebLinks] = useAtom(browserWebLinksAtom);
+  const [localLinks, setLocalLinks] = useAtom(browserLocalLinksAtom);
+  const [showFullURL, setShowFullURL] = useAtom(browserShowFullURLAtom);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const selectedTask = runtime?.connected && selectedSession ? selectedSession : null;
+
+  const clearData = async () => {
+    if (!selectedTask || !runtime) return;
+    setClearing(true);
+    try {
+      await palot.browserClearData({
+        sessionID: selectedTask.id,
+        profileID: runtime.profileID,
+        connectionID: runtime.connectionID,
+      });
+      toast.add({ type: "success", title: "Task browser data cleared" });
+    } catch (error) {
+      showErrorToast("Could not clear browser data", error);
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <SettingsSection
+        title="Browser access"
+        description="Experimental workbench browser for tasks."
+      >
+        <SettingsGroup>
+          <SettingsRow
+            title="Enable browser"
+            description="Allow tasks to open browser tabs in the workbench. Requires the OpenCode browser plugin on the connected server. The browser tool can access sites reachable from that server, including localhost and private networks. Palot cannot require per-site approval yet."
+            control={
+              <Switch
+                checked={experimentalBrowser}
+                aria-label="Enable experimental browser"
+                onCheckedChange={(checked) => setExperimentalBrowser(Boolean(checked))}
+              />
+            }
+          />
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection
+        title="Navigation"
+        description="Choose where links open and how addresses appear."
+      >
+        <SettingsGroup>
+          <SettingsRow
+            title="Search engine"
+            description="Used when you enter search terms instead of a URL in the browser address bar."
+            control={
+              <Select
+                value={searchEngine}
+                onValueChange={(value) => setSearchEngine(value as typeof searchEngine)}
+              >
+                <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Search engine">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="google">Google</SelectItem>
+                  <SelectItem value="duckduckgo">DuckDuckGo</SelectItem>
+                  <SelectItem value="bing">Bing</SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Web links"
+            description="Choose where public web links open when you click them in Palot."
+            control={
+              <Select
+                value={webLinks}
+                onValueChange={(value) => setWebLinks(value as typeof webLinks)}
+              >
+                <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Web links">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="external">External browser</SelectItem>
+                  <SelectItem value="browser">Palot Browser</SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Local dev links"
+            description="Choose where local development links open when you click them in Palot."
+            control={
+              <Select
+                value={localLinks}
+                onValueChange={(value) => setLocalLinks(value as typeof localLinks)}
+              >
+                <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Local dev links">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="external">External browser</SelectItem>
+                  <SelectItem value="browser">Palot Browser</SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Show full URL"
+            description="Show the complete page address rather than a shortened address in the browser bar."
+            control={
+              <Switch
+                checked={showFullURL}
+                aria-label="Show full URL"
+                onCheckedChange={(checked) => setShowFullURL(Boolean(checked))}
+              />
+            }
+          />
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection title="Browser data and permissions">
+        <SettingsGroup>
+          <SettingsRow
+            title="Clear task browser data"
+            description="Close this task's browser pages and remove their saved tab URLs, temporary captures and downloads, site data, and cache. Other tasks and files exported to the server are unaffected."
+            control={
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!selectedTask || clearing}
+                onClick={() => setConfirmClear(true)}
+              >
+                {clearing ? "Clearing…" : "Clear data"}
+              </Button>
+            }
+          />
+          <SettingsRow
+            title="Not available in Palot"
+            description="Palot does not provide a download manager, browsing history, saved passwords, extensions, or per-site permissions. There are no separate WebMCP or CDP settings here."
+          />
+        </SettingsGroup>
+      </SettingsSection>
+      <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear browser data for this task?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This closes its browser pages and deletes their saved URLs, private site data, cache,
+              and temporary files. It does not delete files already exported to the server.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setConfirmClear(false);
+                void clearData();
+              }}
+            >
+              Clear task data
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
 
 function GeneralSettings() {
   const [workspaceMode, setWorkspaceMode] = useAtom(defaultWorkspaceModeAtom);

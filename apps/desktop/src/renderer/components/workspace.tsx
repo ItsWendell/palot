@@ -33,7 +33,7 @@ import {
 } from "../atoms/workbench";
 import { cn } from "../lib/cn";
 import { showErrorToast } from "../lib/toast-error";
-import type { WorkbenchScope } from "../lib/workbench-tabs";
+import { workbenchScopeKey, type WorkbenchScope } from "../lib/workbench-tabs";
 import { projectForSession, projectLocation, visibleProjects } from "../lib/view-models";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useProjectCatalog, useSessionCatalogSelector } from "../hooks/use-session-catalog";
@@ -103,6 +103,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const [navigationRequestedOpen, setNavigationOpen] = useAtom(navigationOpenAtom);
   const workbenchScope: WorkbenchScope | null =
     runtime && sessionID ? { profileID: runtime.profileID, sessionID } : null;
+  const scopeKey = workbenchScope ? workbenchScopeKey(workbenchScope) : null;
   const workbench = useWorkbenchScope(workbenchScope);
   const workbenchCommands = useWorkbenchCommands(workbenchScope);
   const rightRequestedOpen = workbench.right.requestedOpen;
@@ -110,6 +111,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const setCommandPaletteOpen = useSetAtom(commandPaletteOpenAtom);
   const setCommandPaletteReturnFocus = useSetAtom(commandPaletteReturnFocusAtom);
   const navigationPanelRef = usePanelRef();
+  const centerPanelRef = usePanelRef();
   const rightPanelRef = usePanelRef();
   const bottomPanelRef = usePanelRef();
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -155,14 +157,21 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const navigationVisible = navigationOpen || navigationSheetOpen;
   const navigationTransitionRef = useRef<boolean | null>(navigationOpen);
   const navigationWidth = navigationOpen ? paneGeometry.navigation : 0;
-  const rightUsesSheet =
-    workspaceSize.width > 0 &&
-    workspaceSize.width < navigationWidth + 420 + Math.min(paneGeometry.right, 400) + 2;
-  const rightSheet = rightRequestedOpen && rightUsesSheet;
-  const rightInlineOpen = rightRequestedOpen && !rightSheet;
+  const [fullscreenScopeKey, setFullscreenScopeKey] = useState<string | null>(null);
+  const [fullscreenNavigationWidth, setFullscreenNavigationWidth] = useState(
+    paneGeometry.navigation,
+  );
+  const rightExpanded =
+    fullscreenScopeKey !== null &&
+    fullscreenScopeKey === scopeKey &&
+    rightRequestedOpen &&
+    Boolean(selectedSession);
+  const rightTooNarrow = workspaceSize.width < navigationWidth + 800;
+  const narrowRightRef = useRef<{ scope: string; narrow: boolean } | null>(null);
+  const wasRightExpandedRef = useRef(false);
   const bottomOpen =
     bottomRequestedOpen && (workspaceSize.height === 0 || workspaceSize.height >= 501);
-  const rightTransitionRef = useRef<boolean | null>(rightInlineOpen);
+  const rightTransitionRef = useRef<boolean | null>(rightRequestedOpen);
   const bottomTransitionRef = useRef<boolean | null>(bottomOpen);
   const canGoBack = router.history.canGoBack();
   const canGoForward = historyIndex < router.history.length - 1;
@@ -181,10 +190,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
       }
 
       const findSurface = () => {
-        const selector =
-          surface === "right"
-            ? '[data-shell-panel="right-workbench-sheet"], [data-shell-surface="right"]'
-            : `[data-shell-surface="${surface}"]`;
+        const selector = `[data-shell-surface="${surface}"]`;
         const candidates = Array.from(
           workspaceRef.current?.querySelectorAll<HTMLElement>(selector) ?? [],
         );
@@ -403,6 +409,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
     if (!selectedSession) return;
     const open = !rightRequestedOpen;
     rightTransitionRef.current = open;
+    if (!open) setFullscreenScopeKey(null);
     void (async () => {
       await runShellTransition("right", open, () => {
         if (open && workbench.right.tabs.length === 0) {
@@ -418,14 +425,13 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
         } else {
           workbenchCommands.togglePane("right");
         }
-        if (open && !rightUsesSheet) rightPanelRef.current?.expand();
+        if (open) rightPanelRef.current?.expand();
         else rightPanelRef.current?.collapse();
       });
     })();
   }, [
     rightPanelRef,
     rightRequestedOpen,
-    rightUsesSheet,
     runShellTransition,
     selectedSession,
     workbench.right.tabs.length,
@@ -536,6 +542,58 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   }, [phase]);
 
   useEffect(() => {
+    setFullscreenScopeKey(null);
+  }, [scopeKey]);
+
+  useEffect(() => {
+    if (!rightRequestedOpen) setFullscreenScopeKey(null);
+  }, [rightRequestedOpen]);
+
+  useEffect(() => {
+    if (phase !== "ready" || workspaceSize.width === 0 || !scopeKey) return;
+    const previous = narrowRightRef.current;
+    narrowRightRef.current = { scope: scopeKey, narrow: rightTooNarrow };
+    if (
+      rightTooNarrow &&
+      (previous?.scope !== scopeKey || !previous.narrow) &&
+      rightRequestedOpen &&
+      !rightExpanded
+    ) {
+      workbenchCommands.togglePane("right");
+      rightPanelRef.current?.collapse();
+    }
+  }, [
+    phase,
+    rightTooNarrow,
+    rightRequestedOpen,
+    rightExpanded,
+    scopeKey,
+    workbenchCommands,
+    rightPanelRef,
+    workspaceSize.width,
+  ]);
+
+  useLayoutEffect(() => {
+    if (phase !== "ready") return;
+    let restoreFrame: number | undefined;
+    const frame = requestAnimationFrame(() => {
+      if (rightExpanded) centerPanelRef.current?.collapse();
+      else if (wasRightExpandedRef.current) {
+        centerPanelRef.current?.expand();
+        if (rightRequestedOpen)
+          restoreFrame = requestAnimationFrame(() =>
+            rightPanelRef.current?.resize(paneGeometry.right),
+          );
+      }
+      wasRightExpandedRef.current = rightExpanded;
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (restoreFrame !== undefined) cancelAnimationFrame(restoreFrame);
+    };
+  }, [phase, rightExpanded, rightRequestedOpen, paneGeometry.right, centerPanelRef, rightPanelRef]);
+
+  useEffect(() => {
     window.addEventListener("beforeunload", flushWorkbenchPersistence);
     return () => {
       window.removeEventListener("beforeunload", flushWorkbenchPersistence);
@@ -625,13 +683,13 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
 
   useEffect(() => {
     if (phase !== "ready") return;
-    rightTransitionRef.current = rightInlineOpen;
+    rightTransitionRef.current = rightRequestedOpen;
     const animationFrame = requestAnimationFrame(() => {
-      if (rightInlineOpen) rightPanelRef.current?.expand();
+      if (rightRequestedOpen) rightPanelRef.current?.expand();
       else rightPanelRef.current?.collapse();
     });
     const transitionEnd = window.setTimeout(() => {
-      if (rightTransitionRef.current === rightInlineOpen) {
+      if (rightTransitionRef.current === rightRequestedOpen) {
         rightTransitionRef.current = null;
       }
     }, 280);
@@ -639,7 +697,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
       cancelAnimationFrame(animationFrame);
       window.clearTimeout(transitionEnd);
     };
-  }, [phase, rightInlineOpen, rightPanelRef]);
+  }, [phase, rightRequestedOpen, rightPanelRef]);
 
   useEffect(() => {
     if (phase !== "ready") return;
@@ -721,7 +779,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
         className="size-full min-h-0 min-w-0 bg-transparent"
         data-navigation={navigationOpen ? "open" : "closed"}
         data-right-workbench={rightRequestedOpen ? "open" : "closed"}
-        data-right-workbench-mode={rightSheet ? "sheet" : "inline"}
+        data-right-workbench-mode={rightExpanded ? "expanded" : "inline"}
         data-bottom-workbench={bottomRequestedOpen ? "open" : "closed"}
       >
         <ResizablePanelGroup
@@ -734,7 +792,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             setPaneGeometry((current) => ({
               ...current,
               navigation: navigationSize > 1 ? navigationSize : current.navigation,
-              right: rightSize > 1 ? rightSize : current.right,
+              right: !rightExpanded && rightSize > 1 ? rightSize : current.right,
             }));
           }}
         >
@@ -743,7 +801,11 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             panelRef={navigationPanelRef}
             defaultSize={`${paneGeometry.navigation}px`}
             minSize="220px"
-            maxSize="420px"
+            maxSize={
+              rightExpanded
+                ? `${Math.min(420, Math.max(220, fullscreenNavigationWidth))}px`
+                : "420px"
+            }
             collapsedSize="0px"
             collapsible
             groupResizeBehavior="preserve-pixel-size"
@@ -782,7 +844,13 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
           />
           <ResizablePanel
             id="center"
-            minSize={`${Math.min(360, workspaceSize.width || 360)}px`}
+            panelRef={centerPanelRef}
+            minSize={rightExpanded ? "0px" : `${Math.min(360, workspaceSize.width || 360)}px`}
+            maxSize={rightExpanded ? "0px" : "100%"}
+            collapsedSize="0px"
+            collapsible
+            aria-hidden={rightExpanded}
+            inert={rightExpanded}
             data-shell-panel="center"
             className="relative min-h-0 min-w-0 flex-[1_1_auto]"
           >
@@ -833,6 +901,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
                 selectedSession ? (
                   <WorkbenchPane
                     pane="bottom"
+                    visible={bottomOpen}
                     scope={workbenchScope}
                     context={workbench}
                     location={selectedSession.location}
@@ -842,11 +911,13 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             </ResizablePanelGroup>
           </ResizablePanel>
           <ResizableHandle
-            disabled={!rightInlineOpen}
-            aria-hidden={!rightInlineOpen}
+            disabled={!rightRequestedOpen || rightExpanded}
+            aria-hidden={!rightRequestedOpen || rightExpanded}
             className={cn(
-              "transition-opacity duration-150",
-              rightInlineOpen ? "opacity-100" : "pointer-events-none w-0 opacity-0 after:hidden",
+              "palot-workbench-splitter transition-opacity duration-150",
+              rightRequestedOpen && !rightExpanded
+                ? "opacity-100"
+                : "pointer-events-none w-0 opacity-0 after:hidden",
             )}
           />
           <ResizablePanel
@@ -854,23 +925,34 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             panelRef={rightPanelRef}
             defaultSize={`${paneGeometry.right}px`}
             minSize="300px"
-            maxSize="70%"
+            maxSize={rightExpanded ? "100%" : "70%"}
             collapsedSize="0px"
             collapsible
             groupResizeBehavior="preserve-pixel-size"
             data-shell-panel="right-workbench"
             className={cn(
               "relative flex min-h-0 min-w-0 overflow-hidden!",
-              rightInlineOpen || exitingPanel === "right-workbench"
+              rightRequestedOpen || exitingPanel === "right-workbench"
                 ? "opacity-100"
                 : "pointer-events-none opacity-0",
             )}
           >
-            {(rightInlineOpen || exitingPanel === "right-workbench") &&
+            {(rightRequestedOpen || exitingPanel === "right-workbench") &&
             workbenchScope &&
             selectedSession ? (
               <WorkbenchPane
                 pane="right"
+                visible={rightRequestedOpen}
+                expanded={rightExpanded}
+                onToggleExpanded={() => {
+                  if (!rightExpanded) {
+                    const width = navigationPanelRef.current?.getSize().inPixels ?? 0;
+                    setFullscreenNavigationWidth(
+                      navigationOpen && width > 1 ? width : paneGeometry.navigation,
+                    );
+                  }
+                  setFullscreenScopeKey(rightExpanded ? null : scopeKey);
+                }}
                 scope={workbenchScope}
                 context={workbench}
                 location={selectedSession.location}
@@ -896,24 +978,6 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             />
           </SheetContent>
         </Sheet>
-        {(rightSheet || exitingPanel === "right-workbench-sheet") &&
-        workbenchScope &&
-        selectedSession ? (
-          <div
-            className="absolute inset-y-0 right-0 z-30 min-w-[300px] overflow-hidden border-l border-border/40 shadow-2xl"
-            style={{
-              width: `${Math.min(paneGeometry.right, Math.max(300, workspaceSize.width - 80))}px`,
-            }}
-            data-shell-panel="right-workbench-sheet"
-          >
-            <WorkbenchPane
-              pane="right"
-              scope={workbenchScope}
-              context={workbench}
-              location={selectedSession.location}
-            />
-          </div>
-        ) : null}
         <div className="window-chrome-cluster pointer-events-none fixed top-0 z-40 flex h-(--shell-header-height) items-center gap-2">
           <IconButton
             label={navigationVisible ? "Hide navigation" : "Show navigation"}

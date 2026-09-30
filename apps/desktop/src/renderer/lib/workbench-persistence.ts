@@ -47,14 +47,19 @@ function parseContext(value: unknown): WorkbenchContextState | null {
       }),
     });
   };
-  const parsedRight = unique(right);
-  const parsedBottom = unique(bottom);
+  // Browser pages are the published browser inventory projected into this strip,
+  // not user-opened workbench resources. Never truncate their saved placements.
+  let otherTabs = 0;
+  const limit = (pane: WorkbenchPaneState) =>
+    repairPane({
+      ...pane,
+      tabs: pane.tabs.filter((tab) => tab.kind === "browser" || otherTabs++ < MAX_WORKBENCH_TABS),
+    });
+  const parsedRight = limit(unique(right));
+  const parsedBottom = limit(unique(bottom));
   return {
     right: parsedRight,
-    bottom: repairPane({
-      ...parsedBottom,
-      tabs: parsedBottom.tabs.slice(0, Math.max(0, MAX_WORKBENCH_TABS - parsedRight.tabs.length)),
-    }),
+    bottom: parsedBottom,
     updatedAt: value.updatedAt,
   };
 }
@@ -94,6 +99,21 @@ function parseTab(value: unknown): WorkbenchTab | null {
   const location = parseLocation(value.resource.location);
   const sourceSessionID = optionalIdentifier(value.resource.sourceSessionID);
   if (!location || sourceSessionID === false) return null;
+  if (value.kind === "browser" && identifier(value.resource.sessionID)) {
+    if (value.resource.browserTabID !== undefined && !identifier(value.resource.browserTabID))
+      return null;
+    return {
+      id: value.id,
+      kind: "browser",
+      pinned: value.pinned,
+      resource: {
+        profileID: value.resource.profileID,
+        sessionID: value.resource.sessionID,
+        location,
+        ...(value.resource.browserTabID ? { browserTabID: value.resource.browserTabID } : {}),
+      },
+    };
+  }
   if (value.kind === "context" && identifier(value.resource.sessionID)) {
     return {
       id: value.id,
@@ -117,6 +137,31 @@ function parseTab(value: unknown): WorkbenchTab | null {
         location,
         mode,
         ...(sourceSessionID ? { sourceSessionID } : {}),
+      },
+    };
+  }
+  if (value.kind === "workspace-files") {
+    return {
+      id: value.id,
+      kind: value.kind,
+      pinned: value.pinned,
+      resource: { profileID: value.resource.profileID, location },
+    };
+  }
+  if (
+    value.kind === "turn-diff" &&
+    identifier(value.resource.sessionID) &&
+    identifier(value.resource.userMessageID)
+  ) {
+    return {
+      id: value.id,
+      kind: value.kind,
+      pinned: value.pinned,
+      resource: {
+        profileID: value.resource.profileID,
+        location,
+        sessionID: value.resource.sessionID,
+        userMessageID: value.resource.userMessageID,
       },
     };
   }

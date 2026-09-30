@@ -1,8 +1,11 @@
 import type { PalotFileAttachment } from "../../shared";
+import type { PromptInput } from "../../shared";
+import { formatReviewComment } from "../lib/review-comments";
 
 export interface AttachmentDeliveryInput {
   files?: PalotFileAttachment[];
   modelInput?: readonly string[];
+  comments?: PromptInput["comments"];
 }
 
 const images = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -11,7 +14,7 @@ const MAX_INLINE_BYTES = 20 * 1024 * 1024;
 /** The server retains attachments, but only forwards supported media to the model. */
 export function attachmentPrompt(
   text: string,
-  { files = [], modelInput }: AttachmentDeliveryInput,
+  { files = [], modelInput, comments = [] }: AttachmentDeliveryInput,
 ) {
   const inlineFiles: PalotFileAttachment[] = [];
   const attachments = files.flatMap((file) => {
@@ -42,11 +45,19 @@ export function attachmentPrompt(
     text: [
       text,
       ...attachments.map((attachment) => `Attached file: ${JSON.stringify(attachment.path)}`),
+      ...comments.map(formatReviewComment),
     ]
       .filter(Boolean)
       .join("\n"),
-    ...(attachments.length
-      ? { metadata: { displayText: text, comments: [], attachments, palotAttachmentPaths: true } }
+    ...(attachments.length || comments.length
+      ? {
+          metadata: {
+            displayText: text,
+            comments,
+            attachments,
+            ...(attachments.length ? { palotAttachmentPaths: true } : {}),
+          },
+        }
       : {}),
   };
 }

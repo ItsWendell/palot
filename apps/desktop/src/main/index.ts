@@ -22,7 +22,8 @@ import {
 } from "../shared/appearance-contract";
 import { resolveBuildIdentity } from "../shared/build-identity";
 import { IPC_CHANNELS, type PalotOpenTarget } from "../shared/opencode-contract";
-import { registerIpcHandlers } from "./ipc-handlers";
+import { registerIpcHandlers, shutdownBrowserPane } from "./ipc-handlers";
+import { installBrowserWebviewHost } from "./browser/webview-host";
 import { installLiquidGlass, nativeGlassOptions, resolveWindowChrome } from "./liquid-glass";
 import { openCodeRuntime } from "./opencode-runtime";
 import {
@@ -190,6 +191,7 @@ async function createWindow(
     icon: isMac ? undefined : icon,
     webPreferences: {
       preload: path.join(currentDirectory, "../preload/index.cjs"),
+      webviewTag: true,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -203,6 +205,7 @@ async function createWindow(
       ],
     },
   });
+  installBrowserWebviewHost(window);
   workspaceWindows.add(window);
   if (owner) sessionWindowScopes.set(window, createSessionWindowScope(owner, openCodeRuntime));
   if (!mainWindow) mainWindow = window;
@@ -467,6 +470,7 @@ if (helpRequested) {
       .finally(async () => {
         await trayShutdown;
         destroyOpenCodeAttentionIndex();
+        await shutdownBrowserPane();
         await openCodeRuntime.shutdown();
         closePalotDatabase();
         await shutdownAttachmentStorage();

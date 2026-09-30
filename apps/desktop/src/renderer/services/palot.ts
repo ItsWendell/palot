@@ -79,6 +79,7 @@ import {
   findWorkspaceFiles as findOpenCodeWorkspaceFiles,
   getSession as getOpenCodeSession,
   listDiffs as listOpenCodeDiffs,
+  listTurnDiffs as listOpenCodeTurnDiffs,
   listModels as listOpenCodeModels,
   listWorkspaceDirectory as listOpenCodeWorkspaceDirectory,
   listRequests as listOpenCodeRequests,
@@ -377,7 +378,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "2.0.9",
+  contractVersion: "2.0.19",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -394,7 +395,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.0.9",
+  version: "2.0.19",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,
@@ -504,6 +505,53 @@ function getApi(): PalotApi | undefined {
 
 export const palot = {
   isPreview: () => !apiAvailable(),
+
+  async browserRegister(input: Parameters<PalotApi["browserRegister"]>[0]) {
+    const api = getApi();
+    if (!api?.browserRegister)
+      throw new Error("Browser plugin is unavailable in this desktop connection");
+    return api.browserRegister(input);
+  },
+
+  async browserLayout(input: Parameters<PalotApi["browserLayout"]>[0]) {
+    const api = getApi();
+    if (!api?.browserLayout) throw new Error("Browser layout is unavailable");
+    return api.browserLayout(input);
+  },
+
+  async browserCommand(
+    bindingID: string,
+    command: Parameters<PalotApi["browserCommand"]>[1],
+    pane?: Parameters<PalotApi["browserCommand"]>[2],
+  ) {
+    const api = getApi();
+    if (!api?.browserCommand) throw new Error("Browser controls are unavailable");
+    return api.browserCommand(bindingID, command, pane);
+  },
+
+  async browserPageControl(
+    bindingID: string,
+    tabID: string,
+    control: Parameters<PalotApi["browserPageControl"]>[2],
+  ) {
+    const api = getApi();
+    if (!api?.browserPageControl) throw new Error("Browser page controls are unavailable");
+    return api.browserPageControl(bindingID, tabID, control);
+  },
+
+  async browserClearData(input: Parameters<PalotApi["browserClearData"]>[0]) {
+    const api = getApi();
+    if (!api?.browserClearData) throw new Error("Browser data controls are unavailable");
+    await api.browserClearData(input);
+  },
+
+  async browserClose(bindingID: string) {
+    await getApi()?.browserClose?.(bindingID);
+  },
+
+  onBrowserEvent(listener: Parameters<PalotApi["onBrowserEvent"]>[0]) {
+    return getApi()?.onBrowserEvent?.(listener) ?? (() => undefined);
+  },
 
   async openCodeReleaseStatus() {
     const api = getApi();
@@ -1314,6 +1362,16 @@ export const palot = {
   async listDiffs(input: ListDiffsInput, requestSignal?: AbortSignal, connectionID?: string) {
     if (!apiAvailable()) return previewDiffs;
     return listOpenCodeDiffs(input, requestSignal, connectionID);
+  },
+
+  async listTurnDiffs(
+    sessionID: string,
+    userMessageID: string,
+    requestSignal?: AbortSignal,
+    connectionID?: string,
+  ): Promise<FileDiffInfo[]> {
+    if (!apiAvailable()) return [];
+    return listOpenCodeTurnDiffs(sessionID, userMessageID, requestSignal, connectionID);
   },
 
   async listModels(

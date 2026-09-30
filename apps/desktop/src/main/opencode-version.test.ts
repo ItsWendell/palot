@@ -6,6 +6,7 @@ import {
   isTestedOpenCodeVersion,
   parseOpenCodeVersionOutput,
   shouldReuseOpenCodeService,
+  supportsOneTimeOpenCodePairing,
   supportedOpenCodeVersionLabel,
 } from "./opencode-version";
 
@@ -77,7 +78,14 @@ describe("OpenCode service compatibility", () => {
   });
 
   it("describes the exact supported version", () => {
-    expect(supportedOpenCodeVersionLabel()).toBe("2.0.9");
+    expect(supportedOpenCodeVersionLabel()).toBe("2.0.19");
+  });
+
+  it("only offers one-time pairing on stable services with the published endpoint", () => {
+    for (const version of [null, "2.0.14", "2.0.16", "0.0.0-beta-19507", "2.0.17-beta.1"])
+      expect(supportsOneTimeOpenCodePairing(version)).toBe(false);
+    for (const version of ["2.0.17", "2.0.18", "2.0.19", "2.1.0"])
+      expect(supportsOneTimeOpenCodePairing(version)).toBe(true);
   });
 
   it("reuses compatible stable services without requiring consent", () => {

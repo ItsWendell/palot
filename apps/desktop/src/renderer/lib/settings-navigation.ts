@@ -5,6 +5,7 @@ import {
   Cable,
   FileCog,
   Gauge,
+  Globe2,
   Palette,
   Server,
   ShieldCheck,
@@ -16,6 +17,7 @@ import type { ComponentType } from "react";
 export type SettingsCategory =
   | "project"
   | "general"
+  | "browser"
   | "connections"
   | "appearance"
   | "notifications"
@@ -53,6 +55,15 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
     icon: Gauge,
     keywords:
       "default task worktree approval timeline tools compact links icons favicon duckduckgo privacy website",
+    group: "Palot",
+  },
+  {
+    id: "browser",
+    label: "Browser",
+    description: "Browser access, search, links, and address display",
+    icon: Globe2,
+    keywords:
+      "experimental browser sites server localhost private network search engine google duckduckgo bing web links local dev links external full url address downloads history site permissions",
     group: "Palot",
   },
   {

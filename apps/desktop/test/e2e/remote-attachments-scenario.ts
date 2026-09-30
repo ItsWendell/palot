@@ -27,14 +27,20 @@ export const remoteAttachmentsScenario: Scenario = {
       );
       if (!loopback) throw new Error("Isolated service has no loopback pairing address");
       const before = new Set(profiles.profiles.map((profile) => profile.id));
-      // Pair only with the harness-owned service. Credentials never leave this evaluation.
-      const created = await api.createOpenCodeProfile({
-        kind: "remote",
-        name: "Remote attachments fixture",
-        urls: [loopback],
-        credential: { type: "basic", username: pairing.username, password: pairing.password },
-        allowPlainHttp: true,
-      });
+      // Pair only with the harness-owned service. The one-time link is redeemed by main.
+      const created =
+        pairing.mode === "link"
+          ? await api.importOpenCodePairing({
+              link: `${loopback}/auth/connect/${pairing.code}`,
+              allowPlainHttp: true,
+            })
+          : await api.createOpenCodeProfile({
+              kind: "remote",
+              name: "Remote attachments fixture",
+              urls: [loopback],
+              credential: { type: "basic", username: pairing.username, password: pairing.password },
+              allowPlainHttp: true,
+            });
       const profile = created.profiles.find((entry) => !before.has(entry.id));
       if (!profile) throw new Error("Remote attachment profile was not created");
       return { originalID: profiles.activeProfileID, profileID: profile.id };

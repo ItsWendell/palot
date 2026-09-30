@@ -16,7 +16,7 @@ const first: Project = {
   canonical: "/first",
   name: "First",
   sandboxes: [],
-  time: { created: 1, updated: 1 },
+  time: { created: 1, updated: 1, active: 1 },
 };
 const second: Project = { ...first, id: "second", canonical: "/second", name: "Second" };
 afterEach(() => {

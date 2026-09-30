@@ -19,6 +19,7 @@ import { Route as SettingsIndexRouteImport } from "./routes/settings.index";
 import { Route as SettingsAboutRouteImport } from "./routes/settings.about";
 import { Route as SettingsAgentsRouteImport } from "./routes/settings.agents";
 import { Route as SettingsAppearanceRouteImport } from "./routes/settings.appearance";
+import { Route as SettingsBrowserRouteImport } from "./routes/settings.browser";
 import { Route as SettingsConfigRouteImport } from "./routes/settings.config";
 import { Route as SettingsConnectionsRouteImport } from "./routes/settings.connections";
 import { Route as SettingsDiagnosticsRouteImport } from "./routes/settings.diagnostics";
@@ -93,6 +94,11 @@ const SettingsAgentsRoute = SettingsAgentsRouteImport.update({
 const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   id: "/appearance",
   path: "/appearance",
+  getParentRoute: () => SettingsRoute,
+} as any);
+const SettingsBrowserRoute = SettingsBrowserRouteImport.update({
+  id: "/browser",
+  path: "/browser",
   getParentRoute: () => SettingsRoute,
 } as any);
 const SettingsConfigRoute = SettingsConfigRouteImport.update({
@@ -193,6 +199,7 @@ export interface FileRoutesByFullPath {
   "/settings/about": typeof SettingsAboutRoute;
   "/settings/agents": typeof SettingsAgentsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/browser": typeof SettingsBrowserRoute;
   "/settings/config": typeof SettingsConfigRoute;
   "/settings/connections": typeof SettingsConnectionsRouteWithChildren;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
@@ -220,6 +227,7 @@ export interface FileRoutesByTo {
   "/settings/about": typeof SettingsAboutRoute;
   "/settings/agents": typeof SettingsAgentsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/browser": typeof SettingsBrowserRoute;
   "/settings/config": typeof SettingsConfigRoute;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
   "/settings/general": typeof SettingsGeneralRoute;
@@ -250,6 +258,7 @@ export interface FileRoutesById {
   "/settings/about": typeof SettingsAboutRoute;
   "/settings/agents": typeof SettingsAgentsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/browser": typeof SettingsBrowserRoute;
   "/settings/config": typeof SettingsConfigRoute;
   "/settings/connections": typeof SettingsConnectionsRouteWithChildren;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
@@ -282,6 +291,7 @@ export interface FileRouteTypes {
     | "/settings/about"
     | "/settings/agents"
     | "/settings/appearance"
+    | "/settings/browser"
     | "/settings/config"
     | "/settings/connections"
     | "/settings/diagnostics"
@@ -309,6 +319,7 @@ export interface FileRouteTypes {
     | "/settings/about"
     | "/settings/agents"
     | "/settings/appearance"
+    | "/settings/browser"
     | "/settings/config"
     | "/settings/diagnostics"
     | "/settings/general"
@@ -338,6 +349,7 @@ export interface FileRouteTypes {
     | "/settings/about"
     | "/settings/agents"
     | "/settings/appearance"
+    | "/settings/browser"
     | "/settings/config"
     | "/settings/connections"
     | "/settings/diagnostics"
@@ -448,6 +460,13 @@ declare module "@tanstack/react-router" {
       path: "/appearance";
       fullPath: "/settings/appearance";
       preLoaderRoute: typeof SettingsAppearanceRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
+    "/settings/browser": {
+      id: "/settings/browser";
+      path: "/browser";
+      fullPath: "/settings/browser";
+      preLoaderRoute: typeof SettingsBrowserRouteImport;
       parentRoute: typeof SettingsRoute;
     };
     "/settings/config": {
@@ -623,6 +642,7 @@ interface SettingsRouteChildren {
   SettingsAboutRoute: typeof SettingsAboutRoute;
   SettingsAgentsRoute: typeof SettingsAgentsRoute;
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute;
+  SettingsBrowserRoute: typeof SettingsBrowserRoute;
   SettingsConfigRoute: typeof SettingsConfigRoute;
   SettingsConnectionsRoute: typeof SettingsConnectionsRouteWithChildren;
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute;
@@ -640,6 +660,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAboutRoute: SettingsAboutRoute,
   SettingsAgentsRoute: SettingsAgentsRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
+  SettingsBrowserRoute: SettingsBrowserRoute,
   SettingsConfigRoute: SettingsConfigRoute,
   SettingsConnectionsRoute: SettingsConnectionsRouteWithChildren,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,

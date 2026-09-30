@@ -9,6 +9,16 @@ type TabBase = { id: string; pinned: boolean };
 
 export type WorkbenchTab =
   | (TabBase & {
+      kind: "browser";
+      resource: {
+        profileID: string;
+        sessionID: string;
+        location: LocationRef;
+        /** Absent only in a saved workbench from before browser pages became tabs. */
+        browserTabID?: string;
+      };
+    })
+  | (TabBase & {
       kind: "command";
       resource: {
         profileID: string;
@@ -46,6 +56,15 @@ export type WorkbenchTab =
       };
     })
   | (TabBase & {
+      kind: "turn-diff";
+      resource: {
+        profileID: string;
+        location: LocationRef;
+        sessionID: string;
+        userMessageID: string;
+      };
+    })
+  | (TabBase & {
       kind: "file";
       resource: {
         profileID: string;
@@ -53,6 +72,10 @@ export type WorkbenchTab =
         path: string;
         line?: number;
       };
+    })
+  | (TabBase & {
+      kind: "workspace-files";
+      resource: { profileID: string; location: LocationRef };
     })
   | (TabBase & {
       kind: "terminal";
@@ -67,6 +90,7 @@ export type WorkbenchTab =
     });
 
 export type OpenWorkbenchTabInput =
+  | { kind: "browser"; location: LocationRef; browserTabID: string }
   | { kind: "command"; location: LocationRef; shellID: string; sessionID?: string; command: string }
   | { kind: "context"; location: LocationRef }
   | {
@@ -83,6 +107,8 @@ export type OpenWorkbenchTabInput =
       sourceSessionID?: string;
     }
   | { kind: "file"; location: LocationRef; path: string; line?: number }
+  | { kind: "workspace-files"; location: LocationRef }
+  | { kind: "turn-diff"; location: LocationRef; userMessageID: string }
   | {
       kind: "terminal";
       location: LocationRef;
@@ -145,7 +171,12 @@ export function workbenchTabResourceKey(tab: WorkbenchTab): string {
   if (tab.kind === "context") {
     return `context\u0000${tab.resource.profileID}\u0000${tab.resource.sessionID}`;
   }
+  if (tab.kind === "browser")
+    return `browser\u0000${tab.resource.profileID}\u0000${tab.resource.sessionID}\u0000${tab.resource.browserTabID ?? ""}`;
   if (tab.kind === "changes") return `changes\u0000${location}`;
+  if (tab.kind === "workspace-files") return `workspace-files\u0000${location}`;
+  if (tab.kind === "turn-diff")
+    return `turn-diff\u0000${location}\u0000${tab.resource.sessionID}\u0000${tab.resource.userMessageID}`;
   if (tab.kind === "terminal") return `terminal\u0000${location}\u0000${tab.resource.ptyID}`;
   if (tab.kind === "command") return `command\u0000${location}\u0000${tab.resource.shellID}`;
   if (tab.kind === "file") return `file\u0000${location}\u0000${tab.resource.path}`;
@@ -153,8 +184,11 @@ export function workbenchTabResourceKey(tab: WorkbenchTab): string {
 }
 
 export function workbenchTabTitle(tab: WorkbenchTab): string {
+  if (tab.kind === "browser") return "Browser";
   if (tab.kind === "context") return "Context";
   if (tab.kind === "changes") return "Changes";
+  if (tab.kind === "workspace-files") return "Files";
+  if (tab.kind === "turn-diff") return "Turn changes";
   if (tab.kind === "terminal") return "Terminal";
   if (tab.kind === "command") return tab.resource.command || "Command output";
   if (tab.kind === "file") return tab.resource.path.split("/").at(-1) || tab.resource.path;
@@ -198,7 +232,10 @@ export function openWorkbenchTab(
       },
     };
   }
-  if (context.right.tabs.length + context.bottom.tabs.length >= MAX_WORKBENCH_TABS) {
+  if (
+    [...context.right.tabs, ...context.bottom.tabs].filter((tab) => tab.kind !== "browser")
+      .length >= MAX_WORKBENCH_TABS
+  ) {
     return { state, result: { ok: false, reason: "tab-limit" } };
   }
   const pane = options.pane ?? workbenchDefaultPane(input.kind);
@@ -216,6 +253,102 @@ export function openWorkbenchTab(
     state: withScope(state, key, next, now),
     result: { ok: true, tabID: candidate.id, pane, created: true, moved: false },
   };
+}
+
+/** Browser inventory is authoritative; the workbench only retains page placement and selection. */
+export function reconcileBrowserPages(
+  state: WorkbenchState,
+  scope: WorkbenchScope,
+  location: LocationRef,
+  pageIDs: readonly string[],
+  focusedPageID?: string | null,
+  preferredPanes: ReadonlyMap<string, WorkbenchPaneID> = new Map(),
+  now = Date.now(),
+  createID: () => string = defaultTabID,
+): WorkbenchState {
+  const key = workbenchScopeKey(scope);
+  const context = state.scopes[key] ?? emptyContext(now);
+  const wanted = new Set(pageIDs);
+  const retained = new Set<string>();
+  const legacy = [...context.right.tabs, ...context.bottom.tabs].find(
+    (tab) => tab.kind === "browser" && !tab.resource.browserTabID,
+  );
+  const legacyPageID = pageIDs.find(
+    (id) =>
+      ![...context.right.tabs, ...context.bottom.tabs].some(
+        (tab) => tab.kind === "browser" && tab.resource.browserTabID === id,
+      ),
+  );
+  let changed = false;
+  const repair = (pane: WorkbenchPaneState): WorkbenchPaneState => {
+    const tabs = pane.tabs.flatMap((tab): WorkbenchTab[] => {
+      if (tab.kind !== "browser") return [tab];
+      const pageID = tab.resource.browserTabID ?? (tab === legacy ? legacyPageID : undefined);
+      if (!pageID || !wanted.has(pageID) || retained.has(pageID)) {
+        changed = true;
+        return [];
+      }
+      retained.add(pageID);
+      if (tab.resource.browserTabID) return [tab];
+      changed = true;
+      return [{ ...tab, pinned: false, resource: { ...tab.resource, browserTabID: pageID } }];
+    });
+    if (tabs.length === pane.tabs.length && pane.tabs.every((tab, i) => tabs[i] === tab))
+      return pane;
+    const previousActiveIndex = pane.tabs.findIndex((tab) => tab.id === pane.activeTabID);
+    const activeTabID = tabs.some((tab) => tab.id === pane.activeTabID)
+      ? pane.activeTabID
+      : (tabs[Math.min(previousActiveIndex < 0 ? 0 : previousActiveIndex, tabs.length - 1)]?.id ??
+        null);
+    return {
+      ...pane,
+      tabs,
+      activeTabID,
+      requestedOpen: tabs.length > 0 && pane.requestedOpen,
+    };
+  };
+  let right = repair(context.right);
+  let bottom = repair(context.bottom);
+  const newRightTabs: WorkbenchTab[] = [];
+  const newBottomTabs: WorkbenchTab[] = [];
+  for (const id of pageIDs) {
+    if (retained.has(id)) continue;
+    retained.add(id);
+    changed = true;
+    const tab = tabFromInput(scope, { kind: "browser", location, browserTabID: id }, createID());
+    if (preferredPanes.get(id) === "bottom") newBottomTabs.push(tab);
+    else newRightTabs.push(tab);
+  }
+  if (newRightTabs.length)
+    right = {
+      ...right,
+      tabs: [...right.tabs, ...newRightTabs],
+      activeTabID: right.activeTabID ?? newRightTabs[0]!.id,
+    };
+  if (newBottomTabs.length)
+    bottom = {
+      ...bottom,
+      tabs: [...bottom.tabs, ...newBottomTabs],
+      activeTabID: bottom.activeTabID ?? newBottomTabs[0]!.id,
+    };
+  if (focusedPageID) {
+    const rightTab = right.tabs.find(
+      (tab) => tab.kind === "browser" && tab.resource.browserTabID === focusedPageID,
+    );
+    const bottomTab = rightTab
+      ? undefined
+      : bottom.tabs.find(
+          (tab) => tab.kind === "browser" && tab.resource.browserTabID === focusedPageID,
+        );
+    if (rightTab && (right.activeTabID !== rightTab.id || !right.requestedOpen)) {
+      changed = true;
+      right = { ...right, activeTabID: rightTab.id, requestedOpen: true };
+    } else if (bottomTab && (bottom.activeTabID !== bottomTab.id || !bottom.requestedOpen)) {
+      changed = true;
+      bottom = { ...bottom, activeTabID: bottomTab.id, requestedOpen: true };
+    }
+  }
+  return changed ? withScope(state, key, { ...context, right, bottom }, now) : state;
 }
 
 export type WorkbenchMutation =
@@ -317,6 +450,19 @@ function tabFromInput(
   input: OpenWorkbenchTabInput,
   id: string,
 ): WorkbenchTab {
+  if (input.kind === "browser") {
+    return {
+      id,
+      kind: "browser",
+      pinned: false,
+      resource: {
+        profileID: scope.profileID,
+        sessionID: scope.sessionID,
+        location: input.location,
+        browserTabID: input.browserTabID,
+      },
+    };
+  }
   if (input.kind === "command") {
     return {
       id,
@@ -368,6 +514,27 @@ function tabFromInput(
         location: input.location,
         mode: input.mode,
         ...(input.sourceSessionID ? { sourceSessionID: input.sourceSessionID } : {}),
+      },
+    };
+  }
+  if (input.kind === "workspace-files") {
+    return {
+      id,
+      kind: input.kind,
+      pinned: true,
+      resource: { profileID: scope.profileID, location: input.location },
+    };
+  }
+  if (input.kind === "turn-diff") {
+    return {
+      id,
+      kind: input.kind,
+      pinned: false,
+      resource: {
+        profileID: scope.profileID,
+        location: input.location,
+        sessionID: scope.sessionID,
+        userMessageID: input.userMessageID,
       },
     };
   }

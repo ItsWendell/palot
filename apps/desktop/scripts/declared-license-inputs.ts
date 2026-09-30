@@ -3,7 +3,7 @@ import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import declarations from "../resources/licenses/DEPENDENCY_LICENSE_DECLARATIONS.json" with { type: "json" };
 
-type Declaration = (typeof declarations)[number];
+type Declaration = (typeof declarations)[number] & { packagedManifestSha256?: string };
 
 interface DeclaredLicenseText {
   name: string;
@@ -35,7 +35,11 @@ export function createDeclaredLicenseCollector(
       fail("declared license conflicts with recorded MIT declaration.");
 
     const manifest = await readFile(path.join(directory, "package.json"));
-    if (sha256(manifest) !== record.manifestSha256) fail("installed manifest SHA-256 changed.");
+    if (
+      (record.packagedManifestSha256 !== undefined && !isSha256(record.packagedManifestSha256)) ||
+      ![record.manifestSha256, record.packagedManifestSha256].includes(sha256(manifest))
+    )
+      fail("installed manifest SHA-256 changed.");
     const installed = JSON.parse(manifest.toString("utf8"));
     if (
       installed.name !== name ||

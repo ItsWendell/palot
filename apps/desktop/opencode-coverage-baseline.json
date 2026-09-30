@@ -1,6 +1,6 @@
 {
-  "contractFingerprint": "e365f75407217c036b7b1a177020c2d0e23e0db19a8fd33b565dd4897f9b06e0",
-  "contractVersion": "2.0.9",
+  "contractFingerprint": "decea2124ea7c7e6d8f5271aced467f66821b2142fef74df4e4d3a340a81f6d5",
+  "contractVersion": "2.0.19",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
@@ -95,7 +95,7 @@
     },
     "project.updated": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "b3f0867b9e1ba4fbe0ea60cefd10a2cff7119eff966513b35336652255531d9f"
+      "payloadFingerprint": "eb5184894ed8fa22bb46a6718e309c7125be5095276b28d2b805d86fa6ef468a"
     },
     "provider.updated": {
       "expectedProductionMention": true,
@@ -205,6 +205,10 @@
       "expectedProductionMention": true,
       "payloadFingerprint": "a88d02d95d1ba27323841b50b4ba2b107d38fd799cc6654c19fb84bc857ba54b"
     },
+    "session.metadata.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "39b6a8841ec7d221fe4a7564db3202ff16cf9213918c072fec29948b0bb2b869"
+    },
     "session.model.selected": {
       "expectedProductionMention": true,
       "payloadFingerprint": "f40ffbe8a8b83c1ba442f8026be260b792593e1e434b93967606038e08514321"
@@ -251,11 +255,11 @@
     },
     "session.shell.ended": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "2a4edd2f2da3ffda96a6fff9f98ab5ec3f16cec57a47be5d570bca80d6f2dbc0"
+      "payloadFingerprint": "096a635e26254a44c141b8534abf6242b0c9cbe0f90ce8e95726e39589c7aab3"
     },
     "session.shell.started": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "08d001698ce29f225b99153914bfdb0c212ea22351d445aa6222045e956dcd2b"
+      "payloadFingerprint": "b0a865c746e3fe98c26f1f8f5dd094c0378ffc4f24dc04f23ceca15923e20747"
     },
     "session.skill.activated": {
       "expectedProductionMention": true,
@@ -335,7 +339,7 @@
     },
     "shell.created": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "e90f91cd00ba3d95418f0392542cc7efd67c0156fbae976e4e55511a563c9cd0"
+      "payloadFingerprint": "8b5bc2659382ae51b6134b6337ccdd8171e8d098fee0bd9761a3441c399a8b90"
     },
     "shell.deleted": {
       "expectedProductionMention": true,
@@ -672,7 +676,11 @@
     "rpc.call": {
       "disposition": "not-integrated",
       "expectedProductionReference": false,
-      "note": "No Palot feature currently consumes a plugin-defined RPC contract. Generic plugin execution is not added as part of the release migration."
+      "note": "The opt-in browser consumes the plugin-defined Browser RPC through scoped OpenCode.rpc(Browser.RPC), not the generic rpc.call Promise-client operation. Generic arbitrary-plugin RPC has no product UI."
+    },
+    "server.connect": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "server.experimental.persistentPty.connectToken": {
       "disposition": "integrated",
@@ -722,6 +730,10 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
+    "server.pair": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
     "session.active": {
       "disposition": "integrated",
       "expectedProductionReference": true
@@ -747,9 +759,8 @@
       "expectedProductionReference": true
     },
     "session.diff": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false,
-      "note": "Structured diffs for a user-message turn or range remain deferred. Existing Changes workflows use VCS diff and transcript tool diffs; this upgrade does not add a separate turn-diff view."
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "session.environment": {
       "disposition": "intentional-omit",

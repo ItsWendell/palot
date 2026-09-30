@@ -1,7 +1,12 @@
-import type { PermissionRuleset, SessionInfo, SessionLogOutput } from "@opencode/client";
+import type { PermissionRuleset, Project, SessionInfo, SessionLogOutput } from "@opencode/client";
 import { describe, expect, it, vi } from "vitest";
 import type { PalotEvent, PalotEventBatch, PalotMessage } from "../../shared";
-import { OpenCodeReconciler } from "./open-code-reconciler";
+import {
+  OpenCodeReconciler,
+  projectInfoFromPalot,
+  sessionInfoFromPalot,
+} from "./open-code-reconciler";
+import { mapProject, mapSession } from "../services/opencode-mappers";
 import { getStreamingPatchLine, getStreamingPatchLineCount } from "./streaming-patch-input";
 import { projectToolExecution } from "./tool-executions";
 
@@ -57,6 +62,65 @@ function assistant(text: string): PalotMessage {
 }
 
 describe("OpenCodeReconciler", () => {
+  it("round-trips project activity and preserves it when an older projection omits it", () => {
+    const project: Project = {
+      id: "project",
+      canonical: "/repo",
+      sandboxes: [],
+      time: { created: 1, updated: 2, active: 3 },
+    };
+    expect(projectInfoFromPalot(mapProject(project)).time).toEqual({
+      created: 2,
+      updated: 2,
+      active: 3,
+    });
+    expect(
+      projectInfoFromPalot({ ...mapProject(project), activeAt: undefined }, project).time,
+    ).toEqual(project.time);
+    expect(
+      projectInfoFromPalot({ ...mapProject(project), activeAt: undefined, updatedAt: 5 }).time
+        .active,
+    ).toBe(5);
+  });
+
+  it("keeps hydrated metadata and applies durable metadata updates without stale snapshots or duplicates", () => {
+    const reconciler = new OpenCodeReconciler();
+    const source = { ...session("Initial"), metadata: { label: "initial" } };
+    reconciler.upsertPalotSessions("connection", [mapSession(source)]);
+    expect(sessionInfoFromPalot(mapSession(source)).metadata).toEqual(source.metadata);
+    expect(reconciler.session("connection", "session")?.metadata).toEqual(source.metadata);
+    const snapshot = reconciler.beginSnapshot("connection");
+    const update = {
+      ...event("session.metadata.updated", 3, {
+        sessionID: "session",
+        metadata: { label: "live", extra: true },
+      }),
+      durable: { aggregateID: "session", seq: 2, version: 1 },
+    } as PalotEvent;
+    const result = reconciler.applyBatch(batch(1, [update]));
+    expect(result.changedSessionIDs).toEqual(["session"]);
+    expect(result.changedTranscriptSessionIDs).toEqual([]);
+    expect(reconciler.session("connection", "session")?.metadata).toEqual({
+      label: "live",
+      extra: true,
+    });
+    reconciler.upsertSessionInfos("connection", [source], snapshot);
+    expect(reconciler.session("connection", "session")?.metadata).toEqual({
+      label: "live",
+      extra: true,
+    });
+    expect(reconciler.applyBatch(batch(2, [update])).events).toEqual([]);
+    expect(reconciler.session("connection", "session")?.metadata).toEqual({
+      label: "live",
+      extra: true,
+    });
+    const replay = reconciler.applyReplay("connection", "session", [
+      { ...update, created: 3 } as SessionLogOutput,
+      { type: "log.synced", aggregateID: "session", seq: 2 },
+    ]);
+    expect(replay.events).toEqual([]);
+  });
+
   it("hydrates created permissions and applies foreign normal, full, and custom updates on only their connection", () => {
     const reconciler = new OpenCodeReconciler();
     const full: PermissionRuleset = [{ action: "*", resource: "*", effect: "allow" }];

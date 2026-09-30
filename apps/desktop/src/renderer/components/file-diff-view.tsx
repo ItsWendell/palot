@@ -1,4 +1,5 @@
 import { FileDiff } from "@pierre/diffs/react";
+import type { SelectedLineRange } from "@pierre/diffs";
 import { useAtomValue } from "jotai";
 import { memo, useMemo } from "react";
 import { resolvedAppearanceAtom } from "../atoms/appearance";
@@ -14,6 +15,8 @@ export const FileDiffView = memo(function FileDiffView({
   expandUnchanged = false,
   className,
   ariaLabel,
+  selectedLines,
+  onSelectedLinesChange,
 }: {
   file: string;
   patch?: string;
@@ -22,6 +25,8 @@ export const FileDiffView = memo(function FileDiffView({
   expandUnchanged?: boolean;
   className?: string;
   ariaLabel?: string | null;
+  selectedLines?: SelectedLineRange | null;
+  onSelectedLinesChange?(range: SelectedLineRange | null): void;
 }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
   const diff = useMemo(
@@ -38,8 +43,11 @@ export const FileDiffView = memo(function FileDiffView({
       lineDiffType: "word" as const,
       diffIndicators: "none" as const,
       expandUnchanged,
+      ...(onSelectedLinesChange
+        ? { enableLineSelection: true, onLineSelectionEnd: onSelectedLinesChange }
+        : {}),
     }),
-    [appearance.codeThemePair, appearance.scheme, expandUnchanged],
+    [appearance.codeThemePair, appearance.scheme, expandUnchanged, onSelectedLinesChange],
   );
   if (!diff) {
     return <div className="p-3 text-xs text-muted-foreground">Diff unavailable for {file}.</div>;
@@ -50,7 +58,12 @@ export const FileDiffView = memo(function FileDiffView({
       tabIndex={ariaLabel === null ? undefined : 0}
       aria-label={ariaLabel === null ? undefined : (ariaLabel ?? `Diff contents for ${file}`)}
     >
-      <FileDiff fileDiff={diff} options={options} style={pierreViewerStyle} />
+      <FileDiff
+        fileDiff={diff}
+        options={options}
+        selectedLines={selectedLines}
+        style={pierreViewerStyle}
+      />
     </div>
   );
 });

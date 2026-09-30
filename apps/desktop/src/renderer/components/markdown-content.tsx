@@ -33,6 +33,7 @@ import { cn } from "../lib/cn";
 import { duckDuckGoFaviconUrl } from "../lib/markdown-favicon";
 import { transformInlineMath } from "../lib/markdown-math";
 import { palot } from "../services/palot";
+import { isLocalBrowserURL } from "../lib/browser-address";
 import { MarkdownCodeBlock } from "./markdown-code-block";
 import type { CodeAnimationRange } from "./highlighted-code";
 import { PalotMarkdown, useMarkdownBlockStreaming } from "./palot-markdown-react";
@@ -63,6 +64,7 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "css",
   "env",
   "fish",
+  "gif",
   "go",
   "gql",
   "graphql",
@@ -70,6 +72,8 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "hpp",
   "html",
   "java",
+  "jpeg",
+  "jpg",
   "js",
   "json",
   "jsonc",
@@ -78,6 +82,12 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "lock",
   "md",
   "mdx",
+  "mp3",
+  "mp4",
+  "ogg",
+  "opus",
+  "pdf",
+  "png",
   "py",
   "rb",
   "rs",
@@ -89,6 +99,9 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "ts",
   "tsx",
   "txt",
+  "wav",
+  "webm",
+  "webp",
   "xml",
   "yaml",
   "yml",
@@ -107,6 +120,7 @@ export type WorkspaceFileOpenHandler = (
 ) => void;
 const MarkdownWorkspaceDirectoryContext = createContext<string | undefined>(undefined);
 const MarkdownWorkspaceFileContext = createContext<WorkspaceFileOpenHandler | null>(null);
+const MarkdownWebLinkContext = createContext<((url: string) => void) | null>(null);
 
 function MarkdownDetails({
   children,
@@ -136,16 +150,20 @@ export interface MarkdownFileReference {
 export function MarkdownWorkspaceProvider({
   children,
   onOpenFile,
+  onOpenWebLink,
   workspaceDirectory,
 }: {
   children?: ReactNode;
   onOpenFile(reference: MarkdownFileReference, event?: ReactMouseEvent | ReactKeyboardEvent): void;
+  onOpenWebLink?(url: string): void;
   workspaceDirectory?: string;
 }) {
   return (
     <MarkdownWorkspaceDirectoryContext.Provider value={workspaceDirectory}>
       <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
-        {children}
+        <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
+          {children}
+        </MarkdownWebLinkContext.Provider>
       </MarkdownWorkspaceFileContext.Provider>
     </MarkdownWorkspaceDirectoryContext.Provider>
   );
@@ -157,6 +175,10 @@ export function useWorkspaceFileOpener() {
 
 export function useWorkspaceDirectory() {
   return useContext(MarkdownWorkspaceDirectoryContext);
+}
+
+export function isLocalMarkdownWebLink(url: URL): boolean {
+  return isLocalBrowserURL(url);
 }
 
 function MarkdownPre({ children, ...props }: MarkdownComponentProps<"pre">) {
@@ -292,6 +314,7 @@ function MarkdownLink({
 }: MarkdownComponentProps<"a"> & { remoteFavicons: boolean }) {
   const { baseUrl, idPrefix } = useContext(MarkdownRenderContext);
   const openWorkspaceFile = useContext(MarkdownWorkspaceFileContext);
+  const openWebLink = useContext(MarkdownWebLinkContext);
   const fileReference = !baseUrl && openWorkspaceFile ? parseWorkspaceFileReference(href) : null;
   if (fileReference && openWorkspaceFile) {
     return (
@@ -323,7 +346,8 @@ function MarkdownLink({
           }
           if (isWebUrl && resolvedHref) {
             event.preventDefault();
-            void palot.openExternalUrl(resolvedHref);
+            if (openWebLink) openWebLink(resolvedHref);
+            else void palot.openExternalUrl(resolvedHref);
           }
         }}
       >

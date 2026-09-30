@@ -28,6 +28,7 @@ import QRCode from "qrcode";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   OpenCodeCredentialInput,
+  OpenCodePairImportInput,
   OpenCodePairingInfo,
   OpenCodePairPayload,
   OpenCodeProfile,
@@ -273,7 +274,7 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
 
           <SettingsSection
             title="Import a connection"
-            description="Add credentials exported by `opencode2 pair` on another computer."
+            description="Use a one-time pairing link, or import legacy Basic credentials from another computer."
           >
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setImportOpen(true)}>
@@ -443,7 +444,7 @@ function WebAccessSettings({
             </a>
           ) : null}
           <Button type="button" variant="outline" disabled={!pairingAvailable} onClick={onPair}>
-            <QrCode className="size-4" /> Show login credentials
+            <QrCode className="size-4" /> Pair device
           </Button>
           <Button type="button" variant="ghost" onClick={onRefresh}>
             Refresh
@@ -1031,13 +1032,16 @@ export function PairDialog({
   }, [open, suggestedAddress]);
   useEffect(() => {
     if (!info) return;
-    const timeout = window.setTimeout(() => {
-      qrRequest.current += 1;
-      setInfo(null);
-      setQr(null);
-      setShowQr(false);
-      setRevealed(false);
-    }, 60_000);
+    const timeout = window.setTimeout(
+      () => {
+        qrRequest.current += 1;
+        setInfo(null);
+        setQr(null);
+        setShowQr(false);
+        setRevealed(false);
+      },
+      info.mode === "link" ? info.expiresIn * 1_000 : 60_000,
+    );
     return () => window.clearTimeout(timeout);
   }, [info]);
   const pairing = useMemo(() => {
@@ -1090,7 +1094,11 @@ export function PairDialog({
         <DialogHeader>
           <DialogTitle>Pair device</DialogTitle>
           <DialogDescription>
-            The QR contains reusable OpenCode service credentials.
+            {info?.mode === "link"
+              ? "This one-time link and QR expire in up to 5 minutes and work only once. The session credential issued when redeemed can last up to 30 days."
+              : info?.mode === "credentials"
+                ? "Legacy pairing JSON and QR contain reusable OpenCode service credentials."
+                : "Generate pairing details when the other device is ready."}
           </DialogDescription>
         </DialogHeader>
         {info ? (
@@ -1111,7 +1119,7 @@ export function PairDialog({
                   />
                   <p id="pairing-address-help" className="text-meta text-muted-foreground">
                     Use an HTTPS proxy you control that forwards to this service. Leave blank to use
-                    the service addresses. This does not configure the proxy.
+                    the service address. This does not configure the proxy.
                   </p>
                   {address ? (
                     <Button variant="ghost" size="sm" onClick={() => changeAddress("")}>
@@ -1132,20 +1140,37 @@ export function PairDialog({
                     </p>
                   ) : null}
                 </div>
-                {pairing.info?.urls.map((url) => (
-                  <p key={url} className="break-all text-code-compact">
-                    {url}
-                  </p>
-                ))}
-                <div className="space-y-2">
-                  <PairingCredentialRow label="Username" value={info.username} />
-                  <PairingCredentialRow
-                    label="Password"
-                    value={info.password}
-                    concealed={!revealed}
-                    onToggleConcealed={() => setRevealed((value) => !value)}
-                  />
-                </div>
+                {info.mode === "link" ? (
+                  <>
+                    <p className="text-meta text-muted-foreground">
+                      Expires{" "}
+                      {info.expiresIn === 300 ? "in 5 minutes" : `in ${info.expiresIn} seconds`}{" "}
+                      after generation. Redeeming it creates a longer-lived session credential.
+                    </p>
+                    {pairing.info ? (
+                      <code className="block break-all text-code-compact">
+                        {pairing.info.payload}
+                      </code>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {pairing.info?.urls.map((url) => (
+                      <p key={url} className="break-all text-code-compact">
+                        {url}
+                      </p>
+                    ))}
+                    <div className="space-y-2">
+                      <PairingCredentialRow label="Username" value={info.username} />
+                      <PairingCredentialRow
+                        label="Password"
+                        value={info.password}
+                        concealed={!revealed}
+                        onToggleConcealed={() => setRevealed((value) => !value)}
+                      />
+                    </div>
+                  </>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
@@ -1168,14 +1193,18 @@ export function PairDialog({
                     }}
                   >
                     <Copy className="size-4" />
-                    Copy pairing JSON
+                    {info.mode === "link" ? "Copy one-time link" : "Copy pairing JSON"}
                   </Button>
                 </div>
               </div>
               {qr && showQr ? (
                 <img
                   src={qr}
-                  alt="OpenCode pairing QR code"
+                  alt={
+                    info.mode === "link"
+                      ? "OpenCode one-time pairing QR code"
+                      : "OpenCode pairing QR code"
+                  }
                   className="w-48 max-w-full justify-self-center rounded-lg bg-white p-2"
                 />
               ) : null}
@@ -1184,11 +1213,11 @@ export function PairDialog({
         ) : (
           <div className="space-y-3 text-sm text-muted-foreground">
             <p>
-              Reveal only when the other device is ready. The credentials can control this OpenCode
-              service.
+              Generate only when the other device is ready. Legacy credentials and redeemed sessions
+              can control this OpenCode service.
             </p>
             <Button type="button" disabled={loading} onClick={() => void load()}>
-              {loading ? "Loading…" : "Reveal pairing credentials"}
+              {loading ? "Loading…" : "Generate pairing details"}
             </Button>
           </div>
         )}
@@ -1245,7 +1274,7 @@ export function PairingCredentialRow({
   );
 }
 
-function ImportPairDialog({
+export function ImportPairDialog({
   open,
   onOpenChange,
   onSaved,
@@ -1257,25 +1286,30 @@ function ImportPairDialog({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [allowPlainHttp, setAllowPlainHttp] = useState(false);
-  const payload = useMemo(() => {
+  useEffect(() => {
+    if (!open) {
+      setText("");
+      setAllowPlainHttp(false);
+    }
+  }, [open]);
+  const parsed = useMemo(() => {
+    if (!text.trim()) return null;
     try {
-      const value = JSON.parse(text) as OpenCodePairPayload;
-      return Array.isArray(value.urls) && value.urls.every((url) => typeof url === "string")
-        ? value
-        : null;
-    } catch {
-      return null;
+      return { value: parsePairingText(text), error: null };
+    } catch (error) {
+      return {
+        value: null,
+        error: error instanceof Error ? error.message : "Invalid pairing details",
+      };
     }
   }, [text]);
   const insecure =
-    payload?.urls.some(
-      (url) => url.trim().toLowerCase().startsWith("http://") && !isLoopback(url),
-    ) ?? false;
+    parsed?.value?.urls.some((url) => url.startsWith("http://") && !isLoopback(url)) ?? false;
   const save = async () => {
-    if (!payload) return;
+    if (!parsed?.value || busy || (insecure && !allowPlainHttp)) return;
     setBusy(true);
     try {
-      onSaved(await palot.importOpenCodePairing({ payload, allowPlainHttp }));
+      onSaved(await palot.importOpenCodePairing({ ...parsed.value.input, allowPlainHttp }));
     } catch (error) {
       showError(error);
     } finally {
@@ -1283,21 +1317,49 @@ function ImportPairDialog({
     }
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (busy) return;
+        if (!next) {
+          setText("");
+          setAllowPlainHttp(false);
+        }
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent showCloseButton={!busy}>
         <DialogHeader>
           <DialogTitle>Add paired server</DialogTitle>
-          <DialogDescription>Paste the JSON printed by `opencode2 pair`.</DialogDescription>
+          <DialogDescription>
+            Paste a one-time pairing URL or legacy Basic pairing JSON. The link is redeemed only
+            when you import.
+          </DialogDescription>
         </DialogHeader>
         <Textarea
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => {
+            setText(event.target.value);
+            setAllowPlainHttp(false);
+          }}
+          disabled={busy}
+          aria-label="Pairing link or legacy JSON"
           rows={8}
-          placeholder={'{"urls":["http://host:4096"],"username":"opencode","password":"…"}'}
+          placeholder="https://server.example/auth/connect/… or legacy pairing JSON"
         />
-        {payload ? (
-          <div className="space-y-2 rounded-lg border border-border/70 bg-muted/30 p-3 text-xs text-muted-foreground">
-            {payload.urls.map((url) => (
+        {parsed?.error ? (
+          <p role="alert" className="text-meta text-destructive">
+            {parsed.error}
+          </p>
+        ) : null}
+        {parsed?.value ? (
+          <div className="space-y-2 rounded-lg border border-border/70 bg-muted/30 p-3 text-meta text-muted-foreground">
+            <p>
+              {"link" in parsed.value.input
+                ? "One-time link target"
+                : "Legacy Basic credential targets"}
+            </p>
+            {parsed.value.urls.map((url) => (
               <p key={url} className="break-all font-mono">
                 {url}
               </p>
@@ -1308,19 +1370,29 @@ function ImportPairDialog({
           <label className="flex items-start gap-2 text-sm text-muted-foreground">
             <Checkbox
               checked={allowPlainHttp}
+              disabled={busy}
               onCheckedChange={(checked) => setAllowPlainHttp(checked === true)}
             />
-            Allow plain HTTP. Pairing credentials, prompts, source, and terminal traffic can be
-            observed or modified in transit.
+            Allow plain HTTP. The pairing code or credentials, prompts, source, and terminal traffic
+            can be observed or modified in transit.
           </label>
         ) : null}
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              setText("");
+              setAllowPlainHttp(false);
+              onOpenChange(false);
+            }}
+          >
             Cancel
           </Button>
           <Button
             type="button"
-            disabled={busy || !payload || (insecure && !allowPlainHttp)}
+            disabled={busy || !parsed?.value || (insecure && !allowPlainHttp)}
             onClick={() => void save()}
           >
             Probe and import
@@ -1329,6 +1401,69 @@ function ImportPairDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function parsePairingText(text: string): {
+  input:
+    | Omit<Extract<OpenCodePairImportInput, { link: string }>, "allowPlainHttp">
+    | Omit<Extract<OpenCodePairImportInput, { payload: OpenCodePairPayload }>, "allowPlainHttp">;
+  urls: string[];
+} {
+  if (!text.trim().startsWith("{")) {
+    let url: URL;
+    try {
+      url = new URL(text.trim());
+    } catch {
+      throw new Error("Enter a complete one-time pairing URL or legacy JSON.");
+    }
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !/^\/auth\/connect\/[A-Za-z0-9_-]{16,128}$/.test(url.pathname) ||
+      text.length > 2_048
+    )
+      throw new Error("Enter an OpenCode one-time pairing URL without extra parameters.");
+    return { input: { link: text.trim() }, urls: [url.origin] };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("Enter valid legacy pairing JSON.");
+  }
+  if (!value || typeof value !== "object") throw new Error("Invalid legacy pairing JSON.");
+  const payload = value as OpenCodePairPayload;
+  if (
+    !Array.isArray(payload.urls) ||
+    !payload.urls.length ||
+    !payload.urls.every((url) => typeof url === "string") ||
+    typeof payload.username !== "string" ||
+    !payload.username ||
+    typeof payload.password !== "string" ||
+    !payload.password
+  )
+    throw new Error("Legacy pairing JSON needs server URLs, username, and password.");
+  let urls: string[];
+  try {
+    urls = payload.urls.map((address) => {
+      const url = new URL(address.trim());
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.pathname !== "/"
+      ) {
+        throw new Error("Invalid server URL");
+      }
+      return url.origin;
+    });
+  } catch {
+    throw new Error("Legacy pairing JSON contains an invalid server URL.");
+  }
+  return { input: { payload }, urls };
 }
 
 function credential(

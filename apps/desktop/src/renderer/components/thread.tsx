@@ -10,6 +10,7 @@ import {
   CircleAlert,
   CircleStop,
   Copy,
+  FileDiff,
   FileText,
   FolderGit2,
   GitBranch,
@@ -34,6 +35,9 @@ import {
 import type { PalotMessage, PalotMessageContent, PalotModel, PalotSession } from "../../shared";
 import {
   activityGroupOpenAtomFamily,
+  browserLocalLinksAtom,
+  browserWebLinksAtom,
+  experimentalBrowserAtom,
   sessionProjectionPreferenceAtom,
   showTimelineCacheBustsAtom,
   turnActivityOpenAtomFamily,
@@ -50,6 +54,7 @@ import { attentionTargetAtom } from "../atoms/attention";
 import { resolvedAppearanceAtom } from "../atoms/appearance";
 import { retainedTranscriptLayouts } from "../lib/transcript-layout-cache";
 import { useSessionTranscript } from "../hooks/use-session-transcript";
+import { useBrowserSession } from "../hooks/use-browser-session";
 import { useSessionTranscriptProjection } from "../hooks/use-session-transcript-projection";
 import { useSessionRequests, useSessionFamilyRequestViews } from "../hooks/use-session-requests";
 import type { OwnedPendingRequestView } from "../lib/session-family-requests";
@@ -116,6 +121,7 @@ import { Composer } from "./composer";
 import { ConnectionDestination } from "./connection-destination";
 import { FileAttachment } from "./file-attachment";
 import {
+  isLocalMarkdownWebLink,
   MarkdownContent,
   MarkdownWorkspaceProvider,
   type MarkdownFileReference,
@@ -203,6 +209,7 @@ function estimateTranscriptTurnSize(turn: TranscriptTurn | undefined): number {
     size += 56 + Math.max(24, Math.ceil(text.length / 88) * 24);
   }
   if (turn.postFinal.length > 0) size += Math.min(420, 48 + turn.postFinal.length * 48);
+  if (turn.status === "completed" && turn.user) size += 28;
   if (turn.status === "working") size += 28;
   if (
     turn.kind === "subagent" ||
@@ -357,6 +364,10 @@ const SessionThreadContents = memo(function SessionThreadContents({
   }, [scheduleScrollToBottom, scrollToBottomNow, setBottomLock]);
   const [models, setModels] = useState<PalotModel[]>([]);
   const runtime = useAtomValue(runtimeAtom);
+  const browserEnabled = useAtomValue(experimentalBrowserAtom);
+  const webLinks = useAtomValue(browserWebLinksAtom);
+  const localLinks = useAtomValue(browserLocalLinksAtom);
+  const browser = useBrowserSession({ profileID: runtime?.profileID ?? "", sessionID: session.id });
   const workbench = useWorkbenchCommands(
     runtime ? { profileID: runtime.profileID, sessionID: session.id } : null,
   );
@@ -870,6 +881,15 @@ const SessionThreadContents = memo(function SessionThreadContents({
     },
     [session.id, session.location, setContextMessageTarget, workbench],
   );
+  const openTurnChanges = useCallback(
+    (userMessageID: string) => {
+      workbench.openTab(
+        { kind: "turn-diff", location: session.location, userMessageID },
+        { pane: "right" },
+      );
+    },
+    [session.location, workbench],
+  );
   const openWorkspaceFile = useCallback(
     (reference: MarkdownFileReference, event?: React.MouseEvent | React.KeyboardEvent) => {
       const modifier = event ? event.metaKey || event.ctrlKey : false;
@@ -906,12 +926,72 @@ const SessionThreadContents = memo(function SessionThreadContents({
     },
     [session.id, session.location, workbench, runtime?.connectionID],
   );
+  const openWebLink = useCallback(
+    (href: string) => {
+      let url: URL;
+      try {
+        url = new URL(href, "https://palot.invalid");
+        if (!/^https?:\/\//i.test(href) && !href.startsWith("//")) throw new Error();
+        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+          throw new Error();
+      } catch {
+        showErrorToast("Could not open link", new Error("Only safe HTTP(S) links can be opened"));
+        return;
+      }
+
+      const local = isLocalMarkdownWebLink(url);
+      const destination = local ? localLinks : webLinks;
+      if (destination === "external") {
+        if (local && runtime?.topology !== "same-machine") {
+          showErrorToast(
+            "Cannot open server-local link externally",
+            new Error(
+              "This task runs on a remote machine or its location is unknown. In an external browser, localhost refers to this computer, not the task server. Choose Palot Browser for local dev links to open them on the task's server.",
+            ),
+          );
+          return;
+        }
+        void palot.openExternalUrl(url.href);
+        return;
+      }
+      if (!browserEnabled) {
+        showErrorToast(
+          "Browser unavailable",
+          new Error("Enable Palot Browser in settings to open this link"),
+        );
+        return;
+      }
+      if (!runtime?.connected || !browser?.bindingID) {
+        showErrorToast(
+          "Browser unavailable",
+          new Error(browser?.error ?? "Browser is still connecting to this task"),
+        );
+        return;
+      }
+      void palot
+        .browserCommand(browser.bindingID, { type: "tabs.open", url: url.href, focus: true })
+        .catch((error: unknown) => showErrorToast("Could not open link in Palot Browser", error));
+    },
+    [
+      browser?.bindingID,
+      browser?.error,
+      browserEnabled,
+      localLinks,
+      runtime?.connected,
+      runtime?.topology,
+      webLinks,
+    ],
+  );
 
   const coldTranscriptLoading = coldTranscriptPendingRef.current && loading;
 
   return createElement(
     MarkdownWorkspaceProvider,
-    { onOpenFile: openWorkspaceFile, workspaceDirectory: session.location.directory },
+    {
+      onOpenFile: openWorkspaceFile,
+      onOpenWebLink: openWebLink,
+      workspaceDirectory: session.location.directory,
+    },
     <>
       <SessionThreadHeader
         session={session}
@@ -1151,6 +1231,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
                             showTimelineCacheBusts ? turnCacheBust(turnRow.turn, cacheBusts) : null
                           }
                           onOpenCacheDiagnostic={openCacheDiagnostic}
+                          onOpenTurnChanges={openTurnChanges}
                           subagentProgress={
                             virtualItem.index === turnRows.length - 1
                               ? subagentProgress
@@ -1691,6 +1772,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   sessionID,
   cacheBust,
   onOpenCacheDiagnostic,
+  onOpenTurnChanges,
   subagentProgress,
   virtualIndex,
   virtualSize,
@@ -1705,6 +1787,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   sessionID: string;
   cacheBust: LikelyCacheBust | null;
   onOpenCacheDiagnostic: (messageID: string) => void;
+  onOpenTurnChanges: (userMessageID: string) => void;
   subagentProgress: { active: number; total: number };
   virtualIndex: number;
   virtualSize: number;
@@ -1775,6 +1858,20 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
             subagentProgress={row.kind === "activity" ? subagentProgress : EMPTY_SUBAGENT_PROGRESS}
           />
         ))}
+        {turn.status === "completed" && turn.user ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="mt-1 text-muted-foreground"
+            onClick={() => {
+              if (turn.user) onOpenTurnChanges(turn.user.id);
+            }}
+          >
+            <FileDiff data-icon="inline-start" aria-hidden="true" />
+            View turn changes
+          </Button>
+        ) : null}
       </article>
     </div>
   );
@@ -1788,6 +1885,7 @@ function sameTranscriptPresentationTurnItemProps(
     sessionID: string;
     cacheBust: LikelyCacheBust | null;
     onOpenCacheDiagnostic: (messageID: string) => void;
+    onOpenTurnChanges: (userMessageID: string) => void;
     subagentProgress: { active: number; total: number };
     virtualIndex: number;
     virtualSize: number;
@@ -1803,6 +1901,7 @@ function sameTranscriptPresentationTurnItemProps(
     sessionID: string;
     cacheBust: LikelyCacheBust | null;
     onOpenCacheDiagnostic: (messageID: string) => void;
+    onOpenTurnChanges: (userMessageID: string) => void;
     subagentProgress: { active: number; total: number };
     virtualIndex: number;
     virtualSize: number;
@@ -1820,6 +1919,7 @@ function sameTranscriptPresentationTurnItemProps(
     previous.sessionID === next.sessionID &&
     previous.cacheBust === next.cacheBust &&
     previous.onOpenCacheDiagnostic === next.onOpenCacheDiagnostic &&
+    previous.onOpenTurnChanges === next.onOpenTurnChanges &&
     previous.virtualIndex === next.virtualIndex &&
     previous.virtualSize === next.virtualSize &&
     previous.isLastTurn === next.isLastTurn &&
@@ -2233,6 +2333,24 @@ function TurnActivitySummary({ turn }: { turn: TranscriptTurn }) {
   );
 }
 
+function subagentAnchors(group: TurnActivityGroup): TurnActivityGroup[] {
+  if (group.presentation !== "grouped") return [];
+  return group.entries.flatMap((entry) => {
+    if (!isTool(entry.part) || projectToolExecution(entry.part, entry.index).kind !== "subagent") {
+      return [];
+    }
+    return [
+      {
+        id: entryID(entry),
+        kind: "subagent-tool" as const,
+        title: "Delegated work",
+        status: group.status,
+        entries: [entry],
+      },
+    ];
+  });
+}
+
 export function TurnActivity({
   turn,
   sessionID,
@@ -2253,6 +2371,11 @@ export function TurnActivity({
   const open = canDisclose ? (persistedOpen ?? defaultOpen) : true;
 
   if (turn.activity.length === 0) return null;
+
+  // A returned child is a chronological event, not another timed period of parent work.
+  if (turn.kind === "subagent") {
+    return <ActivityGroups groups={turn.activity} live={false} sessionID={sessionID} />;
+  }
 
   if (turn.activity.length > 0 && turn.activity.every((group) => group.kind === "compaction")) {
     return (
@@ -2281,9 +2404,10 @@ export function TurnActivity({
     );
   }
 
-  const pinnedActivity = turn.activity.filter(
-    (group) => group.pinned || group.kind === "subagent" || group.kind === "subagent-tool",
-  );
+  const pinnedActivity = turn.activity.flatMap((group) => {
+    if (group.pinned || group.kind === "subagent" || group.kind === "subagent-tool") return [group];
+    return subagentAnchors(group);
+  });
 
   if (pinnedActivity.length > 0) {
     return (
@@ -2501,6 +2625,7 @@ export function ActivityGroup({
   const forcedOpen = group.forceOpen === true;
   const open = forcedOpen ? true : (persistedOpen ?? defaultOpen);
   const shimmer = live || group.kind === "compaction";
+  const visibleAnchors = subagentAnchors(group);
 
   useEffect(() => {
     if (revealGeneration <= appliedRevealGeneration.current) return;
@@ -2544,6 +2669,9 @@ export function ActivityGroup({
           <ChevronRight data-icon="inline-end" aria-hidden="true" />
         )}
       </CollapsibleTrigger>
+      {!open && visibleAnchors.length > 0 ? (
+        <ActivityGroups groups={visibleAnchors} live={false} sessionID={sessionID} />
+      ) : null}
       <CollapsibleContent smooth animate={animate} className="min-w-0 pt-1">
         <GroupedActivityDetails
           entries={group.entries}

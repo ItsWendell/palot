@@ -24,17 +24,17 @@
     {
       "id": "opencode-linux-x64",
       "packageName": "@opencode/cli-linux-x64-baseline",
-      "version": "2.0.9",
-      "sha256": ["2d6f5c69a5e390448e6d45bb3b24bdf7b7505ba34394e80bd17ed8a430e9b45f"],
-      "source": "https://github.com/anomalyco/opencode/tree/e50d845451afd5f584e6bf38300657e39bbaa25a",
+      "version": "2.0.14",
+      "sha256": ["d5cc1ad9ed083d7d72d50f8bba064911921b6be2098d3048cc1aa24193b08978"],
+      "source": "https://github.com/anomalyco/opencode/tree/e0ddc47aa4119707f35e97447aa58acb28915e51",
       "notices": ["opencode", "bun", "bun-webkit", "sources"]
     },
     {
       "id": "opencode-darwin-arm64",
       "packageName": "@opencode/cli-darwin-arm64",
-      "version": "2.0.9",
-      "sha256": ["83b3835e2da7cfd22839dd66408d84a30662363ce0015c934d6d7e2d53c1834e"],
-      "source": "https://github.com/anomalyco/opencode/tree/e50d845451afd5f584e6bf38300657e39bbaa25a",
+      "version": "2.0.14",
+      "sha256": ["f6cd2df4e09c05f4c6c9d4033f3ab2cbdd0069b11d036ebcfea5c96d0094a099"],
+      "source": "https://github.com/anomalyco/opencode/tree/e0ddc47aa4119707f35e97447aa58acb28915e51",
       "notices": ["opencode", "bun", "bun-webkit", "sources"]
     }
   ],
@@ -89,7 +89,7 @@
     },
     "sources": {
       "file": "upstream/RUNTIME_SOURCES.md",
-      "sha256": "508a7d7d0b6caf3a35607614b8c1a7e9b64675b43c6396b47bd65ae0666a57d0"
+      "sha256": "3d82ca561eaf09a87208f7707557ab04006ee323858cde7864b57b73ba33e7a0"
     }
   }
 }

@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@pierre/diffs/react", () => ({ File: mocks.file }));
+vi.mock("../../atoms/workspace", async () => ({
+  runtimeAtom: (await import("jotai")).atom(null),
+}));
 vi.mock("../../hooks/use-workspace-file", () => ({ useWorkspaceFile: () => mocks.query }));
 
 afterEach(() => {

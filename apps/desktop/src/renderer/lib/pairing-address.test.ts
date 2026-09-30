@@ -3,7 +3,14 @@ import type { OpenCodeWebAccessInfo } from "../../shared";
 import { pairingInfoForAddress, suggestedPairingAddress } from "./pairing-address";
 
 const payload = { urls: ["http://127.0.0.1:4096"], username: "opencode", password: "test-only" };
-const info = { ...payload, payload: JSON.stringify(payload) };
+const info = { mode: "credentials" as const, ...payload, payload: JSON.stringify(payload) };
+const linkInfo = {
+  mode: "link" as const,
+  urls: ["http://127.0.0.1:4096", "https://second.example"],
+  code: "abcdefghijklmnop",
+  expiresIn: 300,
+  payload: "http://127.0.0.1:4096/auth/connect/abcdefghijklmnop",
+};
 
 describe("pairing address", () => {
   it("only suggests a proxy that targets the current local service", () => {
@@ -56,6 +63,16 @@ describe("pairing address", () => {
     expect(info.urls).toEqual(["http://127.0.0.1:4096"]);
   });
 
+  it("builds a one-time URL for a validated proxy origin without changing the code", () => {
+    const result = pairingInfoForAddress(linkInfo, " https://workstation.example:8443/ ");
+    expect(result).toEqual({
+      ...linkInfo,
+      urls: ["https://workstation.example:8443"],
+      payload: "https://workstation.example:8443/auth/connect/abcdefghijklmnop",
+    });
+    expect(pairingInfoForAddress(linkInfo, " ").payload).toBe(linkInfo.payload);
+  });
+
   it("keeps the original advertised addresses when no override is selected", () => {
     expect(pairingInfoForAddress(info, " ")).toEqual(info);
   });
@@ -70,5 +87,6 @@ describe("pairing address", () => {
     "https://proxy.example.com#example",
   ])("rejects an insecure or unsupported proxy address: %s", (address) => {
     expect(() => pairingInfoForAddress(info, address)).toThrow();
+    expect(() => pairingInfoForAddress(linkInfo, address)).toThrow();
   });
 });

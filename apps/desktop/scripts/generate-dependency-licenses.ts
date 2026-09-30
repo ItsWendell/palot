@@ -251,13 +251,17 @@ export async function collectDependencyLicenses(
     for (const source of upstreamEvidence) {
       const evidence = source.packages.find(
         (item) => item.name === entry.name && item.version === entry.version,
-      );
+      ) as ((typeof source.packages)[number] & { packagedManifestSha256?: string }) | undefined;
       if (!evidence) continue;
       try {
         const manifest = await readFile(path.join(directory, "package.json"));
+        const manifestSha256 = createHash("sha256").update(manifest).digest("hex");
         if (
           entry.license !== evidence.license ||
-          createHash("sha256").update(manifest).digest("hex") !== evidence.manifestSha256
+          (evidence.packagedManifestSha256 !== undefined &&
+            !/^[a-f0-9]{64}$/.test(evidence.packagedManifestSha256)) ||
+          (manifestSha256 !== evidence.manifestSha256 &&
+            manifestSha256 !== evidence.packagedManifestSha256)
         ) {
           issue(directory, "Installed metadata does not match recorded upstream evidence.");
           return false;

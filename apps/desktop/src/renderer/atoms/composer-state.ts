@@ -3,16 +3,19 @@ import type { PalotFileAttachment } from "../../shared";
 import { normalizeComposerDraft, type ComposerDraft } from "../lib/composer-draft";
 import { loadScopedPersistedValue, scheduledScopedPersistence } from "./persisted";
 import { isComposerDraft, type ComposerDelivery } from "./ui";
+import { isReviewComment, type ReviewComment } from "../lib/review-comments";
 
 export interface PendingInputEdit {
   id: string;
   delivery: ComposerDelivery;
   draft: ComposerDraft;
   files: PalotFileAttachment[];
+  comments: ReviewComment[];
 }
 
 interface ComposerContents {
   files: PalotFileAttachment[];
+  comments: ReviewComment[];
   edit: PendingInputEdit | null;
 }
 
@@ -39,9 +42,10 @@ function isFiles(value: unknown): value is PalotFileAttachment[] {
 
 function isContents(value: unknown): value is ComposerContents {
   if (!value || typeof value !== "object") return false;
-  const { files, edit } = value as Partial<ComposerContents>;
+  const { files, comments, edit } = value as Partial<ComposerContents>;
   return (
     isFiles(files) &&
+    (comments === undefined || (Array.isArray(comments) && comments.every(isReviewComment))) &&
     (edit === null ||
       Boolean(
         edit &&
@@ -49,7 +53,9 @@ function isContents(value: unknown): value is ComposerContents {
         typeof edit.id === "string" &&
         (edit.delivery === "steer" || edit.delivery === "queue") &&
         isComposerDraft(edit.draft) &&
-        isFiles(edit.files),
+        isFiles(edit.files) &&
+        (edit.comments === undefined ||
+          (Array.isArray(edit.comments) && edit.comments.every(isReviewComment))),
       ))
   );
 }
@@ -66,13 +72,18 @@ function createComposerStateAtom(scope: string) {
     family: "composer.contents",
     scope,
     maxEntries: MAX_PERSISTED_COMPOSERS,
-    initialValue: { files: [], edit: null } as ComposerContents,
+    initialValue: { files: [], comments: [], edit: null } as ComposerContents,
     validate: isContents,
   });
   const valueAtom = atom<ComposerState>({
     ...contents,
+    comments: contents.comments ?? [],
     edit: contents.edit
-      ? { ...contents.edit, draft: normalizeComposerDraft(contents.edit.draft) }
+      ? {
+          ...contents.edit,
+          comments: contents.edit.comments ?? [],
+          draft: normalizeComposerDraft(contents.edit.draft),
+        }
       : null,
     sending: false,
     cancelingID: null,
@@ -84,10 +95,21 @@ function createComposerStateAtom(scope: string) {
       const current = get(valueAtom);
       const next = update(current);
       set(valueAtom, next);
-      if (current.files === next.files && current.edit === next.edit) return;
+      if (
+        current.files === next.files &&
+        current.comments === next.comments &&
+        current.edit === next.edit
+      )
+        return;
       // Request flags survive navigation, but are not replayed after an app restart.
-      if (!next.files.length && !next.edit) contentsPersistence.remove(scope);
-      else contentsPersistence.save(scope, { files: next.files, edit: next.edit });
+      if (!next.files.length && !next.comments.length && !next.edit)
+        contentsPersistence.remove(scope);
+      else
+        contentsPersistence.save(scope, {
+          files: next.files,
+          comments: next.comments,
+          edit: next.edit,
+        });
     },
   );
 }

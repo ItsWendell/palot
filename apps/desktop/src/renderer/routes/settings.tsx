@@ -6,6 +6,7 @@ import type { SettingsCategory } from "../lib/settings-navigation";
 const SETTINGS_CATEGORIES = [
   "project",
   "general",
+  "browser",
   "appearance",
   "notifications",
   "connections",

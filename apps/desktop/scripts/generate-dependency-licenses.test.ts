@@ -36,7 +36,7 @@ vi.mock("../resources/licenses/DEPENDENCY_LICENSE_EVIDENCE.json", async () => {
 
 const reviewedText = "Package documentation\nCopyright Example contributors\nFull reviewed grant\n";
 
-const upstreamFixture = vi.hoisted(() => ({ failure: "" }));
+const upstreamFixture = vi.hoisted(() => ({ failure: "", packagedManifest: "" }));
 vi.mock("../resources/licenses/DEPENDENCY_LICENSE_UPSTREAM.json", async () => {
   const { createHash } = await import("node:crypto");
   const manifest = JSON.stringify({ name: "upstream-example", version: "1.0.0", license: "MIT" });
@@ -78,6 +78,11 @@ vi.mock("../resources/licenses/DEPENDENCY_LICENSE_UPSTREAM.json", async () => {
             archive: "https://registry.npmjs.org/upstream-example/-/upstream-example-1.0.0.tgz",
             integrity: `sha512-${"A".repeat(86)}==`,
             manifestSha256: createHash("sha256").update(manifest).digest("hex"),
+            get packagedManifestSha256() {
+              return upstreamFixture.failure === "invalid packaged hash"
+                ? "not-a-hash"
+                : createHash("sha256").update(upstreamFixture.packagedManifest).digest("hex");
+            },
           },
         ],
       },
@@ -90,6 +95,7 @@ let nodeModules: string;
 
 beforeEach(async () => {
   upstreamFixture.failure = "";
+  upstreamFixture.packagedManifest = `${JSON.stringify({ name: "upstream-example", version: "1.0.0", license: "MIT" })}\n`;
   const temporaryRoot = path.join(tmpdir(), "opencode");
   await mkdir(temporaryRoot, { recursive: true });
   fixture = await realpath(await mkdtemp(path.join(temporaryRoot, "dependency-licenses-")));
@@ -181,6 +187,34 @@ describe("dependency license inventory", () => {
     const changed = await collectDependencyLicenses(nodeModules);
     expect(changed.entries[0]?.reviewedLicense).toBeUndefined();
     expect(changed.issues).toContainEqual({
+      location: "upstream-example",
+      reason: "Installed metadata does not match recorded upstream evidence.",
+    });
+  });
+
+  it("accepts only the recorded packaged manifest and rejects unreviewed bytes", async () => {
+    const directory = await packageAt(
+      path.join(nodeModules, "upstream-example"),
+      "upstream-example",
+      "MIT",
+      null,
+    );
+    await writeFile(path.join(directory, "package.json"), upstreamFixture.packagedManifest);
+    expect((await collectDependencyLicenses(nodeModules)).issues).toEqual([]);
+    await writeFile(
+      path.join(directory, "package.json"),
+      JSON.stringify({ name: "upstream-example", version: "1.0.0", license: "MIT", extra: true }),
+    );
+    expect((await collectDependencyLicenses(nodeModules)).issues).toContainEqual({
+      location: "upstream-example",
+      reason: "Installed metadata does not match recorded upstream evidence.",
+    });
+    upstreamFixture.failure = "invalid packaged hash";
+    await writeFile(
+      path.join(directory, "package.json"),
+      JSON.stringify({ name: "upstream-example", version: "1.0.0", license: "MIT" }),
+    );
+    expect((await collectDependencyLicenses(nodeModules)).issues).toContainEqual({
       location: "upstream-example",
       reason: "Installed metadata does not match recorded upstream evidence.",
     });

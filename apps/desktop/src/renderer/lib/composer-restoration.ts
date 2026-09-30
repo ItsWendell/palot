@@ -1,5 +1,6 @@
 import type { PalotFileAttachment, PalotMessage } from "../../shared";
 import { normalizeComposerDraft, type ComposerDraft } from "./composer-draft";
+import { reviewCommentsFromMessage } from "./review-comments";
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -9,40 +10,9 @@ function record(value: unknown): Record<string, unknown> {
 
 function presentationText(message: PalotMessage): string {
   const metadata = record(record(message.data).metadata);
-  if (typeof metadata.displayText !== "string" || !Array.isArray(metadata.comments))
-    return message.text ?? "";
-  const comments: string[] = [];
-  for (const value of metadata.comments) {
-    const comment = record(value);
-    if (typeof comment.path !== "string" || typeof comment.comment !== "string")
-      return message.text ?? "";
-    let range = "";
-    if (comment.selection !== undefined) {
-      const selection = record(comment.selection);
-      if (
-        !["startLine", "startChar", "endLine", "endChar"].every(
-          (key) =>
-            typeof selection[key] === "number" &&
-            Number.isInteger(selection[key]) &&
-            selection[key] >= 0,
-        )
-      )
-        return message.text ?? "";
-      if (
-        Number(selection.startLine) > Number(selection.endLine) ||
-        (selection.startLine === selection.endLine &&
-          Number(selection.startChar) > Number(selection.endChar))
-      )
-        return message.text ?? "";
-      range = ` (lines ${selection.startLine}–${selection.endLine})`;
-    }
-    comments.push(`${comment.path}${range}:\n${comment.comment}`);
-  }
-  // Deliberately editable text, not a second structured review-context model.
-  return (
-    metadata.displayText +
-    (comments.length ? `\n\nRestored file comments:\n${comments.join("\n\n")}` : "")
-  );
+  return reviewCommentsFromMessage(message) !== null
+    ? String(metadata.displayText)
+    : (message.text ?? "");
 }
 
 /** Embedded bytes are portable. Historical local paths/grants and remote URLs are not. */

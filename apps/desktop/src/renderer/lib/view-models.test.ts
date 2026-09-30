@@ -44,6 +44,18 @@ describe("groupSessions", () => {
     expect(groups.map((group) => group.project.id)).toEqual(["p2", "p1"]);
   });
 
+  it("orders sessionless projects by project activity without displacing projects with sessions", () => {
+    const values = [
+      { ...projects[0]!, activeAt: 100 },
+      { ...projects[1]!, activeAt: 200 },
+      { ...projects[1]!, id: "p3", canonical: "/p3", name: "Three", activeAt: 300 },
+    ];
+    expect(groupSessions(values, []).map(({ project }) => project.id)).toEqual(["p3", "p2", "p1"]);
+    expect(
+      groupSessions(values, [session("old", "p1", 1)]).map(({ project }) => project.id),
+    ).toEqual(["p1", "p3", "p2"]);
+  });
+
   it("does not infer project identity from directory", () => {
     expect(groupSessions(projects, [session("orphan", "missing", 1)])[0]?.sessions).toEqual([]);
   });

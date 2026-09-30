@@ -10,6 +10,8 @@ const MAIN_EXTERNALS = new Set([
   "electron-liquid-glass",
   "electron-log",
   "electron-store",
+  // Lighthouse loads its own audit assets and transitive CommonJS modules at runtime.
+  "lighthouse",
   "objc-js",
 ]);
 
@@ -25,6 +27,9 @@ function isExternal(id: string): boolean {
 
 export default defineConfig({
   plugins: [buildInputPlugin("main")],
+  // OpenCode's protocol and schema each pin Effect. Bundle one runtime so
+  // schemas constructed by those packages are decoded by the same SchemaAST.
+  resolve: { dedupe: ["effect"] },
   define: {
     __PALOT_BUILD_CHANNEL__: JSON.stringify(process.env.PALOT_BUILD_CHANNEL ?? "stable"),
   },

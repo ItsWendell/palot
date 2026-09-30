@@ -17,7 +17,9 @@ afterEach(async () => {
 async function fixture() {
   const directory = await mkdtemp(path.join(tmpdir(), "palot-declared-license-"));
   directories.push(directory);
-  const record = structuredClone(declarations[0]!);
+  const record = structuredClone(
+    declarations.find((item) => item.name === "@tanstack/markdown")!,
+  ) as (typeof declarations)[number] & { packagedManifestSha256?: string };
   const identity = { name: record.name, version: record.version, license: record.license };
   const manifest = JSON.stringify(identity);
   record.manifestSha256 = digest(manifest);
@@ -57,6 +59,30 @@ it("rejects a conflicting caller license and a changed installed manifest", asyn
   const { run, directory, manifest } = await fixture();
   await expect(run("Apache-2.0")).rejects.toThrow("declared license conflicts");
   await writeFile(path.join(directory, "package.json"), `${manifest}\n`);
+  await expect(run()).rejects.toThrow("installed manifest SHA-256 changed");
+});
+
+it("accepts only the recorded source or packaged manifest hashes with the same identity", async () => {
+  const { run, directory, record, identity, manifest } = await fixture();
+  const packaged = `${manifest}\n`;
+  record.packagedManifestSha256 = digest(packaged);
+  await writeFile(path.join(directory, "package.json"), packaged);
+  expect((await run())?.sourceLabel).toBe("Declared SPDX license: MIT; standard terms");
+  await writeFile(path.join(directory, "package.json"), manifest);
+  expect(await run()).not.toBeNull();
+  await writeFile(
+    path.join(directory, "package.json"),
+    JSON.stringify({ ...identity, extra: true }),
+  );
+  await expect(run()).rejects.toThrow("installed manifest SHA-256 changed");
+  record.packagedManifestSha256 = digest(JSON.stringify({ ...identity, license: "ISC" }));
+  await writeFile(
+    path.join(directory, "package.json"),
+    JSON.stringify({ ...identity, license: "ISC" }),
+  );
+  await expect(run()).rejects.toThrow("installed package identity or license conflicts");
+  record.packagedManifestSha256 = "not-a-hash";
+  await writeFile(path.join(directory, "package.json"), manifest);
   await expect(run()).rejects.toThrow("installed manifest SHA-256 changed");
 });
 

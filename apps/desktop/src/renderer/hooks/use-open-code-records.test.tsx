@@ -29,7 +29,7 @@ describe("useOpenCodeRecords", () => {
         id: "project",
         canonical: "/repo",
         sandboxes: [],
-        time: { created: 1, updated: 1 },
+        time: { created: 1, updated: 1, active: 1 },
       },
     };
     graph.commit((writer) => {

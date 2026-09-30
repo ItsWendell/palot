@@ -1,4 +1,4 @@
-export const SUPPORTED_OPENCODE_VERSION = "2.0.9";
+export const SUPPORTED_OPENCODE_VERSION = "2.0.19";
 
 // Published contracts used by Palot were compared across these exact releases.
 // A channel name is not a compatibility guarantee (Beta can even lag Stable).
@@ -26,6 +26,12 @@ export function isTestedOpenCodeVersion(version: string): boolean {
 export function isStableOpenCodeV2(version: string): boolean {
   // Prereleases are deliberately separate, even when their major is 2.
   return version === version.trim() && /^2\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version);
+}
+
+export function supportsOneTimeOpenCodePairing(version: string | null): boolean {
+  if (!version || !isStableOpenCodeV2(version)) return false;
+  const [, minor, patch] = version.split(".").map(Number);
+  return minor! > 0 || patch! >= 17;
 }
 
 export function supportedOpenCodeVersionLabel(): string {

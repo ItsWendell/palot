@@ -234,6 +234,43 @@ describe("OpenCode release manager", () => {
   });
 
   it.each([
+    ["beta", "2.0.1"],
+    ["stable", "2.0.6"],
+  ] as const)(
+    "reports a successful %s check without offering incompatible OpenCode %s",
+    async (channel, version) => {
+      const h = await harness({ version: "2.0.7" });
+      await h.manager.check();
+      await h.manager.prepare({ version: "2.0.7" });
+      h.manager.setChannel(channel);
+      h.version(version);
+
+      expect(await h.manager.check()).toMatchObject({
+        channel,
+        checkedAt: 123456,
+        offer: null,
+        preparedVersion: "2.0.7",
+      });
+      await expect(h.manager.prepare({ version, allowUntested: true })).rejects.toThrow("stale");
+      expect(h.fetcher).toHaveBeenCalledTimes(3); // Two checks, one earlier archive download.
+      expect(h.verifyVersion).toHaveBeenCalledTimes(1);
+      h.verifyVersion.mockResolvedValueOnce("2.0.7");
+      expect((await h.manager.discoverPreparedBinary())?.version).toBe("2.0.7");
+    },
+  );
+
+  it("still rejects malformed binary metadata for an incompatible feed version", async () => {
+    const h = await harness({ version: "2.0.1" });
+    h.edit((metadata) => {
+      metadata.metadata.files[h.filename]!.sha256 = "bad";
+      return metadata;
+    });
+    h.manager.setChannel("beta");
+    await expect(h.manager.check()).rejects.toThrow("Invalid official OpenCode binary");
+    expect(h.manager.status()).toMatchObject({ checkedAt: null, offer: null });
+  });
+
+  it.each([
     [
       "V1",
       (m: FeedMetadata) => {

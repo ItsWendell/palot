@@ -23,7 +23,7 @@ vi.mock("../services/palot", () => ({
 
 const initial: OpenCodeReleaseStatus = {
   channel: "stable",
-  bundledVersion: "2.0.2",
+  bundledVersion: "2.0.19",
   preparedVersion: null,
   checkedAt: null,
   offer: null,
@@ -34,7 +34,7 @@ const offered: OpenCodeReleaseStatus = {
   checkedAt: 1000,
   offer: {
     channel: "beta",
-    version: "2.0.1",
+    version: "2.1.0-beta.1",
     tested: false,
     requiresConfirmation: true,
     size: 1024 * 1024,
@@ -51,7 +51,7 @@ beforeEach(() => {
   vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue(offered);
   vi.mocked(palot.prepareOpenCodeRelease).mockResolvedValue({
     ...offered,
-    preparedVersion: "2.0.1",
+    preparedVersion: "2.1.0-beta.1",
   });
   vi.mocked(palot.resetOpenCodeRelease).mockResolvedValue(initial);
 });
@@ -71,7 +71,7 @@ describe("OpenCodeReleaseSettings", () => {
       checkedAt: 1000,
       offer: {
         channel: "stable",
-        version: "2.0.2",
+        version: "2.0.19",
         tested: true,
         requiresConfirmation: false,
         size: 1024,
@@ -81,7 +81,7 @@ describe("OpenCodeReleaseSettings", () => {
     vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue(available);
     vi.mocked(palot.prepareOpenCodeRelease).mockResolvedValue({
       ...available,
-      preparedVersion: "2.0.2",
+      preparedVersion: "2.0.19",
     });
     vi.mocked(palot.resetOpenCodeRelease).mockResolvedValue(external);
     render(<OpenCodeReleaseSettings />);
@@ -90,12 +90,36 @@ describe("OpenCodeReleaseSettings", () => {
     expect(palot.checkOpenCodeRelease).not.toHaveBeenCalled();
     expect(palot.prepareOpenCodeRelease).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Check for release" }));
-    await user.click(await screen.findByRole("button", { name: "Download Palot fallback 2.0.2" }));
-    expect(await screen.findByText("2.0.2 (downloaded)")).toBeTruthy();
-    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.2" });
+    await user.click(await screen.findByRole("button", { name: "Download Palot fallback 2.0.19" }));
+    expect(await screen.findByText("2.0.19 (downloaded)")).toBeTruthy();
+    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.19" });
     await user.click(screen.getByRole("button", { name: "Reset prepared runtime" }));
     expect(await screen.findByText("Not downloaded")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Reset to bundled/ })).toBeNull();
+  });
+
+  it("shows a checked but unavailable Beta without a download action or generic error", async () => {
+    const user = userEvent.setup();
+    vi.mocked(palot.openCodeReleaseStatus).mockResolvedValue({
+      ...initial,
+      channel: "beta",
+      preparedVersion: "2.0.19",
+    });
+    vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue({
+      ...initial,
+      channel: "beta",
+      preparedVersion: "2.0.19",
+      checkedAt: 1000,
+      offer: null,
+    });
+    render(<OpenCodeReleaseSettings />);
+    await user.click(await screen.findByRole("button", { name: "Check for release" }));
+    expect(await screen.findByText(/No compatible Beta available/)).toBeTruthy();
+    expect(screen.getByText("2.0.19 (downloaded)")).toBeTruthy();
+    expect(screen.getByText(/Last checked:/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Download Palot fallback/ })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(palot.prepareOpenCodeRelease).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -135,7 +159,7 @@ describe("OpenCodeReleaseSettings", () => {
     );
     expect(await screen.findByRole("combobox", { name: "Preferred channel" })).toBeTruthy();
     expect(screen.getByText("2.0.0-beta.19507")).toBeTruthy();
-    expect(screen.getByText("2.0.2 (bundled)")).toBeTruthy();
+    expect(screen.getByText("2.0.19 (bundled)")).toBeTruthy();
     expect(palot.openCodeReleaseStatus).toHaveBeenCalledOnce();
     expect(palot.checkOpenCodeRelease).not.toHaveBeenCalled();
     expect(palot.prepareOpenCodeRelease).not.toHaveBeenCalled();
@@ -220,7 +244,7 @@ describe("OpenCodeReleaseSettings", () => {
     "requires explicit consent for an unsupported %s release and supports cancellation",
     async (channel) => {
       const user = userEvent.setup();
-      const version = channel === "stable" ? "3.0.0" : "0.0.0-beta-20000";
+      const version = channel === "stable" ? "2.1.0-beta.2" : "0.0.0-beta-20000";
       vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue({
         ...offered,
         channel,
@@ -264,15 +288,15 @@ describe("OpenCodeReleaseSettings", () => {
         offer: {
           ...offered.offer!,
           channel,
-          version: "2.0.3",
+          version: "2.0.8",
           requiresConfirmation: false,
         },
       });
       render(<OpenCodeReleaseSettings />);
       await user.click(await screen.findByRole("button", { name: "Check for release" }));
       expect(screen.getByText(/Compatible · not yet tested with this Palot build/)).toBeTruthy();
-      await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.0.3" }));
-      expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.3" });
+      await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.0.8" }));
+      expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.8" });
       expect(screen.queryByRole("alertdialog")).toBeNull();
     },
   );
@@ -281,24 +305,24 @@ describe("OpenCodeReleaseSettings", () => {
     const user = userEvent.setup();
     vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue({
       ...offered,
-      offer: { ...offered.offer!, tested: true, requiresConfirmation: false },
+      offer: { ...offered.offer!, version: "2.0.19", tested: true, requiresConfirmation: false },
     });
     render(<OpenCodeReleaseSettings />);
     await user.click(await screen.findByRole("button", { name: "Check for release" }));
-    await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.0.1" }));
-    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.1" });
+    await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.0.19" }));
+    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.19" });
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Reset to bundled 2.0.2" }));
+    await user.click(screen.getByRole("button", { name: "Reset to bundled 2.0.19" }));
     expect(palot.resetOpenCodeRelease).toHaveBeenCalledOnce();
-    expect(screen.getByText("2.0.2 (bundled)")).toBeTruthy();
-    expect(screen.getByText(/Bundled OpenCode 2.0.2 is the Palot fallback again/)).toBeTruthy();
+    expect(screen.getByText("2.0.19 (bundled)")).toBeTruthy();
+    expect(screen.getByText(/Bundled OpenCode 2.0.19 is the Palot fallback again/)).toBeTruthy();
   });
 
   it("preserves the selected runtime on offline errors and retries only when asked", async () => {
     const user = userEvent.setup();
     vi.mocked(palot.openCodeReleaseStatus).mockResolvedValue({
       ...initial,
-      preparedVersion: "2.0.1",
+      preparedVersion: "2.1.0-beta.1",
     });
     vi.mocked(palot.checkOpenCodeRelease).mockRejectedValueOnce(
       new Error("Offline: release feed unavailable"),
@@ -306,7 +330,7 @@ describe("OpenCodeReleaseSettings", () => {
     render(<OpenCodeReleaseSettings />);
     await user.click(await screen.findByRole("button", { name: "Check for release" }));
     expect(screen.getByRole("alert").textContent).toContain("Offline");
-    expect(screen.getByText("2.0.1 (downloaded)")).toBeTruthy();
+    expect(screen.getByText("2.1.0-beta.1 (downloaded)")).toBeTruthy();
     expect(palot.checkOpenCodeRelease).toHaveBeenCalledOnce();
     await user.click(screen.getByRole("button", { name: "Retry release action" }));
     expect(palot.checkOpenCodeRelease).toHaveBeenCalledTimes(2);
@@ -330,9 +354,9 @@ describe("OpenCodeReleaseSettings", () => {
     vi.mocked(palot.prepareOpenCodeRelease).mockRejectedValueOnce(new Error("Download failed"));
     render(<OpenCodeReleaseSettings />);
     await user.click(await screen.findByRole("button", { name: "Check for release" }));
-    await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.0.1" }));
+    await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.1.0-beta.1" }));
     await user.click(screen.getByRole("button", { name: "Continue and prepare" }));
-    expect(screen.getByText("2.0.2 (bundled)")).toBeTruthy();
+    expect(screen.getByText("2.0.19 (bundled)")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Retry release action" }));
     expect(screen.getByRole("alertdialog")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -344,7 +368,7 @@ describe("OpenCodeReleaseSettings", () => {
     let resolve!: (value: OpenCodeReleaseStatus) => void;
     vi.mocked(palot.openCodeReleaseStatus).mockResolvedValue({
       ...initial,
-      preparedVersion: "2.0.1",
+      preparedVersion: "2.1.0-beta.1",
     });
     vi.mocked(palot.checkOpenCodeRelease).mockReturnValue(
       new Promise((done) => {
@@ -358,7 +382,7 @@ describe("OpenCodeReleaseSettings", () => {
       (screen.getByRole("combobox", { name: "Preferred channel" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(
-      (screen.getByRole("button", { name: "Reset to bundled 2.0.2" }) as HTMLButtonElement)
+      (screen.getByRole("button", { name: "Reset to bundled 2.0.19" }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
     await act(async () => resolve(offered));

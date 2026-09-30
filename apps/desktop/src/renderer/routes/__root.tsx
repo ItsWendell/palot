@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PalotOpenTarget } from "../../shared";
 import { attentionTargetAtom, markAttentionSeenAtom } from "../atoms/attention";
 import { defaultSidebarModeAtom, sidebarModeAtom } from "../atoms/ui";
+import { BrowserSessionManager } from "../components/browser-session-manager";
 import { GlobalCommandPalette } from "../components/global-command-palette";
 import { OnboardingController } from "../components/onboarding-controller";
 import { SshPrompts } from "../components/ssh-prompts";
@@ -158,6 +159,14 @@ function RuntimeLayout() {
         key={runtime?.connectionID ?? "initial"}
         sessionID={routeProfileID && routeProfileID !== runtime?.profileID ? null : sessionID}
       />
+      {runtime?.connected ? (
+        <BrowserSessionManager
+          key={JSON.stringify([runtime.connectionID, runtime.profileID])}
+          connectionID={runtime.connectionID}
+          profileID={runtime.profileID}
+          sessionID={routeProfileID && routeProfileID !== runtime.profileID ? null : sessionID}
+        />
+      ) : null}
       <InboxController />
       <OnboardingController
         initialTargetHandled={initialTarget.handled}

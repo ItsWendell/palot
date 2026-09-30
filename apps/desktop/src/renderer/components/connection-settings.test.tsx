@@ -2,7 +2,12 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palot } from "../services/palot";
-import { LocalServiceSettings, PairDialog, PairingCredentialRow } from "./connection-settings";
+import {
+  ImportPairDialog,
+  LocalServiceSettings,
+  PairDialog,
+  PairingCredentialRow,
+} from "./connection-settings";
 import { Provider, createStore } from "jotai";
 import { runtimeAtom } from "../atoms/workspace";
 
@@ -16,7 +21,14 @@ afterEach(() => {
 });
 
 const payload = { urls: ["http://127.0.0.1:4096"], username: "opencode", password: "test-only" };
-const pairingInfo = { ...payload, payload: JSON.stringify(payload) };
+const pairingInfo = { mode: "credentials" as const, ...payload, payload: JSON.stringify(payload) };
+const linkInfo = {
+  mode: "link" as const,
+  urls: ["http://127.0.0.1:4096", "https://fallback.example"],
+  code: "abcdefghijklmnop",
+  expiresIn: 300,
+  payload: "http://127.0.0.1:4096/auth/connect/abcdefghijklmnop",
+};
 
 describe("LocalServiceSettings", () => {
   beforeEach(() => {
@@ -316,7 +328,7 @@ describe("PairDialog", () => {
       <PairDialog open onOpenChange={() => {}} suggestedAddress="https://device.tailnet.example" />,
     );
     expect(palot.openCodePairingInfo).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Reveal pairing credentials" }));
+    await user.click(screen.getByRole("button", { name: "Generate pairing details" }));
     await user.click(screen.getByRole("button", { name: "Copy pairing JSON" }));
     expect(JSON.parse(clipboard.mock.calls[0]![0])).toEqual({
       ...payload,
@@ -338,7 +350,7 @@ describe("PairDialog", () => {
     setupPairing();
     const user = userEvent.setup();
     render(<PairDialog open onOpenChange={() => {}} />);
-    await user.click(screen.getByRole("button", { name: "Reveal pairing credentials" }));
+    await user.click(screen.getByRole("button", { name: "Generate pairing details" }));
     await user.type(
       screen.getByRole("textbox", { name: "Address for pairing" }),
       "http://proxy.example",
@@ -362,7 +374,7 @@ describe("PairDialog", () => {
     );
     const user = userEvent.setup();
     render(<PairDialog open onOpenChange={() => {}} />);
-    await user.click(screen.getByRole("button", { name: "Reveal pairing credentials" }));
+    await user.click(screen.getByRole("button", { name: "Generate pairing details" }));
     await user.click(screen.getByRole("button", { name: "Show QR" }));
     await user.type(
       screen.getByRole("textbox", { name: "Address for pairing" }),
@@ -387,7 +399,7 @@ describe("PairDialog", () => {
     );
     render(<PairDialog open onOpenChange={() => {}} />);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Reveal pairing credentials" }));
+      fireEvent.click(screen.getByRole("button", { name: "Generate pairing details" }));
     });
     act(() => {
       vi.advanceTimersByTime(30_000);
@@ -404,7 +416,7 @@ describe("PairDialog", () => {
     });
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy pairing JSON" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Reveal pairing credentials" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Generate pairing details" })).toBeTruthy();
   });
 
   it("does not restore credentials or a pending QR after closing and reopening", async () => {
@@ -417,7 +429,7 @@ describe("PairDialog", () => {
     );
     const user = userEvent.setup();
     const view = render(<PairDialog open onOpenChange={() => {}} />);
-    await user.click(screen.getByRole("button", { name: "Reveal pairing credentials" }));
+    await user.click(screen.getByRole("button", { name: "Generate pairing details" }));
     await user.click(screen.getByRole("button", { name: "Show QR" }));
     view.rerender(<PairDialog open={false} onOpenChange={() => {}} />);
     await act(async () => {
@@ -426,7 +438,138 @@ describe("PairDialog", () => {
     view.rerender(<PairDialog open onOpenChange={() => {}} />);
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy pairing JSON" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Reveal pairing credentials" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Generate pairing details" })).toBeTruthy();
+  });
+
+  it("copies and encodes only the one-time link and expires it without extending on address changes", async () => {
+    vi.useFakeTimers();
+    const clipboard = setupPairing();
+    vi.mocked(palot.openCodePairingInfo).mockResolvedValue(linkInfo);
+    render(<PairDialog open onOpenChange={() => {}} suggestedAddress="https://proxy.example" />);
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Generate pairing details" })),
+    );
+    expect(screen.getByText(/up to 30 days/)).toBeTruthy();
+    expect(screen.getByText(/Expires in 5 minutes/)).toBeTruthy();
+    expect(screen.queryByText("Password")).toBeNull();
+    expect(screen.queryByText("Username")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy one-time link" }));
+    expect(clipboard).toHaveBeenLastCalledWith(
+      "https://proxy.example/auth/connect/abcdefghijklmnop",
+    );
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Show QR" })));
+    expect(toDataURL).toHaveBeenLastCalledWith(
+      "https://proxy.example/auth/connect/abcdefghijklmnop",
+      { margin: 1, width: 320 },
+    );
+    expect(screen.getByRole("img", { name: "OpenCode one-time pairing QR code" })).toBeTruthy();
+    act(() => vi.advanceTimersByTime(150_000));
+    fireEvent.click(screen.getByRole("button", { name: "Use service addresses" }));
+    expect(screen.queryByRole("img")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy one-time link" }));
+    expect(clipboard).toHaveBeenLastCalledWith(linkInfo.payload);
+    act(() => vi.advanceTimersByTime(150_000));
+    expect(screen.queryByRole("button", { name: "Copy one-time link" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Generate pairing details" })).toBeTruthy();
+  });
+});
+
+describe("ImportPairDialog", () => {
+  it("previews a one-time URL without redeeming on paste, and imports only on submission", async () => {
+    const user = userEvent.setup();
+    const importPairing = vi
+      .spyOn(palot, "importOpenCodePairing")
+      .mockResolvedValue({} as Awaited<ReturnType<typeof palot.importOpenCodePairing>>);
+    const onSaved = vi.fn();
+    render(<ImportPairDialog open onOpenChange={() => {}} onSaved={onSaved} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Pairing link or legacy JSON" }), {
+      target: { value: "https://proxy.example/auth/connect/abcdefghijklmnop" },
+    });
+    expect(screen.getByText("https://proxy.example")).toBeTruthy();
+    expect(importPairing).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Probe and import" }));
+    expect(importPairing).toHaveBeenCalledExactlyOnceWith({
+      link: "https://proxy.example/auth/connect/abcdefghijklmnop",
+      allowPlainHttp: false,
+    });
+    expect(onSaved).toHaveBeenCalledOnce();
+  });
+
+  it("requires fresh consent for nonloopback HTTP, resets on edit and close, and preserves legacy JSON", async () => {
+    const user = userEvent.setup();
+    const importPairing = vi
+      .spyOn(palot, "importOpenCodePairing")
+      .mockResolvedValue({} as Awaited<ReturnType<typeof palot.importOpenCodePairing>>);
+    const onOpenChange = vi.fn();
+    const view = render(<ImportPairDialog open onOpenChange={onOpenChange} onSaved={() => {}} />);
+    const textbox = screen.getByRole("textbox", { name: "Pairing link or legacy JSON" });
+    fireEvent.change(textbox, {
+      target: { value: "http://proxy.example/auth/connect/abcdefghijklmnop" },
+    });
+    const submit = screen.getByRole("button", { name: "Probe and import" }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    expect(importPairing).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("checkbox"));
+    expect(submit.disabled).toBe(false);
+    await user.click(submit);
+    expect(importPairing).toHaveBeenLastCalledWith({
+      link: "http://proxy.example/auth/connect/abcdefghijklmnop",
+      allowPlainHttp: true,
+    });
+    fireEvent.change(textbox, {
+      target: { value: JSON.stringify({ ...payload, urls: ["http://remote.example:4096"] }) },
+    });
+    expect(submit.disabled).toBe(true);
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(submit);
+    expect(importPairing).toHaveBeenLastCalledWith({
+      payload: { ...payload, urls: ["http://remote.example:4096"] },
+      allowPlainHttp: true,
+    });
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    view.rerender(<ImportPairDialog open={false} onOpenChange={onOpenChange} onSaved={() => {}} />);
+    view.rerender(<ImportPairDialog open onOpenChange={onOpenChange} onSaved={() => {}} />);
+    expect(
+      (screen.getByRole("textbox", { name: "Pairing link or legacy JSON" }) as HTMLTextAreaElement)
+        .value,
+    ).toBe("");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("rejects malformed links locally and disables edits and dismissal while import is pending", async () => {
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<typeof palot.importOpenCodePairing>>>();
+    const importPairing = vi.spyOn(palot, "importOpenCodePairing").mockReturnValue(pending.promise);
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(<ImportPairDialog open onOpenChange={onOpenChange} onSaved={() => {}} />);
+    const textbox = screen.getByRole("textbox", {
+      name: "Pairing link or legacy JSON",
+    }) as HTMLTextAreaElement;
+    fireEvent.change(textbox, {
+      target: { value: "https://proxy.example/auth/connect/abcdefghijklmnop?extra=1" },
+    });
+    expect(screen.getByRole("alert").textContent).toContain("without extra parameters");
+    expect(
+      (screen.getByRole("button", { name: "Probe and import" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(importPairing).not.toHaveBeenCalled();
+    fireEvent.change(textbox, {
+      target: { value: "https://proxy.example/auth/connect/abcdefghijklmnop" },
+    });
+    await user.click(screen.getByRole("button", { name: "Probe and import" }));
+    expect(textbox.disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (screen.getByRole("button", { name: "Probe and import" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await act(async () =>
+      pending.resolve({} as Awaited<ReturnType<typeof palot.importOpenCodePairing>>),
+    );
   });
 });
 

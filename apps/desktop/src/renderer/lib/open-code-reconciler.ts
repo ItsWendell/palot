@@ -159,6 +159,7 @@ export function sessionInfoFromPalot(
     projectID: session.projectID,
     ...(session.agent ? { agent: session.agent } : { agent: undefined }),
     ...(session.model ? { model: { ...session.model } } : { model: undefined }),
+    ...(session.metadata === undefined ? {} : { metadata: { ...session.metadata } }),
     ...(session.permissions === undefined
       ? {}
       : { permissions: session.permissions.map((rule) => ({ ...rule })) }),
@@ -189,13 +190,18 @@ export function sessionInfoFromPalot(
 }
 
 export function projectInfoFromPalot(project: PalotProject, previous?: Project): Project {
-  const updated = project.updatedAt ?? 0;
+  const updated = project.updatedAt ?? previous?.time.updated ?? 0;
   return {
     ...previous,
     id: project.id,
     canonical: project.canonical,
     ...(project.name ? { name: project.name } : { name: undefined }),
-    time: { ...previous?.time, created: previous?.time.created ?? updated, updated },
+    time: {
+      ...previous?.time,
+      created: previous?.time.created ?? updated,
+      updated,
+      active: project.activeAt ?? previous?.time.active ?? updated,
+    },
     sandboxes: [...project.sandboxes],
   };
 }
@@ -1001,6 +1007,13 @@ export class OpenCodeReconciler {
       return {
         ...session,
         permissions: event.data.permissions,
+        time: { ...session.time, updated: Math.max(session.time.updated, event.createdAt) },
+      };
+    }
+    if (event.type === "session.metadata.updated") {
+      return {
+        ...session,
+        metadata: { ...event.data.metadata },
         time: { ...session.time, updated: Math.max(session.time.updated, event.createdAt) },
       };
     }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { isSessionNotFoundError } from "@opencode/client";
 import type { OpenCodeRuntimeStatus, PalotApi } from "../../shared";
 import {
   openCodeClient,
@@ -94,6 +95,37 @@ describe("renderer OpenCode client transport", () => {
       "/api/info",
       "/api/session?limit=50&order=desc&parentID=null",
     ]);
+  });
+
+  it("retains declared API error predicates and useful messages through the IPC bridge", async () => {
+    const openCodeRequest = vi.fn(async (_request: { path: string }) => ({
+      status: 404,
+      statusText: "Not Found",
+      headers: { "content-type": "application/json" },
+      body: new TextEncoder().encode(
+        JSON.stringify({
+          _tag: "SessionNotFoundError",
+          sessionID: "missing",
+          message: "Session missing was not found",
+        }),
+      ).buffer,
+    }));
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: { openCodeRequest, cancelOpenCodeRequest: vi.fn() } as unknown as PalotApi,
+    });
+
+    const error = await openCodeClient()
+      .session.get({ sessionID: "missing" })
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect(isSessionNotFoundError(error)).toBe(true);
+    expect(error).toMatchObject({
+      _tag: "SessionNotFoundError",
+      sessionID: "missing",
+      message: "Session missing was not found",
+    });
+    expect(openCodeRequest.mock.calls[0]?.[0].path).toBe("/api/session/missing");
   });
 
   it("forwards AbortSignal cancellation to main", async () => {

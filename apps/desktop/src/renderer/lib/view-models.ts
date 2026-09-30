@@ -109,6 +109,10 @@ export function groupSessions(projects: PalotProject[], sessions: PalotSession[]
         if (rightActivity === undefined) return -1;
         if (leftActivity !== rightActivity) return rightActivity - leftActivity;
       }
+      if (leftActivity === undefined && rightActivity === undefined) {
+        const recent = (right.project.activeAt ?? 0) - (left.project.activeAt ?? 0);
+        if (recent) return recent;
+      }
       return projectName(left.project).localeCompare(projectName(right.project));
     });
 }

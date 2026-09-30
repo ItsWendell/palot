@@ -1,6 +1,6 @@
 /** Main-process OpenCode lifecycle and event transport. */
 
-import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client";
+import { OpenCode, type OpenCodeClient, type OpenCodeEvent } from "@opencode/client";
 import { BrowserWindow } from "electron";
 import Store from "electron-store";
 import type {
@@ -27,9 +27,15 @@ import { OpenCodeRuntimeLifecycle } from "./opencode-runtime-lifecycle";
 import { getOpenCodeReleaseManager } from "./opencode-release-manager";
 import { getOpenCodeInstallations } from "./opencode-local-installations";
 import type { SshConnector } from "./ssh/interaction";
-import { buildAllowsOpenCodeVersionMismatch } from "./opencode-version";
+import {
+  buildAllowsOpenCodeVersionMismatch,
+  supportsOneTimeOpenCodePairing,
+} from "./opencode-version";
 import { OpenCodeCredentialVault } from "./opencode-connections/credential-vault";
-import { serializeOpenCodePairPayload } from "./opencode-connections/pairing";
+import {
+  parseOneTimePairingLink,
+  serializeOpenCodePairPayload,
+} from "./opencode-connections/pairing";
 import {
   OpenCodeProfileStore,
   isLoopbackOpenCodeUrl,
@@ -419,15 +425,28 @@ export class OpenCodeRuntime {
     const status = this.runtimeStatus();
     if (status.capabilities?.pairing !== "show")
       throw new Error("Pairing is unavailable for this profile");
-    const [server, connection] = await Promise.all([
-      this.withClient((client) => client.server.info()),
-      this.requestConnection(),
-    ]);
+    const server = await this.withClient((client) => client.server.info());
+    if (supportsOneTimeOpenCodePairing(status.version)) {
+      const urls = normalizeOpenCodeUrls(server.urls);
+      const { code, expires_in: expiresIn } = await this.withClient((client) =>
+        client.server.pair(),
+      );
+      if (!/^[A-Za-z0-9_-]{16,128}$/.test(code) || expiresIn <= 0 || expiresIn > 300)
+        throw new Error("OpenCode returned an invalid one-time pairing code");
+      return {
+        mode: "link",
+        urls,
+        code,
+        expiresIn,
+        payload: `${urls[0]}/auth/connect/${encodeURIComponent(code)}`,
+      };
+    }
+    const connection = await this.requestConnection();
     const auth = connection.endpoint.auth;
     if (!auth || auth.type !== "basic")
       throw new Error("The active OpenCode service has no pairable credentials");
     const payload = { urls: server.urls, username: auth.username, password: auth.password };
-    return { ...payload, payload: serializeOpenCodePairPayload(payload) };
+    return { mode: "credentials", ...payload, payload: serializeOpenCodePairPayload(payload) };
   }
 
   async restartLocalService(): Promise<OpenCodeRuntimeStatus> {
@@ -482,11 +501,42 @@ export class OpenCodeRuntime {
   }
 
   async importPairing(input: OpenCodePairImportInput): Promise<OpenCodeProfileSnapshot> {
-    const urls = normalizeOpenCodeUrls(input.payload.urls);
+    let payload;
+    if (input.link !== undefined) {
+      const { origin, code } = parseOneTimePairingLink(input.link);
+      const urls = normalizeOpenCodeUrls([origin]);
+      // The redemption URL carries a secret. Refuse cleartext before sending the code.
+      assertPlainHttpAllowed(urls, input.allowPlainHttp, {
+        type: "basic",
+        username: "opencode",
+        password: code,
+      });
+      const anonymousFetch: typeof fetch = (request, init) =>
+        fetch(request, { ...init, redirect: "manual" });
+      const client = OpenCode.make({ baseUrl: origin, fetch: anonymousFetch });
+      const { token } = await client.server.connect(
+        { code },
+        { signal: AbortSignal.timeout(15_000) },
+      );
+      if (
+        !token ||
+        token.length > 2_048 ||
+        token.trim() !== token ||
+        [...token].some((character) => {
+          const code = character.charCodeAt(0);
+          return code < 32 || code === 127;
+        })
+      )
+        throw new Error("OpenCode returned an invalid pairing token");
+      payload = { urls, username: "opencode", password: token };
+    } else {
+      payload = input.payload;
+    }
+    const urls = normalizeOpenCodeUrls(payload.urls);
     const credential = {
       type: "basic" as const,
-      username: input.payload.username,
-      password: input.payload.password,
+      username: payload.username,
+      password: payload.password,
     };
     assertPlainHttpAllowed(urls, input.allowPlainHttp, credential);
     const credentialID = this.credentials.storeCredential(credential);

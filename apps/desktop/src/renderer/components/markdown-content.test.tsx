@@ -4,7 +4,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteMarkdownFaviconsAtom } from "../atoms/ui";
 import { palot } from "../services/palot";
-import { MarkdownContent, MarkdownWorkspaceProvider } from "./markdown-content";
+import {
+  isLocalMarkdownWebLink,
+  MarkdownContent,
+  MarkdownWorkspaceProvider,
+} from "./markdown-content";
 import { MermaidLightbox } from "./markdown-rich";
 
 afterEach(cleanup);
@@ -534,6 +538,23 @@ describe("MarkdownContent", () => {
     expect(screen.queryByText("apps/desktop/src/renderer/components/thread.tsx:58")).toBeNull();
   });
 
+  it("opens agent-referenced workspace media in the same file tabs", () => {
+    const openFile = vi.fn();
+    render(
+      <MarkdownWorkspaceProvider onOpenFile={openFile} workspaceDirectory="/repo">
+        <MarkdownContent value="Preview `diagram.png`, `guide.pdf`, and `tone.wav`." />
+      </MarkdownWorkspaceProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Open diagram.png" }));
+    fireEvent.click(screen.getByRole("link", { name: "Open guide.pdf" }));
+    fireEvent.click(screen.getByRole("link", { name: "Open tone.wav" }));
+
+    expect(openFile).toHaveBeenNthCalledWith(1, { path: "diagram.png" });
+    expect(openFile).toHaveBeenNthCalledWith(2, { path: "guide.pdf" });
+    expect(openFile).toHaveBeenNthCalledWith(3, { path: "tone.wav" });
+  });
+
   it("opens relative Markdown file links without intercepting web links", () => {
     const openFile = vi.fn();
     render(
@@ -615,5 +636,48 @@ describe("MarkdownContent", () => {
 
     fireEvent.click(link);
     expect(openExternalSpy).toHaveBeenCalledWith("http://example.com");
+  });
+
+  it("routes web links through a thread provider only on deliberate click", () => {
+    const openExternal = vi.spyOn(palot, "openExternalUrl").mockResolvedValue(true);
+    const openWebLink = vi.fn();
+    const openFile = vi.fn();
+    render(
+      <>
+        <MarkdownWorkspaceProvider onOpenFile={openFile} onOpenWebLink={openWebLink}>
+          <MarkdownContent value="[Task link](https://example.com/docs) and [File](README.md)" />
+        </MarkdownWorkspaceProvider>
+        <MarkdownContent value="[Outside](https://outside.example.com)" />
+      </>,
+    );
+
+    expect(openWebLink).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("link", { name: "Task link" }));
+    expect(openWebLink).toHaveBeenCalledExactlyOnceWith("https://example.com/docs");
+    expect(openExternal).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("link", { name: "Outside" }));
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://outside.example.com");
+    fireEvent.click(screen.getByRole("link", { name: "Open README.md" }));
+    expect(openFile).toHaveBeenCalledExactlyOnceWith({ path: "README.md" });
+    expect(openWebLink).toHaveBeenCalledTimes(1);
+  });
+
+  it("recognizes localhost and IPv4/IPv6 loopback links as local", () => {
+    for (const href of [
+      "http://localhost:3000",
+      "http://localhost.:3000",
+      "http://0.0.0.0:3000",
+      "http://[::]:3000",
+      "https://app.localhost/docs",
+      "http://127.42.0.1:8000",
+      "http://[::1]:8080",
+      "http://[::ffff:127.0.0.1]:9000",
+    ]) {
+      expect(isLocalMarkdownWebLink(new URL(href)), href).toBe(true);
+    }
+    for (const href of ["https://example.com", "https://notlocalhost.com", "http://192.168.1.1"]) {
+      expect(isLocalMarkdownWebLink(new URL(href)), href).toBe(false);
+    }
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mapMessage } from "../services/opencode-mappers";
 import { composerDraftFromMessage, composerFilesFromMessage } from "./composer-restoration";
+import { reviewCommentsFromMessage } from "./review-comments";
 import type { SessionMessageInfo } from "@opencode/client";
 
 function message(extra: Record<string, unknown> = {}) {
@@ -14,33 +15,38 @@ function message(extra: Record<string, unknown> = {}) {
 }
 
 describe("composer restoration", () => {
-  it("restores display text and review comments as an editable text block", () => {
-    const draft = composerDraftFromMessage(
-      message({
-        metadata: {
-          displayText: "Fix @a.ts",
-          comments: [
-            {
-              path: "a.ts",
-              comment: "Handle null.",
-              selection: { startLine: 2, endLine: 4, startChar: 0, endChar: 1 },
-              origin: "review",
-            },
-          ],
-        },
-        files: [
+  it("restores display text and structured review comments", () => {
+    const source = message({
+      metadata: {
+        displayText: "Fix @a.ts",
+        comments: [
           {
-            name: "a.ts",
-            mime: "text/plain",
-            source: { type: "uri", uri: "file:///repo/a.ts" },
-            mention: { text: "@a.ts", start: 4, end: 9 },
+            path: "a.ts",
+            comment: "Handle null.",
+            selection: { startLine: 2, endLine: 4, startChar: 0, endChar: 1 },
+            origin: "review",
           },
         ],
-      }),
-    );
-    expect(draft.text).toBe(
-      "Fix @a.ts\n\nRestored file comments:\na.ts (lines 2–4):\nHandle null.",
-    );
+      },
+      files: [
+        {
+          name: "a.ts",
+          mime: "text/plain",
+          source: { type: "uri", uri: "file:///repo/a.ts" },
+          mention: { text: "@a.ts", start: 4, end: 9 },
+        },
+      ],
+    });
+    const draft = composerDraftFromMessage(source);
+    expect(draft.text).toBe("Fix @a.ts");
+    expect(reviewCommentsFromMessage(source)).toEqual([
+      {
+        id: "restored-prompt-1-0",
+        path: "a.ts",
+        comment: "Handle null.",
+        selection: { startLine: 2, endLine: 4, startChar: 0, endChar: 1 },
+      },
+    ]);
     expect(draft.mentions).toMatchObject([{ kind: "file", value: "a.ts", start: 4, end: 9 }]);
     expect(draft.command).toBeNull();
   });

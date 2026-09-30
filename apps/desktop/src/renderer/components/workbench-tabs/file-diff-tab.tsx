@@ -3,10 +3,13 @@ import { useState } from "react";
 import { useAtomValue } from "jotai";
 import { runtimeAtom } from "../../atoms/workspace";
 import { cn } from "../../lib/cn";
+import { canCommentOnRange } from "../../lib/review-comments";
 import { useLocationDiffs } from "../../hooks/use-location-diffs";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import { palot } from "../../services/palot";
 import { FileDiffView } from "../file-diff-view";
+import type { SelectedLineRange } from "@pierre/diffs";
+import { ReviewCommentEditor, useReviewComments } from "../review-comment-editor";
 import { DiffContextToggle } from "../diff-context-toggle";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -62,6 +65,8 @@ function FileDiffContent({
   setExpandUnchanged(value: boolean): void;
 }) {
   const runtime = useAtomValue(runtimeAtom);
+  const review = useReviewComments(tab.resource.profileID, tab.resource.sourceSessionID);
+  const [selection, setSelection] = useState<SelectedLineRange | null>(null);
   const diff = query.data?.find((file) => file.file === tab.resource.path);
 
   if (query.isPending) {
@@ -175,7 +180,25 @@ function FileDiffContent({
         patch={diff.patch}
         expandUnchanged={expandUnchanged}
         className="min-h-0 flex-1"
+        selectedLines={review.enabled ? selection : undefined}
+        onSelectedLinesChange={
+          review.enabled
+            ? (range) => setSelection(range && canCommentOnRange(range) ? range : null)
+            : undefined
+        }
       />
+      {review.enabled && selection ? (
+        <ReviewCommentEditor
+          key={`${diff.file}:${selection.start}:${selection.end}:${selection.side}`}
+          path={diff.file}
+          range={selection}
+          onSave={(text) => {
+            review.add(diff.file, selection, text);
+            setSelection(null);
+          }}
+          onCancel={() => setSelection(null)}
+        />
+      ) : null}
     </div>
   ) : (
     <Empty className="rounded-none p-5">

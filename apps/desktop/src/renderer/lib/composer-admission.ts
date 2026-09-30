@@ -1,6 +1,7 @@
 import type { PalotFileAttachment, PalotMessage, PalotSession } from "../../shared";
 import type { SessionExecutionState } from "../atoms/workspace";
 import type { ComposerSubmission } from "./composer-draft";
+import { formatReviewComment, type ReviewComment } from "./review-comments";
 
 export interface ComposerAdmissionReceipt {
   id: string;
@@ -10,6 +11,7 @@ export interface ComposerAdmissionReceipt {
 interface ComposerAdmissionInput {
   submission: ComposerSubmission;
   files: PalotFileAttachment[];
+  comments?: Omit<ReviewComment, "id" | "side">[];
   delivery: "steer" | "queue";
   optimistic?: boolean;
   createTarget(): Promise<PalotSession | null>;
@@ -37,7 +39,13 @@ export interface ComposerAdmissionEffects {
 
 export async function admitComposerSubmission(input: ComposerAdmissionInput): Promise<void> {
   const submittedAt = Date.now();
-  const optimistic = optimisticMessage(input.submission, input.files, input.delivery, submittedAt);
+  const optimistic = optimisticMessage(
+    input.submission,
+    input.files,
+    input.delivery,
+    submittedAt,
+    input.comments ?? [],
+  );
   let target: PalotSession | null = null;
   let admitted = false;
 
@@ -72,6 +80,7 @@ function optimisticMessage(
   files: PalotFileAttachment[],
   delivery: "steer" | "queue",
   submittedAt: number,
+  comments: Omit<ReviewComment, "id" | "side">[],
 ): PalotMessage {
   return {
     id: `msg_${crypto.randomUUID().replaceAll("-", "")}`,
@@ -81,7 +90,8 @@ function optimisticMessage(
     timelineAt: submittedAt,
     delivery,
     completedAt: submittedAt,
-    text: submission.text || null,
+    text:
+      [submission.text, ...comments.map(formatReviewComment)].filter(Boolean).join("\n") || null,
     agent: null,
     model: null,
     tokens: null,
