@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { describe, expect, it, vi } from "vitest";
 import type { PalotMessage, PalotSession } from "../../shared";
-import type { TurnActivityGroup } from "../lib/turn-projection";
+import { projectTranscriptTurns, type TurnActivityGroup } from "../lib/turn-projection";
 import { createRendererQueryClient } from "../lib/query-client";
 import { seedCatalog } from "../test-utils/render-with-router";
 
@@ -15,6 +15,7 @@ vi.mock("../hooks/use-navigation", () => ({
 }));
 
 import { SubagentResponse } from "./subagent-activity";
+import { TurnActivity } from "./thread";
 
 describe("SubagentResponse", () => {
   it("reveals the full response and opens the child task", async () => {
@@ -88,5 +89,47 @@ describe("SubagentResponse", () => {
     expect(screen.getByText("Use sparse metadata.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Open Explore subagent" }));
     expect(mocks.openSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("shows completed child returns without inventing a parent work duration", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(301_000);
+    try {
+      const responses = [20_000, 25_000].map((createdAt, index): PalotMessage => ({
+        id: `child-${index}`,
+        type: "synthetic",
+        createdAt,
+        completedAt: createdAt,
+        text: `<subagent sessionID="child-${index}" state="completed">Done.</subagent>`,
+        agent: null,
+        model: null,
+        tokens: null,
+        finish: null,
+        content: [],
+        data: {
+          metadata: { source: "subagent", childID: `child-${index}`, state: "completed" },
+          description: `Inspect ${index}`,
+        },
+      }));
+      const turns = projectTranscriptTurns(responses);
+      const queryClient = createRendererQueryClient();
+      seedCatalog(queryClient, { sessions: [] });
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <Provider store={createStore()}>
+            {turns.map((turn) => (
+              <TurnActivity key={turn.id} turn={turn} sessionID="parent" />
+            ))}
+          </Provider>
+        </QueryClientProvider>,
+      );
+
+      expect(screen.queryByRole("button", { name: /^Completed in / })).toBeNull();
+      expect(screen.getByRole("button", { name: "Subagent returned Inspect 0" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Subagent returned Inspect 1" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

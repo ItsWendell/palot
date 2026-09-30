@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PalotMessage, PalotSession } from "../../shared";
 import { messagesAtom, type SessionExecutionState } from "../atoms/workspace";
-import type { TurnActivityGroup } from "../lib/turn-projection";
+import { projectTranscriptTurns, type TurnActivityGroup } from "../lib/turn-projection";
 import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { seedCatalog } from "../test-utils/render-with-router";
@@ -30,6 +30,7 @@ import {
   SubagentSessionDock,
   type BackgroundWorkItem,
 } from "./subagent-activity";
+import { TurnActivity } from "./thread";
 
 function session(input: Partial<PalotSession> & Pick<PalotSession, "id">): PalotSession {
   return {
@@ -113,6 +114,66 @@ function launchGroup(): TurnActivityGroup {
 describe("subagent activity", () => {
   beforeEach(() => {
     mocks.openSession.mockClear();
+  });
+
+  it("keeps a delegated task accessible at every disclosure level without splitting the parent group", async () => {
+    const child = session({
+      id: "child-1",
+      parentID: "parent",
+      title: "Map the timeline (@explore subagent)",
+    });
+    const assistant = {
+      ...source([
+        {
+          type: "tool",
+          id: "read",
+          name: "read",
+          state: { status: "completed", input: { path: "src/a.ts" } },
+        },
+        {
+          type: "tool",
+          id: "task-call",
+          name: "task",
+          state: {
+            status: "completed",
+            input: { subagent_type: "explore", description: "Map the timeline", background: true },
+            metadata: { sessionId: child.id, background: true },
+          },
+        },
+        {
+          type: "tool",
+          id: "edit",
+          name: "edit",
+          state: { status: "completed", input: { path: "src/a.ts", text: "updated" } },
+        },
+        { type: "text", id: "final", text: "Done" },
+      ]),
+      finish: "stop" as const,
+    };
+    const turn = projectTranscriptTurns([assistant])[0]!;
+    expect(turn.activity).toHaveLength(1);
+    const user = userEvent.setup();
+    renderCatalog(<TurnActivity turn={turn} sessionID="parent" />, createStore(), [child]);
+
+    const cardName = "Explore subagent finished: Map the timeline";
+    const oneVisibleCard = () =>
+      expect(screen.getAllByRole("button", { name: cardName })).toHaveLength(1);
+    const turnSummary = screen.getByRole("button", { name: "Completed in 1s" });
+    expect(turnSummary.getAttribute("aria-expanded")).toBe("false");
+    oneVisibleCard();
+
+    await user.click(turnSummary);
+    const groupSummary = screen.getByRole("button", {
+      name: "Read 1 file, changed 1 file, and delegated 1 task",
+    });
+    expect(groupSummary.getAttribute("aria-expanded")).toBe("false");
+    oneVisibleCard();
+
+    await user.click(groupSummary);
+    expect(groupSummary.getAttribute("aria-expanded")).toBe("true");
+    oneVisibleCard();
+    await user.click(screen.getByRole("button", { name: cardName }));
+    expect(mocks.openSession).toHaveBeenCalledWith(child.id);
   });
 
   afterEach(cleanup);

@@ -283,6 +283,71 @@ function subagentResponsePart(message: PalotMessage): PalotMessageContent | null
   };
 }
 
+function backgroundShellReturn(
+  message: PalotMessage,
+): { shellID: string; state: string; metadata: Record<string, JsonValue> } | null {
+  if (message.type !== "synthetic" || !stringValue(messageData(message).description)) return null;
+  const metadata = recordValue(messageData(message).metadata);
+  const shellID = stringValue(metadata.shellID);
+  const state = stringValue(metadata.state);
+  if (metadata.source !== "shell" || !shellID) return null;
+  if (!state || !["completed", "failed", "error", "interrupted", "cancelled"].includes(state))
+    return null;
+  return { shellID, state, metadata };
+}
+
+function backgroundShellTool(part: PalotMessageContent, shellID: string): boolean {
+  if (!isTool(part) || (part.name !== "shell" && part.name !== "local_shell")) return false;
+  const state = recordValue(part.state);
+  return (
+    recordValue(state.input).background === true &&
+    stringValue(recordValue(state.metadata).shellID) === shellID
+  );
+}
+
+function shellToolWithReturn(
+  part: PalotMessageContent,
+  startedAt: number,
+  returned: PalotMessage,
+): PalotMessageContent {
+  const state = recordValue(part.state);
+  const result = backgroundShellReturn(returned)!;
+  const { metadata } = result;
+  const exit = typeof metadata.exit === "number" ? metadata.exit : null;
+  const failed = result.state !== "completed" || (exit !== null && exit !== 0);
+  const output = unwrapShellTransport(returned.text ?? "");
+  return {
+    ...part,
+    time: {
+      created: part.time?.created ?? startedAt,
+      ...part.time,
+      completed: returned.createdAt,
+    },
+    state: {
+      ...state,
+      status: failed ? "error" : "completed",
+      content: [{ type: "text", text: output }],
+      metadata: {
+        ...recordValue(state.metadata),
+        status: result.state,
+        ...(exit === null ? {} : { exit }),
+        ...(typeof metadata.truncated === "boolean" ? { truncated: metadata.truncated } : {}),
+      },
+      ...(failed
+        ? {
+            error: {
+              type: "ShellReturnError",
+              message:
+                exit !== null && exit !== 0
+                  ? `Shell command exited with code ${exit}`
+                  : `Background command ${result.state}`,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
 function shellPart(message: PalotMessage): PalotMessageContent {
   const data = messageData(message);
   const status = stringValue(data.status) ?? (message.completedAt === null ? "running" : "exited");
@@ -946,7 +1011,6 @@ function groupActivity(
   const groups: TurnActivityGroup[] = [];
   let current: TurnActivityGroup | null = null;
   let currentFailed = false;
-  let currentSubagent = false;
 
   const flush = () => {
     if (!current) return;
@@ -976,7 +1040,6 @@ function groupActivity(
     groups.push(current);
     current = null;
     currentFailed = false;
-    currentSubagent = false;
   };
 
   const appendProcessEntry = (entry: TurnPart) => {
@@ -999,8 +1062,6 @@ function groupActivity(
     const category = activityCategory(entry.part, entry.index);
     const preference = policy.categories[category];
     const status = activityStatus([entry]);
-    const execution = isTool(entry.part) ? projectToolExecution(entry.part, entry.index) : null;
-    const subagent = execution?.kind === "subagent";
     const interruptedEntry = safeguards.interruptedEntryID === entryID(entry);
     const blocking =
       safeguards.protectAllForBlocking || safeguards.blockingMessageIDs.has(entry.message.id);
@@ -1013,7 +1074,6 @@ function groupActivity(
       flush();
       return;
     }
-    if (subagent !== currentSubagent && current) flush();
     const presentation =
       blocking ||
       interruptedEntry ||
@@ -1045,7 +1105,6 @@ function groupActivity(
         pinned: blocking || preference.foldedTurn === "pinned",
         groupSameFileReads: policy.groupSameFileReads,
       };
-      currentSubagent = subagent;
       flush();
       return;
     }
@@ -1063,7 +1122,6 @@ function groupActivity(
       current.entries.push(entry);
       current.categories = [...new Set([...(current.categories ?? []), category])];
       currentFailed = status === "failed";
-      currentSubagent = subagent;
       return;
     }
 
@@ -1084,7 +1142,6 @@ function groupActivity(
       groupSameFileReads: policy.groupSameFileReads,
     };
     currentFailed = status === "failed";
-    currentSubagent = subagent;
   };
 
   for (const item of items) {
@@ -1225,13 +1282,17 @@ function failed(entries: TurnPart[], assistants: PalotMessage[]): boolean {
   );
 }
 
-function assistantTokensPerSecond(messages: PalotMessage[]): Map<string, number | null> {
+function assistantTokensPerSecond(
+  messages: PalotMessage[],
+  linkedShellReturnIDs: Set<string>,
+): Map<string, number | null> {
   const rates = new Map<string, number | null>();
   let outputTokens = 0;
   let durationMs = 0;
   let allStreamed = true;
 
   for (const message of messages) {
+    if (linkedShellReturnIDs.has(message.id)) continue;
     if (message.type === "user" || message.type === "synthetic") {
       outputTokens = 0;
       durationMs = 0;
@@ -1393,12 +1454,29 @@ function project(
   const user = users[0] ?? null;
   const entries: TurnPart[] = [];
   const entriesByMessage = new Map<PalotMessage, TurnPart[]>();
+  const shellReturns = new Map<string, PalotMessage>();
+  for (const message of messages) {
+    const returned = backgroundShellReturn(message);
+    if (returned) shellReturns.set(returned.shellID, message);
+  }
+  const linkedReturnIDs = new Set<string>();
   for (const message of messages) {
     if (message.type === "user") continue;
+    if (linkedReturnIDs.has(message.id)) continue;
     const messageEntries = projectedParts(
       message,
       message.type !== "assistant" || message === latestAssistant,
-    ).map((part, index) => ({ message, part, index }));
+    ).map((part, index) => {
+      const shellID = stringValue(recordValue(recordValue(part.state).metadata).shellID);
+      const returned =
+        shellID && backgroundShellTool(part, shellID) ? shellReturns.get(shellID) : undefined;
+      if (returned) linkedReturnIDs.add(returned.id);
+      return {
+        message,
+        part: returned ? shellToolWithReturn(part, message.createdAt, returned) : part,
+        index,
+      };
+    });
     if (messageEntries.length === 0) continue;
     entriesByMessage.set(message, messageEntries);
     entries.push(...messageEntries);
@@ -1611,6 +1689,7 @@ interface TimelineGrouping {
   userMessages: PalotMessage[];
   contextMessage: PalotMessage | null;
   background: TranscriptBackgroundFacts;
+  linkedShellReturnIDs: Set<string>;
 }
 
 interface CachedTurnProjection {
@@ -1667,6 +1746,14 @@ function groupTimelineMessages(
   const subagentResponses: TranscriptBackgroundResponseSource[] = [];
   const shellTools: TranscriptBackgroundToolSource[] = [];
   const shellMessages: PalotMessage[] = [];
+  const linkedShellReturnIDs = new Set<string>();
+  const activeBackgroundShellIDs = new Set<string>();
+  const trackBackgroundShells = (facts: MessageProjectionFacts) => {
+    for (const { part } of facts.shellTools) {
+      const shellID = stringValue(recordValue(recordValue(part.state).metadata).shellID);
+      if (shellID && backgroundShellTool(part, shellID)) activeBackgroundShellIDs.add(shellID);
+    }
+  };
   let contextMessage: PalotMessage | null = null;
   let previousMessage: PalotMessage | null = null;
   let activeAgent: string | null = null;
@@ -1706,6 +1793,18 @@ function groupTimelineMessages(
     const kind = timelineKind(message, facts);
     const activityOnly = facts.activityOnly;
     const previous = groups.at(-1);
+    const returned = backgroundShellReturn(message);
+    if (
+      returned &&
+      previous?.kind === "conversation" &&
+      previous.activityOnly &&
+      activeBackgroundShellIDs.has(returned.shellID)
+    ) {
+      previous.messages.push(message);
+      linkedShellReturnIDs.add(message.id);
+      activeBackgroundShellIDs.delete(returned.shellID);
+      continue;
+    }
     if (
       kind === "conversation" &&
       activityOnly &&
@@ -1714,8 +1813,10 @@ function groupTimelineMessages(
     ) {
       previous.messages.push(message);
       previous.context = { agent: activeAgent, model: activeModel, location: activeLocation };
+      trackBackgroundShells(facts);
       continue;
     }
+    activeBackgroundShellIDs.clear();
     groups.push({
       id: message.id,
       kind,
@@ -1723,6 +1824,7 @@ function groupTimelineMessages(
       activityOnly,
       context: { agent: activeAgent, model: activeModel, location: activeLocation },
     });
+    if (kind === "conversation" && activityOnly) trackBackgroundShells(facts);
   }
 
   return {
@@ -1731,6 +1833,7 @@ function groupTimelineMessages(
     userMessages,
     contextMessage,
     background: { subagentTools, subagentResponses, shellTools, shellMessages },
+    linkedShellReturnIDs,
   };
 }
 
@@ -2023,7 +2126,10 @@ class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
   }: SessionTranscriptProjectionInput): SessionTranscriptProjection {
     const timeline = groupTimelineMessages(messages, initialLocation);
     const { groups } = timeline;
-    const tokensPerSecondByMessageID = assistantTokensPerSecond(timeline.orderedMessages);
+    const tokensPerSecondByMessageID = assistantTokensPerSecond(
+      timeline.orderedMessages,
+      timeline.linkedShellReturnIDs,
+    );
     let diffGroupIndex = -1;
     let lastConversationIndex = -1;
     let lastCompletedAssistantIndex = -1;

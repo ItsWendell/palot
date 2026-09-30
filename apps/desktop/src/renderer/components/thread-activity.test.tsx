@@ -3,7 +3,11 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { PalotMessage, PalotMessageContent } from "../../shared";
-import type { TurnActivityGroup, TurnPart } from "../lib/turn-projection";
+import {
+  createSessionTranscriptProjector,
+  type TurnActivityGroup,
+  type TurnPart,
+} from "../lib/turn-projection";
 import {
   ActivityGroup,
   CompactionBoundary,
@@ -34,6 +38,45 @@ function reasoningEntry(part: PalotMessageContent): TurnPart {
 }
 
 describe("ActivityGroup", () => {
+  it("shows a background command's returned output in its original tool details", async () => {
+    const user = userEvent.setup();
+    const assistant: PalotMessage = {
+      ...message([
+        {
+          type: "tool",
+          id: "background-command",
+          name: "shell",
+          state: {
+            status: "completed",
+            input: { command: "python sample.py", background: true },
+            metadata: { shellID: "job-1", status: "running" },
+          },
+        },
+      ]),
+      finish: "tool-calls",
+    };
+    const returned: PalotMessage = {
+      ...message([]),
+      id: "return",
+      type: "synthetic",
+      createdAt: 3,
+      text: '<shell id="job-1" state="completed" command="python sample.py">\nFinished sample\n</shell>',
+      data: {
+        description: "python sample.py",
+        metadata: { source: "shell", shellID: "job-1", state: "completed", exit: 0 },
+      },
+    };
+    const group = createSessionTranscriptProjector().project({
+      messages: [assistant, returned],
+    }).rows[0]!.turn.activity[0]!;
+
+    render(<ActivityGroup group={group} live={false} defaultOpen sessionID="background-fixture" />);
+
+    expect(screen.queryByRole("status", { name: "python sample.py" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /Ran python sample\.py/ }));
+    expect(screen.getByText("Finished sample")).toBeTruthy();
+  });
+
   it("renders a described synthetic message as a static inline update", () => {
     const part: PalotMessageContent = {
       type: "timeline-boundary",

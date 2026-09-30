@@ -421,7 +421,7 @@ describe("projectTranscriptTurns", () => {
     ]);
   });
 
-  it("keeps adjacent delegation individually identifiable and pinned", () => {
+  it("groups adjacent delegations without losing their individual tool entries", () => {
     const assistant = message({
       id: "assistant",
       type: "assistant",
@@ -455,18 +455,11 @@ describe("projectTranscriptTurns", () => {
 
     expect(turn.activity).toMatchObject([
       {
-        title: "Delegating 'Inspect one'",
+        title: "Delegated 2 tasks",
         categories: ["delegation"],
-        presentation: "individual",
-        pinned: true,
-        entries: [{}],
-      },
-      {
-        title: "Delegating 'Inspect two'",
-        categories: ["delegation"],
-        presentation: "individual",
-        pinned: true,
-        entries: [{}],
+        presentation: "grouped",
+        pinned: false,
+        entries: [{ part: { id: "first-task" } }, { part: { id: "second-task" } }],
       },
     ]);
   });
@@ -671,7 +664,7 @@ describe("projectTranscriptTurns", () => {
     const policy = resolveSessionProjectionPreference({
       version: 2,
       preset: "compact",
-      categories: { delegation: { foldedTurn: "inside" } },
+      categories: { delegation: { presentation: "individual", foldedTurn: "inside" } },
     });
     const assistant = message({
       id: "assistant",
@@ -1259,7 +1252,15 @@ describe("projectTranscriptTurns", () => {
       ],
     });
 
-    expect(row([assistant], assistant.id)?.activity).toMatchObject([
+    const policy = resolveSessionProjectionPreference({
+      version: 2,
+      preset: "compact",
+      categories: { delegation: { presentation: "individual", foldedTurn: "pinned" } },
+    });
+
+    expect(
+      projectTranscriptTurns([assistant], null, [], [], null, null, policy)[0]?.activity,
+    ).toMatchObject([
       { categories: ["read"], pinned: false },
       { categories: ["delegation"], pinned: true },
       { categories: ["code-search"], pinned: false },
@@ -2497,5 +2498,479 @@ describe("createReasoningTitle", () => {
     expect(createReasoningTitle("Planning lightweight animated lightbox component")).toBe(
       "Planning lightweight animated lightbox component",
     );
+  });
+});
+
+describe("activity grouping across asynchronous work", () => {
+  it("keeps background delegations and surrounding tools in one chronological activity group", () => {
+    const work = message({
+      id: "work",
+      type: "assistant",
+      createdAt: 10,
+      finish: "tool-calls",
+      content: [
+        { type: "reasoning", id: "plan", text: "Checking the implementation." },
+        {
+          type: "tool",
+          id: "read",
+          name: "read",
+          state: { status: "completed", input: { path: "src/a.ts" } },
+        },
+        {
+          type: "tool",
+          id: "delegate-one",
+          name: "subagent",
+          state: {
+            status: "completed",
+            input: { description: "Inspect UI", agent: "explore", background: true },
+            metadata: { sessionID: "child-one", background: true },
+          },
+        },
+        {
+          type: "tool",
+          id: "delegate-two",
+          name: "subagent",
+          state: {
+            status: "completed",
+            input: { description: "Inspect tests", agent: "explore", background: true },
+            metadata: { sessionID: "child-two", background: true },
+          },
+        },
+        {
+          type: "tool",
+          id: "edit",
+          name: "edit",
+          state: { status: "completed", input: { path: "src/a.ts", text: "updated" } },
+        },
+        {
+          type: "tool",
+          id: "command",
+          name: "shell",
+          state: { status: "completed", input: { command: "bun run test" } },
+        },
+      ],
+    });
+
+    const groups = projectTranscriptTurns([work])[0]!.activity;
+    expect(
+      groups.map((group) => ({
+        ids: group.entries.map((entry) => entry.part.id),
+        presentation: group.presentation,
+        pinned: group.pinned,
+      })),
+    ).toEqual([
+      {
+        ids: ["plan", "read", "delegate-one", "delegate-two", "edit", "command"],
+        presentation: "grouped",
+        pinned: false,
+      },
+    ]);
+  });
+
+  it("keeps an ordinary command in the same activity group when its tool state settles", () => {
+    const projector = createSessionTranscriptProjector();
+    const first = message({
+      id: "first",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 11,
+      finish: "tool-calls",
+      content: [
+        { type: "reasoning", id: "plan", text: "Running the checks." },
+        {
+          type: "tool",
+          id: "command",
+          name: "shell",
+          state: { status: "running", input: { command: "bun run test" } },
+        },
+      ],
+    });
+    const continued = message({
+      id: "continued",
+      type: "assistant",
+      createdAt: 12,
+      completedAt: null,
+      content: [
+        {
+          type: "tool",
+          id: "read",
+          name: "read",
+          state: { status: "completed", input: { path: "result.json" } },
+        },
+      ],
+    });
+    const running = projector.project({ messages: [first, continued] });
+    const settled = projector.project({
+      messages: [
+        {
+          ...first,
+          content: first.content.map((part) =>
+            part.id === "command"
+              ? { ...part, state: { status: "completed", input: { command: "bun run test" } } }
+              : part,
+          ),
+        },
+        continued,
+      ],
+    });
+
+    expect(running.rows).toHaveLength(1);
+    expect(running.rows[0]?.turn.activity).toMatchObject([{ id: "plan", status: "running" }]);
+    expect(settled.rows[0]?.turn.activity).toMatchObject([{ id: "plan", status: "completed" }]);
+    expect(settled.rows[0]?.turn.activity[0]?.entries.map((entry) => entry.part.id)).toEqual([
+      "plan",
+      "command",
+      "read",
+    ]);
+  });
+
+  it("makes a first-class shell result a timeline boundary between assistant activity rows", () => {
+    const before = message({
+      id: "before",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 12,
+      finish: "tool-calls",
+      content: [{ type: "tool", id: "edit", name: "edit", state: { status: "completed" } }],
+    });
+    const shell = message({
+      id: "shell-result",
+      type: "shell",
+      createdAt: 13,
+      completedAt: 20,
+      data: {
+        shellID: "shell-1",
+        command: "bun run test",
+        status: "exited",
+        exit: 0,
+        output: { output: "Tests passed" },
+      },
+    });
+    const after = message({
+      id: "after",
+      type: "assistant",
+      createdAt: 21,
+      completedAt: 23,
+      finish: "tool-calls",
+      content: [
+        {
+          type: "tool",
+          id: "read-result",
+          name: "read",
+          state: { status: "completed", input: { path: "result.json" } },
+        },
+      ],
+    });
+
+    const projection = createSessionTranscriptProjector().project({
+      messages: [before, shell, after],
+    });
+    expect(projection.rows.map((row) => [row.id, row.turn.kind])).toEqual([
+      ["before", "conversation"],
+      ["shell-result", "shell"],
+      ["after", "conversation"],
+    ]);
+    expect(projection.presentationRows.map((row) => row.kind)).toEqual([
+      "activity",
+      "shell",
+      "activity",
+    ]);
+    expect(projection.rows[0]?.turn.activity[0]?.entries.map((entry) => entry.part.id)).toEqual([
+      "edit",
+    ]);
+    expect(projection.rows[2]?.turn.activity[0]?.entries.map((entry) => entry.part.id)).toEqual([
+      "read-result",
+    ]);
+  });
+
+  it("projects each background subagent return as a separate completed row without a turn duration", () => {
+    const before = message({
+      id: "before",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 11,
+      finish: "tool-calls",
+      content: [{ type: "tool", id: "read", name: "read", state: { status: "completed" } }],
+    });
+    const returned = (id: string, createdAt: number) =>
+      message({
+        id,
+        type: "synthetic",
+        createdAt,
+        completedAt: createdAt,
+        text: `<subagent sessionID="${id}" state="completed">Done.</subagent>`,
+        data: { metadata: { source: "subagent", childID: id, state: "completed" } },
+      });
+    const after = message({
+      id: "after",
+      type: "assistant",
+      createdAt: 30,
+      completedAt: 31,
+      finish: "tool-calls",
+      content: [{ type: "tool", id: "edit", name: "edit", state: { status: "completed" } }],
+    });
+
+    const projection = createSessionTranscriptProjector().project({
+      messages: [before, returned("child-one", 20), returned("child-two", 25), after],
+    });
+    expect(projection.rows.map((row) => [row.id, row.turn.kind])).toEqual([
+      ["before", "conversation"],
+      ["child-one", "subagent"],
+      ["child-two", "subagent"],
+      ["after", "conversation"],
+    ]);
+    expect(
+      projection.rows.slice(1, 3).map(({ turn }) => ({
+        status: turn.status,
+        startedAt: turn.startedAt,
+        completedAt: turn.completedAt,
+        activity: turn.activity.map((group) => group.kind),
+      })),
+    ).toEqual([
+      { status: "completed", startedAt: 20, completedAt: null, activity: ["subagent"] },
+      { status: "completed", startedAt: 25, completedAt: null, activity: ["subagent"] },
+    ]);
+    expect(projection.presentationRows.map((row) => row.kind)).toEqual([
+      "activity",
+      "activity",
+      "activity",
+      "activity",
+    ]);
+  });
+});
+
+describe("background shell returns", () => {
+  const command = (id: string) => ({
+    type: "tool" as const,
+    id: `tool-${id}`,
+    name: "shell",
+    time: { created: 11, completed: 12 },
+    state: {
+      status: "completed",
+      input: { command: `python ${id}.py`, background: true },
+      content: [{ type: "text", text: "Command running in background" }],
+      metadata: { shellID: id, status: "running" },
+    },
+  });
+  const returned = (id: string, createdAt: number, exit = 0) =>
+    message({
+      id: `returned-${id}`,
+      type: "synthetic",
+      createdAt,
+      text: `<shell id="${id}" state="completed" command="python ${id}.py">\nResult from ${id}\n</shell>`,
+      data: {
+        description: `python ${id}.py`,
+        metadata: {
+          source: "shell",
+          shellID: id,
+          jobID: id,
+          state: "completed",
+          exit,
+          truncated: false,
+        },
+      },
+    });
+
+  it("attaches a keyed return to its original command and keeps continuing activity together", () => {
+    const before = message({
+      id: "before",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 12,
+      finish: "tool-calls",
+      content: [
+        { type: "reasoning", id: "plan", text: "Reviewing the samples." },
+        command("sample"),
+      ],
+    });
+    const after = message({
+      id: "after",
+      type: "assistant",
+      createdAt: 21,
+      completedAt: null,
+      content: [
+        {
+          type: "tool",
+          id: "read-result",
+          name: "read",
+          state: { status: "completed", input: { path: "result.json" } },
+        },
+      ],
+    });
+    const projector = createSessionTranscriptProjector();
+    const running = projector.project({ messages: [before] });
+    const messages = [before, returned("sample", 20), after];
+    const result = projector.project({ messages });
+    const fromReload = createSessionTranscriptProjector().project({ messages });
+
+    expect(running.rows.map((row) => row.id)).toEqual(["before"]);
+    expect(result.rows.map((row) => row.id)).toEqual(["before"]);
+    expect(result.presentationRows.map((row) => row.kind)).toEqual(["activity", "turn-status"]);
+    expect(result.rows[0]?.turn.activity).toHaveLength(1);
+    expect(result.rows[0]?.turn.activity[0]?.entries.map((entry) => entry.part.id)).toEqual([
+      "plan",
+      "tool-sample",
+      "read-result",
+    ]);
+    const part = result.rows[0]?.turn.activity[0]?.entries[1]?.part;
+    expect(part).toMatchObject({
+      time: { created: 11, completed: 20 },
+      state: {
+        status: "completed",
+        input: { command: "python sample.py", background: true },
+        content: [{ type: "text", text: "Result from sample" }],
+        metadata: { shellID: "sample", status: "completed", exit: 0 },
+      },
+    });
+    expect(before.content[1]).toMatchObject({
+      state: { content: [{ type: "text", text: "Command running in background" }] },
+    });
+    expect(fromReload.rows[0]?.turn.activity[0]?.entries[1]?.part).toEqual(part);
+  });
+
+  it("links concurrent returns by shell ID even when they finish out of order", () => {
+    const before = message({
+      id: "before",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 12,
+      finish: "tool-calls",
+      content: [command("first"), command("second")],
+    });
+    const after = message({
+      id: "after",
+      type: "assistant",
+      createdAt: 30,
+      completedAt: 31,
+      finish: "tool-calls",
+      content: [{ type: "tool", id: "edit", name: "edit", state: { status: "completed" } }],
+    });
+    const projection = createSessionTranscriptProjector().project({
+      messages: [before, returned("second", 20), returned("first", 25), after],
+    });
+
+    expect(projection.rows.map((row) => row.id)).toEqual(["before"]);
+    expect(projection.rows[0]?.turn.activity[0]?.entries.map((entry) => entry.part.id)).toEqual([
+      "tool-first",
+      "tool-second",
+      "edit",
+    ]);
+    expect(
+      projection.rows[0]?.turn.activity[0]?.entries.slice(0, 2).map((entry) => entry.part.state),
+    ).toMatchObject([
+      { content: [{ text: "Result from first" }] },
+      { content: [{ text: "Result from second" }] },
+    ]);
+  });
+
+  it("retains a failed return's output and failed state on the command", () => {
+    const before = message({
+      id: "before",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 12,
+      finish: "tool-calls",
+      content: [command("failure")],
+    });
+    const result = createSessionTranscriptProjector().project({
+      messages: [before, returned("failure", 20, 2)],
+    });
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.turn.status).toBe("failed");
+    expect(result.rows[0]?.turn.activity[0]?.entries[0]?.part.state).toMatchObject({
+      status: "error",
+      content: [{ text: "Result from failure" }],
+      metadata: { exit: 2 },
+      error: { message: "Shell command exited with code 2" },
+    });
+  });
+
+  it("replaces the background launch notice when the completed command has no output", () => {
+    const before = message({
+      id: "before",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 12,
+      finish: "tool-calls",
+      content: [command("quiet")],
+    });
+    const quiet = {
+      ...returned("quiet", 20),
+      text: '<shell id="quiet" state="completed" command="python quiet.py">\n</shell>',
+    };
+    const result = createSessionTranscriptProjector().project({ messages: [before, quiet] });
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.turn.activity[0]?.entries[0]?.part.state).toMatchObject({
+      status: "completed",
+      content: [{ type: "text", text: "" }],
+    });
+  });
+
+  it("leaves unmatched or user-separated returns as distinct chronological updates", () => {
+    const before = message({
+      id: "before",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 12,
+      finish: "tool-calls",
+      content: [command("sample")],
+    });
+    const steer = message({ id: "steer", type: "user", createdAt: 15, text: "Change the plan" });
+    const later = returned("sample", 20);
+    const unlinked = returned("different", 25);
+    const result = createSessionTranscriptProjector().project({
+      messages: [before, steer, later, unlinked],
+    });
+
+    expect(result.rows.map((row) => row.id)).toEqual([
+      "before",
+      "steer",
+      "returned-sample",
+      "returned-different",
+    ]);
+    expect(result.rows[0]?.turn.activity[0]?.entries[0]?.part.state).toMatchObject({
+      content: [{ text: "Command running in background" }],
+    });
+    expect(result.rows[2]?.turn.rootBoundary?.title).toBe("python sample.py");
+  });
+
+  it("does not pull a late return across an unrelated notice or a final reply", () => {
+    const before = message({
+      id: "before",
+      type: "assistant",
+      createdAt: 10,
+      completedAt: 12,
+      finish: "tool-calls",
+      content: [command("sample")],
+    });
+    const notice = message({
+      id: "restart-notice",
+      type: "synthetic",
+      createdAt: 15,
+      data: { description: "Continuing after restart" },
+    });
+    const final = message({
+      id: "final",
+      type: "assistant",
+      createdAt: 17,
+      completedAt: 18,
+      finish: "stop",
+      content: [{ type: "text", text: "Summary" }],
+    });
+    const result = createSessionTranscriptProjector().project({
+      messages: [before, notice, final, returned("sample", 20)],
+    });
+
+    expect(result.rows.map((row) => row.id)).toEqual([
+      "before",
+      "restart-notice",
+      "final",
+      "returned-sample",
+    ]);
+    expect(result.rows[0]?.turn.activity[0]?.entries[0]?.part.state).toMatchObject({
+      content: [{ text: "Command running in background" }],
+    });
   });
 });
