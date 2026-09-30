@@ -127,6 +127,22 @@ function renderSidebar(mode: "inbox" | "project" = "inbox", store = createStore(
 }
 
 describe("MultiConnectionSidebar", () => {
+  it.each(["inbox", "project"] as const)(
+    "keeps offline connection errors out of the %s task list without hiding cached tasks",
+    (mode) => {
+      const owner = overview.connections[1]!;
+      owner.runtime = { ...owner.runtime!, connected: false };
+      owner.phase = "error";
+      owner.error = "Error invoking remote method 'palot:opencode:profile-connect'";
+      renderSidebar(mode);
+      expect(screen.queryByText(owner.error)).toBeNull();
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Same task · Same server · beta.example" }),
+      ).toBeTruthy();
+    },
+  );
+
   it.each(["syncing", "error", "ready"] as const)(
     "only shows an all-clear when attention is ready (%s)",
     async (state) => {

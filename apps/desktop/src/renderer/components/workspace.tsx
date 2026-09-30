@@ -838,7 +838,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             disabled={!navigationOpen}
             aria-hidden={!navigationOpen}
             className={cn(
-              "transition-opacity duration-150",
+              "palot-shell-splitter transition-opacity duration-150",
               navigationOpen ? "opacity-100" : "pointer-events-none w-0 opacity-0 after:hidden",
             )}
           />
@@ -914,7 +914,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             disabled={!rightRequestedOpen || rightExpanded}
             aria-hidden={!rightRequestedOpen || rightExpanded}
             className={cn(
-              "palot-workbench-splitter transition-opacity duration-150",
+              "palot-shell-splitter transition-opacity duration-150",
               rightRequestedOpen && !rightExpanded
                 ? "opacity-100"
                 : "pointer-events-none w-0 opacity-0 after:hidden",

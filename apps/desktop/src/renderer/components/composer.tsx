@@ -1248,16 +1248,16 @@ function ComposerView({
       <div
         className={cn(
           "relative z-10",
-          contextBarMode === "new-task" &&
-            "overflow-hidden rounded-[22px] border border-foreground/12 bg-card transition-colors",
+          unifiedFocus &&
+            "palot-composer-frame overflow-hidden border border-foreground/12 bg-card transition-colors",
           unifiedFocus && "has-[[data-slot=input-group-control]:focus-visible]:border-ring",
         )}
       >
         <InputGroup
           className={cn(
-            "palot-composer @container/composer relative isolate z-10 h-auto min-h-0 flex-col items-stretch overflow-hidden rounded-[22px] border-foreground/12 bg-card",
+            "palot-composer @container/composer relative isolate z-10 h-auto min-h-0 flex-col items-stretch overflow-hidden border-foreground/12 bg-card",
             unifiedFocus &&
-              "rounded-none border-0 bg-transparent shadow-none ring-0 has-[[data-slot=input-group-control]:focus-visible]:border-0 has-[[data-slot=input-group-control]:focus-visible]:ring-0",
+              "palot-composer-unified border-0 bg-transparent shadow-none ring-0 has-[[data-slot=input-group-control]:focus-visible]:border-0 has-[[data-slot=input-group-control]:focus-visible]:ring-0",
           )}
         >
           <SurfaceBackdrop tone="composer" />

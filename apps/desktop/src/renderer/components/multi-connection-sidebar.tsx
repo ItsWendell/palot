@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useState, type ReactElement, type ReactNode } from "react";
 import { useAtom, useAtomValue } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
-import { Check, Ellipsis, LoaderCircle, PinOff, Plus, Server, Undo2 } from "lucide-react";
+import { Check, Ellipsis, PinOff, Plus, Server, Undo2 } from "lucide-react";
 import type { SessionTriageCommand } from "../../shared";
 import {
   inboxFiltersAtom,
@@ -713,7 +713,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
               </form>
             ) : null}
             {visible.map((c) =>
-              c.phase !== "ready" || !c.runtime?.connected || c.attentionState !== "ready" ? (
+              c.phase === "ready" && c.runtime?.connected && c.attentionState !== "ready" ? (
                 <div
                   key={c.profile.id}
                   className="rounded-md px-2 py-1.5 text-meta text-muted-foreground"
@@ -732,24 +732,11 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                     />
                   </div>
                   <div className="flex items-center gap-1">
-                    {c.phase === "ready" && c.runtime?.connected ? (
-                      <span>
-                        {c.attentionState === "syncing"
-                          ? "Syncing requests…"
-                          : "Request status unavailable"}
-                      </span>
-                    ) : c.phase === "loading" ? (
-                      <>
-                        <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />
-                        Connecting…
-                      </>
-                    ) : (
-                      <>
-                        <span className="min-w-0 flex-1 truncate" title={c.error ?? undefined}>
-                          {c.error ?? "Disconnected"}
-                        </span>
-                      </>
-                    )}
+                    <span>
+                      {c.attentionState === "syncing"
+                        ? "Syncing requests…"
+                        : "Request status unavailable"}
+                    </span>
                   </div>
                 </div>
               ) : null,

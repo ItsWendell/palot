@@ -458,7 +458,12 @@
 }
 
 :root[data-desktop-shape="true"]
-  :is([data-slot="dialog-content"], [data-slot="sheet-content"], .palot-composer) {
+  :is(
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .palot-composer:not(.palot-composer-unified),
+    .palot-composer-frame
+  ) {
   border-radius: var(--desktop-surface-radius);
 }
 
@@ -619,7 +624,7 @@
   background-color: var(--background);
 }
 
-.palot-workbench-splitter::before {
+.palot-shell-splitter::before {
   position: absolute;
   top: calc(var(--shell-header-height) - 1px);
   right: 0;
@@ -950,6 +955,10 @@
   color: var(--muted-foreground);
 }
 
+.palot-composer-frame {
+  border-radius: var(--surface-radius);
+}
+
 .palot-composer {
   --palot-composer-border: color-mix(in oklch, var(--foreground) 13%, transparent);
 
@@ -961,6 +970,11 @@
 
 .palot-composer > .palot-surface-backdrop {
   inset: -1px;
+  border-radius: 0;
+}
+
+.palot-composer.palot-composer-unified {
+  border-radius: 0;
 }
 
 .palot-composer:has([data-slot="input-group-control"]:focus-visible) {
