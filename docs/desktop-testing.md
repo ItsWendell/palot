@@ -5,13 +5,13 @@ Palot has two desktop test paths. Choose the narrowest one that proves the chang
 For setup, worktree isolation, focused checks, and debug attachment, see the
 [agent development loop](agent-development.md).
 
-| Path                                       | OpenCode state      | Credentials    | Window            | Use for                           |
-| ------------------------------------------ | ------------------- | -------------- | ----------------- | --------------------------------- |
-| `bun run test:e2e -- <scenario>`           | Ephemeral           | Dummy          | Hidden            | Agent and CI testing              |
-| `bun run test:e2e -- <scenario> --visible` | Ephemeral           | Dummy          | Visible, inactive | Watching a deterministic scenario |
-| `bun run dev`                              | Shared user service | Real user auth | Hidden            | Background live integration       |
-| `bun run dev:visible`                      | Shared user service | Real user auth | Visible, inactive | Live visual and interaction QA    |
-| `bun run dev:focus`                        | Shared user service | Real user auth | Visible, focused  | Focus behavior and human review   |
+| Path                                                         | OpenCode state      | Credentials    | Window                             | Use for                           |
+| ------------------------------------------------------------ | ------------------- | -------------- | ---------------------------------- | --------------------------------- |
+| `bun run test:e2e -- <scenario>`                             | Ephemeral           | Dummy          | Private on Linux; hidden elsewhere | Agent and CI testing              |
+| `bun run test:e2e -- <scenario> --display=desktop --visible` | Ephemeral           | Dummy          | Visible, inactive                  | Watching a deterministic scenario |
+| `bun run dev`                                                | Shared user service | Real user auth | Hidden                             | Background live integration       |
+| `bun run dev:visible`                                        | Shared user service | Real user auth | Visible, inactive                  | Live visual and interaction QA    |
+| `bun run dev:focus`                                          | Shared user service | Real user auth | Visible, focused                   | Focus behavior and human review   |
 
 ## Interactive demo
 
@@ -58,13 +58,25 @@ The E2E harness builds Palot, then starts:
 
 1. A vendored OpenAI-compatible test LLM.
 2. A real OpenCode service with isolated XDG directories and inline test config.
-3. A real Electron process with hidden UI and temporary Palot state.
+3. A real Electron process with temporary Palot state, on a private display by default on Linux.
 
-The harness uses the host display and does not provision a private display server.
-Linux needs a working display session even for hidden runs. Add `--visible` to
-show an inactive window or `--focus` to show and focus it. An inactive window can
-still reflow a tiling desktop; `showInactive()` is not display isolation.
-`--profile` and `--showcase` also imply visibility.
+On Linux, the harness defaults to a private headless Weston display. Install
+Weston first (`sudo pacman -S --needed weston` on Arch). The app is shown inside
+that display, not on your desktop. Electron uses native Wayland with a private
+socket and no X11 fallback. Missing Weston fails before the build.
+
+Use `--display=desktop --visible` only when you want the window on your actual
+desktop, or add `--focus` to request focus. An inactive window can still reflow a
+tiling desktop. Other platforms retain the host display and hidden-window default;
+private display mode is Linux-only. `--visible` and `--focus` always refer to the
+selected display, not necessarily your desktop.
+
+The private display uses a fixed 1920×1080 screen at scale 1 with Weston's pixman
+software renderer. `display.json` and `weston.log` record its configuration and
+startup. Cleanup stops Electron before Weston and removes the private socket
+directory. These runs prove functional behavior, not Hyprland-specific behavior
+or representative GPU performance. Do not compare private-display performance
+numbers with desktop runs.
 
 The harness drives OpenCode through the official client and asserts the rendered Palot state with Playwright. Ordinary successful runs remove all state. Failed runs and runs using `--keep` retain artifacts under the primary checkout's `.local/desktop-e2e/` directory; `perf:e2e` and `perf:trace` retain their reports by default.
 
@@ -88,9 +100,89 @@ bun run test:e2e -- composer-permissions --visible --keep
 bun run test:e2e -- composer-context --visible --keep
 bun run test:e2e -- theme-presets --visible --keep
 bun run test:e2e -- settings-plugin-failure
+bun run test:e2e -- browser-native --keep
 ```
 
 Use `--keep` to retain a successful run's artifacts.
+
+### Preview, review and workbench scenarios
+
+The 0.15.0 scenarios below exercise isolated native behavior. Their definitions
+describe assertions, not qualification of every platform or release artifact.
+Release verification must run against the exact packaged build separately.
+
+- `workspace-preview` browses and searches workspace files through OpenCode,
+  renders image, Markdown, PDF and audio fixtures, refreshes Markdown, checks
+  that embedded script text does not execute, and unloads inactive media.
+  It does not check video playback or remote SSH/HTTP file previews.
+- `review-comments` selects a real diff line, edits/removes comment drafts,
+  sends a comment-only prompt, verifies saved structured metadata and opens a
+  nonempty turn diff from a scripted file edit.
+- `workbench-resize` checks divider hit-testing beside the transcript scrollbar,
+  narrow-width closure, right-pane expansion/restoration and task-local layout.
+- `usage` includes previous-period comparison and compact-layout
+  assertions alongside the existing usage flow.
+
+```sh
+bun run test:e2e -- workspace-preview --keep
+bun run test:e2e -- review-comments --keep
+bun run test:e2e -- workbench-resize --keep
+bun run test:e2e -- usage --keep
+```
+
+### Browser scenarios
+
+`browser-native` enables Experimental Browser in an isolated Palot profile, attaches the real
+OpenCode 2.0.19 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
+It checks the returned snapshot, the session workbench address bar, rejection of an out-of-root
+`file://` URL, and tab-URL restoration after detach/reattach when the setting changes. It does not
+test an external server, service reconnect, or a packaged Lighthouse dependency.
+
+The scenario also checks hidden page state, absence of the app bridge/Node globals, stable guest
+IDs through settings and session switches, browser/menu hit-testing, resizing and page zoom,
+managed popups, and teardown without renderer errors. Popup checks cover opener messaging,
+blank-then-navigate, exact POST bodies, cookie continuity, two-origin HTTP login redirects,
+agent snapshots/screenshots, nested-popup rejection, and opener-close cascading. Native surface
+unit tests check show/hide gating; `document.visibilityState` isn't a visibility oracle with
+Electron's `backgroundThrottling:false`. The scenario also exercises renderer-loss recovery.
+The runner maps the exact fixture
+WebContents ID to its owned renderer PID through diagnostics, verifies it isn't the app renderer
+or shared with another guest, then sends SIGKILL. The assertions require the healthy page's live
+state and identity to survive, the binding to stay connected, and explicit reload to restore the
+failed tab with its original ID and a newer generation. This tests process loss (`killed`), not
+a native hang or a particular Chromium crash cause. `browser-recovery.json` records the result.
+
+Do not use `Page.crash` as a short-deadline exit assertion on Linux: an isolated probe
+showed the renderer stuck in core dumping before its process-gone event. The test does not
+disable production guest DevTools restrictions or change system core-dump settings.
+
+`--profile` records 24 warm tab switches and a two-second idle sample in
+`browser-host-performance.json`; visible runs retain page and menu screenshots. Compare repeated
+runs with the same window size and display conditions, not a single switching time.
+
+It also writes `browser-retention.json`: an accumulating 2 → 6 → 10 tab workload, a switch away
+from the owning session, and explicit closure back to 2. Each phase contains three spaced
+Electron process snapshots and guest counts. Working sets include shared memory; don't treat
+their sum as unique physical usage or this workload as a forced-GC leak test. `display.json`
+identifies the private software compositor so these results aren't confused with desktop GPU
+measurements. No automatic tab suspension is enabled by the measurement.
+
+Browser screenshots use CDP's viewport capture (`fromSurface: false`). The default
+surface capture can misrepresent embedded guest layout even when the page's live
+layout and viewport dimensions are correct.
+
+```sh
+bun run test:e2e -- browser-native --visible --keep
+bun run test:e2e -- browser-native --profile --keep
+bun run test:e2e -- browser-native-http --keep
+```
+
+There is no backend flag: primary tabs use `<webview>` in every build, with managed native windows
+for page-created popups. The experimental browser remains off by default. Electron 44.4.4 fixes
+the loaded-guest DOM teardown error seen in 44.3.0. The HTTP variant pairs only with the harness's
+own service and runs the same assertions through a remote profile. It does not prove an external
+network, SSH transport, real-provider OAuth, HTTPS login, or cross-window stress behavior. Use
+`--executable` with an unpacked build for a separate packaged check; development runs don't prove it.
 
 The default isolated service uses the pinned OpenCode client version. To check
 backward compatibility with a reviewed beta or another supported stable 2.x
@@ -98,6 +190,8 @@ runtime, provide both its exact `OPENCODE_BIN` and
 `--opencode-version <version>`. This changes only the isolated test service, not
 the generated client or shared service. Unknown prereleases and other majors
 are rejected by this harness override.
+
+### Runtime and session scenarios
 
 `opencode-release-channel` verifies native Stable/Beta preference persistence,
 reload hydration, actual versus next-start version labels, keyboard interaction
@@ -174,7 +268,7 @@ For transcript history and responsive navigation:
 - Use `perf:stability` separately for streaming Working/composer settlement, and
   `perf:input` without video/trace for clean input measurements.
 
-Use `--inspect` to keep an isolated scenario alive. The harness prints an explicit `agent-browser connect '<renderer-websocket>'` command and writes the browser port plus renderer WebSocket to `instance.json`. Connect to the renderer WebSocket because Electron does not support the new-target command that this `agent-browser` version sends to browser-level CDP endpoints. Add `--visible` only when the user wants the native window shown. Visible E2E windows use `showInactive()` so they do not take keyboard focus; add `--focus` only for a focus-specific test. Stop the retained command with Ctrl-C; cleanup runs on exit.
+Use `--inspect` to keep an isolated scenario alive. The harness prints an explicit `agent-browser connect '<renderer-websocket>'` command and writes the browser port plus renderer WebSocket to `instance.json`. Connect to the renderer WebSocket because Electron does not support the new-target command that this `agent-browser` version sends to browser-level CDP endpoints. Use `--display=desktop --visible` to show it on your desktop rather than Linux's private display. Visible E2E windows use `showInactive()` so they do not take keyboard focus; add `--focus` only for a focus-specific test. Stop the retained command with Ctrl-C; cleanup runs on exit.
 
 Use `--inspect-on-failure` to retain a failed renderer for inspection. It only
 waits when a renderer is still attachable, keeps the isolated service alive, and

@@ -1,7 +1,7 @@
 # Privacy
 
-This policy describes the current source version of Palot. It may change before
-a public binary release.
+This policy describes the Palot 0.15.0 source. It may change as pre-release
+features evolve.
 
 ## Data sent by Palot
 
@@ -32,6 +32,38 @@ OpenCode and the package manager or official installer contact their own update
 servers/registries according to their policies. Palot does not silently run this
 command during installation discovery or restart the shared service afterward.
 
+## Experimental browser
+
+The task browser is off by default. Enabling it lets the OpenCode browser tool
+inspect and interact with pages. HTTP(S) page traffic goes through the connected
+OpenCode server, including requests to localhost and private networks. Localhost
+refers to that server's machine, not necessarily the computer running Palot.
+The server operator and visited sites can observe the traffic they handle.
+Browser-tool results and exported captures or downloads can also reach OpenCode
+and the model providers or integrations used by the task.
+
+Browser permission is broad. Palot does not provide per-site approval or a
+separate sensitive-action confirmation boundary. Do not enable it for a server,
+task or browsing session you don't trust.
+
+Tab IDs, URLs and the selected tab are saved locally by connection profile and
+task so pages can be restored. Saved URLs can contain sensitive query parameters;
+they are not stored in the encrypted credential vault. Cookies and site storage
+use a separate in-memory Chromium partition for each task attachment, shared by
+its tabs and managed popups. They do not use the app renderer's partition or your
+external browser's profile. Captures and downloads use owner-only temporary
+directories on the computer running Palot.
+
+Disabling the browser or detaching a task closes its pages but retains the saved
+tab inventory. It is not a browser-data reset. Switching to another task can
+leave the previous task's browser attached in the background. **Settings → Browser
+→ Clear task browser data** closes that task's pages, removes saved tab URLs and
+temporary browser files, and clears its site storage and cache. Close that task's
+browser in other Palot windows before clearing. This does not remove other tasks'
+data or files already exported to the OpenCode server. Interrupted cleanup or an
+app crash can leave temporary files behind; review local app and temporary data
+before disposing of a machine or sharing it.
+
 ## Data stored on the device
 
 Depending on the features used, Palot stores local settings, window and
@@ -40,7 +72,7 @@ credentials, app logs, diagnostics history, automation definitions and runs,
 and a local SQLite database for Palot-owned state.
 
 Runtime release preferences and explicitly downloaded OpenCode executables are
-stored in Palot's application data directory. Selecting the bundled runtime
+stored in Palot's application data directory. Resetting the prepared runtime
 clears the active downloaded selection; cached files can remain on disk. This
 does not uninstall or change a separate global OpenCode installation.
 

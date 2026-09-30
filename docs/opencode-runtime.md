@@ -20,13 +20,13 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot supports stable OpenCode **2.x starting at 2.0.7**, without a patch-version
-override. The generated client and isolated release-smoke runtime are pinned to
-2.0.9 for repeatable checks. Earlier stable releases use incompatible API contracts
-and are refused. The previously tested beta `0.0.0-beta-19507` is no longer accepted
-automatically. Recognized V2 beta versions require explicit consent; V1, unknown
-majors and malformed versions are refused. Palot's own Stable/Nightly channel does
-not change this policy.
+Palot 0.15.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
+patch-version override. The client, protocol, schema, browser plugin and isolated
+release-smoke runtime are pinned to **2.0.19** for repeatable checks. Stable
+releases before 2.0.7 use incompatible API contracts and are refused. The previously
+tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
+versions require explicit consent; V1, unknown majors and malformed versions are
+refused. Palot's own Stable/Nightly channel does not change this policy.
 
 This is Palot's compatibility policy, not a claim of a formal upstream warranty.
 The official client documentation [demonstrates a 2.x compatibility predicate](https://github.com/anomalyco/opencode/blob/cf4f1fb45e2695d86a4ef8c20a3883f4ac79935a/services/www/src/docs/content/build/client/index.mdx#L162-L174).
@@ -37,8 +37,9 @@ with no changes to existing event contracts. Palot now uses `location.reload`
 from Settings; shell listing and shell configuration updates remain unused.
 The 2.0.3 contract adds `session.diff` and projected `idle`
 messages that mark completed, failed or interrupted turns. Palot retains those
-markers in hydrated history without displaying extra transcript rows; it does not
-yet use the turn-diff operation. Those changes left existing event contracts intact.
+markers in hydrated history without displaying extra transcript rows, and uses
+the turn-diff operation for the separate Turn changes view. Those changes
+left existing event contracts intact.
 
 The 2.0.7 migration changes existing API contracts, including server health,
 location/worktree management and session form operations. Palot uses the new
@@ -58,6 +59,51 @@ and model compaction into model settings. Compaction policies now use
 consume the removed top-level fields, so the connection minimum remains 2.0.7.
 Plugins or user configurations that set those policies must migrate before their
 service moves to 2.0.9; updating the client alone does not migrate server config.
+
+The published 2.0.11 client declarations, protocol, and schema are unchanged from
+2.0.9, apart from package version and dependency pins. No API migration is needed,
+and the connection minimum remains 2.0.7. Transport reliability and session
+permission fixes require updating the OpenCode service separately.
+
+The published 2.0.14 contract adds `method: "key" | "oauth"` to stored credential
+information. The operation inventory and event variants are unchanged from 2.0.11.
+Palot does not depend on the new field, so the connection minimum remains 2.0.7.
+Code Mode, provider, plugin cancellation and child prompt-cache fixes require
+updating the OpenCode service separately.
+
+The 2.0.18 contract adds server pairing and connection endpoints, mutable session
+metadata with a durable event, an optional shell exit signal, and a required
+`project.time.active` field. Palot maps project activity, retains session metadata
+through hydration and live events, and uses one-time pairing links with stable
+services starting at 2.0.17. Older compatible services still use the explicit
+legacy credentials flow. A link's code expires within five minutes and can only be
+redeemed once. The resulting session token is stored in Palot's credential vault,
+can last up to 30 days, and is revoked when the server password changes. Non-loopback
+plain HTTP still requires explicit consent before sending a code or token.
+These additions do not change the 2.0.7 connection
+minimum. Streaming fixes and recovery of 2.0.14 media in compaction checkpoints
+require updating the running service; upgrading the client alone is not enough.
+
+The published 2.0.19 client, protocol, schema and browser-plugin declarations
+are unchanged from 2.0.18. Its service improves context-window output limits,
+compaction, prompt-cache reuse, child-session affinity, and transient AI failure
+handling. Palot needs no new API integration or higher connection minimum for this
+release. Those behavior changes require updating the running service separately.
+
+## Experimental browser
+
+The browser is off by default and requires the browser plugin on the connected
+service. A compatible OpenCode connection alone does not guarantee browser
+availability. Palot attaches through the published plugin contract; it does not
+start a separate service or silently fall back to desktop-direct networking.
+
+HTTP(S) browser traffic, including localhost and private-network requests, uses
+the connected server. Browser tool permission is broad, without per-site approval.
+Saved tab inventory remains on the desktop after disabling or detaching the
+browser; clearing task browser data is a separate action. Read the
+[privacy and retention details](../PRIVACY.md#experimental-browser) before enabling it.
+The [native browser scenarios](desktop-testing.md#browser-scenarios) describe
+scenario assertions and remaining packaging/transport limits.
 
 ## Preferred release and local startup
 

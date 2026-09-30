@@ -7,8 +7,44 @@ operations.
 
 ## Unreleased
 
-The Palot v2 rewrite targets **0.12.0** (`v0.12.0`), continuing the existing public
-release sequence after [0.11.0](https://github.com/ItsWendell/palot/releases/tag/v0.11.0).
+## 0.15.0
+
+This remains an experimental pre-release, not a supported stable release.
+
+### Added
+
+- Opt-in, task-scoped browser tabs with agent tools, managed popups, page recovery,
+  saved tab restoration and explicit task-browser data clearing. Traffic uses the
+  connected OpenCode server; per-site approval is not available.
+- Workspace file browsing/search and image, Markdown, PDF and supported audio/video previews.
+- Diff-line review comments that can be edited, removed and sent with a prompt,
+  plus a separate view of changes from a completed turn.
+- Usage comparisons with the previous period.
+
+### Changed
+
+- Pinned the OpenCode client, protocol, schema, browser plugin and release-smoke
+  runtime to 2.0.19. The supported stable connection minimum remains 2.0.7.
+- Added one-time pairing links for stable services from 2.0.17, retaining explicit
+  legacy credential import for older compatible services.
+- Retained live session metadata and project activity, linked background shell
+  results to their originating activity, and kept delegated-work anchors visible
+  in folded activity groups.
+- Improved workbench resizing, expansion, tab navigation, composer framing,
+  connection status presentation and usage refresh behavior.
+
+### Testing
+
+- Added isolated native scenarios for workspace previews, review comments and
+  turn changes, workbench resizing, browser popups/recovery and HTTP profiles,
+  plus usage-comparison assertions. Linux E2E defaults to a private Weston display.
+- Browser scenarios do not qualify packaged Lighthouse, SSH browser transport,
+  external-network OAuth/HTTPS login or cross-window stress behavior.
+
+## 0.12.0 rewrite baseline
+
+The source-only Palot v2 rewrite introduced **0.12.0** (`v0.12.0`), continuing the
+public release sequence after [0.11.0](https://github.com/ItsWendell/palot/releases/tag/v0.11.0).
 The product generation and independently versioned OpenCode runtime do not reset
 Palot's Semantic Versioning sequence.
 
