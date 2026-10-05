@@ -32,6 +32,7 @@ import { remoteMarkdownFaviconsAtom } from "../atoms/ui";
 import { cn } from "../lib/cn";
 import { duckDuckGoFaviconUrl } from "../lib/markdown-favicon";
 import { transformInlineMath } from "../lib/markdown-math";
+import { isCompleteSessionID, sessionLinksExtension } from "../lib/markdown-session-links";
 import { palot } from "../services/palot";
 import { isLocalBrowserURL } from "../lib/browser-address";
 import { MarkdownCodeBlock } from "./markdown-code-block";
@@ -121,6 +122,7 @@ export type WorkspaceFileOpenHandler = (
 const MarkdownWorkspaceDirectoryContext = createContext<string | undefined>(undefined);
 const MarkdownWorkspaceFileContext = createContext<WorkspaceFileOpenHandler | null>(null);
 const MarkdownWebLinkContext = createContext<((url: string) => void) | null>(null);
+const MarkdownSessionLinkContext = createContext<((sessionID: string) => void) | null>(null);
 
 function MarkdownDetails({
   children,
@@ -151,18 +153,22 @@ export function MarkdownWorkspaceProvider({
   children,
   onOpenFile,
   onOpenWebLink,
+  onOpenSession,
   workspaceDirectory,
 }: {
   children?: ReactNode;
   onOpenFile(reference: MarkdownFileReference, event?: ReactMouseEvent | ReactKeyboardEvent): void;
   onOpenWebLink?(url: string): void;
+  onOpenSession?(sessionID: string): void;
   workspaceDirectory?: string;
 }) {
   return (
     <MarkdownWorkspaceDirectoryContext.Provider value={workspaceDirectory}>
       <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
         <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
-          {children}
+          <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
+            {children}
+          </MarkdownSessionLinkContext.Provider>
         </MarkdownWebLinkContext.Provider>
       </MarkdownWorkspaceFileContext.Provider>
     </MarkdownWorkspaceDirectoryContext.Provider>
@@ -553,7 +559,28 @@ const MARKDOWN_COMPONENTS = {
   "palot-math": MarkdownMath,
   "palot-inline-math": MarkdownInlineMath,
   "palot-details": MarkdownDetails,
+  "palot-session-link": MarkdownSessionLink,
 } satisfies MarkdownComponents;
+
+function MarkdownSessionLink({
+  children,
+  "data-session-id": sessionID,
+}: {
+  children?: ReactNode;
+  "data-session-id"?: string;
+}) {
+  const openSession = useContext(MarkdownSessionLinkContext);
+  if (!openSession || !sessionID || !isCompleteSessionID(sessionID)) return <>{children}</>;
+  return (
+    <button
+      type="button"
+      className="cursor-pointer text-info underline-offset-4 outline-none hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={() => openSession(sessionID)}
+    >
+      {children}
+    </button>
+  );
+}
 
 interface MarkdownContentProps {
   value: string;
@@ -590,6 +617,14 @@ const MarkdownBody = memo(function MarkdownBody({
 }: Required<Pick<MarkdownContentProps, "value" | "streaming" | "passiveMedia">> &
   Pick<MarkdownContentProps, "baseUrl">) {
   const remoteFavicons = useAtomValue(remoteMarkdownFaviconsAtom);
+  const openSession = useContext(MarkdownSessionLinkContext);
+  const extensions = useMemo(
+    () =>
+      openSession && !baseUrl
+        ? [...MARKDOWN_EXTENSIONS, sessionLinksExtension(streaming)]
+        : MARKDOWN_EXTENSIONS,
+    [baseUrl, openSession, streaming],
+  );
   const generatedID = useId().replaceAll(":", "");
   const idPrefix = `markdown-${generatedID}`;
   const context = useMemo(
@@ -608,7 +643,7 @@ const MarkdownBody = memo(function MarkdownBody({
       <PalotMarkdown
         allowHtml={false}
         components={components}
-        extensions={MARKDOWN_EXTENSIONS}
+        extensions={extensions}
         frontmatter={false}
         headingIds
         idPrefix={idPrefix}

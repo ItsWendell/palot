@@ -5,6 +5,7 @@ import { isBuiltinCommand, mergeBuiltinCommands } from "./builtin-commands";
 describe("builtin-commands", () => {
   it("includes essential built-in commands like /compact, /new, /model, /undo, /revert", () => {
     expect(isBuiltinCommand("compact")).toBe(true);
+    expect(isBuiltinCommand("btw")).toBe(true);
     expect(isBuiltinCommand("COMPACT")).toBe(true);
     expect(isBuiltinCommand("new")).toBe(true);
     expect(isBuiltinCommand("clear")).toBe(true);

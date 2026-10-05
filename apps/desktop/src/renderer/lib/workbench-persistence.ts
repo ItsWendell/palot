@@ -3,20 +3,22 @@ import {
   MAX_WORKBENCH_SCOPES,
   MAX_WORKBENCH_TABS,
   createWorkbenchState,
+  hasBtwTabs,
   type WorkbenchContextState,
   type WorkbenchPaneState,
   type WorkbenchState,
   type WorkbenchTab,
   workbenchTabResourceKey,
+  workbenchScopeKey,
 } from "./workbench-tabs";
 
 export function parseWorkbenchState(value: unknown): WorkbenchState {
   if (!record(value) || value.version !== 1 || !record(value.scopes)) return createWorkbenchState();
   const scopes = Object.entries(value.scopes)
-    .map(([key, context]) => [key, parseContext(context)] as const)
+    .map(([key, context]) => [key, parseContext(context, key)] as const)
     .filter((entry): entry is readonly [string, WorkbenchContextState] => entry[1] !== null)
     .toSorted(([, left], [, right]) => right.updatedAt - left.updatedAt)
-    .slice(0, MAX_WORKBENCH_SCOPES);
+    .filter(([, context], index) => index < MAX_WORKBENCH_SCOPES || hasBtwTabs(context));
   return { version: 1, scopes: Object.fromEntries(scopes) };
 }
 
@@ -25,7 +27,7 @@ export function isWorkbenchState(value: unknown): value is WorkbenchState {
   return JSON.stringify(parseWorkbenchState(value)) === JSON.stringify(value);
 }
 
-function parseContext(value: unknown): WorkbenchContextState | null {
+function parseContext(value: unknown, key: string): WorkbenchContextState | null {
   if (!record(value)) return null;
   const right = parsePane(value.right);
   const bottom = parsePane(value.bottom);
@@ -38,6 +40,7 @@ function parseContext(value: unknown): WorkbenchContextState | null {
     return repairPane({
       ...pane,
       tabs: pane.tabs.filter((tab) => {
+        if (tab.kind === "btw" && workbenchScopeKey(tab.resource) !== key) return false;
         const resource = workbenchTabResourceKey(tab);
         if (resource === activeResourceKey && tab.id !== pane.activeTabID) return false;
         if (seenIDs.has(tab.id) || seenResources.has(resource)) return false;
@@ -99,6 +102,31 @@ function parseTab(value: unknown): WorkbenchTab | null {
   const location = parseLocation(value.resource.location);
   const sourceSessionID = optionalIdentifier(value.resource.sourceSessionID);
   if (!location || sourceSessionID === false) return null;
+  if (value.kind === "btw") {
+    if (
+      !identifier(value.resource.sessionID) ||
+      !identifier(value.resource.questionID) ||
+      typeof value.resource.question !== "string" ||
+      !value.resource.question.trim() ||
+      (value.resource.answer !== undefined && typeof value.resource.answer !== "string") ||
+      (value.resource.error !== undefined && typeof value.resource.error !== "string")
+    )
+      return null;
+    return {
+      id: value.id,
+      kind: "btw",
+      pinned: value.pinned,
+      resource: {
+        profileID: value.resource.profileID,
+        sessionID: value.resource.sessionID,
+        location,
+        questionID: value.resource.questionID,
+        question: value.resource.question,
+        ...(value.resource.answer !== undefined ? { answer: value.resource.answer } : {}),
+        ...(value.resource.error !== undefined ? { error: value.resource.error } : {}),
+      },
+    };
+  }
   if (value.kind === "browser" && identifier(value.resource.sessionID)) {
     if (value.resource.browserTabID !== undefined && !identifier(value.resource.browserTabID))
       return null;

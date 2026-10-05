@@ -2,6 +2,13 @@ import type { PalotCommand } from "../../shared";
 
 export const BUILTIN_COMMANDS: readonly PalotCommand[] = [
   {
+    name: "btw",
+    description: "Ask a quick side question without adding to the conversation",
+    agent: null,
+    model: null,
+    subtask: false,
+  },
+  {
     name: "compact",
     description: "Summarize and compact conversation history to free context space",
     agent: null,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PalotMessage } from "../../shared";
+import type { JsonValue, PalotMessage, PalotMessageContent } from "../../shared";
 import type { PendingRequestView } from "./view-models";
 import { mergeOptimisticMessages } from "./message-reconcile";
 import {
@@ -34,6 +34,54 @@ function row(messages: PalotMessage[], id: string) {
 }
 
 describe("projectTranscriptTurns", () => {
+  it("keeps adjacent plain reads together across files, but retains image, instruction, failed and running reads individually", () => {
+    const read = (
+      id: string,
+      status = "completed",
+      metadata = {},
+      content: JsonValue[] = [],
+    ): PalotMessageContent => ({
+      type: "tool",
+      id,
+      name: "read",
+      state: { status, input: { path: `${id}.ts` }, metadata, content },
+    });
+    const assistant = message({
+      id: "reads",
+      type: "assistant",
+      completedAt: null,
+      finish: "tool-calls",
+      content: [
+        read("first"),
+        read("second"),
+        read("instruction", "completed", { loaded: ["AGENTS.md"] }),
+        read("image", "completed", {}, [
+          { type: "file", mime: "image/png", uri: "data:image/png;base64,AAA" },
+        ]),
+        read("failed", "error"),
+        read("running", "running"),
+      ],
+    });
+    const turn = projectTranscriptTurns(
+      [assistant],
+      null,
+      [],
+      [],
+      null,
+      null,
+      SESSION_PROJECTION_PRESETS.expanded,
+    )[0]!;
+    expect(turn.status).toBe("working");
+    expect(turn.activity.map((group) => group.entries.map((entry) => entry.part.id))).toEqual([
+      ["first", "second"],
+      ["instruction"],
+      ["image"],
+      ["failed"],
+      ["running"],
+    ]);
+    expect(turn.activity.at(-1)?.status).toBe("running");
+    expect(turn.activity.at(-2)?.status).toBe("failed");
+  });
   it("retains prompt entries and array while assistant content streams", () => {
     const projector = createSessionTranscriptProjector();
     const user = message({ id: "prompt", type: "user", text: "Inspect the code" });

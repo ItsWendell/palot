@@ -8,6 +8,8 @@ import { defaultWorktreeBaseAtom, defaultWorkspaceModeAtom } from "../atoms/ui";
 import { approvalPresetRules } from "../lib/session-permissions";
 import { createSessionInWorkspace, type WorkspaceSelection } from "../lib/new-session-workspace";
 import { runtimeAtom } from "../atoms/workspace";
+import { disabledProfileIDsAtom } from "../atoms/connections";
+import { assertNewTaskOwner, type NewTaskDestination } from "../lib/new-task-destination";
 import { orderProjects, projectLocation, projectName, visibleProjects } from "../lib/view-models";
 import { useVcsBranches, useVcsInfo } from "../hooks/use-vcs-info";
 import {
@@ -18,7 +20,6 @@ import {
 import { palot } from "../services/palot";
 import { Composer, type NewSessionComposerOptions } from "./composer";
 import { ConnectionDestination } from "./connection-destination";
-import { ProjectSelect } from "./project-select";
 import { PalotBeacon } from "./palot-beacon";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -207,12 +208,16 @@ function BranchPicker({
 }
 
 export function NewTask({
+  profileID,
   projectID: selectedProjectID = null,
   onProjectChange,
+  onDestinationChange,
   onSessionCreated,
 }: {
   projectID?: string | null;
+  profileID?: string;
   onProjectChange?(projectID: string): void;
+  onDestinationChange?(destination: NewTaskDestination): void;
   onSessionCreated?(sessionID: string): void;
 } = {}) {
   const projects = useProjectCatalog();
@@ -221,18 +226,20 @@ export function NewTask({
     () => selectableProjects(orderProjects(projects, sessions)),
     [projects, sessions],
   );
-  const selectProject = useCallback(
-    (projectID: string) => onProjectChange?.(projectID),
-    [onProjectChange],
-  );
   const cacheSession = useCacheSession();
   const store = useStore();
   const runtime = useAtomValue(runtimeAtom);
+  const disabledProfiles = useAtomValue(disabledProfileIDsAtom);
+  const ownsCatalog = !profileID || profileID === runtime?.profileID;
   const defaultWorktreeBase = useAtomValue(defaultWorktreeBaseAtom);
   const [defaultWorkspaceMode, setDefaultWorkspaceMode] = useAtom(defaultWorkspaceModeAtom);
-  const selectedProject =
-    taskProjects.find((project) => project.id === selectedProjectID) ?? taskProjects[0] ?? null;
-  const workspaceIdentity = selectedProject ? `${selectedProject.id}\0${defaultWorkspaceMode}` : "";
+  const selectedProject = ownsCatalog
+    ? selectedProjectID
+      ? (projects.find((project) => project.id === selectedProjectID) ?? null)
+      : (taskProjects[0] ?? null)
+    : null;
+  const projectIdentity = selectedProject ? `${runtime?.profileID}\0${selectedProject.id}` : "";
+  const workspaceIdentity = selectedProject ? `${projectIdentity}\0${defaultWorkspaceMode}` : "";
   const [workspaceOverride, setWorkspaceOverride] = useState<{
     identity: string;
     selection: WorkspaceSelection;
@@ -276,17 +283,22 @@ export function NewTask({
     : branches;
 
   useEffect(() => {
-    if (selectedProject && selectedProject.id !== selectedProjectID) {
+    if (
+      selectedProject &&
+      !selectedProjectID &&
+      runtime?.connected &&
+      !disabledProfiles.includes(runtime.profileID)
+    ) {
       // NewTask canonicalizes a missing or invalid project selection in the owning route.
       // eslint-disable-next-line react-doctor/no-pass-data-to-parent
       onProjectChange?.(selectedProject.id);
     }
-  }, [onProjectChange, selectedProject, selectedProjectID]);
+  }, [onProjectChange, selectedProject, selectedProjectID, runtime, disabledProfiles]);
 
   const draftSession = useMemo<PalotSession | null>(() => {
     if (!selectedProject) return null;
     return {
-      id: `new:${selectedProject.id}`,
+      id: `new:${runtime?.profileID}:${selectedProject.id}`,
       parentID: null,
       projectID: selectedProject.id,
       title: null,
@@ -299,19 +311,14 @@ export function NewTask({
       cost: null,
       tokens: EMPTY_TOKENS,
     };
-  }, [draftCreatedAt, selectedProject]);
+  }, [draftCreatedAt, selectedProject, runtime?.profileID]);
 
   const createSession = useCallback(
     async ({ approvalMode, agent, model }: NewSessionComposerOptions) => {
       if (!selectedProject || !draftSession) return null;
       const assertConnection = () => {
         const current = store.get(runtimeAtom);
-        if (
-          current?.connectionID !== runtime?.connectionID ||
-          current?.profileID !== runtime?.profileID
-        ) {
-          throw new Error("The server connection changed. Try creating the task again.");
-        }
+        assertNewTaskOwner(runtime, current, profileID, store.get(disabledProfileIDsAtom));
       };
       assertConnection();
       setCreationErrorState(null);
@@ -323,7 +330,10 @@ export function NewTask({
             workspaceSelection.type === "create" && selectedSourceBranch
               ? { type: "create", branch: selectedSourceBranch }
               : workspaceSelection,
-          createCopy: palot.createProjectCopy,
+          createCopy: (projectID, directory, branch) => {
+            assertConnection();
+            return palot.createProjectCopy(projectID, directory, branch, runtime?.connectionID);
+          },
           createSession: (directory) => {
             assertConnection();
             return palot.createSession(
@@ -374,6 +384,7 @@ export function NewTask({
       store,
       runtime?.connectionID,
       runtime?.profileID,
+      profileID,
       selectedProject,
       onSessionCreated,
       cacheSession,
@@ -388,10 +399,22 @@ export function NewTask({
       <main className="flex size-full items-center justify-center p-8 text-center">
         <div className="max-w-sm">
           <PalotBeacon className="mx-auto mb-6" />
-          <h1 className="text-lg font-semibold">Add a project to start</h1>
+          <h1 className="text-lg font-semibold">Choose a task destination</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Add a project folder from the sidebar, then start a task in that project.
+            {selectedProjectID
+              ? "This project is not available on the selected server. Reconnect or choose another destination."
+              : "Choose a project and server below. You can add a project folder from the sidebar."}
           </p>
+          <div className="mt-4 flex justify-center">
+            <ConnectionDestination
+              destination={{
+                profileID: profileID ?? runtime?.profileID ?? "local-default",
+                projectID: selectedProjectID,
+              }}
+              projects={projects}
+              onDestinationChange={onDestinationChange}
+            />
+          </div>
         </div>
       </main>
     );
@@ -409,13 +432,7 @@ export function NewTask({
           <PalotBeacon />
           <h1 className="flex max-w-full flex-wrap items-center justify-center gap-x-1 text-center text-hero/tight font-normal tracking-[-0.035em] max-[720px]:text-2xl">
             <span>What should we build in</span>
-            <ProjectSelect
-              projects={taskProjects}
-              value={selectedProject.id}
-              onValueChange={(value) => value && selectProject(value)}
-              ariaLabel={`Project: ${projectName(selectedProject)}`}
-              variant="heading"
-            />
+            <span className="truncate">{projectName(selectedProject)}</span>
             <span>?</span>
           </h1>
           <Composer
@@ -433,13 +450,13 @@ export function NewTask({
             contextBarMode="compact"
             contextBar={
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-1.5">
-                <ConnectionDestination />
-                <ProjectSelect
-                  projects={taskProjects}
-                  value={selectedProject.id}
-                  onValueChange={(value) => value && selectProject(value)}
-                  ariaLabel="Project"
-                  variant="context"
+                <ConnectionDestination
+                  destination={{
+                    profileID: profileID ?? runtime?.profileID ?? "local-default",
+                    projectID: selectedProject.id,
+                  }}
+                  projects={projects}
+                  onDestinationChange={onDestinationChange}
                 />
                 <WorkspacePicker
                   project={selectedProject}
@@ -447,7 +464,7 @@ export function NewTask({
                   onSelect={(selection) => {
                     const mode = selection.type === "current" ? "current" : "worktree";
                     setWorkspaceOverride({
-                      identity: `${selectedProject.id}\0${mode}`,
+                      identity: `${projectIdentity}\0${mode}`,
                       selection,
                     });
                     setDefaultWorkspaceMode(mode);
@@ -461,7 +478,7 @@ export function NewTask({
                     onSearchChange={setBranchSearch}
                     onSelect={(branch) => {
                       setWorkspaceOverride({
-                        identity: `${selectedProject.id}\0worktree`,
+                        identity: `${projectIdentity}\0worktree`,
                         selection: { type: "create", branch },
                       });
                       setCreationErrorState(null);

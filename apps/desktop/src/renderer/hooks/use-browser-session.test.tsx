@@ -20,6 +20,20 @@ import { BrowserTab } from "../components/workbench-tabs/browser-tab";
 const location = { directory: "/repo" };
 const scope: WorkbenchScope = { profileID: "ssh-one", sessionID: "session-one" };
 
+function mockBrowserEvents() {
+  type Listener = Parameters<typeof palot.onBrowserEvent>[0];
+  const listeners = new Set<Listener>();
+  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  });
+  return (event: Parameters<Listener>[0]) => {
+    for (const listener of listeners) listener(event);
+  };
+}
+
 function expectGuestVisibility(guest: HTMLElement, visible: boolean) {
   expect(guest.dataset.browserVisible).toBe(String(visible));
   expect(guest.style.visibility).toBe(visible ? "visible" : "hidden");
@@ -77,13 +91,7 @@ it("registers the exact session connection, scopes events, and detaches on disab
   store.set(experimentalBrowserAtom, true);
   const register = vi.spyOn(palot, "browserRegister").mockResolvedValue("binding-one");
   const close = vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => {
-      notify = () => undefined;
-    };
-  });
+  const notify = mockBrowserEvents();
   const mounted = render(
     <Provider store={store}>
       <Harness owner={scope} />
@@ -145,11 +153,7 @@ it("restores the focused page when an attachment registered behind settings beco
       }),
   );
   vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => undefined;
-  });
+  const notify = mockBrowserEvents();
   const focused = "restored-page" as Browser.TabID;
   const state: Browser.State = {
     tabs: [
@@ -205,11 +209,7 @@ it("places a locally opened page in the requested pane without reopening a colla
   );
   vi.spyOn(palot, "browserRegister").mockResolvedValue("binding-one");
   vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => undefined;
-  });
+  const notify = mockBrowserEvents();
   render(
     <Provider store={store}>
       <Harness owner={scope} />
@@ -257,7 +257,7 @@ it("closes a late registration after leaving the session", async () => {
       }),
   );
   const close = vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
-  vi.spyOn(palot, "onBrowserEvent").mockReturnValue(() => undefined);
+  mockBrowserEvents();
   const mounted = render(
     <Provider store={store}>
       <Harness owner={scope} />
@@ -280,11 +280,7 @@ it("buffers webview hosts before registration and keeps hidden guest nodes mount
   );
   vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
   const layout = vi.spyOn(palot, "browserLayout").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => undefined;
-  });
+  const notify = mockBrowserEvents();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -351,6 +347,12 @@ it("buffers webview hosts before registration and keeps hidden guest nodes mount
   );
   await waitFor(() => expectGuestVisibility(first, true));
   expectGuestVisibility(second, false);
+  await act(async () =>
+    notify({ bindingID: "binding-one", type: "inspect", tabID: hosts[0].tabID, active: true }),
+  );
+  expect(
+    mounted.getByRole("button", { name: "Cancel element picker" }).getAttribute("aria-pressed"),
+  ).toBe("true");
   const assertInventoryKeepsActiveGuest = async (nextState: Browser.State) => {
     const previousCalls = layout.mock.calls.length;
     await act(async () => notify({ bindingID: "binding-one", type: "state", state: nextState }));
@@ -378,6 +380,7 @@ it("buffers webview hosts before registration and keeps hidden guest nodes mount
       },
     ],
   });
+  expect(mounted.getByTestId("browser").textContent).toBe("3");
   await act(async () => notify({ bindingID: "binding-one", type: "focus", tabID: hosts[1].tabID }));
   mounted.rerender(
     <Provider store={store}>
@@ -450,11 +453,7 @@ it("keeps buffered hosts when an early nonnull state reports a recoverable error
       }),
   );
   vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => undefined;
-  });
+  const notify = mockBrowserEvents();
   const host: PalotBrowserHost = {
     tabID: "early-page" as Browser.TabID,
     leaseID: "early-lease",
@@ -494,11 +493,7 @@ it("applies buffered popup state and clears popup metadata on later states and d
       }),
   );
   vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => undefined;
-  });
+  const notify = mockBrowserEvents();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -553,11 +548,7 @@ it("shows a popup placeholder while retaining embedded guests and normal tab com
   vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
   const layout = vi.spyOn(palot, "browserLayout").mockResolvedValue(undefined);
   const command = vi.spyOn(palot, "browserCommand").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => undefined;
-  });
+  const notify = mockBrowserEvents();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -676,11 +667,7 @@ it("treats pending empty webview hosts as webview mode, without native overlay s
   vi.spyOn(palot, "browserRegister").mockResolvedValue("binding-one");
   vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
   const layout = vi.spyOn(palot, "browserLayout").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => undefined;
-  });
+  const notify = mockBrowserEvents();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -744,11 +731,7 @@ it("keeps pages behind overlays and hides them when their workbench tab becomes 
   vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
   const layout = vi.spyOn(palot, "browserLayout").mockResolvedValue(undefined);
   const command = vi.spyOn(palot, "browserCommand").mockResolvedValue(undefined);
-  let notify: Parameters<typeof palot.onBrowserEvent>[0] = () => undefined;
-  vi.spyOn(palot, "onBrowserEvent").mockImplementation((listener) => {
-    notify = listener;
-    return () => undefined;
-  });
+  const notify = mockBrowserEvents();
   vi.stubGlobal(
     "ResizeObserver",
     class {

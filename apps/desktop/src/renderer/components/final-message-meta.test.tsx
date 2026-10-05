@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PalotMessage } from "../../shared";
-import type { TranscriptTurn } from "../lib/turn-projection";
+import { projectTranscriptTurns, type TranscriptTurn } from "../lib/turn-projection";
 
 const mocks = vi.hoisted(() => ({ forkSession: vi.fn() }));
 
@@ -12,6 +12,35 @@ vi.mock("../hooks/use-session-fork", () => ({
 import { FinalMessageMeta } from "./thread";
 
 describe("FinalMessageMeta", () => {
+  it.each(["high", "default", undefined])(
+    "shows only the response's non-default variant (%s)",
+    (variant) => {
+      const message: PalotMessage = {
+        id: "response",
+        type: "assistant",
+        createdAt: 1,
+        completedAt: 2,
+        text: "Done",
+        agent: null,
+        model: { id: "actual", providerID: "provider", ...(variant ? { variant } : {}) },
+        tokens: null,
+        finish: "stop",
+        content: [{ type: "text", text: "Done" }],
+        data: null,
+      };
+      const turn = projectTranscriptTurns([message])[0]!;
+      turn.context = {
+        model: { id: "composer-model", providerID: "provider", variant: "low" },
+        agent: null,
+        location: null,
+      };
+      render(<FinalMessageMeta turn={turn} models={[]} sessionID="session" />);
+      expect(screen.getByTitle("actual").textContent).toBe(
+        variant === "high" ? "actual · high" : "actual",
+      );
+      expect(screen.queryByText(/composer-model|low|default/)).toBeNull();
+    },
+  );
   beforeEach(() => {
     mocks.forkSession.mockReset();
     mocks.forkSession.mockResolvedValue(undefined);

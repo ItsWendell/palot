@@ -22,7 +22,8 @@ export const processPickerScenario: Scenario = {
       metadata: { sessionID: session.id },
     });
     let terminalID: string | undefined;
-    const picker = page.getByRole("button", { name: /^Commands & terminals:/ });
+    let commandRemoved = false;
+    const picker = page.getByRole("button", { name: /^Running work:/ });
     const output = page.getByRole("region", { name: "Command output", exact: true });
     const commandTab = page.getByRole("tab", { name: COMMAND, exact: true });
     const commandRow = page.getByRole("button").filter({
@@ -30,7 +31,7 @@ export const processPickerScenario: Scenario = {
     });
 
     try {
-      await expect(picker).toHaveAccessibleName("Commands & terminals: 1 command");
+      await expect(picker).toHaveAccessibleName("Running work: 1 running");
       await picker.click();
       await expect(commandRow).toContainText("This conversation · Running");
       await commandRow.click();
@@ -67,7 +68,7 @@ export const processPickerScenario: Scenario = {
         size: { cols: 80, rows: 24 },
       });
       terminalID = terminal.id;
-      await expect(picker).toHaveAccessibleName("Commands & terminals: 2 processes");
+      await expect(picker).toHaveAccessibleName("Running work: 1 running · 1 terminal");
       await picker.click();
       const terminalRow = page.getByRole("button").filter({
         has: page.getByText(TERMINAL_TITLE, { exact: true }),
@@ -99,11 +100,20 @@ export const processPickerScenario: Scenario = {
         terminalPanel.getByRole("button", { name: "Take control", exact: true }),
       ).toBeEnabled();
       await assertConnected(page);
+      await picker.click();
+      page.once("dialog", (dialog) => void dialog.accept());
+      await page.getByRole("button", { name: `Stop ${COMMAND}`, exact: true }).click();
+      await expect(picker).toHaveAccessibleName("Running work: 1 terminal");
+      commandRemoved = true;
+      await expect(client.shell.get({ id: shell.data.id, location })).rejects.toMatchObject({
+        _tag: "ShellNotFoundError",
+      });
+      await page.keyboard.press("Escape");
     } finally {
       // These resources belong to the isolated scenario, not the user's service.
       // Cleanup is explicit and separate from the close-tab survival assertions.
       await Promise.all([
-        client.shell.remove({ id: shell.data.id, location }),
+        commandRemoved ? Promise.resolve() : client.shell.remove({ id: shell.data.id, location }),
         terminalID
           ? client.experimental.persistentPty.remove({ ptyID: terminalID })
           : Promise.resolve(),
@@ -138,10 +148,8 @@ async function captureSizes(page: Page, surface: Locator, runRoot: string, name:
     expect(bounds!.height).toBeGreaterThan(40);
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(641);
-    await page.getByRole("button", { name: /^Commands & terminals:/ }).click();
-    const popup = page
-      .locator('[data-slot="popover-content"]')
-      .filter({ hasText: "Commands & terminals" });
+    await page.getByRole("button", { name: /^Running work:/ }).click();
+    const popup = page.locator('[data-slot="popover-content"]').filter({ hasText: "Running work" });
     await expect(popup).toBeVisible();
     const popupBounds = await popup.boundingBox();
     expect(popupBounds).not.toBeNull();

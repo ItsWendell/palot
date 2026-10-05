@@ -8,6 +8,7 @@ import { measureBrowserRetention } from "./browser-retention.ts";
 import { verifyBrowserRecovery } from "./browser-recovery.ts";
 import { prepareBrowserPopupFixture, verifyBrowserPopups } from "./browser-popup.ts";
 import { useIsolatedHttpProfile } from "./isolated-http-profile.ts";
+import { verifyBrowserComments } from "./browser-comments.ts";
 import type { Browser } from "@opencode/plugin-browser/rpc";
 
 const PROMPT = "Use the browser to inspect the fixture page and report its title.";
@@ -446,6 +447,8 @@ export function createBrowserNativeScenario(transport: "local" | "http"): Scenar
         await page.getByRole("button", { name: "Reload page" }).click();
         await expect(page.getByRole("alert")).toHaveCount(0);
         await verifyBrowserRecovery(page, runRoot, address);
+        await verifyBrowserComments(page, context);
+        await captureBrowserWindow(page, path.join(runRoot, "browser-comments.png"));
         await addressBar.fill("file:///etc/passwd");
         await addressBar.press("Enter");
         await expect(page.getByRole("alert")).toContainText("Only HTTP, HTTPS");

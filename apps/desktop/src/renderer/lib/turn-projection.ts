@@ -1225,15 +1225,38 @@ function groupActivity(
   }
 
   flush();
-  return policy.groupSameFileReads ? combineIndividualReadGroups(groups) : groups;
+  return combineIndividualReadGroups(groups);
+}
+
+/** Only successful plain file reads can share a compact disclosure. */
+export function isPlainReadEntry(entry: TurnPart): boolean {
+  if (!isTool(entry.part)) return false;
+  const execution = projectToolExecution(entry.part, entry.index);
+  const metadata = recordValue(recordValue(entry.part.state).metadata);
+  return (
+    execution.kind === "read" &&
+    execution.status === "complete" &&
+    execution.path !== "Unknown path" &&
+    execution.images.length === 0 &&
+    execution.entries.length === 0 &&
+    !execution.error &&
+    !(Array.isArray(metadata.loaded) && metadata.loaded.length > 0) &&
+    !execution.rawOutput?.includes("<system-reminder>")
+  );
 }
 
 function combineIndividualReadGroups(groups: TurnActivityGroup[]): TurnActivityGroup[] {
   const combined: TurnActivityGroup[] = [];
   for (const group of groups) {
-    const path = individualReadGroupPath(group);
+    const eligible = individualPlainReadGroup(group);
     const previous = combined.at(-1);
-    if (path && previous && individualReadGroupPath(previous) === path) {
+    if (
+      eligible &&
+      previous &&
+      individualPlainReadGroup(previous) &&
+      previous.detailsDefaultOpen === group.detailsDefaultOpen &&
+      previous.pinned === group.pinned
+    ) {
       combined[combined.length - 1] = {
         ...previous,
         entries: [...previous.entries, ...group.entries],
@@ -1245,23 +1268,17 @@ function combineIndividualReadGroups(groups: TurnActivityGroup[]): TurnActivityG
   return combined;
 }
 
-function individualReadGroupPath(group: TurnActivityGroup): string | null {
+function individualPlainReadGroup(group: TurnActivityGroup): boolean {
   if (
     group.presentation !== "individual" ||
     group.status !== "completed" ||
+    group.forceOpen ||
     group.categories?.length !== 1 ||
     group.categories[0] !== "read"
   ) {
-    return null;
+    return false;
   }
-  const paths = group.entries.flatMap((entry) => {
-    if (!isTool(entry.part)) return [];
-    const execution = projectToolExecution(entry.part, entry.index);
-    return execution.kind === "read" && execution.path !== "Unknown path" ? [execution.path] : [];
-  });
-  return paths.length === group.entries.length && paths.every((path) => path === paths[0])
-    ? (paths[0] ?? null)
-    : null;
+  return group.entries.length > 0 && group.entries.every(isPlainReadEntry);
 }
 
 function failed(entries: TurnPart[], assistants: PalotMessage[]): boolean {

@@ -136,26 +136,28 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
   }));
 
   const commands: GlobalCommand[] = [];
+  commands.push({
+    id: "task.new",
+    title: "New task",
+    description: "Choose a server and project, then start a task",
+    group: "suggested",
+    icon: SquarePen,
+    keywords: ["create", "conversation", "thread"],
+    shortcut: ["Meta", "N"],
+    suggested: true,
+    kind: "action",
+    run: () => openNewTask(),
+  });
   if (projects.length > 0) {
     commands.push({
-      id: "task.new",
-      title: currentProject ? `New task in ${projectName(currentProject)}` : "New task",
-      description:
-        currentProject && projects.length > 1
-          ? "Start in the current project"
-          : "Choose a project and start a task",
-      group: "suggested",
+      id: "task.choose-project",
+      title: "Choose project for a new task",
+      group: "projects",
       icon: SquarePen,
-      keywords: ["create", "conversation", "thread"],
-      shortcut: ["Meta", "N"],
-      suggested: true,
+      defaultVisible: true,
       kind: "action",
-      closeOnRun: Boolean(currentProject || projects.length === 1),
-      run: () => {
-        const project = currentProject ?? (projects.length === 1 ? projects[0] : undefined);
-        if (project) return openNewTask(project.id);
-        onChooseProject();
-      },
+      closeOnRun: false,
+      run: onChooseProject,
     });
   }
 

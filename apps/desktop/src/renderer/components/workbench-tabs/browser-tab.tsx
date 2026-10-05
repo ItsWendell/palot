@@ -6,6 +6,7 @@ import {
   Ellipsis,
   ExternalLink,
   Globe2,
+  MousePointer2,
   RotateCw,
   Search,
   X,
@@ -14,7 +15,14 @@ import {
 } from "lucide-react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { PalotBrowserUserCommand } from "../../../shared/browser-contract";
+import type {
+  PalotBrowserSelection,
+  PalotBrowserUserCommand,
+} from "../../../shared/browser-contract";
+import { composerStateAtomFamily } from "../../atoms/composer-state";
+import { composerScope } from "../../lib/composer-scope";
+import { durableBrowserComment } from "../../lib/browser-comments";
+import { Textarea } from "../ui/textarea";
 import { browserViewportsAtom, type BrowserViewport } from "../browser-webview-hosts";
 import { useBrowserReconnect, useBrowserSession } from "../../hooks/use-browser-session";
 import { browserSearchEngineAtom, browserShowFullURLAtom } from "../../atoms/ui";
@@ -59,10 +67,37 @@ export function BrowserTab({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [zoom, setZoom] = useState(100);
+  const [inspecting, setInspecting] = useState(false);
+  const [selection, setSelection] = useState<PalotBrowserSelection | null>(null);
+  const [comment, setComment] = useState("");
+  const composerStateAtom = composerStateAtomFamily(
+    composerScope(scope.profileID, `session:${scope.sessionID}`),
+  );
+  const composerState = useAtomValue(composerStateAtom);
+  const commentCount = (
+    (composerState.edit ? composerState.edit.browserComments : composerState.browserComments) ?? []
+  ).length;
+  const setComposerState = useSetAtom(composerStateAtom);
   const viewport = useRef<HTMLDivElement>(null);
   const setViewports = useSetAtom(browserViewportsAtom);
   const scopeKey = workbenchScopeKey(scope);
   const layoutPage = useRef({ bindingID, tabID: pageID });
+
+  useEffect(() => {
+    setInspecting(false);
+    setSelection(null);
+    setComment("");
+    if (!bindingID || !active) return;
+    return palot.onBrowserEvent((event) => {
+      if (event.type !== "inspect" || event.bindingID !== bindingID || event.tabID !== tabID)
+        return;
+      setInspecting(event.active);
+      if (event.selection) {
+        setSelection(event.selection);
+        setComment("");
+      }
+    });
+  }, [active, bindingID, tabID]);
 
   useEffect(() => {
     if (!editing) setAddress(page?.url ?? "");
@@ -246,6 +281,17 @@ export function BrowserTab({
             onChange={(event) => setAddress(event.target.value)}
           />
         </form>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant={inspecting ? "secondary" : "ghost"}
+          disabled={!page || !active || !focused || !bindingID}
+          aria-label={inspecting ? "Cancel element picker" : "Comment on page element"}
+          aria-pressed={inspecting}
+          onClick={() => void control({ type: "inspect", enabled: !inspecting })}
+        >
+          <MousePointer2 aria-hidden="true" />
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -321,6 +367,91 @@ export function BrowserTab({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {inspecting ? (
+        <p
+          role="status"
+          className="border-b border-border px-3 py-2 text-meta text-muted-foreground"
+        >
+          Select an element on the page. Escape cancels.
+        </p>
+      ) : null}
+      {selection ? (
+        <form
+          aria-label="Browser element comment"
+          className="flex shrink-0 flex-col gap-2 border-b border-border p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!comment.trim() || comment.length > 8000 || commentCount >= 10) return;
+            const item = {
+              ...selection,
+              bindingID: bindingID ?? undefined,
+              id: crypto.randomUUID(),
+              comment: comment.trim(),
+            };
+            const live =
+              bindingID && page?.generation === selection.generation && page.url === selection.url;
+            const saved = live ? item : durableBrowserComment(item);
+            setComposerState((current) => {
+              const comments =
+                (current.edit ? current.edit.browserComments : current.browserComments) ?? [];
+              if (comments.length >= 10) return current;
+              return current.edit
+                ? { ...current, edit: { ...current.edit, browserComments: [...comments, saved] } }
+                : { ...current, browserComments: [...comments, saved] };
+            });
+            setSelection(null);
+            setComment("");
+          }}
+        >
+          <div className="flex items-start gap-2">
+            {selection.preview ? (
+              <img
+                src={selection.preview}
+                alt="Selected page preview"
+                className="h-16 w-24 shrink-0 rounded-md object-cover"
+              />
+            ) : null}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">
+                {selection.element.name || selection.element.label}
+              </p>
+              <p title={selection.url} className="truncate text-meta text-muted-foreground">
+                {selection.url}
+              </p>
+              {page?.generation !== selection.generation || page.url !== selection.url ? (
+                <p className="text-meta text-warning">
+                  Page changed. Only the saved description will be attached.
+                </p>
+              ) : null}
+            </div>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Discard browser comment"
+              onClick={() => setSelection(null)}
+            >
+              <X aria-hidden="true" />
+            </Button>
+          </div>
+          <Textarea
+            autoFocus
+            aria-label="Comment about selected element"
+            placeholder="What should change here?"
+            value={comment}
+            maxLength={8000}
+            onChange={(event) => setComment(event.target.value)}
+          />
+          {commentCount >= 10 ? (
+            <p role="status" className="text-meta text-warning">
+              Send or remove a comment before attaching more.
+            </p>
+          ) : null}
+          <Button type="submit" size="sm" disabled={!comment.trim() || commentCount >= 10}>
+            Attach comment to prompt
+          </Button>
+        </form>
+      ) : null}
       {findOpen ? (
         <form
           className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1"

@@ -5,6 +5,7 @@ import {
   Files,
   Gauge,
   Maximize2,
+  MessageCircleQuestion,
   Minimize2,
   PanelBottom,
   PanelRight,
@@ -63,6 +64,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 
 const ChangesTab = lazy(() =>
   import("../workbench-tabs/changes-tab").then((module) => ({ default: module.ChangesTab })),
+);
+const BtwTab = lazy(() =>
+  import("../workbench-tabs/btw-tab").then((module) => ({ default: module.BtwTab })),
 );
 const ContextTab = lazy(() =>
   import("../workbench-tabs/context-tab").then((module) => ({ default: module.ContextTab })),
@@ -525,6 +529,11 @@ function WorkbenchTabItem({
                 className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
                 aria-hidden="true"
               />
+            ) : tab.kind === "btw" ? (
+              <MessageCircleQuestion
+                className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
+                aria-hidden="true"
+              />
             ) : tab.kind === "browser" ? (
               <Globe2
                 className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
@@ -615,6 +624,7 @@ function WorkbenchTabContent({
   scope: WorkbenchScope;
   active: boolean;
 }) {
+  if (tab.kind === "btw") return <BtwTab tab={tab} />;
   if (tab.kind === "browser")
     return tab.resource.browserTabID ? (
       <BrowserTab scope={scope} tabID={tab.resource.browserTabID} active={active} />

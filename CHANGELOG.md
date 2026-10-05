@@ -7,6 +7,40 @@ operations.
 
 ## Unreleased
 
+## 0.16.0
+
+This remains an experimental pre-release, not a supported stable release.
+
+### Added
+
+- A searchable project/device destination picker, grouped by server with project
+  paths and explicit offline/disabled states.
+- `/btw` side questions in separate persisted tabs, without normal transcript
+  turns or tool execution. Closing a pending tab cancels its request.
+- Browser element comments with page previews and prompt context. Saved drafts
+  and restored messages retain descriptions, not live element references.
+- Missing-workspace recovery on the original connection, using another directory
+  or a new worktree from the project's saved checkout.
+- Clickable session IDs that open on their originating connection.
+- A unified running-work menu for subagents, commands and terminals, with
+  open/stop controls for agents and commands.
+
+### Changed
+
+- New-task navigation defaults to the local device instead of inheriting an
+  unrelated remote selection. Explicit destinations retain their owner.
+- Response metadata shows the actual model variant used.
+- Adjacent plain file reads are grouped more compactly.
+- Pinned OpenCode dependencies and the release-smoke runtime to 2.0.23. The
+  supported stable connection minimum remains 2.0.7.
+
+### Testing
+
+- Added native scenarios for transient side questions and missing-workspace
+  recovery, plus multi-connection destination checks and running-command stops.
+- Browser scenarios cover element comments, live references across snapshots,
+  child-frame replacement, and paired HTTP transport.
+
 ## 0.15.0
 
 This remains an experimental pre-release, not a supported stable release.

@@ -21,6 +21,8 @@ import { processPickerScenario } from "./process-picker-scenario.ts";
 import { reviewBaseScenario } from "./review-base-scenario.ts";
 import { reviewCommentsScenario } from "./review-comments-scenario.ts";
 import { browserNativeHttpScenario, browserNativeScenario } from "./browser-native-scenario.ts";
+import { btwScenario } from "./btw-scenario.ts";
+import { destinationRecoveryScenario } from "./destination-recovery-scenario.ts";
 import { projectSettingsScenario } from "./project-settings-scenario.ts";
 import { streamingPatchScenario } from "./streaming-patch-scenario.ts";
 import type { TestLLMServer } from "./test-llm-server";
@@ -206,6 +208,8 @@ export const scenarios = {
   "review-base": reviewBaseScenario,
   "review-comments": reviewCommentsScenario,
   "browser-native": browserNativeScenario,
+  btw: btwScenario,
+  "destination-recovery": destinationRecoveryScenario,
   "browser-native-http": browserNativeHttpScenario,
   "project-settings": projectSettingsScenario,
   "streaming-patch": streamingPatchScenario,

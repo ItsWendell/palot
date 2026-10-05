@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import type { OpenCodeConnectInput, OpenCodeRuntimeStatus, PalotMessage } from "../../shared";
+import type { NewTaskDestination } from "../lib/new-task-destination";
 import { persistedAtom, retainRecent } from "./persisted";
 
 const MAX_PERSISTED_INSPECTOR_SESSIONS = 100;
@@ -30,6 +31,20 @@ export const newTaskProjectIDAtom = persistedAtom({
   initialValue: null as string | null,
   validate: nullableIdentifier,
   legacyKeys: ["palot.workspace.new-task-project.v1"],
+});
+export const newTaskDestinationAtom = persistedAtom({
+  key: "workspace.new-task-destination",
+  initialValue: null as NewTaskDestination | null,
+  validate: (value: unknown): value is NewTaskDestination | null => {
+    if (value === null) return true;
+    if (!value || typeof value !== "object") return false;
+    const destination = value as Partial<NewTaskDestination>;
+    return (
+      nullableIdentifier(destination.profileID) &&
+      destination.profileID !== null &&
+      nullableIdentifier(destination.projectID)
+    );
+  },
 });
 export const inspectorOpenSessionIDsAtom = persistedAtom({
   key: "ui.inspector-open-sessions",

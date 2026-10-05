@@ -20,9 +20,9 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot 0.15.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
+Palot 0.16.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
-release-smoke runtime are pinned to **2.0.19** for repeatable checks. Stable
+release-smoke runtime are pinned to **2.0.23** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
 tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
 versions require explicit consent; V1, unknown majors and malformed versions are
@@ -89,6 +89,11 @@ are unchanged from 2.0.18. Its service improves context-window output limits,
 compaction, prompt-cache reuse, child-session affinity, and transient AI failure
 handling. Palot needs no new API integration or higher connection minimum for this
 release. Those behavior changes require updating the running service separately.
+
+The published 2.0.23 contract adds credential listing/creation and VCS initialization,
+optional connection authentication status and a form cancellation message, a server
+persistent-PTY capability hint, and provider timeout options. Existing Palot workflows
+do not need to adopt these additions, and the connection minimum remains 2.0.7.
 
 ## Experimental browser
 

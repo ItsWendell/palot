@@ -9,6 +9,18 @@ type TabBase = { id: string; pinned: boolean };
 
 export type WorkbenchTab =
   | (TabBase & {
+      kind: "btw";
+      resource: {
+        profileID: string;
+        sessionID: string;
+        location: LocationRef;
+        questionID: string;
+        question: string;
+        answer?: string;
+        error?: string;
+      };
+    })
+  | (TabBase & {
       kind: "browser";
       resource: {
         profileID: string;
@@ -90,6 +102,7 @@ export type WorkbenchTab =
     });
 
 export type OpenWorkbenchTabInput =
+  | { kind: "btw"; location: LocationRef; questionID: string; question: string }
   | { kind: "browser"; location: LocationRef; browserTabID: string }
   | { kind: "command"; location: LocationRef; shellID: string; sessionID?: string; command: string }
   | { kind: "context"; location: LocationRef }
@@ -168,6 +181,8 @@ export function workbenchScopeKey(scope: WorkbenchScope): string {
 
 export function workbenchTabResourceKey(tab: WorkbenchTab): string {
   const location = `${tab.resource.profileID}\u0000${locationKey(tab.resource.location)}`;
+  if (tab.kind === "btw")
+    return `btw\u0000${tab.resource.profileID}\u0000${tab.resource.sessionID}\u0000${tab.resource.questionID}`;
   if (tab.kind === "context") {
     return `context\u0000${tab.resource.profileID}\u0000${tab.resource.sessionID}`;
   }
@@ -184,6 +199,7 @@ export function workbenchTabResourceKey(tab: WorkbenchTab): string {
 }
 
 export function workbenchTabTitle(tab: WorkbenchTab): string {
+  if (tab.kind === "btw") return `BTW: ${tab.resource.question}`;
   if (tab.kind === "browser") return "Browser";
   if (tab.kind === "context") return "Context";
   if (tab.kind === "changes") return "Changes";
@@ -450,6 +466,20 @@ function tabFromInput(
   input: OpenWorkbenchTabInput,
   id: string,
 ): WorkbenchTab {
+  if (input.kind === "btw") {
+    return {
+      id,
+      kind: "btw",
+      pinned: false,
+      resource: {
+        profileID: scope.profileID,
+        sessionID: scope.sessionID,
+        location: input.location,
+        questionID: input.questionID,
+        question: input.question,
+      },
+    };
+  }
   if (input.kind === "browser") {
     return {
       id,
@@ -687,9 +717,14 @@ function withScope(
     scopes: Object.fromEntries(
       Object.entries(scopes)
         .toSorted(([, left], [, right]) => right.updatedAt - left.updatedAt)
-        .slice(0, MAX_WORKBENCH_SCOPES),
+        .filter(([, context], index) => index < MAX_WORKBENCH_SCOPES || hasBtwTabs(context)),
     ),
   };
+}
+
+/** Side answers are retained until their tabs close, even when other scopes age out. */
+export function hasBtwTabs(context: WorkbenchContextState): boolean {
+  return [...context.right.tabs, ...context.bottom.tabs].some((tab) => tab.kind === "btw");
 }
 
 function defaultTabID(): string {

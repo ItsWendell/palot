@@ -1,7 +1,81 @@
 import { describe, expect, it } from "vitest";
 import { parseWorkbenchState } from "./workbench-persistence";
+import {
+  createWorkbenchState,
+  MAX_WORKBENCH_SCOPES,
+  mutateWorkbench,
+  openWorkbenchTab,
+  workbenchScopeKey,
+} from "./workbench-tabs";
+import { updateBtwTab } from "./btw";
 
 describe("workbench persistence", () => {
+  it("round-trips side questions and answers independently and forgets closed tabs", () => {
+    const scope = { profileID: "profile", sessionID: "session" };
+    let state = createWorkbenchState();
+    for (const questionID of ["one", "two"]) {
+      state = openWorkbenchTab(
+        state,
+        scope,
+        { kind: "btw", location: { directory: "/repo" }, questionID, question: "Same question?" },
+        {},
+        1,
+        () => questionID,
+      ).state;
+    }
+    state = updateBtwTab(state, scope, "one", (tab) => ({
+      ...tab,
+      resource: { ...tab.resource, answer: "First answer" },
+    }));
+    const reloaded = parseWorkbenchState(JSON.parse(JSON.stringify(state)));
+    expect(reloaded).toEqual(state);
+    expect(reloaded.scopes[workbenchScopeKey(scope)]?.right.tabs).toHaveLength(2);
+    const closed = mutateWorkbench(reloaded, scope, { type: "close", pane: "right", tabID: "one" });
+    expect(
+      parseWorkbenchState(JSON.parse(JSON.stringify(closed))).scopes[workbenchScopeKey(scope)]
+        ?.right.tabs,
+    ).toMatchObject([{ id: "two", resource: { question: "Same question?" } }]);
+  });
+
+  it("retains side answers until closed even after browsing more than the recent scope limit", () => {
+    const owner = { profileID: "profile", sessionID: "owner" };
+    let state = openWorkbenchTab(
+      createWorkbenchState(),
+      owner,
+      { kind: "btw", location: { directory: "/repo" }, questionID: "one", question: "Keep me?" },
+      {},
+      1,
+    ).state;
+    for (let i = 0; i < MAX_WORKBENCH_SCOPES + 2; i++) {
+      state = openWorkbenchTab(
+        state,
+        { profileID: "profile", sessionID: `other-${i}` },
+        { kind: "context", location: { directory: "/repo" } },
+        {},
+        i + 2,
+      ).state;
+    }
+    expect(state.scopes[workbenchScopeKey(owner)]?.right.tabs[0]?.kind).toBe("btw");
+    expect(parseWorkbenchState(state).scopes[workbenchScopeKey(owner)]?.right.tabs[0]?.kind).toBe(
+      "btw",
+    );
+  });
+
+  it("rejects saved side questions belonging to another scope", () => {
+    const scope = { profileID: "profile", sessionID: "session" };
+    const state = openWorkbenchTab(createWorkbenchState(), scope, {
+      kind: "btw",
+      location: { directory: "/repo" },
+      questionID: "one",
+      question: "Owner?",
+    }).state;
+    const context = state.scopes[workbenchScopeKey(scope)]!;
+    expect(
+      parseWorkbenchState({ ...state, scopes: { "other\u0000session": context } }).scopes[
+        "other\u0000session"
+      ]?.right.tabs,
+    ).toEqual([]);
+  });
   it("drops corrupt tabs and repairs active identity", () => {
     const parsed = parseWorkbenchState({
       version: 1,

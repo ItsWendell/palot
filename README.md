@@ -19,7 +19,7 @@ and managing local OpenCode connections.
 upgrade from Palot 0.11.x. “Palot v2” names the rebuild; the application follows
 the `0.x` SemVer release sequence. OpenCode has its own independent version.
 
-Palot 0.15.0 is open-source pre-release software under active development, with
+Palot 0.16.0 is open-source pre-release software under active development, with
 desktop packaging targets for Linux x64 and macOS Apple Silicon. Available
 packages are experimental, not supported stable releases. macOS downloads are
 ad-hoc signed, not Apple Developer ID signed or notarized. Updates are manual.
@@ -33,7 +33,20 @@ still pre-release and should not be the only protection for important work.
 The 0.12.0 release is source-only. Earlier 0.11.x downloads install the previous
 application, not Palot v2.
 
-### New in 0.15.0
+### New in 0.16.0
+
+- Choose projects by device/server in one searchable destination picker. Local
+  tasks no longer silently reuse a similarly named remote project.
+- Ask quick side questions with `/btw`, in separate tabs without adding normal
+  conversation turns or running tools.
+- Attach element comments and page previews from the experimental browser to
+  your next prompt. Browser access remains off by default; read the
+  [privacy details](PRIVACY.md#experimental-browser) before enabling it.
+- Recover missing workspaces, open linked session IDs on their originating
+  connection, and inspect or stop running agents and commands from one menu.
+- See the response's actual model variant and more compact file-read activity.
+
+### Added in 0.15.0
 
 - Browse workspace files and preview images, Markdown, PDFs and supported audio/video.
 - Add diff-line comments to a task's prompt and review changes from a completed turn.
@@ -128,7 +141,7 @@ bun run dev:focus
 
 Source builds require Bun `1.4.2`, Node.js `24` or later, and Vite+. Stable OpenCode
 **2.x starting at 2.0.7** is supported as an external service; the client and
-release-smoke runtime are pinned to **2.0.19**. V2 betas require explicit consent.
+release-smoke runtime are pinned to **2.0.23**. V2 betas require explicit consent.
 See [runtime compatibility](docs/opencode-runtime.md#compatibility) before upgrading.
 `bun run dev` starts hidden; `bun run dev:visible` shows the window without taking
 focus. Windows is not a qualified installation target.

@@ -37,6 +37,7 @@ import type {
   PalotProvider,
   PalotSession,
 } from "../../shared";
+import type { PalotBrowserComment } from "../../shared/browser-contract";
 import {
   type ComposerDelivery,
   autoBackgroundOnSteerAtom,
@@ -47,6 +48,8 @@ import {
   modelPickerPreferencesAtom,
 } from "../atoms/ui";
 import { useWorkbenchCommands } from "../atoms/workbench";
+import { askBtw } from "../atoms/btw";
+import { draftAfterBtw, parseBtwQuestion } from "../lib/btw";
 import { composerStateAtomFamily } from "../atoms/composer-state";
 import { composerScope } from "../lib/composer-scope";
 import {
@@ -76,6 +79,14 @@ import {
 import { detectComposerQuery } from "../lib/composer-query";
 import { composerDraftFromMessage } from "../lib/composer-restoration";
 import { reviewCommentsFromMessage, type ReviewComment } from "../lib/review-comments";
+import {
+  browserCommentsFromMessage,
+  liveBrowserComments,
+  retainedComposerFiles,
+} from "../lib/browser-comments";
+import { useBrowserSession } from "../hooks/use-browser-session";
+import { useSessionLocationMissing } from "../hooks/use-session-location-missing";
+import { SessionLocationMissingView } from "./session-location-missing";
 import { formatCommandShortcut } from "../lib/global-commands";
 import { BUILTIN_COMMANDS } from "../lib/builtin-commands";
 import { convergeMessageReceipt } from "../lib/message-reconcile";
@@ -236,6 +247,14 @@ function ComposerView({
   const draft = activePendingInputEdit?.draft ?? originalDraft;
   const files = activePendingInputEdit?.files ?? composerState.files;
   const comments = activePendingInputEdit?.comments ?? composerState.comments;
+  const browserComments =
+    (activePendingInputEdit
+      ? activePendingInputEdit.browserComments
+      : composerState.browserComments) ?? [];
+  const browser = useBrowserSession({
+    profileID: runtime?.profileID ?? "unscoped",
+    sessionID: session.id,
+  });
   const [editingCommentID, setEditingCommentID] = useState<string | null>(null);
   const [editingCommentText, setEditingCommentText] = useState("");
 
@@ -275,6 +294,18 @@ function ComposerView({
     });
   }
 
+  function setBrowserComments(update: (current: PalotBrowserComment[]) => PalotBrowserComment[]) {
+    setComposerState((current) => {
+      if (!activePendingInputEdit)
+        return { ...current, browserComments: update(current.browserComments ?? []) };
+      if (current.edit?.id !== activePendingInputEdit.id) return current;
+      return {
+        ...current,
+        edit: { ...current.edit, browserComments: update(current.edit.browserComments ?? []) },
+      };
+    });
+  }
+
   // Only retire the exact contents submitted. Typing and navigation can continue during dispatch.
   function clearSubmittedContents() {
     const current = store.get(stateAtom);
@@ -289,6 +320,9 @@ function ComposerView({
                 edit: {
                   ...value.edit,
                   comments: value.edit.comments.filter((item) => !comments.includes(item)),
+                  browserComments: value.edit.browserComments?.filter(
+                    (item) => !browserComments.includes(item),
+                  ),
                 },
               }
             : value,
@@ -302,6 +336,7 @@ function ComposerView({
       setComposerState((value) => ({
         ...value,
         comments: value.comments.filter((item) => !comments.includes(item)),
+        browserComments: value.browserComments?.filter((item) => !browserComments.includes(item)),
       }));
     }
   }
@@ -316,6 +351,19 @@ function ComposerView({
   );
   const queryClient = useQueryClient();
   const cacheSession = useCacheSession();
+  const projects = useProjectCatalog();
+  const [locationFailure, setLocationFailure] = useState<{ scope: string; error: unknown } | null>(
+    null,
+  );
+  const recoveryOptions = {
+    session,
+    project: projectForSession(projects, session) ?? null,
+    owner: runtime,
+    enabled: !onCreateSession,
+    error: locationFailure?.scope === draftScope ? locationFailure.error : undefined,
+    onRecovered: cacheSession,
+  };
+  const locationRecovery = useSessionLocationMissing(recoveryOptions);
   const setMessages = useSetAtom(messagesForProfileAtom(runtime?.profileID ?? "unscoped"));
   const [attachmentErrors, setAttachmentErrors] = useState<string[]>([]);
   const [attachmentUpload, setAttachmentUpload] = useState<{
@@ -382,7 +430,6 @@ function ComposerView({
     Boolean(onCreateSession) || activeMenu === "agent",
   );
   const catalog = modelCatalogQuery.data ?? EMPTY_MODEL_CATALOG;
-  const projects = useProjectCatalog();
   const preferenceProject = projectForSession(projects, session);
   const preferenceScope = modelProjectPreferenceKey(
     runtime?.profileID ?? "disconnected",
@@ -616,8 +663,9 @@ function ComposerView({
           id: request.id,
           delivery: request.delivery ?? "queue",
           draft: restoredDraft,
-          files: message.files ?? [],
+          files: retainedComposerFiles(message),
           comments: reviewCommentsFromMessage(message) ?? [],
+          browserComments: browserCommentsFromMessage(message),
         },
       }));
       if (activeDraftScopeRef.current === draftScope) {
@@ -729,6 +777,32 @@ function ComposerView({
   /* eslint-enable react-hooks-compiler/set-state-in-effect */
 
   async function submit(deliveryOverride?: ComposerDelivery) {
+    const sideQuestion = parseBtwQuestion(draft.text);
+    if (sideQuestion !== null) {
+      if (store.get(stateAtom).sending || store.get(stateAtom).cancelingID) return;
+      try {
+        if (!sideQuestion) throw new Error("Enter a question after /btw.");
+        if (onCreateSession) throw new Error("Open an existing conversation before using /btw.");
+        if (!runtime?.connected) throw new Error("Connect to OpenCode before using /btw.");
+        askBtw(
+          store,
+          {
+            profileID: runtime.profileID,
+            connectionID: runtime.connectionID,
+            sessionID: session.id,
+            location: session.location,
+          },
+          sideQuestion,
+        );
+        setAttachmentErrors([]);
+        setDraft(draftAfterBtw(draft));
+      } catch (error) {
+        setAttachmentErrors([
+          error instanceof Error ? error.message : "Could not ask this question.",
+        ]);
+      }
+      return;
+    }
     const submission = projectComposerSubmission(draft);
     const value = submission.text;
     const currentState = store.get(stateAtom);
@@ -736,7 +810,9 @@ function ComposerView({
       (!value.trim() &&
         files.length === 0 &&
         submission.skills.length === 0 &&
-        comments.length === 0) ||
+        comments.length === 0 &&
+        browserComments.length === 0) ||
+      locationRecovery.missing ||
       currentState.sending ||
       currentState.cancelingID ||
       attachmentRequestRef.current ||
@@ -744,8 +820,8 @@ function ComposerView({
       permissionSelection.isBusy()
     )
       return;
-    if (submission.kind === "command" && comments.length > 0) {
-      setAttachmentErrors(["Remove line comments before running a slash command."]);
+    if (submission.kind === "command" && (comments.length > 0 || browserComments.length > 0)) {
+      setAttachmentErrors(["Remove comments before running a slash command."]);
       return;
     }
     if (
@@ -835,8 +911,9 @@ function ComposerView({
             );
             if (updated) cacheSession(updated);
             setDraft(composerDraftWithRetainedFiles(target));
-            setFiles(target.files ?? []);
+            setFiles(retainedComposerFiles(target));
             setComments(() => reviewCommentsFromMessage(target) ?? []);
+            setBrowserComments(() => browserCommentsFromMessage(target) ?? []);
           } catch (error) {
             if (activeDraftScopeRef.current === draftScope) {
               setAttachmentErrors([error instanceof Error ? error.message : "Revert failed"]);
@@ -872,8 +949,9 @@ function ComposerView({
             : await palot.clearSessionRevert(session.id, connectionID);
           if (updated) cacheSession(updated);
           setDraft(target ? composerDraftWithRetainedFiles(target) : emptyComposerDraft());
-          setFiles(target?.files ?? []);
+          setFiles(target ? retainedComposerFiles(target) : []);
           setComments(() => (target ? (reviewCommentsFromMessage(target) ?? []) : []));
+          setBrowserComments(() => (target ? (browserCommentsFromMessage(target) ?? []) : []));
         } catch (error) {
           if (activeDraftScopeRef.current === draftScope) {
             setAttachmentErrors([error instanceof Error ? error.message : "Redo failed"]);
@@ -906,6 +984,11 @@ function ComposerView({
     const effectiveDelivery =
       isWorking && !onCreateSession ? (deliveryOverride ?? composerDelivery) : "steer";
     const submittedFiles = files;
+    const submittedBrowserComments = liveBrowserComments(
+      browserComments,
+      browser?.bindingID ?? null,
+      browser?.state.tabs ?? [],
+    );
     const submittedComments = comments.map(({ path, comment, selection }) => ({
       path,
       comment,
@@ -922,6 +1005,7 @@ function ComposerView({
       submission,
       files: submittedFiles,
       comments: submittedComments,
+      browserComments: submittedBrowserComments,
       delivery: effectiveDelivery,
       optimistic: submission.kind !== "command",
       createTarget: async () => {
@@ -958,6 +1042,9 @@ function ComposerView({
               id: messageID,
               text: value,
               ...(submittedComments.length ? { comments: submittedComments } : {}),
+              ...(submittedBrowserComments.length
+                ? { browserComments: submittedBrowserComments }
+                : {}),
               modelInput,
               ...(submittedFiles.length ? { files: submittedFiles } : {}),
               ...(submission.files.length ? { fileReferences: submission.files } : {}),
@@ -1057,10 +1144,12 @@ function ComposerView({
           );
         },
         reportCreationError: (error) => onCreateSessionError?.(error),
-        reportDispatchError: (error) =>
+        reportDispatchError: (error) => {
+          setLocationFailure({ scope: draftScope, error });
           setAttachmentErrors([
             error instanceof Error ? error.message : "Palot could not send the attachment.",
-          ]),
+          ]);
+        },
       },
     });
   }
@@ -1162,11 +1251,16 @@ function ComposerView({
   }
 
   const canSubmit =
-    !attachmentUpload &&
-    !composerSelection.blocked &&
-    !permissionSelection.busy &&
-    !requestBody &&
-    (Boolean(draft.text.trim()) || files.length > 0 || comments.length > 0) &&
+    (parseBtwQuestion(draft.text) !== null ||
+      (!attachmentUpload &&
+        !composerSelection.blocked &&
+        !permissionSelection.busy &&
+        !locationRecovery.missing &&
+        !requestBody)) &&
+    (Boolean(draft.text.trim()) ||
+      files.length > 0 ||
+      comments.length > 0 ||
+      browserComments.length > 0) &&
     !sending &&
     !pendingInputEditID &&
     runtime?.connected !== false;
@@ -1218,6 +1312,7 @@ function ComposerView({
         />
       )}
       <OpenCodeConnectionAlert />
+      <SessionLocationMissingView options={recoveryOptions} recovery={locationRecovery} />
       {pendingInputs.length > 0 ? (
         <section
           aria-label="Pending messages"
@@ -1348,6 +1443,59 @@ function ComposerView({
               ))}
             </section>
           ) : null}
+          {!requestBody && browserComments.length > 0 ? (
+            <section
+              aria-label="Pending browser comments"
+              className="relative z-10 max-h-40 space-y-2 overflow-y-auto border-b border-border px-3 py-2"
+            >
+              {browserComments.map((item) => (
+                <div key={item.id} className="flex min-w-0 items-start gap-2 text-meta">
+                  {item.preview ? (
+                    <img
+                      src={item.preview}
+                      alt={`Preview of ${item.element.label}`}
+                      className="h-12 w-20 shrink-0 rounded border object-cover"
+                    />
+                  ) : null}
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className="truncate text-muted-foreground"
+                      title={`${item.url} · ${item.element.selector}`}
+                    >
+                      {item.element.label} · {item.url}
+                    </p>
+                    <input
+                      aria-label={`Browser comment on ${item.element.label}`}
+                      maxLength={8000}
+                      className="w-full min-w-0 rounded border border-border bg-card px-1 text-foreground"
+                      value={item.comment}
+                      onChange={(event) =>
+                        setBrowserComments((current) =>
+                          current.map((comment) =>
+                            comment.id === item.id
+                              ? { ...comment, comment: event.target.value }
+                              : comment,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label={`Remove browser comment on ${item.element.label}`}
+                    onClick={() =>
+                      setBrowserComments((current) =>
+                        current.filter((comment) => comment.id !== item.id),
+                      )
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </section>
+          ) : null}
           {requestBody ? (
             <div data-palot-composer-request className="px-2 pt-1">
               {requestBody}
@@ -1372,6 +1520,7 @@ function ComposerView({
               rows={2}
               className="palot-native-scrollbar max-h-[clamp(3rem,25cqh,11rem)] min-h-[calc(2lh+--spacing(4))] flex-none resize-none overflow-y-auto overscroll-contain px-5 pt-3 pb-1"
               placeholder="Do anything"
+              disabled={locationRecovery.missing}
               onChange={(event) => {
                 setDraft((current) => applyComposerTextChange(current, event.target.value));
                 updateSelection(event.target);

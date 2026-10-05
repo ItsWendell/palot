@@ -19,13 +19,17 @@ const mocks = vi.hoisted(() => ({
   terminals: vi.fn(),
   get: vi.fn(),
   catalog: vi.fn(),
+  client: vi.fn(),
 }));
 vi.mock("../services/palot", () => ({ palot: { listRunningShells: mocks.shells } }));
 vi.mock("../services/opencode-client", () => ({
-  openCodeClient: () => ({
-    shell: { get: mocks.get },
-    experimental: { persistentPty: { list: mocks.terminals } },
-  }),
+  openCodeClient: (connectionID: string) => {
+    mocks.client(connectionID);
+    return {
+      shell: { get: mocks.get },
+      experimental: { persistentPty: { list: mocks.terminals } },
+    };
+  },
 }));
 vi.mock("./use-session-catalog", () => ({ useSessionCatalog: () => mocks.catalog() }));
 
@@ -132,6 +136,40 @@ describe("process retention", () => {
 });
 
 describe("session process scope", () => {
+  it("never discovers work through a focused connection other than its explicit owner", async () => {
+    mocks.shells.mockClear();
+    mocks.terminals.mockClear();
+    mocks.client.mockClear();
+    mocks.catalog.mockReturnValue([]);
+    const root = { id: "root", location: { directory: "/origin" } } as PalotSession;
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connectionID: "other",
+      profileID: "other-profile",
+      connected: true,
+      capabilities: { pty: "persistent" },
+    } as never);
+    const client = new QueryClient();
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <Provider store={store}>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </Provider>
+    );
+    const hook = renderHook(
+      () =>
+        useSessionProcesses(root, new Set(["root"]), false, {
+          profileID: "origin-profile",
+          connectionID: "origin",
+        }),
+      { wrapper },
+    );
+    expect(hook.result.current.rows).toEqual([]);
+    expect(mocks.shells).not.toHaveBeenCalled();
+    expect(mocks.terminals).not.toHaveBeenCalled();
+    expect(mocks.client).not.toHaveBeenCalled();
+    hook.unmount();
+    client.clear();
+  });
   it("discovers settled catalog descendants without execution IDs and excludes unrelated or cyclic ancestry", async () => {
     const location = { directory: "/repo" };
     const root = { id: "root", parentID: null, location } as PalotSession;
@@ -172,6 +210,7 @@ describe("session process scope", () => {
     const ids = new Set(["root"]);
     const hook = renderHook(() => useSessionProcesses(root, ids, false), { wrapper });
     await waitFor(() => expect(hook.result.current.rows).toHaveLength(3));
+    expect(mocks.client).toHaveBeenCalledWith("settled-descendants");
     expect(hook.result.current.rows.map((row) => row.id)).toEqual([
       "shell-settled",
       "shell-grandchild",

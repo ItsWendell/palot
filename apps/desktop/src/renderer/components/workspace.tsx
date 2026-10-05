@@ -34,7 +34,7 @@ import {
 import { cn } from "../lib/cn";
 import { showErrorToast } from "../lib/toast-error";
 import { workbenchScopeKey, type WorkbenchScope } from "../lib/workbench-tabs";
-import { projectForSession, projectLocation, visibleProjects } from "../lib/view-models";
+import { projectLocation, visibleProjects } from "../lib/view-models";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useProjectCatalog, useSessionCatalogSelector } from "../hooks/use-session-catalog";
 import { useAutomations } from "../hooks/use-automations";
@@ -96,10 +96,10 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
     [sessionID],
   );
   const selectedSession = useSessionCatalogSelector(selectWorkspaceSession, sameWorkspaceSession);
-  const newTaskContext = useRef({ projects, selectedSession, visible });
+  const newTaskContext = useRef(visible);
   useEffect(() => {
-    newTaskContext.current = { projects, selectedSession, visible };
-  }, [projects, selectedSession, visible]);
+    newTaskContext.current = visible;
+  }, [visible]);
   const [navigationRequestedOpen, setNavigationOpen] = useAtom(navigationOpenAtom);
   const workbenchScope: WorkbenchScope | null =
     runtime && sessionID ? { profileID: runtime.profileID, sessionID } : null;
@@ -393,12 +393,13 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
 
   const startNewTask = useCallback(
     (requestedDirectory?: string) => {
-      const current = newTaskContext.current;
-      const project = requestedDirectory
-        ? current.visible.find((item) => projectLocation(item) === requestedDirectory)
-        : current.selectedSession
-          ? projectForSession(current.projects, current.selectedSession)
-          : current.visible[0];
+      if (!requestedDirectory) {
+        void navigateToNewTask();
+        return;
+      }
+      const project = newTaskContext.current.find(
+        (item) => projectLocation(item) === requestedDirectory,
+      );
       if (!project) return;
       void navigateToNewTask(project.id);
     },

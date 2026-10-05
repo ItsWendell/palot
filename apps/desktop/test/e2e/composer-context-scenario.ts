@@ -15,7 +15,7 @@ export const composerContextScenario: Scenario = {
   },
   async assert(page, { runRoot }) {
     const main = page.getByRole("main", { name: "New task" });
-    const project = main.getByRole("combobox", { name: "Project", exact: true });
+    const project = main.getByRole("combobox", { name: "Task destination", exact: true });
     const workspace = main.getByRole("button", { name: /^Work in:/ });
     await workspace.click();
     await page.getByRole("button", { name: /Current checkout Use the project/ }).click();

@@ -9,6 +9,37 @@ beforeEach(() => {
 });
 
 describe("composer contents persistence", () => {
+  it("persists browser comments on their owner without reusing element leases after reload", async () => {
+    const { composerStateAtomFamily } = await import("./composer-state");
+    const scope = composerScope("profile-a", "session:duplicate");
+    const store = createStore();
+    const comment = {
+      id: "browser",
+      comment: "Change this",
+      bindingID: "old-binding",
+      tabID: "tab-a",
+      generation: 1,
+      url: "https://example.test/",
+      element: { label: "button", selector: "#button", ref: "e1" },
+    };
+    store.set(composerStateAtomFamily(scope), (current) => ({
+      ...current,
+      browserComments: [comment],
+    }));
+    expect(store.get(composerStateAtomFamily(scope)).browserComments?.[0]?.element.ref).toBe("e1");
+    window.dispatchEvent(new Event("pagehide"));
+    vi.resetModules();
+    const reloaded = await import("./composer-state");
+    const next = createStore();
+    const restored = next.get(reloaded.composerStateAtomFamily(scope)).browserComments?.[0];
+    expect(restored?.comment).toBe("Change this");
+    expect(restored?.element.ref).toBeUndefined();
+    expect(restored?.bindingID).toBeUndefined();
+    expect(
+      next.get(reloaded.composerStateAtomFamily(composerScope("profile-b", "session:duplicate")))
+        .browserComments,
+    ).toBeUndefined();
+  });
   it("retains a session's unsent line comments without copying them to another session", async () => {
     const { composerStateAtomFamily } = await import("./composer-state");
     const scope = composerScope("profile-a", "session:one");

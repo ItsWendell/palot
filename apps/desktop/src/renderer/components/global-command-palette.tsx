@@ -112,6 +112,10 @@ export function GlobalCommandPalette() {
     reset();
   };
 
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open, page]);
+
   const execute = (command: GlobalCommand) => {
     if (command.disabledReason) return;
     const run = () =>

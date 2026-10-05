@@ -1,6 +1,7 @@
 import type { PalotFileAttachment, PalotMessage } from "../../shared";
 import { normalizeComposerDraft, type ComposerDraft } from "./composer-draft";
 import { reviewCommentsFromMessage } from "./review-comments";
+import { isBrowserCommentPreview } from "./browser-comments";
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -33,6 +34,7 @@ export function composerFilesFromMessage(message: PalotMessage): {
     const file = record(item);
     if (file.mention) continue;
     const name = typeof file.name === "string" ? file.name : `Attachment ${index + 1}`;
+    if (isBrowserCommentPreview(name, message)) continue;
     const mime = typeof file.mime === "string" ? file.mime : "application/octet-stream";
     const source = record(file.source);
     const uri = typeof source.uri === "string" ? source.uri : file.uri;

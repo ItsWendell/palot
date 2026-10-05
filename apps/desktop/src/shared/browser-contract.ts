@@ -7,6 +7,29 @@ export interface PalotBrowserRegistration {
   connectionID: string;
 }
 
+/** A user-selected element. References are valid only in this live document. */
+export interface PalotBrowserSelection {
+  tabID: string;
+  url: string;
+  generation: number;
+  element: {
+    label: string;
+    selector: string;
+    ref?: string;
+    text?: string;
+    role?: string;
+    name?: string;
+  };
+  preview?: string;
+}
+
+export interface PalotBrowserComment extends PalotBrowserSelection {
+  id: string;
+  comment: string;
+  /** A draft-only lease, never reusable after a renderer reload. */
+  bindingID?: string;
+}
+
 export type PalotBrowserEvent =
   | { bindingID: string; type: "hosts"; hosts: PalotBrowserHost[] }
   | {
@@ -18,6 +41,13 @@ export type PalotBrowserEvent =
     }
   | { bindingID: string; type: "focus"; tabID: Browser.TabID }
   | { bindingID: string; type: "placement"; tabID: Browser.TabID; pane: "right" | "bottom" }
+  | {
+      bindingID: string;
+      type: "inspect";
+      tabID: Browser.TabID;
+      active: boolean;
+      selection?: PalotBrowserSelection;
+    }
   | { bindingID: string; type: "preview"; path: string };
 
 /** One-use guest attachment lease. URLs and network credentials remain main-owned. */
@@ -56,4 +86,5 @@ export type PalotBrowserUserCommand = Extract<
 export type PalotBrowserPageControl =
   | { type: "find"; query: string; forward?: boolean; next?: boolean }
   | { type: "find.stop" }
-  | { type: "zoom"; direction: -1 | 0 | 1 };
+  | { type: "zoom"; direction: -1 | 0 | 1 }
+  | { type: "inspect"; enabled: boolean };

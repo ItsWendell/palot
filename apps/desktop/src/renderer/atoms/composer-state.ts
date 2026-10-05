@@ -4,6 +4,8 @@ import { normalizeComposerDraft, type ComposerDraft } from "../lib/composer-draf
 import { loadScopedPersistedValue, scheduledScopedPersistence } from "./persisted";
 import { isComposerDraft, type ComposerDelivery } from "./ui";
 import { isReviewComment, type ReviewComment } from "../lib/review-comments";
+import type { PalotBrowserComment } from "../../shared/browser-contract";
+import { durableBrowserComment, isBrowserComment } from "../lib/browser-comments";
 
 export interface PendingInputEdit {
   id: string;
@@ -11,11 +13,13 @@ export interface PendingInputEdit {
   draft: ComposerDraft;
   files: PalotFileAttachment[];
   comments: ReviewComment[];
+  browserComments?: PalotBrowserComment[];
 }
 
 interface ComposerContents {
   files: PalotFileAttachment[];
   comments: ReviewComment[];
+  browserComments?: PalotBrowserComment[];
   edit: PendingInputEdit | null;
 }
 
@@ -42,10 +46,14 @@ function isFiles(value: unknown): value is PalotFileAttachment[] {
 
 function isContents(value: unknown): value is ComposerContents {
   if (!value || typeof value !== "object") return false;
-  const { files, comments, edit } = value as Partial<ComposerContents>;
+  const { files, comments, browserComments, edit } = value as Partial<ComposerContents>;
   return (
     isFiles(files) &&
     (comments === undefined || (Array.isArray(comments) && comments.every(isReviewComment))) &&
+    (browserComments === undefined ||
+      (Array.isArray(browserComments) &&
+        browserComments.length <= 10 &&
+        browserComments.every(isBrowserComment))) &&
     (edit === null ||
       Boolean(
         edit &&
@@ -55,7 +63,11 @@ function isContents(value: unknown): value is ComposerContents {
         isComposerDraft(edit.draft) &&
         isFiles(edit.files) &&
         (edit.comments === undefined ||
-          (Array.isArray(edit.comments) && edit.comments.every(isReviewComment))),
+          (Array.isArray(edit.comments) && edit.comments.every(isReviewComment))) &&
+        (edit.browserComments === undefined ||
+          (Array.isArray(edit.browserComments) &&
+            edit.browserComments.length <= 10 &&
+            edit.browserComments.every(isBrowserComment))),
       ))
   );
 }
@@ -77,11 +89,17 @@ function createComposerStateAtom(scope: string) {
   });
   const valueAtom = atom<ComposerState>({
     ...contents,
+    ...(contents.browserComments
+      ? { browserComments: contents.browserComments.map(durableBrowserComment) }
+      : {}),
     comments: contents.comments ?? [],
     edit: contents.edit
       ? {
           ...contents.edit,
           comments: contents.edit.comments ?? [],
+          ...(contents.edit.browserComments
+            ? { browserComments: contents.edit.browserComments.map(durableBrowserComment) }
+            : {}),
           draft: normalizeComposerDraft(contents.edit.draft),
         }
       : null,
@@ -98,17 +116,33 @@ function createComposerStateAtom(scope: string) {
       if (
         current.files === next.files &&
         current.comments === next.comments &&
+        current.browserComments === next.browserComments &&
         current.edit === next.edit
       )
         return;
       // Request flags survive navigation, but are not replayed after an app restart.
-      if (!next.files.length && !next.comments.length && !next.edit)
+      if (
+        !next.files.length &&
+        !next.comments.length &&
+        !next.browserComments?.length &&
+        !next.edit
+      )
         contentsPersistence.remove(scope);
       else
         contentsPersistence.save(scope, {
           files: next.files,
           comments: next.comments,
-          edit: next.edit,
+          ...(next.browserComments?.length
+            ? { browserComments: next.browserComments.map(durableBrowserComment) }
+            : {}),
+          edit: next.edit
+            ? {
+                ...next.edit,
+                ...(next.edit.browserComments
+                  ? { browserComments: next.edit.browserComments.map(durableBrowserComment) }
+                  : {}),
+              }
+            : null,
         });
     },
   );

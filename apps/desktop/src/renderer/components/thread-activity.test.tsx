@@ -38,6 +38,50 @@ function reasoningEntry(part: PalotMessageContent): TurnPart {
 }
 
 describe("ActivityGroup", () => {
+  it("renders a compact adjacent read disclosure across different files and preserves its fold choice as more reads arrive", async () => {
+    const user = userEvent.setup();
+    const parts: PalotMessageContent[] = ["one", "two", "three"].map((name) => ({
+      type: "tool",
+      id: name,
+      name: "read",
+      state: {
+        status: "completed",
+        input: { path: `src/${name}.ts` },
+        content: [{ type: "text", text: `1: ${name} contents` }],
+      },
+    }));
+    const source = message(parts);
+    const group: TurnActivityGroup = {
+      id: "adjacent",
+      kind: "tools",
+      status: "completed",
+      title: "Read files",
+      entries: parts.slice(0, 2).map((part, index) => ({ message: source, part, index })),
+    };
+    const store = createStore();
+    const renderGroup = (value: TurnActivityGroup) => (
+      <Provider store={store}>
+        <ActivityGroup group={value} live={false} defaultOpen sessionID="adjacent-reads" />
+      </Provider>
+    );
+    const view = render(renderGroup(group));
+    const trigger = screen.getByRole("button", { name: "Read 2 files" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    await user.click(trigger);
+    expect(screen.getByRole("button", { name: /one.ts/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /two.ts/ })).toBeTruthy();
+    await user.click(trigger);
+    view.rerender(
+      renderGroup({
+        ...group,
+        entries: parts.map((part, index) => ({ message: source, part, index })),
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Read 3 files" }).getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    view.unmount();
+  });
   it("shows a background command's returned output in its original tool details", async () => {
     const user = userEvent.setup();
     const assistant: PalotMessage = {

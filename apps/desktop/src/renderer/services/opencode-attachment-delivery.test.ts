@@ -12,6 +12,28 @@ const binary = {
 };
 
 describe("attachment delivery", () => {
+  it("sends browser context and a preview only to models accepting images", () => {
+    const comment = {
+      id: "browser",
+      tabID: "tab-a",
+      url: "https://example.test/",
+      generation: 1,
+      comment: "Fix this",
+      element: { label: "button", selector: "#save", ref: "e1" },
+      preview: "data:image/jpeg;base64,AA==",
+    };
+    const delivered = attachmentPrompt("", {
+      browserComments: [comment],
+      modelInput: ["text", "image"],
+    });
+    expect(delivered.text).toContain("Fix this");
+    expect(delivered.text).toContain("browser ref @e1");
+    expect(delivered.metadata?.browserComments).toEqual([comment]);
+    expect(delivered.inlineFiles).toMatchObject([{ uri: comment.preview, mime: "image/jpeg" }]);
+    expect(
+      attachmentPrompt("", { browserComments: [comment], modelInput: ["text"] }).inlineFiles,
+    ).toEqual([]);
+  });
   it("delivers a comment-only prompt as an explicit note with structured metadata", () => {
     const comments = [
       {

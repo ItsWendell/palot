@@ -12,6 +12,80 @@ const localTitle = "Overview local collision";
 const remoteTitle = "Overview remote collision";
 const remoteName = "Overview isolated remote";
 
+async function checkNewTaskDestination(
+  page: Page,
+  localRow: Locator,
+  remoteRow: Locator,
+  localProfileID: string,
+  localName: string,
+  remoteProfileID: string,
+  sessionID: string,
+  projectDirectory: string,
+  runRoot: string,
+  visible: boolean,
+) {
+  const newTask = page.getByRole("button", { name: "New task", exact: true });
+  const main = page.getByRole("main", { name: "New task", exact: true });
+  const picker = main.getByRole("combobox", { name: "Task destination", exact: true });
+  const search = page.getByRole("combobox", { name: "Search destinations", exact: true });
+  const projectOption = (server: string) =>
+    page.getByRole("option", { name: new RegExp(server) }).filter({ hasText: projectDirectory });
+  const destination = () => {
+    const route = new URL(page.url().split("#")[1]!, "http://e2e.invalid");
+    return {
+      profileID: route.searchParams.get("profileID"),
+      projectID: route.searchParams.get("projectID"),
+    };
+  };
+  await remoteRow.click();
+  await assertOwner(page, sessionID, remoteProfileID);
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+n" : "Control+n");
+  // Browsing a remote session must not establish a remote new-task default.
+  await expect(main).toBeVisible();
+  await expect.poll(() => destination().profileID).toBe(localProfileID);
+  await expect.poll(() => destination().projectID).not.toBeNull();
+  const localProjectID = destination().projectID;
+  await expect(picker).toContainText(localName);
+  await picker.click();
+  await search.fill(projectDirectory);
+  await expect(projectOption(localName)).toBeVisible();
+  await expect(projectOption(remoteName)).toBeVisible();
+  if (visible) {
+    await page.setViewportSize({ width: 920, height: 640 });
+    await page.screenshot({
+      path: join(runRoot, "new-task-destination-picker-920x640.png"),
+      animations: "disabled",
+    });
+  }
+  await search.fill(remoteName);
+  await projectOption(remoteName).click();
+  await expect(picker).toContainText(remoteName);
+  await expect.poll(destination).toEqual({ profileID: remoteProfileID, projectID: localProjectID });
+  // Project IDs intentionally collide. Switching servers must retain the owner,
+  // not reuse the previous server's checkout or worktree selection.
+  await picker.click();
+  await search.fill(localName);
+  await projectOption(localName).click();
+  await expect.poll(destination).toEqual({ profileID: localProfileID, projectID: localProjectID });
+  await remoteRow.click();
+  await assertOwner(page, sessionID, remoteProfileID);
+  await newTask.click();
+  await expect.poll(destination).toEqual({ profileID: localProfileID, projectID: localProjectID });
+  await page.reload();
+  await expect(picker).toContainText(localName);
+  await remoteRow.click();
+  await assertOwner(page, sessionID, remoteProfileID);
+  await newTask.click();
+  await expect.poll(destination).toEqual({ profileID: localProfileID, projectID: localProjectID });
+  if (visible)
+    await page.screenshot({
+      path: join(runRoot, "new-task-local-destination-920x640.png"),
+      animations: "disabled",
+    });
+  await localRow.click();
+  await assertOwner(page, sessionID, localProfileID);
+}
+
 async function checkWarmNavigation(
   page: Page,
   localRow: Locator,
@@ -629,6 +703,18 @@ export const multiConnectionScenario: Scenario = {
         profileID,
         session.id,
         runRoot,
+      );
+      await checkNewTaskDestination(
+        page,
+        localRow,
+        remoteRow,
+        original.activeProfileID,
+        original.profiles.find((profile) => profile.id === original.activeProfileID)!.name,
+        profileID,
+        session.id,
+        projectDirectory,
+        runRoot,
+        visible,
       );
       // Restored row interactions must use the background owner even when the
       // active service has a different task with exactly the same session ID.

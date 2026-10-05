@@ -2,6 +2,8 @@ import type { PalotFileAttachment, PalotMessage, PalotSession } from "../../shar
 import type { SessionExecutionState } from "../atoms/workspace";
 import type { ComposerSubmission } from "./composer-draft";
 import { formatReviewComment, type ReviewComment } from "./review-comments";
+import { formatBrowserComment } from "./browser-comments";
+import type { PalotBrowserComment } from "../../shared/browser-contract";
 
 export interface ComposerAdmissionReceipt {
   id: string;
@@ -12,6 +14,7 @@ interface ComposerAdmissionInput {
   submission: ComposerSubmission;
   files: PalotFileAttachment[];
   comments?: Omit<ReviewComment, "id" | "side">[];
+  browserComments?: PalotBrowserComment[];
   delivery: "steer" | "queue";
   optimistic?: boolean;
   createTarget(): Promise<PalotSession | null>;
@@ -45,6 +48,7 @@ export async function admitComposerSubmission(input: ComposerAdmissionInput): Pr
     input.delivery,
     submittedAt,
     input.comments ?? [],
+    input.browserComments ?? [],
   );
   let target: PalotSession | null = null;
   let admitted = false;
@@ -81,6 +85,7 @@ function optimisticMessage(
   delivery: "steer" | "queue",
   submittedAt: number,
   comments: Omit<ReviewComment, "id" | "side">[],
+  browserComments: PalotBrowserComment[],
 ): PalotMessage {
   return {
     id: `msg_${crypto.randomUUID().replaceAll("-", "")}`,
@@ -91,7 +96,13 @@ function optimisticMessage(
     delivery,
     completedAt: submittedAt,
     text:
-      [submission.text, ...comments.map(formatReviewComment)].filter(Boolean).join("\n") || null,
+      [
+        submission.text,
+        ...comments.map(formatReviewComment),
+        ...browserComments.map(formatBrowserComment),
+      ]
+        .filter(Boolean)
+        .join("\n") || null,
     agent: null,
     model: null,
     tokens: null,

@@ -129,6 +129,8 @@ export function flushWorkbenchPersistence(): void {
 
 function scheduleSave(state: WorkbenchState): void {
   if (typeof window === "undefined") return;
+  window.addEventListener("pagehide", flushWorkbenchPersistence);
+  window.addEventListener("beforeunload", flushWorkbenchPersistence);
   pending = state;
   if (timer !== undefined) window.clearTimeout(timer);
   timer = window.setTimeout(flushWorkbenchPersistence, 150);

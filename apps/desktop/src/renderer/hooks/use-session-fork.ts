@@ -6,6 +6,8 @@ import { composerStateAtomFamily } from "../atoms/composer-state";
 import { runtimeAtom } from "../atoms/workspace";
 import { composerDraftFromMessage, composerFilesFromMessage } from "../lib/composer-restoration";
 import { composerScope } from "../lib/composer-scope";
+import { browserCommentsFromMessage } from "../lib/browser-comments";
+import { reviewCommentsFromMessage } from "../lib/review-comments";
 import { palot } from "../services/palot";
 import { usePalotNavigation } from "./use-navigation";
 import { useCacheSession } from "./use-session-catalog";
@@ -27,6 +29,8 @@ export function useSessionFork(owner?: OpenCodeRuntimeStatus | null) {
         ? {
             draft: composerDraftFromMessage(input.restore),
             files: composerFilesFromMessage(input.restore).files,
+            browserComments: browserCommentsFromMessage(input.restore),
+            comments: reviewCommentsFromMessage(input.restore) ?? [],
           }
         : null;
       const request = {
@@ -50,6 +54,8 @@ export function useSessionFork(owner?: OpenCodeRuntimeStatus | null) {
         store.set(composerStateAtomFamily(scope), (current) => ({
           ...current,
           files: restored.files,
+          browserComments: restored.browserComments,
+          comments: restored.comments,
           edit: null,
           sending: false,
           cancelingID: null,

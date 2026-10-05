@@ -3,6 +3,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NewSessionComposerOptions } from "./composer";
 import { defaultWorktreeBaseAtom, defaultWorkspaceModeAtom } from "../atoms/ui";
+import { runtimeAtom } from "../atoms/workspace";
+import { discoveredProfileIDsAtom, includedProfileIDsAtom } from "../atoms/connections";
+import type { OpenCodeRuntimeStatus } from "../../shared";
 import { NewTask } from "./new-task";
 
 const catalog = vi.hoisted(() => ({
@@ -43,6 +46,20 @@ const creation = vi.hoisted(() => ({
   result: undefined as unknown,
   error: undefined as unknown,
 }));
+
+const owner = {
+  profileID: "remote",
+  connectionID: "remote-connection",
+  connected: true,
+  phase: "connected",
+} as OpenCodeRuntimeStatus;
+function createDraftStore() {
+  const store = createStore();
+  store.set(runtimeAtom, owner);
+  store.set(discoveredProfileIDsAtom, ["remote", "local"]);
+  store.set(includedProfileIDsAtom, ["remote", "local"]);
+  return store;
+}
 
 vi.mock("../hooks/use-session-catalog", () => ({
   useProjectCatalog: () => catalog.projects,
@@ -112,7 +129,7 @@ describe("NewTask", () => {
       const created = Promise.withResolvers<Awaited<ReturnType<typeof services.createSession>>>();
       services.createSession.mockReturnValueOnce(created.promise);
       render(
-        <Provider store={createStore()}>
+        <Provider store={createDraftStore()}>
           <NewTask projectID="project-1" />
         </Provider>,
       );
@@ -121,7 +138,7 @@ describe("NewTask", () => {
         expect(services.createSession).toHaveBeenCalledExactlyOnceWith(
           "/worktrees/new",
           undefined,
-          undefined,
+          "remote-connection",
           approvalMode === "full" ? [{ action: "*", resource: "*", effect: "allow" }] : [],
         ),
       );
@@ -135,7 +152,7 @@ describe("NewTask", () => {
 
   it("leaves model and agent selection to the server for an automatic draft", async () => {
     render(
-      <Provider store={createStore()}>
+      <Provider store={createDraftStore()}>
         <NewTask projectID="project-1" />
       </Provider>,
     );
@@ -160,7 +177,7 @@ describe("NewTask", () => {
         }),
     );
     render(
-      <Provider store={createStore()}>
+      <Provider store={createDraftStore()}>
         <NewTask projectID="project-1" onSessionCreated={onSessionCreated} />
       </Provider>,
     );
@@ -194,7 +211,7 @@ describe("NewTask", () => {
     services.switchModel.mockRejectedValueOnce(new Error("Model unavailable"));
     const onSessionCreated = vi.fn();
     render(
-      <Provider store={createStore()}>
+      <Provider store={createDraftStore()}>
         <NewTask projectID="project-1" onSessionCreated={onSessionCreated} />
       </Provider>,
     );
@@ -210,7 +227,7 @@ describe("NewTask", () => {
   });
 
   it("resets workspace-specific state on mode changes without remounting the draft", () => {
-    const store = createStore();
+    const store = createDraftStore();
     store.set(defaultWorkspaceModeAtom, "current");
     render(
       <Provider store={store}>
@@ -235,7 +252,7 @@ describe("NewTask", () => {
   });
 
   it("can default new worktrees to the current branch", () => {
-    const store = createStore();
+    const store = createDraftStore();
     store.set(defaultWorktreeBaseAtom, "current");
 
     render(
@@ -249,7 +266,7 @@ describe("NewTask", () => {
 
   it("creates an untouched new worktree from the repository default branch", async () => {
     render(
-      <Provider store={createStore()}>
+      <Provider store={createDraftStore()}>
         <NewTask projectID="project-1" />
       </Provider>,
     );
@@ -257,7 +274,66 @@ describe("NewTask", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() =>
-      expect(services.createProjectCopy).toHaveBeenCalledWith("project-1", "/repo/one", "main"),
+      expect(services.createProjectCopy).toHaveBeenCalledWith(
+        "project-1",
+        "/repo/one",
+        "main",
+        "remote-connection",
+      ),
     );
+  });
+
+  it.each(["offline", "disabled"])("never executes a draft on an %s owner", async (state) => {
+    const store = createDraftStore();
+    if (state === "offline") store.set(runtimeAtom, { ...owner, connected: false });
+    else store.set(includedProfileIDsAtom, ["local"]);
+    render(
+      <Provider store={store}>
+        <NewTask profileID="remote" projectID="project-1" />
+      </Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(creation.error).toBeInstanceOf(Error));
+    expect(services.createProjectCopy).not.toHaveBeenCalled();
+    expect(services.createSession).not.toHaveBeenCalled();
+  });
+
+  it("does not use a colliding project from another focused owner", () => {
+    render(
+      <Provider store={createDraftStore()}>
+        <NewTask profileID="local" projectID="project-1" />
+      </Provider>,
+    );
+    expect(screen.queryByRole("button", { name: "Create task" })).toBeNull();
+  });
+
+  it("does not replace an explicit project while its catalog is cold", () => {
+    const onProjectChange = vi.fn();
+    render(
+      <Provider store={createDraftStore()}>
+        <NewTask projectID="not-loaded" onProjectChange={onProjectChange} />
+      </Provider>,
+    );
+    expect(onProjectChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Create task" })).toBeNull();
+  });
+
+  it("does not create a session on a new owner after a worktree completes late", async () => {
+    const store = createDraftStore();
+    const copy = Promise.withResolvers<{ directory: string }>();
+    services.createProjectCopy.mockReturnValueOnce(copy.promise);
+    render(
+      <Provider store={store}>
+        <NewTask profileID="remote" projectID="project-1" />
+      </Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(services.createProjectCopy).toHaveBeenCalled());
+    act(() =>
+      store.set(runtimeAtom, { ...owner, profileID: "local", connectionID: "local-connection" }),
+    );
+    await act(async () => copy.resolve({ directory: "/remote-created" }));
+    await waitFor(() => expect(creation.error).toBeInstanceOf(Error));
+    expect(services.createSession).not.toHaveBeenCalled();
   });
 });

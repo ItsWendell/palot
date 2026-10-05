@@ -60,7 +60,8 @@ import { useSessionRequests, useSessionFamilyRequestViews } from "../hooks/use-s
 import type { OwnedPendingRequestView } from "../lib/session-family-requests";
 import { useSessionActivityForSession } from "../hooks/use-session-activity";
 import { useRunningShells } from "../hooks/use-running-shells";
-import { ProcessFooterControl } from "./process-footer-control";
+import { RunningWorkControl } from "./running-work-control";
+import { usePalotNavigation } from "../hooks/use-navigation";
 import {
   useCacheSession,
   useProjectCatalog,
@@ -68,6 +69,7 @@ import {
   useSessionCatalogSelector,
 } from "../hooks/use-session-catalog";
 import { cn } from "../lib/cn";
+import { createMarkdownSessionOpener } from "../lib/markdown-session-links";
 import { writeClipboardText } from "../lib/clipboard";
 import { likelyCacheBusts, type LikelyCacheBust } from "../lib/cache-bust";
 import { resolveSessionProjectionPreference } from "../lib/session-projection-policy";
@@ -84,6 +86,7 @@ import {
 import { showErrorToast } from "../lib/toast-error";
 import {
   createReasoningTitle,
+  isPlainReadEntry,
   sameTurnActivityGroup,
   splitReasoningContent,
   type TranscriptBackgroundFacts,
@@ -162,7 +165,6 @@ import { ReadImagePreview } from "./read-image-preview";
 import { ReadToolExecutionGroup, StandaloneShellExecution, ToolExecution } from "./tool-execution";
 import {
   projectBackgroundWork,
-  SubagentFooterControl,
   SubagentLaunch,
   SubagentResponse,
   SubagentSessionDock,
@@ -261,12 +263,13 @@ function sameThreadSession(left: PalotSession | null, right: PalotSession | null
 }
 
 const SessionThread = memo(function SessionThread({ session }: { session: PalotSession }) {
+  const runtime = useAtomValue(runtimeAtom);
   return (
     <main
       className="palot-main-surface relative flex h-full min-h-0 flex-col bg-background"
       aria-label="Current task"
     >
-      <SessionThreadContents key={session.id} session={session} />
+      <SessionThreadContents key={`${runtime?.connectionID}:${session.id}`} session={session} />
     </main>
   );
 });
@@ -364,6 +367,18 @@ const SessionThreadContents = memo(function SessionThreadContents({
   }, [scheduleScrollToBottom, scrollToBottomNow, setBottomLock]);
   const [models, setModels] = useState<PalotModel[]>([]);
   const runtime = useAtomValue(runtimeAtom);
+  const { openSession } = usePalotNavigation();
+  const [markdownOwner] = useState(() =>
+    runtime ? { profileID: runtime.profileID, connectionID: runtime.connectionID } : null,
+  );
+  const openReferencedSession = useMemo(
+    () =>
+      createMarkdownSessionOpener(
+        markdownOwner?.connectionID === transcript.connectionID ? markdownOwner : null,
+        openSession,
+      ),
+    [markdownOwner, openSession, transcript.connectionID],
+  );
   const browserEnabled = useAtomValue(experimentalBrowserAtom);
   const webLinks = useAtomValue(browserWebLinksAtom);
   const localLinks = useAtomValue(browserLocalLinksAtom);
@@ -990,6 +1005,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
     {
       onOpenFile: openWorkspaceFile,
       onOpenWebLink: openWebLink,
+      onOpenSession: openReferencedSession,
       workspaceDirectory: session.location.directory,
     },
     <>
@@ -1607,8 +1623,15 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
           <span className="truncate">{isAdditionalCheckout ? "Worktree" : "Checkout"}</span>
         </div>
         <div className="ml-auto flex h-6 min-w-0 items-center gap-2 px-1.5 text-meta leading-none text-muted-foreground max-[560px]:ml-0">
-          <SubagentFooterControl sessionID={session.id} items={backgroundWork} />
-          <ProcessFooterControl session={session} sessionIDs={shellSessionIDs} />
+          {runtime ? (
+            <RunningWorkControl
+              session={session}
+              sessionIDs={shellSessionIDs}
+              items={backgroundWork}
+              profileID={runtime.profileID}
+              connectionID={runtime.connectionID}
+            />
+          ) : null}
           <GitBranch className="size-3 shrink-0" aria-hidden="true" />
           <span className="truncate">
             {branchQuery.isPending
@@ -1626,6 +1649,7 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
       session.id,
       session,
       shellSessionIDs,
+      runtime,
     ],
   );
 
@@ -2161,6 +2185,11 @@ export const FinalMessageMeta = memo(
       (candidate) => candidate.id === modelRef?.id && candidate.providerID === modelRef.providerID,
     );
     const modelName = model?.name ?? modelRef?.id ?? null;
+    const variant = modelRef?.variant?.trim();
+    const modelLabel =
+      modelName && variant && variant.toLowerCase() !== "default"
+        ? `${modelName} · ${variant}`
+        : modelName;
     const responseMessageID = turn.final?.message.id;
     const tokensPerSecond = turn.tokensPerSecond === null ? null : turn.tokensPerSecond.toFixed(1);
     const hasWorkDuration = turn.workCompletedAt !== null;
@@ -2217,7 +2246,7 @@ export const FinalMessageMeta = memo(
             <FileText aria-hidden="true" />
           </IconButton>
         ) : null}
-        {modelName ? <span title={modelRef?.id}>{modelName}</span> : null}
+        {modelLabel ? <span title={modelRef?.id}>{modelLabel}</span> : null}
         {tokensPerSecond !== null ? (
           <>
             {modelName ? <span aria-hidden="true">·</span> : null}
@@ -2688,6 +2717,7 @@ export function ActivityGroup({
 
 type ActivityDetailRow =
   | { id: string; kind: "reasoning"; entries: TurnPart[] }
+  | { id: string; kind: "reads"; entries: TurnPart[] }
   | { id: string; kind: "read"; path: string; entries: TurnPart[] }
   | { id: string; kind: "compaction"; entry: TurnPart }
   | { id: string; kind: "part"; entry: TurnPart };
@@ -2696,9 +2726,17 @@ function activityDetailRows(
   entries: TurnPart[],
   groupSameFileReads = false,
   showReasoningSummaries = true,
+  groupAdjacentReads = true,
 ): ActivityDetailRow[] {
   const rows: ActivityDetailRow[] = [];
-  for (const entry of entries) {
+  for (const [entryIndex, entry] of entries.entries()) {
+    if (groupAdjacentReads && isPlainReadEntry(entry)) {
+      const previous = rows.at(-1);
+      if (previous?.kind === "reads" && previous.entries.at(-1) === entries[entryIndex - 1])
+        previous.entries.push(entry);
+      else rows.push({ id: entryID(entry), kind: "reads", entries: [entry] });
+      continue;
+    }
     if (entry.part.type === "compaction") {
       rows.push({
         id: entry.part.id ?? `${entry.message.id}:compaction:${entry.index}`,
@@ -2709,7 +2747,7 @@ function activityDetailRows(
     }
     if (entry.part.type !== "reasoning") {
       const execution =
-        groupSameFileReads && isTool(entry.part)
+        groupSameFileReads && isPlainReadEntry(entry)
           ? projectToolExecution(entry.part, entry.index)
           : null;
       if (execution?.kind === "read" && execution.path !== "Unknown path") {
@@ -2757,6 +2795,7 @@ function GroupedActivityDetails({
   showReasoningSummaries = true,
   sessionID,
   groupSameFileReads = false,
+  groupAdjacentReads = true,
 }: {
   entries: TurnPart[];
   live: boolean;
@@ -2764,8 +2803,14 @@ function GroupedActivityDetails({
   showReasoningSummaries?: boolean;
   sessionID: string;
   groupSameFileReads?: boolean;
+  groupAdjacentReads?: boolean;
 }) {
-  const rows = activityDetailRows(entries, groupSameFileReads, showReasoningSummaries);
+  const rows = activityDetailRows(
+    entries,
+    groupSameFileReads,
+    showReasoningSummaries,
+    groupAdjacentReads,
+  );
   const lastEntry = entries.at(-1);
   return (
     <div className="flex flex-col gap-1">
@@ -2794,6 +2839,14 @@ function GroupedActivityDetails({
               ))}
             </div>
           )
+        ) : row.kind === "reads" ? (
+          <CompactReadGroup
+            key={row.id}
+            entries={row.entries}
+            sessionID={sessionID}
+            defaultOpen={detailsDefaultOpen}
+            groupSameFileReads={groupSameFileReads}
+          />
         ) : row.kind === "read" ? (
           <ReadToolExecutionGroup
             key={row.id}
@@ -2827,6 +2880,79 @@ function GroupedActivityDetails({
         ),
       )}
     </div>
+  );
+}
+
+function CompactReadGroup({
+  entries,
+  sessionID,
+  defaultOpen,
+  groupSameFileReads,
+}: {
+  entries: TurnPart[];
+  sessionID: string;
+  defaultOpen: boolean;
+  groupSameFileReads: boolean;
+}) {
+  const disclosure = useMemo(
+    () => activityGroupOpenAtomFamily(sessionID, `reads:${entryID(entries[0]!)}`),
+    [sessionID, entries],
+  );
+  const [persistedOpen, setOpen] = useAtom(disclosure);
+  const [animate, setAnimate] = useState(false);
+  if (entries.length === 1)
+    return (
+      <ToolExecution part={entries[0]!.part} index={entries[0]!.index} defaultOpen={defaultOpen} />
+    );
+  const count = new Set(
+    entries.map((entry) => {
+      const view = projectToolExecution(entry.part, entry.index);
+      return view.kind === "read" ? view.path : "";
+    }),
+  ).size;
+  const open = persistedOpen ?? defaultOpen;
+  if (count === 1 && groupSameFileReads) {
+    return (
+      <ReadToolExecutionGroup
+        entries={entries.map((entry) => ({ part: entry.part, index: entry.index }))}
+        defaultOpen={defaultOpen}
+      />
+    );
+  }
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={(value) => {
+        setAnimate(true);
+        setOpen(value);
+      }}
+      data-palot-read-group
+      className="my-0.5 min-w-0 text-muted-foreground"
+    >
+      <CollapsibleTrigger
+        render={<Button variant="ghost" size="sm" className={activityDisclosureTriggerClassName} />}
+      >
+        <FileText data-icon="inline-start" aria-hidden="true" />
+        <span className="min-w-0 flex-1 text-left">
+          Read {count} {count === 1 ? "file" : "files"}
+        </span>
+        {open ? (
+          <ChevronDown data-icon="inline-end" aria-hidden="true" />
+        ) : (
+          <ChevronRight data-icon="inline-end" aria-hidden="true" />
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent smooth animate={animate} className="min-w-0 pl-3">
+        <GroupedActivityDetails
+          entries={entries}
+          live={false}
+          detailsDefaultOpen={defaultOpen}
+          sessionID={sessionID}
+          groupSameFileReads={groupSameFileReads}
+          groupAdjacentReads={false}
+        />
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

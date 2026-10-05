@@ -21,6 +21,10 @@ import {
   modelPickerPreferencesAtom,
 } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
+import { workbenchStateAtom } from "../atoms/workbench";
+import { composerStateAtomFamily } from "../atoms/composer-state";
+import { composerScope } from "../lib/composer-scope";
+import { createWorkbenchState, workbenchScopeKey } from "../lib/workbench-tabs";
 import { selectionMemoriesAtom } from "../lib/selection-memory";
 import { modelProjectPreferenceKey } from "../lib/model-preferences";
 import type { OpenCodeClient } from "@opencode/client";
@@ -123,6 +127,59 @@ afterEach(() => {
 });
 
 describe("Composer discovery", () => {
+  it("launches typed /btw outside steer/queue and keeps attachments while the composer remains free", async () => {
+    const response = Promise.withResolvers<{ text: string }>();
+    const generate = vi.fn().mockReturnValue(response.promise);
+    setOpenCodeClientForTest(client({ session: { generate } }));
+    const send = vi.spyOn(palot, "sendComposerPrompt");
+    const admitted = vi.fn();
+    const store = createStore();
+    store.set(workbenchStateAtom, createWorkbenchState());
+    const state = composerStateAtomFamily(composerScope("test-profile", `session:${session.id}`));
+    const files = [
+      { uri: "attachment:keep", name: "keep.txt", mime: "text/plain" } as PalotFileAttachment,
+    ];
+    store.set(state, (current) => ({ ...current, files }));
+    renderComposer(
+      <Composer session={session} messages={[]} isWorking onMessageAdmitted={admitted} />,
+      store,
+    );
+    const input = screen.getByRole("textbox", { name: "Message Palot" });
+    fireEvent.change(input, { target: { value: "/btw Why this approach?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(generate).toHaveBeenCalledOnce();
+    expect(generate.mock.calls[0]![0]).toMatchObject({
+      sessionID: session.id,
+      prompt: expect.stringContaining("Why this approach?"),
+    });
+    expect(send).not.toHaveBeenCalled();
+    expect(admitted).not.toHaveBeenCalled();
+    expect(store.get(state).files).toBe(files);
+    expect(store.get(state).sending).toBe(false);
+    expect((input as HTMLTextAreaElement).value).toBe("");
+    const tabs =
+      store.get(workbenchStateAtom).scopes[
+        workbenchScopeKey({ profileID: "test-profile", sessionID: session.id })
+      ]?.right.tabs;
+    expect(tabs).toMatchObject([{ kind: "btw", resource: { question: "Why this approach?" } }]);
+    fireEvent.change(input, { target: { value: "Next message" } });
+    await act(async () => response.resolve({ text: "Side answer" }));
+    expect((input as HTMLTextAreaElement).value).toBe("Next message");
+  });
+
+  it("rejects an empty /btw without normal submission or clearing text", () => {
+    const generate = vi.fn();
+    setOpenCodeClientForTest(client({ session: { generate } }));
+    const send = vi.spyOn(palot, "sendComposerPrompt");
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole("textbox", { name: "Message Palot" });
+    fireEvent.change(input, { target: { value: "/btw " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText("Enter a question after /btw.")).toBeTruthy();
+    expect(generate).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect((input as HTMLTextAreaElement).value).toBe("/btw ");
+  });
   it("blocks sending during attachment selection, shows progress, and cancels without losing the draft", async () => {
     let complete!: (result: PalotFilePickerResult) => void;
     let progress!: (value: PalotAttachmentProgress) => void;
@@ -1111,7 +1168,7 @@ describe("Composer discovery", () => {
     fireEvent.mouseEnter(bravo);
     expect(bravo.getAttribute("aria-selected")).toBe("true");
 
-    await user.type(input, "b");
+    await user.type(input, "be");
 
     expect(screen.getByRole("option", { name: /\/beta/i }).getAttribute("aria-selected")).toBe(
       "true",

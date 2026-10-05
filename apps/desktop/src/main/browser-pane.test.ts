@@ -417,6 +417,29 @@ describe("browser attachment", () => {
     await pane.dispose();
   });
 
+  it("allows the element picker only on an owned focused page", async () => {
+    const { pane, win, binding, state } = await attachedPane();
+    await pane.command(win as never, binding, { type: "tabs.open" });
+    await vi.waitFor(() => expect(state().tabs).toHaveLength(1));
+    const first = state().tabs[0]!.id as never;
+    const page = mocks.page.mock.results[0]!.value;
+    page.contents.isDestroyed = () => false;
+    page.inspectElement = vi.fn(async () => undefined);
+    await pane.pageControl(win as never, binding, first, { type: "inspect", enabled: true });
+    expect(page.inspectElement).toHaveBeenCalledWith(true);
+    expect(() =>
+      pane.pageControl(window() as never, binding, first, { type: "inspect", enabled: true }),
+    ).toThrow("binding is unavailable");
+    await pane.command(win as never, binding, { type: "tabs.open" });
+    await vi.waitFor(() => expect(state().tabs).toHaveLength(2));
+    expect(() =>
+      pane.pageControl(win as never, binding, first, { type: "inspect", enabled: true }),
+    ).toThrow("Select this browser tab");
+    await pane.pageControl(win as never, binding, first, { type: "inspect", enabled: false });
+    expect(page.inspectElement).toHaveBeenLastCalledWith(false);
+    await pane.dispose();
+  });
+
   it("publishes the fallback page focus when a selected page closes", async () => {
     const { pane, win, binding, state } = await attachedPane();
     await pane.command(win as never, binding, { type: "tabs.open" });

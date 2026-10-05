@@ -75,11 +75,17 @@ export function useSessionProcesses(
   session: PalotSession,
   sessionIDs: ReadonlySet<string>,
   open: boolean,
+  target?: { profileID: string; connectionID: string },
 ) {
   const runtime = useAtomValue(runtimeAtom);
   const catalog = useSessionCatalog();
-  const connectionID = runtime?.connectionID ?? "disconnected";
-  const enabled = Boolean(runtime?.connected && connectionID !== "preview");
+  const connectionID = target?.connectionID ?? runtime?.connectionID ?? "disconnected";
+  const enabled = Boolean(
+    runtime?.connected &&
+    connectionID !== "preview" &&
+    (!target ||
+      (runtime.profileID === target.profileID && runtime.connectionID === target.connectionID)),
+  );
   const owners = useMemo(() => {
     const result = new Map<string, PalotSession>([[session.id, session]]);
     const byID = new Map(catalog.map((candidate) => [candidate.id, candidate]));
@@ -125,7 +131,7 @@ export function useSessionProcesses(
     queries: [...owners.keys()].map((sessionID) => ({
       queryKey: [...openCodeKeys.all(connectionID), "session-process-terminals", sessionID],
       queryFn: ({ signal }: { signal: AbortSignal }) =>
-        openCodeClient().experimental.persistentPty.list({ sessionID }, { signal }),
+        openCodeClient(connectionID).experimental.persistentPty.list({ sessionID }, { signal }),
       enabled: enabled && terminalsSupported,
       retry: false,
       refetchOnWindowFocus: false,
@@ -206,7 +212,7 @@ export function useSessionProcesses(
           row.id,
         ],
         queryFn: ({ signal }: { signal: AbortSignal }) =>
-          openCodeClient().shell.get(
+          openCodeClient(connectionID).shell.get(
             {
               id: row.id,
               location: { directory: row.location.directory },

@@ -2,12 +2,19 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "jotai";
 import { useCallback } from "react";
-import { newTaskProjectIDAtom, selectedSessionIDAtom, runtimeAtom } from "../atoms/workspace";
+import {
+  newTaskDestinationAtom,
+  newTaskProjectIDAtom,
+  selectedSessionIDAtom,
+  runtimeAtom,
+} from "../atoms/workspace";
 import { usageRangeAtom } from "../atoms/ui";
 import type { SettingsCategory } from "../lib/settings-navigation";
 import type { SessionRouteSearch, UsageRouteSearch } from "../lib/route-search";
 import { disabledProfileIDsAtom } from "../atoms/connections";
 import { prefetchSessionNavigation } from "../lib/session-navigation-prefetch";
+import { connectionOverview } from "../lib/connection-overview";
+import { resolveNewTaskDestination } from "../lib/new-task-destination";
 
 export function usePalotNavigation() {
   const navigate = useNavigate();
@@ -47,12 +54,28 @@ export function usePalotNavigation() {
     [router, sessionDestination, store],
   );
   const openNewTask = useCallback(
-    (projectID?: string, profileID?: string) =>
-      navigate({
+    async (projectID?: string, profileID?: string) => {
+      const overview = connectionOverview(queryClient);
+      if (
+        projectID === undefined &&
+        profileID === undefined &&
+        overview.getSnapshot().length === 0
+      ) {
+        await overview.refreshRegistry();
+      }
+      return navigate({
         to: "/new",
-        search: { projectID, profileID: profileID ?? store.get(runtimeAtom)?.profileID },
-      }),
-    [navigate, store],
+        search: resolveNewTaskDestination({
+          projectID,
+          profileID,
+          focusedProfileID: store.get(runtimeAtom)?.profileID,
+          remembered: store.get(newTaskDestinationAtom),
+          profiles: overview.getSnapshot().map((entry) => entry.profile),
+          disabledProfileIDs: store.get(disabledProfileIDsAtom),
+        }),
+      });
+    },
+    [navigate, queryClient, store],
   );
   const openSettings = useCallback(
     (category: SettingsCategory = "general", projectID?: string, replace = false) =>

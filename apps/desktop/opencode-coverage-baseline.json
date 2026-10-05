@@ -1,6 +1,6 @@
 {
-  "contractFingerprint": "decea2124ea7c7e6d8f5271aced467f66821b2142fef74df4e4d3a340a81f6d5",
-  "contractVersion": "2.0.19",
+  "contractFingerprint": "d9b15d7a34a97ede27c970ab528ca3445ac43ee12562dbfc190cfda4708716e5",
+  "contractVersion": "2.0.23",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
@@ -36,7 +36,7 @@
     },
     "form.replied": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "3f2749ea7546c5dd403e2f1f756f195eafa6523b6a5cbd1c5929fd4505b6b821"
+      "payloadFingerprint": "cd1c9320d4efdab5054d23e0a06d8b5c1836857b49ac60d91dabab6d0d989cba"
     },
     "installation.update-available": {
       "expectedProductionMention": false,
@@ -147,7 +147,7 @@
     },
     "session.compaction.failed": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "8743135a1829c5bb6e7eb8d7cd5c5f959be2b4217df30ba09fda97d567608a5a"
+      "payloadFingerprint": "e763a1cd6b6b79c4e9b7c25f737b6e4d50e2d582e964f71b52828dceec3108e6"
     },
     "session.compaction.started": {
       "expectedProductionMention": true,
@@ -163,7 +163,7 @@
     },
     "session.execution.failed": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "69b0d2d793707cb5565619a58f626787acd3d35775bb5afae9ba2288f3bc60ff"
+      "payloadFingerprint": "155394ce8b18aa01280defae3f1b02d47c7c929e2348606d2d36e91c56ffa300"
     },
     "session.execution.interrupted": {
       "expectedProductionMention": true,
@@ -239,7 +239,7 @@
     },
     "session.retry.scheduled": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "1df3f84661f9767486b1e10fba68b262ef8eb8b57d6fcabde84f33024c5164ee"
+      "payloadFingerprint": "c0683dff48bb1cb210819cc861270ef46204bccf6418b0fed72bd448463602e8"
     },
     "session.revert.cleared": {
       "expectedProductionMention": true,
@@ -275,7 +275,7 @@
     },
     "session.step.failed": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "1c9d33d0b97d158e6b8e35aa14b7642234aaf1c31fba030418e006b6c6126f8f"
+      "payloadFingerprint": "80b68650953c560bffb026494d4256b592ee7d42811eca7bbabba14c633d95aa"
     },
     "session.step.started": {
       "expectedProductionMention": true,
@@ -307,7 +307,7 @@
     },
     "session.tool.failed": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "ff343c9200d94fdc677d8743de25f46d1c1fad79eca3b4dffa9fea59c7c4e980"
+      "payloadFingerprint": "3ff3d7af12377e7a5b2c1623cc56be7d8bbd14e2491949439f18b244823f1aa6"
     },
     "session.tool.input.delta": {
       "expectedProductionMention": true,
@@ -417,6 +417,16 @@
     "credential.activate": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "credential.create": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Added in 2.0.23. Generic transport can call it, but Palot uses integration connection workflows rather than a raw credential creation UI."
+    },
+    "credential.list": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Added in 2.0.23. Returns secret credential values; Palot does not fetch this catalog into renderer state. Integration metadata supplies the current credential UI."
     },
     "credential.remove": {
       "disposition": "integrated",
@@ -793,9 +803,9 @@
       "expectedProductionReference": true
     },
     "session.generate": {
-      "disposition": "intentional-omit",
-      "expectedProductionReference": false,
-      "note": "Standalone session generation is intentionally excluded in favor of durable prompts."
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "BTW side questions use transient generation without running tools or adding transcript turns."
     },
     "session.get": {
       "disposition": "integrated",
@@ -946,6 +956,11 @@
     "vcs.get": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "vcs.init": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Added in 2.0.23. Generic transport can call it, but Palot has no repository initialization workflow. Existing VCS and worktree workflows are unchanged."
     },
     "vcs.status": {
       "disposition": "integrated",

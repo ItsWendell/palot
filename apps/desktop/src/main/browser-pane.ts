@@ -496,6 +496,9 @@ export function createBrowserPane() {
       publish: (error) => {
         if (entry.pages.get(id) === page) publishState(entry, error);
       },
+      inspect: (event) => {
+        if (entry.pages.get(id) === page) send(entry, { type: "inspect", tabID: id, ...event });
+      },
     });
     entry.pages.set(id, page);
     if (failedDuringCreate) {
@@ -1004,6 +1007,12 @@ export function createBrowserPane() {
       if (!entry.tabs.has(tabID)) throw new Error("Browser page is unavailable");
       const page = entry.pages.get(tabID);
       if (!page || page.contents.isDestroyed()) throw new Error("Browser page is not ready");
+      if (control.type === "inspect") {
+        if (control.enabled && entry.focusedTabID !== tabID)
+          throw new Error("Select this browser tab before picking an element");
+        if (control.enabled) page.focus();
+        return page.inspectElement(control.enabled);
+      }
       if (control.type === "find") {
         if (control.query)
           page.contents.findInPage(control.query, {

@@ -1,6 +1,6 @@
 # Security policy
 
-Palot 0.15.0 is pre-release software. Public packages are experimental, not
+Palot 0.16.0 is pre-release software. Public packages are experimental, not
 supported stable releases. Security fixes target the current `main` branch.
 Older commits and locally built packages may not receive fixes.
 

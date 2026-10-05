@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PalotProject, PalotSession } from "../../shared";
 import { commandPaletteOpenAtom, navigationOpenAtom } from "../atoms/ui";
+import { newTaskDestinationAtom } from "../atoms/workspace";
 import { createRendererQueryClient } from "../lib/query-client";
 import { sessionCatalogInfo, sessionInfoFromPalot } from "../lib/session-catalog-query";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
@@ -268,17 +269,26 @@ describe("GlobalCommandPalette", () => {
     );
   });
 
-  it("opens the project picker for the new-task shortcut when there is no current project", async () => {
+  it("uses the remembered destination for the new-task shortcut instead of the viewed project", async () => {
+    const { store, router } = setup("/sessions/session-1");
+    store.set(newTaskDestinationAtom, { profileID: "local-default", projectID: "another-project" });
+    fireEvent.keyDown(window, { key: "n", metaKey: true });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/new"));
+    expect(router.state.location.search).toMatchObject({
+      profileID: "local-default",
+      projectID: "another-project",
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps the explicit project chooser available in the command palette", async () => {
     const { store } = setup("/new", [
       project,
       { ...project, id: "project-2", canonical: "/other", name: "Other" },
     ]);
     store.set(commandPaletteOpenAtom, true);
     await screen.findByText("New task");
-    store.set(commandPaletteOpenAtom, false);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-
-    fireEvent.keyDown(window, { key: "n", metaKey: true });
+    await userEvent.click(screen.getByRole("option", { name: "Choose project for a new task" }));
 
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(screen.getByText("New task / Choose project")).toBeTruthy();

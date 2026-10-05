@@ -607,6 +607,7 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
             next: v.optional(v.boolean()),
           }),
           v.strictObject({ type: v.literal("find.stop") }),
+          v.strictObject({ type: v.literal("inspect"), enabled: v.boolean() }),
           v.strictObject({
             type: v.literal("zoom"),
             direction: v.union([v.literal(-1), v.literal(0), v.literal(1)]),

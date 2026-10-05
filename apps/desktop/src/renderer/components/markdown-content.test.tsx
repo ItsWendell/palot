@@ -25,6 +25,61 @@ function pinchWheelEvent(bubbles = true) {
 }
 
 describe("MarkdownContent", () => {
+  it("links complete session tokens in prose and standalone inline code without changing copy text", () => {
+    const id = "ses_0123456789abcdefghijklmnop";
+    const openSession = vi.fn();
+    const value = `Open ${id}, then \`${id}\`. **${id}**`;
+    const view = render(
+      <MarkdownWorkspaceProvider onOpenFile={vi.fn()} onOpenSession={openSession}>
+        <MarkdownContent value={value} />
+      </MarkdownWorkspaceProvider>,
+    );
+    const buttons = screen.getAllByRole("button", { name: id });
+    expect(buttons).toHaveLength(3);
+    expect(buttons[1]!.querySelector("code")?.textContent).toBe(id);
+    fireEvent.click(buttons[1]!);
+    expect(openSession).toHaveBeenCalledWith(id);
+    expect(view.container.textContent).toBe(`Open ${id}, then ${id}. ${id}`);
+  });
+
+  it("never links partial IDs, paths, snippets, fences, or existing links", () => {
+    const id = "ses_0123456789abcdefghijklmnop";
+    render(
+      <MarkdownWorkspaceProvider onOpenFile={vi.fn()} onOpenSession={vi.fn()}>
+        <MarkdownContent
+          value={`ses_123 x${id} ${id}extra dir/${id} ${id}.ts\n\n\`const id = '${id}'\`\n\n[${id}](https://example.com/${id})\n\n\`\`\`text\n${id}\n\`\`\``}
+        />
+      </MarkdownWorkspaceProvider>,
+    );
+    expect(screen.queryByRole("button", { name: id })).toBeNull();
+  });
+
+  it("waits for a token boundary during streaming and leaves unclosed inline code alone", () => {
+    const id = "ses_0123456789abcdefghijklmnop";
+    const content = (value: string) => (
+      <MarkdownWorkspaceProvider onOpenFile={vi.fn()} onOpenSession={vi.fn()}>
+        <MarkdownContent value={value} streaming />
+      </MarkdownWorkspaceProvider>
+    );
+    const view = render(content(`See ${id.slice(0, -1)}`));
+    expect(screen.queryByRole("button", { name: id })).toBeNull();
+    view.rerender(content(`See ${id}`));
+    expect(screen.queryByRole("button", { name: id })).toBeNull();
+    view.rerender(content(`See ${id}. Next`));
+    expect(screen.getByRole("button", { name: id })).toBeTruthy();
+    view.rerender(content(`See \`${id}`));
+    expect(screen.queryByRole("button", { name: id })).toBeNull();
+    view.rerender(content(`See \`${id} is still unclosed`));
+    expect(screen.queryByRole("button", { name: id })).toBeNull();
+    view.rerender(content(`See \`${id}\``));
+    expect(screen.getByRole("button", { name: id })).toBeTruthy();
+  });
+
+  it("does not invent a session destination outside a task's scoped provider", () => {
+    const id = "ses_0123456789abcdefghijklmnop";
+    render(<MarkdownContent value={`Open ${id}`} />);
+    expect(screen.queryByRole("button", { name: id })).toBeNull();
+  });
   it("renders reasoning emphasis as Markdown", () => {
     const html = renderToStaticMarkup(
       <MarkdownContent value="**Planning the story continuation**" />,

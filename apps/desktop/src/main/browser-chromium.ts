@@ -11,6 +11,7 @@ import { createProfiling } from "./browser/profiling";
 import { mouseClick } from "./browser/input";
 import type { BrowserPageSurface } from "./browser/surface";
 import type { BrowserNetwork } from "./browser/network";
+import type { PalotBrowserSelection } from "../shared/browser-contract";
 import {
   allowedDestination,
   fileURLWithin,
@@ -35,6 +36,25 @@ const retainedOperations = new Set<Browser.Method>([
   "heap.object",
   "heap.compare",
 ]);
+const pointerOperations = new Set<Browser.Method>([
+  "click",
+  "hover",
+  "drag",
+  "fill",
+  "fill_form",
+  "select",
+  "check",
+  "press",
+  "scroll",
+  "files.drop",
+]);
+const inspectHighlight: Protocol.Overlay.HighlightConfig = {
+  showInfo: true,
+  showAccessibilityInfo: true,
+  contentColor: { r: 111, g: 168, b: 220, a: 0.5 },
+  borderColor: { r: 255, g: 229, b: 153, a: 0.7 },
+};
+const inspectOff = { mode: "none", highlightConfig: inspectHighlight };
 export type BrowserPage = ReturnType<typeof createBrowserPage>;
 
 export function createBrowserPage(
@@ -52,6 +72,7 @@ export function createBrowserPage(
     closed?: () => void;
     /** Directories whose files may load as file:// documents; empty when the server is remote. */
     fileRoots?: () => ReadonlyArray<string>;
+    inspect?: (event: { active: boolean; selection?: PalotBrowserSelection }) => void;
   },
 ) {
   const policy: Policy = {
@@ -66,12 +87,22 @@ export function createBrowserPage(
   const detachNetwork = options.network?.attach(contents);
   contents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown") return;
+    if (input.key === "Escape" && inspecting) {
+      event.preventDefault();
+      void toggleInspect(false).catch(() => undefined);
+      return;
+    }
     if (input.key === "F5" && !input.meta && !input.control && !input.alt && !input.shift) {
       event.preventDefault();
       contents.reload();
       return;
     }
     if (input.alt || !(process.platform === "darwin" ? input.meta : input.control)) return;
+    if (input.shift && input.code === "KeyC") {
+      event.preventDefault();
+      void toggleInspect(!inspecting).catch(() => undefined);
+      return;
+    }
     const step =
       input.key === "=" || input.key === "+" || input.code === "NumpadAdd"
         ? 0.5
@@ -89,6 +120,10 @@ export function createBrowserPage(
   const diagnostics = createDiagnostics(cdp);
   const profiling = createProfiling(contents, cdp, files, sourceURLs);
   const refs = new Map<string, Element>();
+  const picked = new Map<string, Element>();
+  let visible = false;
+  let inspecting = false;
+  let picks = 0;
   const sessions = new Map<string, string>();
   const parents = new Map<string, string>();
   const contexts = new Map<string, { id: number; sessionID?: string }>();
@@ -106,10 +141,12 @@ export function createBrowserPage(
   cdp.on("Page.frameNavigated", ({ frame }) => {
     documents.set(frame.id, frame.url);
     revision++;
+    invalidatePickedDocument();
   });
   cdp.on("Page.frameDetached", ({ frameId }) => {
     documents.delete(frameId);
     revision++;
+    invalidatePickedDocument();
   });
   let closed = false;
   let failure: { url: string; message: string } | undefined;
@@ -146,6 +183,29 @@ export function createBrowserPage(
       options.publish();
     }
   };
+  function invalidatePickedDocument() {
+    // Frame replacement revokes the whole reference lease, including prompt drafts.
+    const hadPicked = picked.size > 0;
+    if (hadPicked) refs.clear();
+    picked.clear();
+    if (hadPicked) generation++;
+    void toggleInspect(false).catch(() => undefined);
+    publish();
+  }
+  const inspectionVisible = () =>
+    !closed &&
+    visible &&
+    !contents.isDestroyed() &&
+    !displayWindow.isDestroyed() &&
+    displayWindow.isVisible() &&
+    !displayWindow.isMinimized() &&
+    displayWindow.isFocused();
+  const cancelInspection = () => {
+    void toggleInspect(false).catch(() => undefined);
+  };
+  displayWindow.on("blur", cancelInspection);
+  displayWindow.on("hide", cancelInspection);
+  displayWindow.on("minimize", cancelInspection);
   const reset = (
     event: Electron.Event<{ url: string; isMainFrame: boolean; isSameDocument: boolean }>,
   ) => {
@@ -154,6 +214,8 @@ export function createBrowserPage(
     generation++;
     documents.clear();
     refs.clear();
+    picked.clear();
+    void toggleInspect(false).catch(() => undefined);
     diagnostics.clear();
     publish();
   };
@@ -270,6 +332,7 @@ export function createBrowserPage(
     void Promise.all([
       diagnostics.enable(sessionId),
       cdp.send("Page.enable", {}, sessionId),
+      ...(inspecting ? [armInspect(sessionId)] : []),
       cdp.send(
         "Target.setAutoAttach",
         {
@@ -283,11 +346,21 @@ export function createBrowserPage(
     ]).catch(() => undefined);
   });
   cdp.on("Target.detachedFromTarget", ({ sessionId }) => {
+    invalidatePickedDocument();
+    for (const [ref, element] of picked) {
+      if (element.sessionID === sessionId) picked.delete(ref);
+    }
     sessions.forEach((id, frameID) => {
       if (id === sessionId) {
         sessions.delete(frameID);
         parents.delete(frameID);
       }
+    });
+  });
+  cdp.on("Overlay.inspectNodeRequested", ({ backendNodeId }, sessionID) => {
+    if (!inspecting) return;
+    void inspected(backendNodeId, sessionID).catch(() => {
+      void toggleInspect(false).catch(() => undefined);
     });
   });
   cdp.on("Page.javascriptDialogOpening", (event) => {
@@ -336,12 +409,22 @@ export function createBrowserPage(
       surface.layout(bounds, background, radius);
     },
     setVisible(value: boolean) {
+      visible = value;
+      if (!value) void toggleInspect(false).catch(() => undefined);
       // DOM visibility follows the viewport, including blank/error documents.
       // Errors are shown in the browser toolbar rather than hiding a native layer.
       surface.setVisible(value);
     },
     focus() {
       surface.focus?.();
+    },
+    async inspectElement(enabled: boolean) {
+      await ready;
+      if (closed || (enabled && !visible))
+        throw new Error("Show this browser page before picking an element");
+      if (enabled && !inspectionVisible())
+        throw new Error("Focus this browser window before picking an element");
+      await toggleInspect(enabled);
     },
     async execute(command: Browser.Command, signal: AbortSignal): Promise<Browser.Result> {
       await ready;
@@ -350,6 +433,7 @@ export function createBrowserPage(
         throw new Error(
           "Browser tab was closed. Call browser.tabs.list({}) and choose an existing tabID; do not reuse the closed tab's refs.",
         );
+      if (inspecting && pointerOperations.has(command.action.type)) await toggleInspect(false);
       if (dialog && command.action.type !== "dialog")
         throw new Error(
           'A JavaScript dialog is open. Inspect it with browser.dialog({tabID,action:"get"}), then explicitly accept or dismiss it before continuing.',
@@ -413,6 +497,11 @@ export function createBrowserPage(
     async dispose() {
       if (closed) return;
       closed = true;
+      picks++;
+      displayWindow.removeListener("blur", cancelInspection);
+      displayWindow.removeListener("hide", cancelInspection);
+      displayWindow.removeListener("minimize", cancelInspection);
+      picked.clear();
       // Native views sit above renderer portals. Remove them before any profiler
       // cleanup that may wait on DevTools, or a closed tab can cover app dialogs.
       detachNetwork?.();
@@ -475,6 +564,17 @@ export function createBrowserPage(
       case "find":
         return result({ tab: state(), ...(await snapshot(action)) });
       case "evaluate": {
+        if (action.ref && action.frameID)
+          throw new Error("Pass either ref or frameID to browser.evaluate, not both");
+        if (action.ref) {
+          const element = target(action.ref);
+          const value = await call(
+            element,
+            `function() { return (${action.script}).call(this, this); }`,
+          );
+          abortError(signal);
+          return result({ tab: state(), value: value ?? null });
+        }
         const context = action.frameID ? contexts.get(action.frameID) : undefined;
         if (action.frameID && !context)
           throw new Error(
@@ -856,7 +956,8 @@ export function createBrowserPage(
   }
 
   function target(ref: Browser.Ref): Element {
-    const value = refs.get(ref.replace(/^@/, ""));
+    const key = ref.replace(/^@/, "");
+    const value = refs.get(key) ?? picked.get(key);
     if (!value)
       throw new Error(
         "Element ref is stale or belongs to another tab. Call browser.snapshot({tabID}) and use a ref from that tab's newest snapshot. Do not reuse refs after navigation or a newer snapshot.",
@@ -1113,6 +1214,9 @@ export function createBrowserPage(
         "Element is absent from this frame's accessibility snapshot. Retry browser.snapshot with the same tabID and no ref to refresh the frame, then choose a returned ref.",
       );
     refs.clear();
+    const pinned = new Map(
+      Array.from(picked, ([ref, element]) => [`${element.frameID}:${element.backendID}`, ref]),
+    );
     const lines: string[] = [];
     let truncated = false;
     const walk = async (node: Protocol.Accessibility.AXNode, level: number): Promise<void> => {
@@ -1131,11 +1235,14 @@ export function createBrowserPage(
           role !== "RootWebArea" &&
           (properties.get("focusable") ||
             /^(button|link|textbox|combobox|checkbox|radio|option)$/.test(role));
-        const ref = actionable && node.backendDOMNodeId ? `e${++nextRef}` : "";
+        const known = node.backendDOMNodeId
+          ? pinned.get(`${frameID}:${node.backendDOMNodeId}`)
+          : undefined;
+        const ref = known ?? (actionable && node.backendDOMNodeId ? `e${++nextRef}` : "");
         const element = node.backendDOMNodeId
           ? { backendID: node.backendDOMNodeId, frameID, sessionID }
           : undefined;
-        if (ref && element) refs.set(ref, element);
+        if (ref && element && !known) refs.set(ref, element);
         const flags = (["checked", "disabled", "expanded", "selected"] as const).flatMap((name) =>
           properties.has(name) ? [`${name}=${properties.get(name)}`] : [],
         );
@@ -1167,5 +1274,131 @@ export function createBrowserPage(
       content: content.slice(0, Browser.MAX_TEXT),
       truncated: truncated || content.length > Browser.MAX_TEXT,
     };
+  }
+
+  // Element-picker lifecycle follows OpenCode's MIT implementation in #52217.
+  async function armInspect(sessionID?: string) {
+    await cdp.send("DOM.enable", {}, sessionID);
+    await cdp.send("Overlay.enable", {}, sessionID);
+    if (inspecting && !closed)
+      await cdp.send(
+        "Overlay.setInspectMode",
+        { mode: "searchForNode", highlightConfig: inspectHighlight },
+        sessionID,
+      );
+  }
+
+  async function toggleInspect(enabled: boolean) {
+    const pick = ++picks;
+    inspecting = enabled && !closed && visible;
+    try {
+      await Promise.all(
+        [undefined, ...sessions.values()].map((sessionID) =>
+          enabled
+            ? armInspect(sessionID)
+            : cdp.send("Overlay.setInspectMode", inspectOff, sessionID).catch(() => undefined),
+        ),
+      );
+    } catch (error) {
+      if (pick === picks) {
+        inspecting = false;
+        options.inspect?.({ active: false });
+      }
+      throw error;
+    }
+    if (pick === picks) options.inspect?.({ active: inspecting });
+  }
+
+  async function frameOf(backendID: number, sessionID?: string) {
+    const tree = await frames();
+    const owned = tree.filter((frame) => sessionFor(frame.id, tree) === sessionID);
+    const root = owned.find(
+      (frame) => !frame.parentID || sessionFor(frame.parentID, tree) !== sessionID,
+    );
+    if (!root) throw new Error("Selected element's frame is unavailable");
+    // Chromium's DOM tree is authoritative. Page-controlled ownerDocument
+    // getters must never decide the origin used for operation permissions.
+    const document = await cdp.send("DOM.getDocument", { depth: -1, pierce: true }, sessionID);
+    const pending = [{ node: document.root, frameID: root.id }];
+    while (pending.length) {
+      const entry = pending.pop()!;
+      if (entry.node.backendNodeId === backendID) return entry.frameID;
+      for (const node of [...(entry.node.children ?? []), ...(entry.node.shadowRoots ?? [])])
+        pending.push({ node, frameID: entry.frameID });
+      if (entry.node.contentDocument) {
+        const frameID = entry.node.frameId;
+        if (!frameID || !owned.some((frame) => frame.id === frameID))
+          throw new Error("Selected element's frame is unavailable");
+        pending.push({ node: entry.node.contentDocument, frameID });
+      }
+    }
+    throw new Error("Selected element is no longer available");
+  }
+
+  async function inspected(backendID: number, sessionID?: string) {
+    if (!inspectionVisible()) return;
+    inspecting = false;
+    const pick = ++picks;
+    const navigation = generation;
+    await Promise.all(
+      [undefined, ...sessions.values()].map((id) =>
+        cdp.send("Overlay.setInspectMode", inspectOff, id).catch(() => undefined),
+      ),
+    );
+    const element = { backendID, frameID: await frameOf(backendID, sessionID), sessionID };
+    const details = Schema.decodeUnknownSync(
+      Schema.Struct({ label: Schema.String, selector: Schema.String, text: Schema.String }),
+    )(
+      await call(
+        element,
+        `function() {
+        const segments = [];
+        for (let start = this; start; ) {
+          const root = start.getRootNode(); const path = [];
+          for (let node = start; node; node = node.parentElement) {
+            if (node.id && root.querySelectorAll('#' + CSS.escape(node.id)).length === 1) { path.unshift('#' + CSS.escape(node.id)); break; }
+            const same = Array.from(node.parentNode?.children ?? []).filter(child => child.localName === node.localName);
+            path.unshift(CSS.escape(node.localName) + (same.length > 1 ? ':nth-of-type(' + (same.indexOf(node) + 1) + ')' : ''));
+          }
+          segments.unshift(path.join(' > ')); start = root instanceof ShadowRoot ? root.host : undefined;
+        }
+        const selector = segments.join(' >>> ');
+        return {label: (this.localName + (this.id ? '#' + this.id : '')).slice(0,200), selector: selector.length <= 2000 ? selector : '', text: (this.innerText ?? this.textContent ?? '').replace(/\\s+/g,' ').trim().slice(0,160)};
+      }`,
+      ),
+    );
+    const ax = await cdp
+      .send(
+        "Accessibility.getPartialAXTree",
+        { backendNodeId: backendID, fetchRelatives: false },
+        sessionID,
+      )
+      .catch(() => undefined);
+    const node = ax?.nodes.find((node) => node.backendDOMNodeId === backendID && !node.ignored);
+    if (!inspectionVisible() || pick !== picks || navigation !== generation) return;
+    const image = await contents.capturePage().catch(() => undefined);
+    const bytes = image && !image.isEmpty() ? image.resize({ width: 640 }).toJPEG(75) : undefined;
+    if (!inspectionVisible() || pick !== picks || navigation !== generation) return;
+    const ref = `e${++nextRef}`;
+    picked.set(ref, element);
+    if (picked.size > 100) picked.delete(picked.keys().next().value!);
+    if (!win.isDestroyed() && win.isFocused()) win.webContents.focus();
+    options.inspect?.({
+      active: false,
+      selection: {
+        tabID: options.id,
+        url: state().url,
+        generation,
+        element: {
+          ...details,
+          ref,
+          ...(node?.role?.value ? { role: String(node.role.value).slice(0, 128) } : {}),
+          ...(node?.name?.value ? { name: String(node.name.value).slice(0, 160) } : {}),
+        },
+        ...(bytes && Math.ceil(bytes.length / 3) * 4 + "data:image/jpeg;base64,".length <= 262144
+          ? { preview: `data:image/jpeg;base64,${bytes.toString("base64")}` }
+          : {}),
+      },
+    });
   }
 }

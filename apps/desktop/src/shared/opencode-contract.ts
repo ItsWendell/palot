@@ -7,6 +7,7 @@
 import type { OpenCodeReleaseChannel, OpenCodeReleaseStatus } from "./opencode-release-contract";
 import type {
   PalotBrowserEvent,
+  PalotBrowserComment,
   PalotBrowserLayout,
   PalotBrowserPageControl,
   PalotBrowserRegistration,
@@ -896,6 +897,7 @@ export interface PromptInput {
   sessionID: string;
   id?: string;
   text: string;
+  browserComments?: PalotBrowserComment[];
   comments?: {
     path: string;
     comment: string;
