@@ -67,7 +67,7 @@ opencode.ai in **OpenCode release settings**. Starting or restarting the shared
 service is a separate confirmation. See [runtime management](opencode-runtime.md).
 
 Palot 0.16.0 requires stable OpenCode **2.0.7 or later in the 2.x series** and uses
-the **2.0.23** client and exact isolated release-smoke runtime. Earlier stable
+the **2.0.24** client and exact isolated release-smoke runtime. Earlier stable
 services are refused; V2 betas require explicit consent. Update an older service
 separately before connecting. Updating Palot does not upgrade or restart OpenCode.
 See [compatibility](opencode-runtime.md#compatibility) for configuration changes

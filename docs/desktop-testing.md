@@ -133,7 +133,7 @@ bun run test:e2e -- usage --keep
 ### Browser scenarios
 
 `browser-native` enables Experimental Browser in an isolated Palot profile, attaches the real
-OpenCode 2.0.23 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
+OpenCode 2.0.24 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
 It checks the returned snapshot, Lighthouse category scores and JSON/HTML reports, the session
 workbench address bar, rejection of an out-of-root `file://` URL, and tab-URL restoration after
 detach/reattach when the setting changes. Use `--executable` to exercise the packaged Lighthouse

@@ -22,7 +22,7 @@ explicitly signed with a local certificate.
 
 Palot 0.16.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
-release-smoke runtime are pinned to **2.0.23** for repeatable checks. Stable
+release-smoke runtime are pinned to **2.0.24** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
 tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
 versions require explicit consent; V1, unknown majors and malformed versions are
@@ -94,6 +94,14 @@ The published 2.0.23 contract adds credential listing/creation and VCS initializ
 optional connection authentication status and a form cancellation message, a server
 persistent-PTY capability hint, and provider timeout options. Existing Palot workflows
 do not need to adopt these additions, and the connection minimum remains 2.0.7.
+
+The published 2.0.24 protocol, schema and browser plugin are unchanged from 2.0.23,
+apart from package version and dependency pins. Generated client API and event
+declarations are unchanged. The client shares its service health probe and startup
+attempt bookkeeping, and adds Solid data helpers that Palot does not use. Existing
+service lifecycle signatures remain compatible; no API migration or higher
+connection minimum is needed. Provider and shell-scanner fixes require updating the
+running service separately.
 
 ## Experimental browser
 

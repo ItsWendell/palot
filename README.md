@@ -141,7 +141,7 @@ bun run dev:focus
 
 Source builds require Bun `1.4.2`, Node.js `24` or later, and Vite+. Stable OpenCode
 **2.x starting at 2.0.7** is supported as an external service; the client and
-release-smoke runtime are pinned to **2.0.23**. V2 betas require explicit consent.
+release-smoke runtime are pinned to **2.0.24**. V2 betas require explicit consent.
 See [runtime compatibility](docs/opencode-runtime.md#compatibility) before upgrading.
 `bun run dev` starts hidden; `bun run dev:visible` shows the window without taking
 focus. Windows is not a qualified installation target.

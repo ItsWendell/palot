@@ -7,6 +7,11 @@ operations.
 
 ## Unreleased
 
+### Changed
+
+- Pinned OpenCode dependencies and the release-smoke runtime to 2.0.24. The
+  supported stable connection minimum remains 2.0.7.
+
 ## 0.16.0
 
 This remains an experimental pre-release, not a supported stable release.
