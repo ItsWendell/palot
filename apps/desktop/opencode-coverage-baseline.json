@@ -1,6 +1,6 @@
 {
   "contractFingerprint": "d9b15d7a34a97ede27c970ab528ca3445ac43ee12562dbfc190cfda4708716e5",
-  "contractVersion": "2.0.23",
+  "contractVersion": "2.0.24",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,

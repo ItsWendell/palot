@@ -23,7 +23,7 @@ vi.mock("../services/palot", () => ({
 
 const initial: OpenCodeReleaseStatus = {
   channel: "stable",
-  bundledVersion: "2.0.23",
+  bundledVersion: "2.0.24",
   preparedVersion: null,
   checkedAt: null,
   offer: null,
@@ -71,7 +71,7 @@ describe("OpenCodeReleaseSettings", () => {
       checkedAt: 1000,
       offer: {
         channel: "stable",
-        version: "2.0.23",
+        version: "2.0.24",
         tested: true,
         requiresConfirmation: false,
         size: 1024,
@@ -81,7 +81,7 @@ describe("OpenCodeReleaseSettings", () => {
     vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue(available);
     vi.mocked(palot.prepareOpenCodeRelease).mockResolvedValue({
       ...available,
-      preparedVersion: "2.0.23",
+      preparedVersion: "2.0.24",
     });
     vi.mocked(palot.resetOpenCodeRelease).mockResolvedValue(external);
     render(<OpenCodeReleaseSettings />);
@@ -90,9 +90,9 @@ describe("OpenCodeReleaseSettings", () => {
     expect(palot.checkOpenCodeRelease).not.toHaveBeenCalled();
     expect(palot.prepareOpenCodeRelease).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Check for release" }));
-    await user.click(await screen.findByRole("button", { name: "Download Palot fallback 2.0.23" }));
-    expect(await screen.findByText("2.0.23 (downloaded)")).toBeTruthy();
-    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.23" });
+    await user.click(await screen.findByRole("button", { name: "Download Palot fallback 2.0.24" }));
+    expect(await screen.findByText("2.0.24 (downloaded)")).toBeTruthy();
+    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.24" });
     await user.click(screen.getByRole("button", { name: "Reset prepared runtime" }));
     expect(await screen.findByText("Not downloaded")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Reset to bundled/ })).toBeNull();
@@ -103,19 +103,19 @@ describe("OpenCodeReleaseSettings", () => {
     vi.mocked(palot.openCodeReleaseStatus).mockResolvedValue({
       ...initial,
       channel: "beta",
-      preparedVersion: "2.0.23",
+      preparedVersion: "2.0.24",
     });
     vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue({
       ...initial,
       channel: "beta",
-      preparedVersion: "2.0.23",
+      preparedVersion: "2.0.24",
       checkedAt: 1000,
       offer: null,
     });
     render(<OpenCodeReleaseSettings />);
     await user.click(await screen.findByRole("button", { name: "Check for release" }));
     expect(await screen.findByText(/No compatible Beta available/)).toBeTruthy();
-    expect(screen.getByText("2.0.23 (downloaded)")).toBeTruthy();
+    expect(screen.getByText("2.0.24 (downloaded)")).toBeTruthy();
     expect(screen.getByText(/Last checked:/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Download Palot fallback/ })).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
@@ -159,7 +159,7 @@ describe("OpenCodeReleaseSettings", () => {
     );
     expect(await screen.findByRole("combobox", { name: "Preferred channel" })).toBeTruthy();
     expect(screen.getByText("2.0.0-beta.19507")).toBeTruthy();
-    expect(screen.getByText("2.0.23 (bundled)")).toBeTruthy();
+    expect(screen.getByText("2.0.24 (bundled)")).toBeTruthy();
     expect(palot.openCodeReleaseStatus).toHaveBeenCalledOnce();
     expect(palot.checkOpenCodeRelease).not.toHaveBeenCalled();
     expect(palot.prepareOpenCodeRelease).not.toHaveBeenCalled();
@@ -305,17 +305,17 @@ describe("OpenCodeReleaseSettings", () => {
     const user = userEvent.setup();
     vi.mocked(palot.checkOpenCodeRelease).mockResolvedValue({
       ...offered,
-      offer: { ...offered.offer!, version: "2.0.23", tested: true, requiresConfirmation: false },
+      offer: { ...offered.offer!, version: "2.0.24", tested: true, requiresConfirmation: false },
     });
     render(<OpenCodeReleaseSettings />);
     await user.click(await screen.findByRole("button", { name: "Check for release" }));
-    await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.0.23" }));
-    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.23" });
+    await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.0.24" }));
+    expect(palot.prepareOpenCodeRelease).toHaveBeenCalledExactlyOnceWith({ version: "2.0.24" });
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Reset to bundled 2.0.23" }));
+    await user.click(screen.getByRole("button", { name: "Reset to bundled 2.0.24" }));
     expect(palot.resetOpenCodeRelease).toHaveBeenCalledOnce();
-    expect(screen.getByText("2.0.23 (bundled)")).toBeTruthy();
-    expect(screen.getByText(/Bundled OpenCode 2.0.23 is the Palot fallback again/)).toBeTruthy();
+    expect(screen.getByText("2.0.24 (bundled)")).toBeTruthy();
+    expect(screen.getByText(/Bundled OpenCode 2.0.24 is the Palot fallback again/)).toBeTruthy();
   });
 
   it("preserves the selected runtime on offline errors and retries only when asked", async () => {
@@ -356,7 +356,7 @@ describe("OpenCodeReleaseSettings", () => {
     await user.click(await screen.findByRole("button", { name: "Check for release" }));
     await user.click(screen.getByRole("button", { name: "Download Palot fallback 2.1.0-beta.1" }));
     await user.click(screen.getByRole("button", { name: "Continue and prepare" }));
-    expect(screen.getByText("2.0.23 (bundled)")).toBeTruthy();
+    expect(screen.getByText("2.0.24 (bundled)")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Retry release action" }));
     expect(screen.getByRole("alertdialog")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -382,7 +382,7 @@ describe("OpenCodeReleaseSettings", () => {
       (screen.getByRole("combobox", { name: "Preferred channel" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(
-      (screen.getByRole("button", { name: "Reset to bundled 2.0.23" }) as HTMLButtonElement)
+      (screen.getByRole("button", { name: "Reset to bundled 2.0.24" }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
     await act(async () => resolve(offered));
