@@ -99,6 +99,90 @@
   },
   {
     "repository": "anomalyco/opencode",
+    "commit": "5e73d5cb1f788637b1b3d5cf1298ea694cbad0c5",
+    "release": "Official latest CLI and desktop feeds identify version 2.0.26, publish input github.sha, and GitHub publish run 37829762115 (run_number 20759). Source manifests are rewritten by script/publish.ts; npm archive integrity and published manifest hashes were independently verified.",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "opencode.LICENSE.txt",
+        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@opencode/ai",
+        "version": "2.0.26",
+        "license": "MIT",
+        "sourceManifest": "packages/ai/package.json",
+        "sourceManifestSha256": "96426f6b821842c13745a8f2c8bc6bf372227d9fa8098292fcf40c2248b8b4b4",
+        "archive": "https://registry.npmjs.org/@opencode/ai/-/ai-2.0.26.tgz",
+        "integrity": "sha512-CB+k3Ed6mtat2Or/6YZiXSPrI8q02NfECEKKO9HNeYLKFG3UrbIxrhnaRLbA9YMQp9mKOA1qWIWXJDnkxdVjMQ==",
+        "manifestSha256": "379c0b17dd5388a53acbe49aca60b7d1e41018ec4aa7ec241b6f85350efd2839"
+      },
+      {
+        "name": "@opencode/client",
+        "version": "2.0.26",
+        "license": "MIT",
+        "sourceManifest": "packages/client/package.json",
+        "sourceManifestSha256": "a12be0c87d750aa513d8ca5db9d2848415150e31f5bb282f86854b3ffd63e556",
+        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.0.26.tgz",
+        "integrity": "sha512-0uqhXq6DJYjas3mc4roTyWAmhJpyO2gJaMcenoiA22RXJSOSIwPFho5K4qGmYDJGd5Fvvswh++Nr/wfjaHAYyg==",
+        "manifestSha256": "fbbd63ad8994eeea4c5f164dda7a8c5e3af82e50c66d0ecf964644e1354eaebf"
+      },
+      {
+        "name": "@opencode/plugin",
+        "version": "2.0.26",
+        "license": "MIT",
+        "sourceManifest": "packages/plugin/package.json",
+        "sourceManifestSha256": "6231f03529df2852b5000f25e49afb3ebcc0ac34191ec5fe76fe2d4528bc8606",
+        "archive": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.0.26.tgz",
+        "integrity": "sha512-8fu/WokR5hxGjclLQJKL0PAgsMEfh81MHnUBsJuhcnYUiTJ2ZQPLqSYAhzoYEQu/Vj4M65D3Xx7QS0Q9b9Z4fw==",
+        "manifestSha256": "7385491f565440784c4e49bc9dbabce7387715223a9e172a49ff34802fd0414b"
+      },
+      {
+        "name": "@opencode/plugin-browser",
+        "version": "2.0.26",
+        "license": "MIT",
+        "sourceManifest": "packages/plugin-browser/package.json",
+        "sourceManifestSha256": "43829a2f6a14dce1a4e748538c2528b1925fac1dc214d381f997894ac22dc007",
+        "archive": "https://registry.npmjs.org/@opencode/plugin-browser/-/plugin-browser-2.0.26.tgz",
+        "integrity": "sha512-qVT09O4jgvGclo8eou+llFTENGiHydBM8Ducv6il5SJW+usRy4fmpFN2grEzv0wemXAvVC+ZpQtMINquOGMDRw==",
+        "manifestSha256": "265008246b3475055d1672645f6cab82469de53b1f54cc6425b4e692ad2eb1fb"
+      },
+      {
+        "name": "@opencode/protocol",
+        "version": "2.0.26",
+        "license": "MIT",
+        "sourceManifest": "packages/protocol/package.json",
+        "sourceManifestSha256": "09f66b5a8505514f9bef293116052463d24f1099e7fb04eba9b4a097e521c32b",
+        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.0.26.tgz",
+        "integrity": "sha512-Q+kbu0zTneh0RC4jhiuB19WeP8et9dWXGJVjb5EbUdJ8E1j5Eh0lAyqLXlM2tzTxfMfK3gos9ss6mxMVsvDFIg==",
+        "manifestSha256": "9e8b7fd6ed6b3336717c70908c927e0848e7bf77d0bc32d2a4ce667a4c1507af"
+      },
+      {
+        "name": "@opencode/schema",
+        "version": "2.0.26",
+        "license": "MIT",
+        "sourceManifest": "packages/schema/package.json",
+        "sourceManifestSha256": "7341b3ee406ab24b8e0f8718e371faa5785fb2b157465bc6655c704009d42aa2",
+        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.0.26.tgz",
+        "integrity": "sha512-DZ09xXCTkTI3Y9VzuQHsm5AMGh67EqkUM13lC0LGKvD12RAYaVmRX5lDv5AnD3OkmUmPPWLYWjicT18CDloy6Q==",
+        "manifestSha256": "947ab3d2f7a1ba8e4c38fee71f23372745e69009e5c6122a0bb5e1d57049a306"
+      },
+      {
+        "name": "@opencode/util",
+        "version": "2.0.26",
+        "license": "MIT",
+        "sourceManifest": "packages/util/package.json",
+        "sourceManifestSha256": "fd4bf4c83a4bc0dafc6eee8ad184ecb6ae88a277a80709a489702b933a30a844",
+        "archive": "https://registry.npmjs.org/@opencode/util/-/util-2.0.26.tgz",
+        "integrity": "sha512-RebqfdFEEby7IFA7agajYvCpeW4VoaPkKu/ZMhBXsEYRnpz2NMyoI7zapFvvDJdYl4B0/kPnmt5vUVuqRWm0lQ==",
+        "manifestSha256": "364f05afba51607d8ab74a3b44c1ac0cd4a144d3421ec62bacc89bd1a2effeda"
+      }
+    ]
+  },
+  {
+    "repository": "anomalyco/opencode",
     "commit": "32a67d2d0aae927d5cab5a471b43192cbff1199f",
     "release": "Official latest CLI feed identifies version 2.0.24, publish input github.sha, and GitHub publish run 37405043614 (run_number 20622). Source manifests are rewritten by script/publish.ts; npm archive integrity and published manifest hashes were independently verified.",
     "files": [
@@ -519,8 +603,8 @@
   },
   {
     "repository": "puppeteer/puppeteer",
-    "commit": "21efe834b7094d53a1c0d633dc69deced17702d8",
-    "release": "puppeteer-v25.9.0 tag; npm puppeteer-core@25.9.0 gitHead matches this commit.",
+    "commit": "6e95cc563dc57ad5535efb0067425065294c2ba6",
+    "release": "npm puppeteer-core@25.13.0 gitHead matches this commit; source manifest declares the same package version.",
     "files": [
       {
         "source": "LICENSE",
@@ -531,14 +615,14 @@
     "packages": [
       {
         "name": "puppeteer-core",
-        "version": "25.9.0",
+        "version": "25.13.0",
         "license": "Apache-2.0",
         "sourceManifest": "packages/puppeteer-core/package.json",
-        "sourceManifestSha256": "867567bb79f26556bc905652d51fc27509f4179b640f86b97bd82af6f298d4cf",
-        "archive": "https://registry.npmjs.org/puppeteer-core/-/puppeteer-core-25.9.0.tgz",
-        "integrity": "sha512-U61rCwSMha62CA/Opy6tCx2Fx+ck7ouiKnbpEApzSoLYMoEu9F71nuFpHL55vmIt33/GYm6eKZVhH2ev0nAIeg==",
-        "manifestSha256": "867567bb79f26556bc905652d51fc27509f4179b640f86b97bd82af6f298d4cf",
-        "packagedManifestSha256": "26dd25473f455d979aa6f1852cce9808b5a45a245385f90c05c1e095e1b1f2c9"
+        "sourceManifestSha256": "ec328f5aa9eebec0013911d5b07d5e81f93355e87aa065ce0eca2166feb032b4",
+        "archive": "https://registry.npmjs.org/puppeteer-core/-/puppeteer-core-25.13.0.tgz",
+        "integrity": "sha512-cyBS0OEx3e9NS53B5F6+UazXtR7f9Tw0cR1/FbPW59/hV6JPZbkIiMnxK2543IkFp3rsGlLn1iPDLF77TJsJsA==",
+        "manifestSha256": "ec328f5aa9eebec0013911d5b07d5e81f93355e87aa065ce0eca2166feb032b4",
+        "packagedManifestSha256": "a55d49c29639a7aa25e24d87a6aab1f0931c28636510775784564ad70cb16d86"
       }
     ]
   },
@@ -619,8 +703,8 @@
   },
   {
     "repository": "puppeteer/puppeteer",
-    "commit": "8a95741d498c183c1a0d80a61bad7ecda12755f2",
-    "release": "npm @puppeteer/browsers@3.2.1 gitHead identifies this source commit; source manifest declares the same package version.",
+    "commit": "6e95cc563dc57ad5535efb0067425065294c2ba6",
+    "release": "npm @puppeteer/browsers@3.2.4 gitHead identifies this source commit; source manifest declares the same package version.",
     "files": [
       {
         "source": "LICENSE",
@@ -631,14 +715,14 @@
     "packages": [
       {
         "name": "@puppeteer/browsers",
-        "version": "3.2.1",
+        "version": "3.2.4",
         "license": "Apache-2.0",
         "sourceManifest": "packages/browsers/package.json",
-        "sourceManifestSha256": "5603027223258fe9bde1011c5eb6fa51a4725de217d0504a363b48f0938169e4",
-        "archive": "https://registry.npmjs.org/@puppeteer/browsers/-/browsers-3.2.1.tgz",
-        "integrity": "sha512-KDz+3qDRdBAlRlMjmKyj6dEs33YHTk/xRHEENSXq6TNnhgoU15ruSHtEBeVF6OZ9tBDY55Se4P0nFMNsipzU9A==",
-        "manifestSha256": "5603027223258fe9bde1011c5eb6fa51a4725de217d0504a363b48f0938169e4",
-        "packagedManifestSha256": "d388e31f2ab10e099a82f462554023d2d3f45d58c6464d0e7d5134b4f29203d7"
+        "sourceManifestSha256": "abc9613add2f3aeabc4c213134a5b768ebda7e1a9e1434b9056c1c9b77b787e3",
+        "archive": "https://registry.npmjs.org/@puppeteer/browsers/-/browsers-3.2.4.tgz",
+        "integrity": "sha512-okJ6yQMc0SBexOKxMi966omwAV1uAPwgF/YMZdb04gZQPXVjWHl9bmXjZYtIcsN1+PN3Bz4iFfGK3g+c6lZJ0Q==",
+        "manifestSha256": "abc9613add2f3aeabc4c213134a5b768ebda7e1a9e1434b9056c1c9b77b787e3",
+        "packagedManifestSha256": "e961b83752710d3dbf667da2c11b1433bb88712df5524e386f28b11becbef8a1"
       }
     ]
   },

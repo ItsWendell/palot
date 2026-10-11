@@ -1,3 +1,5 @@
+import { configure } from "@testing-library/react";
+
 // Happy DOM 20.14.5 rejects Animation.finished on cancel without marking it
 // handled. WAAPI requires both; Chromium marks this promise handled internally.
 // Keep the original rejected promise observable to callers, not a resolved replacement.
@@ -10,3 +12,7 @@ if (typeof window !== "undefined" && window.navigator.userAgent.includes("HappyD
     return cancelAnimation.call(this);
   };
 }
+
+// The full desktop suite runs hundreds of files in parallel; under that load an async UI update
+// can take longer than Testing Library's 1 s default. A longer ceiling only slows failing tests.
+configure({ asyncUtilTimeout: 4000 });

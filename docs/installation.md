@@ -67,7 +67,7 @@ opencode.ai in **OpenCode release settings**. Starting or restarting the shared
 service is a separate confirmation. See [runtime management](opencode-runtime.md).
 
 Palot 0.16.0 requires stable OpenCode **2.0.7 or later in the 2.x series** and uses
-the **2.0.24** client and exact isolated release-smoke runtime. Earlier stable
+the **2.0.26** client and exact isolated release-smoke runtime. Earlier stable
 services are refused; V2 betas require explicit consent. Update an older service
 separately before connecting. Updating Palot does not upgrade or restart OpenCode.
 See [compatibility](opencode-runtime.md#compatibility) for configuration changes
@@ -187,7 +187,7 @@ Apple Developer membership is not needed for development or local self-signing.
 
 ## 2. Clone and bootstrap the toolchain
 
-Use a Bash or Zsh terminal. The current pins are Bun `1.4.2` and Vite+ `0.3.1`;
+Use a Bash or Zsh terminal. The current pins are Bun `1.4.3` and Vite+ `1.1.0`;
 Node.js must be `24` or later. The root [`package.json`](../package.json) is the
 source of truth if these change.
 
@@ -195,8 +195,8 @@ source of truth if these change.
 git clone https://github.com/ItsWendell/palot.git
 cd palot
 
-curl -fsSL https://bun.com/install | bash -s "bun-v1.4.2"
-curl -fsSL https://vite.plus | VP_VERSION=0.3.1 bash
+curl -fsSL https://bun.com/install | bash -s "bun-v1.4.3"
+curl -fsSL https://vite.plus | VP_VERSION=1.1.0 bash
 ```
 
 These are the official [Bun](https://bun.com/docs/installation) and

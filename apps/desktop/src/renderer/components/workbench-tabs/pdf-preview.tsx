@@ -42,7 +42,6 @@ export default function PdfPreview({ data, path }: { data: Uint8Array; path: str
     try {
       task = getDocument({
         data: new Uint8Array(data),
-        isEvalSupported: false,
         enableXfa: false,
         maxImageSize: MAX_RENDER_PIXELS,
       });

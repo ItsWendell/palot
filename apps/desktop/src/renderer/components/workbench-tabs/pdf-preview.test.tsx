@@ -51,12 +51,11 @@ describe("PDF canvas preview", () => {
     const view = render(<PdfPreview data={data} path="report.pdf" />);
     expect(await screen.findByRole("img", { name: "PDF page 1 of report.pdf" })).toBeTruthy();
     expect(screen.getByText(/Page 1 of 200 \(first 200 of 300\)/)).toBeTruthy();
-    expect(fixture.getPage).toHaveBeenCalledWith(1);
+    // Page loads follow the placeholder by a tick; wait rather than race it under load.
+    await waitFor(() => expect(fixture.getPage).toHaveBeenCalledWith(1));
     expect(fixture.getPage).toHaveBeenCalledTimes(1);
-    expect(mocks.getDocument.mock.lastCall?.[0]).toMatchObject({
-      isEvalSupported: false,
-      enableXfa: false,
-    });
+    // pdfjs-dist 6 has no eval path, so only XFA needs disabling explicitly.
+    expect(mocks.getDocument.mock.lastCall?.[0]).toMatchObject({ enableXfa: false });
     expect(mocks.getDocument.mock.lastCall?.[0].data).not.toBe(data);
     expect(data).toEqual(bytes("%PDF-1.7"));
     expect(mocks.workerOptions.workerSrc).toContain("pdf.worker.min.mjs");
@@ -64,7 +63,7 @@ describe("PDF canvas preview", () => {
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Next page" }));
     await screen.findByRole("img", { name: "PDF page 2 of report.pdf" });
-    expect(fixture.getPage).toHaveBeenCalledWith(2);
+    await waitFor(() => expect(fixture.getPage).toHaveBeenCalledWith(2));
     await userEvent.setup().click(screen.getByRole("button", { name: "Zoom in" }));
     await screen.findByText("125%");
     await waitFor(() => expect(fixture.renderPage).toHaveBeenCalledTimes(3));
@@ -89,6 +88,8 @@ describe("PDF canvas preview", () => {
     resolveFirst?.({ numPages: 99, getPage: vi.fn() });
     expect(await screen.findByRole("img", { name: "PDF page 1 of report.pdf" })).toBeTruthy();
     expect(screen.getByText("Page 1 of 2")).toBeTruthy();
+    // The page render starts after the image placeholder mounts; unmount must cancel it.
+    await waitFor(() => expect(next.renderPage).toHaveBeenCalledOnce());
     view.unmount();
     expect(next.destroy).toHaveBeenCalledOnce();
     expect(next.cancel).toHaveBeenCalledOnce();

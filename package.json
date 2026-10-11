@@ -70,23 +70,23 @@
     "clean": "vp run --filter @palot/desktop clean"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.82.0",
-    "vite-plus": "0.3.1"
+    "@oxlint/plugins": "1.87.0",
+    "vite-plus": "1.1.0"
   },
   "overrides": {
-    "@shikijs/core": "4.4.3",
-    "@shikijs/themes": "4.4.3",
-    "@shikijs/transformers": "4.4.3",
-    "@shikijs/types": "4.4.3",
-    "katex": "0.18.7",
-    "shiki": "4.4.3",
-    "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1"
+    "@shikijs/core": "4.5.0",
+    "@shikijs/themes": "4.5.0",
+    "@shikijs/transformers": "4.5.0",
+    "@shikijs/types": "4.5.0",
+    "katex": "0.19.0",
+    "shiki": "4.5.0",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.1.0"
   },
   "engines": {
-    "bun": "1.4.2",
+    "bun": "1.4.3",
     "node": ">=24.0.0"
   },
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.3",
   "trustedDependencies": [
     "electron",
     "electron-builder",

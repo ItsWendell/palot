@@ -22,7 +22,7 @@ explicitly signed with a local certificate.
 
 Palot 0.16.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
-release-smoke runtime are pinned to **2.0.24** for repeatable checks. Stable
+release-smoke runtime are pinned to **2.0.26** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
 tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
 versions require explicit consent; V1, unknown majors and malformed versions are
@@ -102,6 +102,44 @@ attempt bookkeeping, and adds Solid data helpers that Palot does not use. Existi
 service lifecycle signatures remain compatible; no API migration or higher
 connection minimum is needed. Provider and shell-scanner fixes require updating the
 running service separately.
+
+The 2.0.25 contract adds external credential references and
+`integration.connect.external`. Palot renders their setup forms and connects them
+through the originating server, including AWS profile and Azure CLI methods
+advertised by that server. Unknown connection methods show an unsupported state
+instead of being treated as environment credentials. Existing event variants and
+browser RPC declarations are unchanged; the connection minimum remains 2.0.7.
+
+OpenCode 2.0.25 also changes experimental managed-policy actions from `permission`
+to `tool.use` and `integration.use`, alongside `provider.use`. Review configurations
+using those experimental policies before upgrading the service. Its default
+permissions no longer ask for external-directory access. Palot does not rewrite
+user permissions or duplicate those server policies; its Defaults approval preset
+continues to use the connected server's rules. Provider and tool-execution fixes
+require updating the running service separately.
+
+The published 2.0.26 client, protocol, schema and browser-plugin declarations are
+unchanged from 2.0.25, apart from package version and dependency pins. Its service
+offers Google Cloud credentials (gcloud or environment) as an external Vertex
+connection method, which Palot renders through the existing external-method flow.
+Remote access through `opencode pair --remote` now uses a random, unguessable
+subdomain. Snapshot and diff performance fixes require updating the running service
+separately. The connection minimum remains 2.0.7.
+
+### One-time pairing and OpenTunnel
+
+Palot accepts one-time links and OpenCode's `{ code, urls }` QR payloads. Import
+previews the advertised addresses, prefers HTTPS, and lets you choose the address
+that receives the code. It redeems only that address, without automatic retries
+against other hosts. Non-loopback plain HTTP still requires explicit consent.
+Exported one-time QR codes include the service's reachable addresses, excluding
+loopback addresses that would point to the scanning device itself.
+
+An active OpenTunnel address is used when OpenCode advertises it. OpenCode has no
+published tunnel-management API, so Palot does not provision a separate tunnel.
+Starting with 2.0.25, `opencode pair --remote` enables remote access through the official CLI.
+That action exposes the service through OpenTunnel and can restart the shared
+service. Run it only when intended, then generate fresh pairing details in Palot.
 
 ## Experimental browser
 

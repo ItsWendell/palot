@@ -245,7 +245,9 @@ export class OpenCodeDataGraph {
       }
       if (deleted.length === 0 && upserted.length === 0) return false;
 
-      this.#begin({ immediate: true });
+      // The collection is sync-only (no optimistic mutations), so a sync transaction applies
+      // at once; @tanstack/db 0.13 removed the redundant `immediate` option.
+      this.#begin();
       for (const key of deleted) this.#write({ type: "delete", key });
       for (const mutation of upserted) this.#write(mutation);
       this.#commitSync();

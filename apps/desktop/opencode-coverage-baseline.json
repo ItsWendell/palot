@@ -1,6 +1,6 @@
 {
-  "contractFingerprint": "d9b15d7a34a97ede27c970ab528ca3445ac43ee12562dbfc190cfda4708716e5",
-  "contractVersion": "2.0.24",
+  "contractFingerprint": "9fd756991136c87e048a4289d3df155c76c5f2fd5e62e09992ceef2ef3f4b650",
+  "contractVersion": "2.0.26",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
@@ -82,7 +82,8 @@
       "payloadFingerprint": "d2d25c8aacd5a9fcc5d576285f7e34cf4de431f20a4b561c29fc9e4a007c78d5"
     },
     "persistent-pty.added": {
-      "expectedProductionMention": true,
+      "expectedProductionMention": false,
+      "note": "Creation and reconnect use authoritative PTY responses and socket state. Delayed added events must not reset an attached terminal; the former explicit no-op branch was removed in 2.0.25 adoption.",
       "payloadFingerprint": "c74ef3b53d747c7a3928dd73d69a2c8a853c3c54a832049e8a4cdc572f08ce28"
     },
     "persistent-pty.removed": {
@@ -410,9 +411,8 @@
       "expectedProductionReference": true
     },
     "config.shells": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false,
-      "note": "Lists available shells. Palot has no shell-selection settings workflow; configuration sources remain visible through config.get."
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "credential.activate": {
       "disposition": "integrated",
@@ -451,9 +451,8 @@
       "expectedProductionReference": true
     },
     "experimental.config.update": {
-      "disposition": "intentional-omit",
-      "expectedProductionReference": false,
-      "note": "Reviewed 2.0.7: only changes the global shell. No existing Palot shell-setting workflow or custom config-write workaround needs this operation."
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "experimental.fs.write": {
       "disposition": "integrated",
@@ -461,9 +460,8 @@
       "note": "Native picker and clipboard selections upload bounded bytes to the captured remote or SSH service's temporary directory. Focus changes abort uploads; failed files never fall back to desktop URIs."
     },
     "experimental.generate.text": {
-      "disposition": "intentional-omit",
-      "expectedProductionReference": false,
-      "note": "Standalone generation has no product owner; session workflows remain the durable path."
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "experimental.integration.wellknown.add": {
       "disposition": "integrated",
@@ -548,6 +546,10 @@
       "expectedProductionReference": true
     },
     "integration.command.status": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "integration.connect.external": {
       "disposition": "integrated",
       "expectedProductionReference": true
     },
@@ -887,9 +889,8 @@
       "expectedProductionReference": true
     },
     "session.shell": {
-      "disposition": "intentional-omit",
-      "expectedProductionReference": false,
-      "note": "Raw session shell mutation is intentionally excluded; PTY and tool execution own shell UX."
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "session.switchAgent": {
       "disposition": "integrated",
@@ -958,9 +959,8 @@
       "expectedProductionReference": true
     },
     "vcs.init": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false,
-      "note": "Added in 2.0.23. Generic transport can call it, but Palot has no repository initialization workflow. Existing VCS and worktree workflows are unchanged."
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "vcs.status": {
       "disposition": "integrated",

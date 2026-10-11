@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palot } from "../services/palot";
@@ -250,7 +250,11 @@ describe("LocalServiceSettings", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: "Start OpenCode" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Restart service" }));
+    // Lifecycle actions stay disabled until the installation and login checks settle; under a
+    // loaded test run, clicking earlier would hit a disabled trigger and never open the dialog.
+    const restart = screen.getByRole("button", { name: "Restart service" }) as HTMLButtonElement;
+    await waitFor(() => expect(restart.disabled).toBe(false));
+    await user.click(restart);
     expect(await screen.findByText(/may interrupt other OpenCode clients/)).toBeTruthy();
     expect(onRestart).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -292,9 +296,12 @@ describe("LocalServiceSettings", () => {
         <LocalServiceSettings info={null} busy={false} onRefresh={onRefresh} onRestart={() => {}} />
       </Provider>,
     );
-    await user.click(screen.getByRole("button", { name: "Start OpenCode" }));
+    // Same as restart: wait for the installation and login checks to release the action.
+    const start = screen.getByRole("button", { name: "Start OpenCode" }) as HTMLButtonElement;
+    await waitFor(() => expect(start.disabled).toBe(false));
+    await user.click(start);
     expect(connect).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Start or recover" }));
+    await user.click(await screen.findByRole("button", { name: "Start or recover" }));
     expect(connect).toHaveBeenCalledExactlyOnceWith({ startLocalService: true });
     expect(store.get(runtimeAtom)).toEqual(connected);
     expect(onRefresh).toHaveBeenCalledOnce();
@@ -459,7 +466,7 @@ describe("PairDialog", () => {
     );
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Show QR" })));
     expect(toDataURL).toHaveBeenLastCalledWith(
-      "https://proxy.example/auth/connect/abcdefghijklmnop",
+      JSON.stringify({ code: linkInfo.code, urls: ["https://proxy.example"] }),
       { margin: 1, width: 320 },
     );
     expect(screen.getByRole("img", { name: "OpenCode one-time pairing QR code" })).toBeTruthy();
@@ -467,7 +474,9 @@ describe("PairDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use service addresses" }));
     expect(screen.queryByRole("img")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Copy one-time link" }));
-    expect(clipboard).toHaveBeenLastCalledWith(linkInfo.payload);
+    expect(clipboard).toHaveBeenLastCalledWith(
+      "https://fallback.example/auth/connect/abcdefghijklmnop",
+    );
     act(() => vi.advanceTimersByTime(150_000));
     expect(screen.queryByRole("button", { name: "Copy one-time link" })).toBeNull();
     expect(screen.getByRole("button", { name: "Generate pairing details" })).toBeTruthy();
@@ -475,6 +484,37 @@ describe("PairDialog", () => {
 });
 
 describe("ImportPairDialog", () => {
+  it("previews QR targets and requires fresh consent when selecting a cleartext target", async () => {
+    const user = userEvent.setup();
+    const importPairing = vi
+      .spyOn(palot, "importOpenCodePairing")
+      .mockResolvedValue({} as Awaited<ReturnType<typeof palot.importOpenCodePairing>>);
+    render(<ImportPairDialog open onOpenChange={() => {}} onSaved={() => {}} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Pairing link or legacy JSON" }), {
+      target: {
+        value: JSON.stringify({
+          code: linkInfo.code,
+          urls: ["http://192.168.1.2:4096", "https://device.example"],
+        }),
+      },
+    });
+    const address = screen.getByRole("combobox", { name: "Redeem at this address" });
+    expect((address as HTMLSelectElement).value).toBe("https://device.example");
+    expect(importPairing).not.toHaveBeenCalled();
+    await user.selectOptions(address, "http://192.168.1.2:4096");
+    const submit = screen.getByRole<HTMLButtonElement>("button", { name: "Probe and import" });
+    expect(submit.disabled).toBe(true);
+    await user.click(screen.getByRole("checkbox"));
+    await user.selectOptions(address, "https://device.example");
+    await user.selectOptions(address, "http://192.168.1.2:4096");
+    expect(submit.disabled).toBe(true);
+    await user.selectOptions(address, "https://device.example");
+    await user.click(submit);
+    expect(importPairing).toHaveBeenCalledExactlyOnceWith({
+      link: "https://device.example/auth/connect/abcdefghijklmnop",
+      allowPlainHttp: false,
+    });
+  });
   it("previews a one-time URL without redeeming on paste, and imports only on submission", async () => {
     const user = userEvent.setup();
     const importPairing = vi
