@@ -22,6 +22,18 @@ connections retain their own ownership and must never silently fall back to a
 local service. See [runtime packaging](opencode-runtime.md) and
 [multi-connection behavior](multi-connection-overview.md).
 
+**Source control.** OpenCode's `vcs` API stays the read path for diffs and
+branches. Palot's main process adds a local-only layer in `main/source-control`:
+GitHub PR links stored in Palot's database (keyed by profile and session), a
+one-minute batched GraphQL sweep (open PRs each minute, closed every 15 minutes,
+merged never), settle-on-merge through the triage store, and PR watches that queue
+an OpenCode prompt to wake the agent. GitHub tokens come from `GH_TOKEN`,
+`GITHUB_TOKEN`, or `gh auth token`, stay in main, and never reach the renderer.
+Background reads keep 10% of each GitHub quota for interactive requests and pause
+on rate limits. Local Git writes run `git` without a shell, with literal pathspecs
+confined to the repository. Remote and SSH connections report source control as
+unsupported.
+
 ## Data flow
 
 Main-process event batching preserves official payload semantics while bounding
