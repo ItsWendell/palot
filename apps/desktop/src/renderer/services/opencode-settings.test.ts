@@ -9,6 +9,7 @@ import {
   checkPlugins,
   connectMcpServer,
   connectIntegrationCommand,
+  connectIntegrationExternal,
   connectIntegrationOAuth,
   disconnectMcpServer,
   loadSettings,
@@ -362,6 +363,158 @@ describe("renderer OpenCode settings service", () => {
       { type: "credential", id: "inactive", label: "Personal", active: false },
       { type: "env", id: null, label: "ANTHROPIC_API_KEY", active: false },
     ]);
+  });
+
+  it("maps external forms and credentials without treating unknown methods as environment variables", async () => {
+    setOpenCodeClientForTest(
+      client({
+        integration: {
+          list: vi.fn().mockResolvedValue({
+            location,
+            data: [
+              {
+                id: "vault",
+                name: "Vault",
+                methods: [
+                  {
+                    id: "profile",
+                    type: "external",
+                    label: "Credential profile",
+                    form: [
+                      { key: "instructions", type: "external", url: "https://example.com/setup" },
+                      {
+                        key: "profile",
+                        type: "string",
+                        title: "Profile",
+                        required: true,
+                        default: "work",
+                      },
+                      { key: "source", type: "string", hidden: true, default: "vault" },
+                      { key: "custom", type: "boolean", default: false },
+                      {
+                        key: "endpoint",
+                        type: "string",
+                        format: "uri",
+                        when: [{ key: "custom", op: "eq", value: true }],
+                      },
+                    ],
+                  },
+                  { id: "empty", type: "external", label: "Default profile" },
+                  { id: "future", type: "device", label: "Device sign-in" },
+                  { type: "env", names: ["VAULT_TOKEN"] },
+                ],
+                connections: [
+                  { type: "credential", id: "stored", label: "Work", method: "external" },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+    );
+
+    const result = await loadSettings({
+      projectID: "project-1",
+      directory: "/repo",
+      capabilities: ["integrations"],
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.integrations[0]?.methods).toEqual([
+      {
+        id: "profile",
+        type: "external",
+        label: "Credential profile",
+        form: [
+          expect.objectContaining({
+            key: "instructions",
+            type: "external",
+            url: "https://example.com/setup",
+          }),
+          expect.objectContaining({ key: "profile", required: true, defaultValue: "work" }),
+          expect.objectContaining({ key: "source", hidden: true, defaultValue: "vault" }),
+          expect.objectContaining({ key: "custom", defaultValue: false }),
+          expect.objectContaining({
+            key: "endpoint",
+            format: "uri",
+            when: [{ key: "custom", op: "eq", value: true }],
+          }),
+        ],
+      },
+      { id: "empty", type: "external", label: "Default profile", form: [] },
+      {
+        id: "future",
+        type: "unsupported",
+        methodType: "device",
+        label: "Device sign-in",
+        form: [],
+      },
+      { id: null, type: "env", names: ["VAULT_TOKEN"], label: "VAULT_TOKEN", form: [] },
+    ]);
+    expect(result.integrations[0]?.connections).toEqual([
+      { type: "credential", id: "stored", label: "Work", method: "external", active: true },
+    ]);
+  });
+
+  it("connects an external method on its settings owner after resolving the location", async () => {
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const key = vi.fn();
+    const oauth = vi.fn();
+    const command = vi.fn();
+    const owner = client({
+      integration: {
+        connect: { external: connect, key },
+        oauth: { connect: oauth },
+        command: { connect: command },
+      },
+    });
+    const focused = client();
+    vi.spyOn(clients, "openCodeClient").mockImplementation((connectionID) =>
+      connectionID === "server-a" ? owner : focused,
+    );
+    await connectIntegrationExternal({
+      connectionID: "server-a",
+      projectID: "project-1",
+      directory: "/repo",
+      workspaceID: "workspace-1",
+      integrationID: "vault",
+      methodID: "profile",
+      answer: { profile: "work" },
+      label: "Work",
+    });
+    expect(owner.location.get).toHaveBeenCalledWith(
+      { location: { directory: "/repo", workspace: "workspace-1" } },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(vi.mocked(owner.location.get).mock.invocationCallOrder[0]).toBeLessThan(
+      connect.mock.invocationCallOrder[0]!,
+    );
+    expect(connect).toHaveBeenCalledExactlyOnceWith(
+      {
+        integrationID: "vault",
+        methodID: "profile",
+        location: { directory: "/repo", workspace: "workspace-1" },
+        answer: { profile: "work" },
+        label: "Work",
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(key).not.toHaveBeenCalled();
+    expect(oauth).not.toHaveBeenCalled();
+    expect(command).not.toHaveBeenCalled();
+    expect(focused.location.get).not.toHaveBeenCalled();
+  });
+
+  it("propagates external connection failures instead of reporting success", async () => {
+    const external = vi.fn().mockRejectedValue(new Error("Profile unavailable"));
+    setOpenCodeClientForTest(client({ integration: { connect: { external } } }));
+    await expect(
+      connectIntegrationExternal({
+        projectID: "project-1",
+        directory: "/repo",
+        integrationID: "vault",
+        methodID: "profile",
+      }),
+    ).rejects.toThrow("Profile unavailable");
   });
 
   it("keeps successful settings projections when another capability fails", async () => {

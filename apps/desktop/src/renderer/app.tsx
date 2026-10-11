@@ -20,6 +20,7 @@ import { rendererStore, router } from "./router";
 import { rendererQueryClient } from "./lib/query-client";
 import { useOpenCodeQueryEvents } from "./hooks/use-opencode-query-events";
 import { useSessionActivity } from "./hooks/use-session-activity";
+import { useNotificationSounds } from "./hooks/use-notification-sounds";
 
 const diffWorkerPoolOptions = {
   poolSize: 2,
@@ -35,6 +36,12 @@ const diffHighlighterOptions = {
   },
   lineDiffType: "word",
 } satisfies WorkerInitializationRenderOptions;
+
+// Linux windows are frameless. Tiling compositors own closing, so only floating
+// desktops get Palot's close button; CSS reserves header space from this flag.
+const showWindowCloseButton =
+  window.palot?.platform === "linux" && window.palot.windowManagerOwnsClose !== true;
+document.documentElement.dataset.windowClose = showWindowCloseButton ? "visible" : "hidden";
 
 export function App() {
   useWindowChrome();
@@ -53,14 +60,16 @@ export function App() {
             <AppearanceSync />
             <PierreAppearanceSync />
             <RouterProvider router={router} />
-            {window.palot?.platform === "linux" ? (
-              <div className="pointer-events-none fixed top-0 right-3 z-40 flex h-(--shell-header-height) items-center">
+            {showWindowCloseButton ? (
+              <div className="window-close-cluster pointer-events-none fixed top-0 right-3 z-40 flex h-(--shell-header-height) w-(--window-close-reserve) items-center justify-end gap-2">
+                {/* Separates the window action from pane toggles that sit beside it. */}
+                <span className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
                 <Button
                   variant="ghost"
                   size="icon-sm"
                   aria-label="Close window"
                   title="Close window"
-                  className="window-no-drag pointer-events-auto hover:bg-destructive/10 hover:text-destructive"
+                  className="pointer-events-auto hover:bg-destructive/10 hover:text-destructive [-webkit-app-region:no-drag]"
                   onClick={() => void palot.closeWindow()}
                 >
                   <X aria-hidden="true" />
@@ -78,5 +87,6 @@ export function App() {
 function OpenCodeQueryEvents() {
   useOpenCodeQueryEvents();
   useSessionActivity({ synchronize: true });
+  useNotificationSounds();
   return null;
 }

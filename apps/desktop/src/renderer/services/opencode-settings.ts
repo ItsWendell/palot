@@ -1,8 +1,10 @@
 import type {
+  ConfigShellOption,
   FormField,
   IntegrationAttemptStatus,
   IntegrationCommandMethod,
   IntegrationCommandAttemptStatus,
+  IntegrationMethod,
   OpenCodeClient,
   PluginInfo,
 } from "@opencode/client";
@@ -10,6 +12,7 @@ import type {
   AddMcpServerInput,
   ActivateCredentialInput,
   ConnectIntegrationCommandInput,
+  ConnectIntegrationExternalInput,
   AddWellknownIntegrationInput,
   CompleteIntegrationOAuthInput,
   ConnectIntegrationKeyInput,
@@ -20,6 +23,7 @@ import type {
   PalotFormField,
   PalotIntegrationAttemptStatus,
   PalotIntegrationCommandAttempt,
+  PalotIntegrationMethod,
   PalotIntegrationOAuthAttempt,
   PalotPlugin,
   PalotSettingsSnapshot,
@@ -310,6 +314,54 @@ function mapAttemptStatus(
   };
 }
 
+function mapIntegrationMethod(method: IntegrationMethod): PalotIntegrationMethod {
+  switch (method.type) {
+    case "oauth":
+    case "external":
+      return {
+        id: method.id,
+        type: method.type,
+        label: method.label,
+        form: (method.form ?? []).map(mapFormField),
+      };
+    case "command":
+      return {
+        id: method.id,
+        type: method.type,
+        label: method.label,
+        command: [...method.command],
+        form: [],
+      };
+    case "key":
+      return {
+        id: null,
+        type: method.type,
+        label: method.label ?? "API key",
+        form: (method.form ?? []).map(mapFormField),
+      };
+    case "env":
+      return {
+        id: null,
+        type: method.type,
+        label: method.names.join(", "),
+        names: [...method.names],
+        form: [],
+      };
+    default: {
+      // The Promise client does not decode responses, so a newer service may
+      // advertise methods outside the pinned contract. Never reinterpret them.
+      const unsupported = method as { type: string; id?: string; label?: string };
+      return {
+        id: unsupported.id ?? null,
+        type: "unsupported",
+        methodType: unsupported.type,
+        label: unsupported.label ?? unsupported.type,
+        form: [],
+      };
+    }
+  }
+}
+
 async function resolveSettingsLocation(
   client: OpenCodeClient,
   input: SettingsLocationInput,
@@ -437,37 +489,7 @@ export async function loadSettings(
         ? integrations.value.data.map((integration) => ({
             id: integration.id,
             name: integration.name,
-            methods: integration.methods.map((method) =>
-              method.type === "oauth"
-                ? {
-                    id: method.id,
-                    type: method.type,
-                    label: method.label,
-                    form: (method.form ?? []).map(mapFormField),
-                  }
-                : method.type === "command"
-                  ? {
-                      id: method.id,
-                      type: method.type,
-                      label: method.label,
-                      command: [...method.command],
-                      form: [] as [],
-                    }
-                  : method.type === "key"
-                    ? {
-                        id: null,
-                        type: method.type,
-                        label: method.label ?? "API key",
-                        form: (method.form ?? []).map(mapFormField),
-                      }
-                    : {
-                        id: null,
-                        type: method.type,
-                        label: method.names.join(", "),
-                        names: [...method.names],
-                        form: [] as [],
-                      },
-            ),
+            methods: integration.methods.map(mapIntegrationMethod),
             // OpenCode orders the selected credential first, followed by other stored
             // credentials and environment fallbacks. Its public connection type does
             // not expose this state separately.
@@ -476,6 +498,9 @@ export async function loadSettings(
               id: connection.type === "credential" ? connection.id : null,
               label: connection.type === "credential" ? connection.label : connection.name,
               active: index === 0,
+              ...(connection.type === "credential" && connection.method
+                ? { method: connection.method }
+                : {}),
             })),
             ...(integration.metadata ? { metadata: toJson(integration.metadata) } : {}),
           }))
@@ -555,6 +580,63 @@ export async function loadSettings(
       }),
     ],
   };
+}
+
+export interface ShellSettings {
+  shells: ConfigShellOption[];
+  /** The shell saved in global OpenCode config; `null` means OpenCode picks automatically. */
+  shell: string | null;
+}
+
+/** Shells OpenCode found on the server and the globally configured default. */
+export async function loadShellSettings(
+  connectionID: string,
+  outerSignal?: AbortSignal,
+): Promise<ShellSettings> {
+  const client = openCodeClient(connectionID);
+  const [entries, shells] = await Promise.all([
+    client.config.get(undefined, { signal: requestSignal(outerSignal) }),
+    client.config.shells({ signal: requestSignal(outerSignal) }),
+  ]);
+  // Entries before the first directory marker are global; later documents are project config.
+  const boundary = entries.findIndex((entry) => entry.type === "directory");
+  const global = boundary === -1 ? entries : entries.slice(0, boundary);
+  const shell = global
+    .flatMap((entry) =>
+      entry.type === "document" && typeof entry.info.shell === "string" ? [entry.info.shell] : [],
+    )
+    .at(-1);
+  return { shells, shell: shell ?? null };
+}
+
+/** Saves the default shell in global OpenCode config; `null` returns to automatic. */
+export async function updateDefaultShell(connectionID: string, shell: string | null) {
+  await openCodeClient(connectionID).config.update({ shell }, { signal: requestSignal() });
+}
+
+export interface ShellSelectOption {
+  /** Value saved to config: the shell name, or its path when names collide. */
+  value: string;
+  label: string;
+  /** OpenCode can open it in terminals but won't run agent commands with it. */
+  terminalOnly: boolean;
+}
+
+export function shellSelectOptions(settings: ShellSettings): ShellSelectOption[] {
+  const counts = new Map<string, number>();
+  for (const shell of settings.shells) counts.set(shell.name, (counts.get(shell.name) ?? 0) + 1);
+  const options = settings.shells.map((shell) => {
+    const ambiguous = (counts.get(shell.name) ?? 0) > 1;
+    return {
+      value: ambiguous ? shell.path : shell.name,
+      label: ambiguous ? shell.path : shell.name,
+      terminalOnly: !shell.acceptable,
+    };
+  });
+  if (settings.shell && !options.some((option) => option.value === settings.shell)) {
+    options.push({ value: settings.shell, label: settings.shell, terminalOnly: false });
+  }
+  return options;
 }
 
 export async function checkPluginUpdates(input: SettingsLocationInput): Promise<void> {
@@ -680,6 +762,23 @@ export async function connectIntegrationOAuth(
     createdAt: finiteNumber(response.data.time.created),
     expiresAt: finiteNumber(response.data.time.expires),
   };
+}
+
+export async function connectIntegrationExternal(
+  input: ConnectIntegrationExternalInput,
+): Promise<void> {
+  const client = openCodeClient(input.connectionID);
+  await resolveSettingsLocation(client, input);
+  await client.integration.connect.external(
+    {
+      integrationID: input.integrationID,
+      methodID: input.methodID,
+      location: settingsLocation(input),
+      ...(input.answer ? { answer: input.answer } : {}),
+      ...(input.label ? { label: input.label } : {}),
+    },
+    { signal: requestSignal() },
+  );
 }
 
 export async function integrationOAuthStatus(
