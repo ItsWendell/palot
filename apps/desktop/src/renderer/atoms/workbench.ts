@@ -31,7 +31,7 @@ const valueAtom = atom(
     migrate: (value) => parseWorkbenchRecoveryState(value),
   }),
 );
-let timer: number | undefined;
+let timer: ReturnType<typeof setTimeout> | undefined;
 let pending: WorkbenchState | undefined;
 
 export const workbenchStateAtom = atom(
@@ -135,9 +135,11 @@ export function useWorkbenchCommands(scope: WorkbenchScope | null) {
 }
 
 export function flushWorkbenchPersistence(): void {
-  if (timer !== undefined) window.clearTimeout(timer);
+  if (timer !== undefined) clearTimeout(timer);
   timer = undefined;
-  if (!pending) return;
+  // A debounced save can fire after its window is gone (a torn-down test environment);
+  // there is nothing left to persist to then.
+  if (!pending || typeof window === "undefined") return;
   savePersistedValue(PERSISTENCE_KEY, pending);
   pending = undefined;
 }
@@ -147,6 +149,6 @@ function scheduleSave(state: WorkbenchState): void {
   window.addEventListener("pagehide", flushWorkbenchPersistence);
   window.addEventListener("beforeunload", flushWorkbenchPersistence);
   pending = state;
-  if (timer !== undefined) window.clearTimeout(timer);
-  timer = window.setTimeout(flushWorkbenchPersistence, 150);
+  if (timer !== undefined) clearTimeout(timer);
+  timer = setTimeout(flushWorkbenchPersistence, 150);
 }
