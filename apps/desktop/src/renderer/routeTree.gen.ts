@@ -12,6 +12,7 @@ import { Route as SettingsRouteImport } from "./routes/settings";
 import { Route as WelcomeRouteImport } from "./routes/welcome";
 import { Route as WorkspaceIndexRouteImport } from "./routes/_workspace.index";
 import { Route as WorkspaceNewRouteImport } from "./routes/_workspace.new";
+import { Route as WorkspacePullRequestsRouteImport } from "./routes/_workspace.pull-requests";
 import { Route as WorkspaceScheduledRouteImport } from "./routes/_workspace.scheduled";
 import { Route as WorkspaceUsageRouteImport } from "./routes/_workspace.usage";
 import { Route as WorkspaceWorktreesRouteImport } from "./routes/_workspace.worktrees";
@@ -29,6 +30,7 @@ import { Route as SettingsNotificationsRouteImport } from "./routes/settings.not
 import { Route as SettingsPermissionsRouteImport } from "./routes/settings.permissions";
 import { Route as SettingsProjectRouteImport } from "./routes/settings.project";
 import { Route as SettingsProvidersRouteImport } from "./routes/settings.providers";
+import { Route as SettingsShortcutsRouteImport } from "./routes/settings.shortcuts";
 import { Route as SettingsToolsRouteImport } from "./routes/settings.tools";
 import { Route as WorkspaceSessionsSessionIDRouteImport } from "./routes/_workspace.sessions.$sessionID";
 import { Route as SettingsConnectionsIndexRouteImport } from "./routes/settings.connections.index";
@@ -59,6 +61,11 @@ const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
 const WorkspaceNewRoute = WorkspaceNewRouteImport.update({
   id: "/new",
   path: "/new",
+  getParentRoute: () => WorkspaceRoute,
+} as any);
+const WorkspacePullRequestsRoute = WorkspacePullRequestsRouteImport.update({
+  id: "/pull-requests",
+  path: "/pull-requests",
   getParentRoute: () => WorkspaceRoute,
 } as any);
 const WorkspaceScheduledRoute = WorkspaceScheduledRouteImport.update({
@@ -146,6 +153,11 @@ const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   path: "/providers",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsShortcutsRoute = SettingsShortcutsRouteImport.update({
+  id: "/shortcuts",
+  path: "/shortcuts",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsToolsRoute = SettingsToolsRouteImport.update({
   id: "/tools",
   path: "/tools",
@@ -193,6 +205,7 @@ export interface FileRoutesByFullPath {
   "/settings": typeof SettingsRouteWithChildren;
   "/welcome": typeof WelcomeRoute;
   "/new": typeof WorkspaceNewRoute;
+  "/pull-requests": typeof WorkspacePullRequestsRoute;
   "/scheduled": typeof WorkspaceScheduledRoute;
   "/usage": typeof WorkspaceUsageRoute;
   "/worktrees": typeof WorkspaceWorktreesRoute;
@@ -209,6 +222,7 @@ export interface FileRoutesByFullPath {
   "/settings/permissions": typeof SettingsPermissionsRoute;
   "/settings/project": typeof SettingsProjectRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
+  "/settings/shortcuts": typeof SettingsShortcutsRoute;
   "/settings/tools": typeof SettingsToolsRoute;
   "/settings/": typeof SettingsIndexRoute;
   "/sessions/$sessionID": typeof WorkspaceSessionsSessionIDRouteWithChildren;
@@ -221,6 +235,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   "/welcome": typeof WelcomeRoute;
   "/new": typeof WorkspaceNewRoute;
+  "/pull-requests": typeof WorkspacePullRequestsRoute;
   "/scheduled": typeof WorkspaceScheduledRoute;
   "/usage": typeof WorkspaceUsageRoute;
   "/worktrees": typeof WorkspaceWorktreesRoute;
@@ -236,6 +251,7 @@ export interface FileRoutesByTo {
   "/settings/permissions": typeof SettingsPermissionsRoute;
   "/settings/project": typeof SettingsProjectRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
+  "/settings/shortcuts": typeof SettingsShortcutsRoute;
   "/settings/tools": typeof SettingsToolsRoute;
   "/": typeof WorkspaceIndexRoute;
   "/settings": typeof SettingsIndexRoute;
@@ -252,6 +268,7 @@ export interface FileRoutesById {
   "/settings": typeof SettingsRouteWithChildren;
   "/welcome": typeof WelcomeRoute;
   "/_workspace/new": typeof WorkspaceNewRoute;
+  "/_workspace/pull-requests": typeof WorkspacePullRequestsRoute;
   "/_workspace/scheduled": typeof WorkspaceScheduledRoute;
   "/_workspace/usage": typeof WorkspaceUsageRoute;
   "/_workspace/worktrees": typeof WorkspaceWorktreesRoute;
@@ -268,6 +285,7 @@ export interface FileRoutesById {
   "/settings/permissions": typeof SettingsPermissionsRoute;
   "/settings/project": typeof SettingsProjectRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
+  "/settings/shortcuts": typeof SettingsShortcutsRoute;
   "/settings/tools": typeof SettingsToolsRoute;
   "/_workspace/": typeof WorkspaceIndexRoute;
   "/settings/": typeof SettingsIndexRoute;
@@ -285,6 +303,7 @@ export interface FileRouteTypes {
     | "/settings"
     | "/welcome"
     | "/new"
+    | "/pull-requests"
     | "/scheduled"
     | "/usage"
     | "/worktrees"
@@ -301,6 +320,7 @@ export interface FileRouteTypes {
     | "/settings/permissions"
     | "/settings/project"
     | "/settings/providers"
+    | "/settings/shortcuts"
     | "/settings/tools"
     | "/settings/"
     | "/sessions/$sessionID"
@@ -313,6 +333,7 @@ export interface FileRouteTypes {
   to:
     | "/welcome"
     | "/new"
+    | "/pull-requests"
     | "/scheduled"
     | "/usage"
     | "/worktrees"
@@ -328,6 +349,7 @@ export interface FileRouteTypes {
     | "/settings/permissions"
     | "/settings/project"
     | "/settings/providers"
+    | "/settings/shortcuts"
     | "/settings/tools"
     | "/"
     | "/settings"
@@ -343,6 +365,7 @@ export interface FileRouteTypes {
     | "/settings"
     | "/welcome"
     | "/_workspace/new"
+    | "/_workspace/pull-requests"
     | "/_workspace/scheduled"
     | "/_workspace/usage"
     | "/_workspace/worktrees"
@@ -359,6 +382,7 @@ export interface FileRouteTypes {
     | "/settings/permissions"
     | "/settings/project"
     | "/settings/providers"
+    | "/settings/shortcuts"
     | "/settings/tools"
     | "/_workspace/"
     | "/settings/"
@@ -411,6 +435,13 @@ declare module "@tanstack/react-router" {
       path: "/new";
       fullPath: "/new";
       preLoaderRoute: typeof WorkspaceNewRouteImport;
+      parentRoute: typeof WorkspaceRoute;
+    };
+    "/_workspace/pull-requests": {
+      id: "/_workspace/pull-requests";
+      path: "/pull-requests";
+      fullPath: "/pull-requests";
+      preLoaderRoute: typeof WorkspacePullRequestsRouteImport;
       parentRoute: typeof WorkspaceRoute;
     };
     "/_workspace/scheduled": {
@@ -532,6 +563,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsProvidersRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/settings/shortcuts": {
+      id: "/settings/shortcuts";
+      path: "/shortcuts";
+      fullPath: "/settings/shortcuts";
+      preLoaderRoute: typeof SettingsShortcutsRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/settings/tools": {
       id: "/settings/tools";
       path: "/tools";
@@ -601,6 +639,7 @@ const WorkspaceSessionsSessionIDRouteWithChildren =
 
 interface WorkspaceRouteChildren {
   WorkspaceNewRoute: typeof WorkspaceNewRoute;
+  WorkspacePullRequestsRoute: typeof WorkspacePullRequestsRoute;
   WorkspaceScheduledRoute: typeof WorkspaceScheduledRoute;
   WorkspaceUsageRoute: typeof WorkspaceUsageRoute;
   WorkspaceWorktreesRoute: typeof WorkspaceWorktreesRoute;
@@ -610,6 +649,7 @@ interface WorkspaceRouteChildren {
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceNewRoute: WorkspaceNewRoute,
+  WorkspacePullRequestsRoute: WorkspacePullRequestsRoute,
   WorkspaceScheduledRoute: WorkspaceScheduledRoute,
   WorkspaceUsageRoute: WorkspaceUsageRoute,
   WorkspaceWorktreesRoute: WorkspaceWorktreesRoute,
@@ -652,6 +692,7 @@ interface SettingsRouteChildren {
   SettingsPermissionsRoute: typeof SettingsPermissionsRoute;
   SettingsProjectRoute: typeof SettingsProjectRoute;
   SettingsProvidersRoute: typeof SettingsProvidersRoute;
+  SettingsShortcutsRoute: typeof SettingsShortcutsRoute;
   SettingsToolsRoute: typeof SettingsToolsRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
 }
@@ -670,6 +711,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsPermissionsRoute: SettingsPermissionsRoute,
   SettingsProjectRoute: SettingsProjectRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsShortcutsRoute: SettingsShortcutsRoute,
   SettingsToolsRoute: SettingsToolsRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 };

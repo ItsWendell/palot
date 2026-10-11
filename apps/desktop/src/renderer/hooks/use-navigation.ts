@@ -15,6 +15,8 @@ import { disabledProfileIDsAtom } from "../atoms/connections";
 import { prefetchSessionNavigation } from "../lib/session-navigation-prefetch";
 import { connectionOverview } from "../lib/connection-overview";
 import { resolveNewTaskDestination } from "../lib/new-task-destination";
+import type { PullRequestRef } from "../../shared/source-control-contract";
+import { formatPullRequestParam } from "../components/pull-requests/pull-request-ref";
 
 export function usePalotNavigation() {
   const navigate = useNavigate();
@@ -122,6 +124,18 @@ export function usePalotNavigation() {
       }),
     [navigate, store],
   );
+  const openPullRequests = useCallback(
+    /** Optionally selects one pull request in the review screen. */
+    (pullRequest?: PullRequestRef) =>
+      navigate({
+        to: "/pull-requests",
+        search: {
+          profileID: store.get(runtimeAtom)?.profileID,
+          ...(pullRequest ? { pr: formatPullRequestParam(pullRequest) } : {}),
+        },
+      }),
+    [navigate, store],
+  );
   const openWelcome = useCallback(() => navigate({ to: "/welcome" }), [navigate]);
   const closeSettings = useCallback(() => {
     const sessionID = store.get(selectedSessionIDAtom);
@@ -139,6 +153,7 @@ export function usePalotNavigation() {
   return {
     closeSettings,
     openNewTask,
+    openPullRequests,
     openSession,
     openScheduled,
     openSettings,

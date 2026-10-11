@@ -83,6 +83,8 @@ import { closePalotDatabase } from "./database/client";
 import { tailscaleService } from "./tailscale-service";
 import type { PalotBrowserLayout, PalotBrowserRegistration } from "../shared/browser-contract";
 import { createBrowserPane, parseBrowserUserCommand } from "./browser-pane";
+import { registerSourceControlIpc } from "./source-control/ipc";
+import { shutdownSourceControlService, sourceControlService } from "./source-control/runtime";
 
 let performanceTraceActive = false;
 const requestProxy = new OpenCodeRequestProxy({
@@ -524,6 +526,7 @@ function focusedPtyRuntime() {
 
 export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void {
   ipcTrust = options;
+  registerSourceControlIpc(register, sourceControlService);
   register(IPC_CHANNELS.browserRegister, (event, value: unknown) => {
     const win = browserWindow(event);
     const input = v.parse(
@@ -1307,6 +1310,7 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
       await resetPalotSettings();
     } else {
       await automationService().shutdown();
+      await shutdownSourceControlService();
       await openCodeRuntime.shutdown();
       closePalotDatabase();
       await shutdownAttachmentStorage();

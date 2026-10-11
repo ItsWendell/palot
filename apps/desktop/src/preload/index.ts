@@ -6,6 +6,7 @@ import type {
   AutomationChangedEvent,
   AutomationNotificationTarget,
 } from "../shared/automation-contract";
+import type { SourceControlChangedEvent } from "../shared/source-control-contract";
 import { IPC_CHANNELS } from "../shared/opencode-contract";
 import {
   hasStoredAppearancePreferencesArgument,
@@ -13,7 +14,11 @@ import {
   REDUCED_TRANSPARENCY_ARGUMENT,
   type AppearancePreferences,
 } from "../shared";
-import { isWindowChromeTier, type WindowChromeTier } from "../shared/window-chrome";
+import {
+  isWindowChromeTier,
+  WINDOW_MANAGER_OWNS_CLOSE_ARGUMENT,
+  type WindowChromeTier,
+} from "../shared/window-chrome";
 
 const CHROME_TIER_ARGUMENT = "--palot-chrome-tier=";
 
@@ -34,6 +39,7 @@ const api: PalotApi = {
   hasStoredAppearancePreferences: hasStoredAppearancePreferencesArgument(process.argv),
   reducedTransparency: process.argv.includes(REDUCED_TRANSPARENCY_ARGUMENT),
   chromeTier: initialChromeTier(),
+  windowManagerOwnsClose: process.argv.includes(WINDOW_MANAGER_OWNS_CLOSE_ARGUMENT),
   browserRegister: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserRegister, input),
   browserLayout: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserLayout, input),
   browserCommand: (bindingID, command, pane) =>
@@ -223,6 +229,42 @@ const api: PalotApi = {
       listener({ ...batch, rendererReceivedAt: Date.now() });
     ipcRenderer.on(IPC_CHANNELS.events, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.events, handler);
+  },
+  sourceControl: {
+    status: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.sourceControlStatus, profileID),
+    listPullRequestLinks: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestLinks, input),
+    linkPullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestLink, input),
+    unlinkPullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestUnlink, input),
+    refreshPullRequests: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestRefresh, input),
+    watchPullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestWatch, input),
+    searchPullRequests: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestSearch, input),
+    pullRequestDetail: (ref) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestDetail, ref),
+    pullRequestTimeline: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestTimeline, input),
+    pullRequestFiles: (ref) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestFiles, ref),
+    setPullRequestFileViewed: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pullRequestFileViewed, input),
+    submitPullRequestReview: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestReview, input),
+    addPullRequestComment: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestComment, input),
+    replyToPullRequestThread: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pullRequestThreadReply, input),
+    resolvePullRequestThread: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pullRequestThreadResolve, input),
+    mergePullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestMerge, input),
+    setPullRequestState: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestState, input),
+    setPullRequestDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestDraft, input),
+    requestPullRequestReviewers: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pullRequestReviewers, input),
+    gitStatus: (target) => ipcRenderer.invoke(IPC_CHANNELS.gitStatus, target),
+    gitStage: (input) => ipcRenderer.invoke(IPC_CHANNELS.gitStage, input),
+    gitUnstage: (input) => ipcRenderer.invoke(IPC_CHANNELS.gitUnstage, input),
+    gitCommit: (input) => ipcRenderer.invoke(IPC_CHANNELS.gitCommit, input),
+    gitPush: (target) => ipcRenderer.invoke(IPC_CHANNELS.gitPush, target),
+    onChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: SourceControlChangedEvent) =>
+        listener(event);
+      ipcRenderer.on(IPC_CHANNELS.sourceControlChanged, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.sourceControlChanged, handler);
+    },
   },
 };
 

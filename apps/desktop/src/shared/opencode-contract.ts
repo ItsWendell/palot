@@ -55,6 +55,7 @@ import type {
 } from "./automation-contract";
 import type { PalotPerformanceSnapshot } from "./performance-contract";
 import type { SshConfig, SshConnectionState, SshPromptResponse } from "./ssh-contract";
+import { SOURCE_CONTROL_IPC_CHANNELS, type PalotSourceControlApi } from "./source-control-contract";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -490,7 +491,7 @@ export type PalotFormField =
 export type PalotIntegrationMethod =
   | {
       id: string;
-      type: "oauth";
+      type: "oauth" | "external";
       label: string;
       form: PalotFormField[];
     }
@@ -513,6 +514,13 @@ export type PalotIntegrationMethod =
       label: string;
       names: string[];
       form: [];
+    }
+  | {
+      id: string | null;
+      type: "unsupported";
+      methodType: string;
+      label: string;
+      form: [];
     };
 
 export interface PalotIntegrationConnection {
@@ -520,6 +528,7 @@ export interface PalotIntegrationConnection {
   id: string | null;
   label: string;
   active: boolean;
+  method?: "key" | "oauth" | "external";
 }
 
 export interface PalotIntegration {
@@ -691,6 +700,10 @@ export interface ConnectIntegrationCommandInput extends IntegrationMethodInput {
 }
 
 export interface ConnectIntegrationOAuthInput extends IntegrationMethodInput {
+  answer?: Record<string, FormValue>;
+}
+
+export interface ConnectIntegrationExternalInput extends IntegrationMethodInput {
   answer?: Record<string, FormValue>;
 }
 
@@ -1243,6 +1256,7 @@ export const IPC_CHANNELS = {
   automationSettingsUpdate: "palot:automation:settings-update",
   automationChanged: "palot:automation:changed",
   automationNotificationOpened: "palot:automation:notification-opened",
+  ...SOURCE_CONTROL_IPC_CHANNELS,
   events: "palot:opencode:events",
 } as const;
 
@@ -1253,6 +1267,8 @@ export interface PalotApi {
   readonly hasStoredAppearancePreferences: boolean;
   readonly reducedTransparency: boolean;
   readonly chromeTier: WindowChromeTier;
+  /** Linux tiling compositors close windows themselves; the renderer omits its close button. */
+  readonly windowManagerOwnsClose: boolean;
   browserRegister(input: PalotBrowserRegistration): Promise<string>;
   browserLayout(input: PalotBrowserLayout): Promise<void>;
   /** tabs.open returns its page ID so the initiating pane can place it. */
@@ -1394,4 +1410,6 @@ export interface PalotApi {
     listener: (target: AutomationNotificationTarget) => void,
   ): () => void;
   onOpenCodeEvents(listener: (batch: PalotEventBatch) => void): () => void;
+  /** GitHub pull request links, PR watches, review lists and local Git writes. */
+  readonly sourceControl: PalotSourceControlApi;
 }

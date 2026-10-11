@@ -34,6 +34,51 @@ export const sessionTriage = sqliteTable(
   (table) => [primaryKey({ columns: [table.profileID, table.sessionID] })],
 );
 
+export const pullRequestLinks = sqliteTable(
+  "pull_request_links",
+  {
+    profileID: text("profile_id").notNull(),
+    sessionID: text("session_id").notNull(),
+    /** `host/owner/name#number`, lowercase. */
+    pullRequestKey: text("pull_request_key").notNull(),
+    host: text("host").notNull(),
+    repository: text("repository").notNull(),
+    number: integer("number").notNull(),
+    source: text("source", { enum: ["url", "branch"] }).notNull(),
+    url: text("url").notNull(),
+    title: text("title").notNull(),
+    state: text("state", { enum: ["open", "draft", "merged", "closed"] }).notNull(),
+    checks: text("checks", { enum: ["passing", "failing", "pending", "none"] }).notNull(),
+    reviewDecision: text("review_decision", {
+      enum: ["approved", "changes-requested", "review-required"],
+    }),
+    mergeable: text("mergeable", { enum: ["mergeable", "conflicting", "unknown"] }).notNull(),
+    headBranch: text("head_branch").notNull(),
+    baseBranch: text("base_branch").notNull(),
+    author: text("author"),
+    pullRequestUpdatedAt: integer("pull_request_updated_at").notNull(),
+    mergedAt: integer("merged_at"),
+    closedAt: integer("closed_at"),
+    linkedAt: integer("linked_at").notNull(),
+    syncedAt: integer("synced_at"),
+    syncError: text("sync_error"),
+    /** Set once the merged/closed settle rule ran; cleared when the PR reopens. */
+    settleCheckedAt: integer("settle_checked_at"),
+    settledAt: integer("settled_at"),
+    watchJSON: text("watch_json"),
+    watchEndedReason: text("watch_ended_reason", {
+      enum: ["merged", "closed", "settled", "comment-limit", "unreadable", "stopped"],
+    }),
+    watchEndedAt: integer("watch_ended_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.profileID, table.sessionID, table.pullRequestKey] }),
+    index("pull_request_links_key_idx").on(table.pullRequestKey),
+    index("pull_request_links_state_idx").on(table.state),
+  ],
+);
+
 export const automations = sqliteTable(
   "automations",
   {

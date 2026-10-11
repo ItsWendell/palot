@@ -6,4 +6,8 @@ declare global {
   }
 }
 
-export {};
+export type {
+  PalotSourceControlApi,
+  SourceControlChangedEvent,
+  SourceControlResult,
+} from "../shared/source-control-contract";

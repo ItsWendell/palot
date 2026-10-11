@@ -34,6 +34,7 @@ import {
 import { closePalotDatabase } from "./database/client";
 import { hydrateShellEnvironment } from "./shell-environment";
 import { automationService } from "./automations/service";
+import { shutdownSourceControlService, sourceControlService } from "./source-control/runtime";
 import { desktopNavigation } from "./desktop-navigation";
 import { desktopNotificationService } from "./notification-service";
 import { appearanceService } from "./appearance-service";
@@ -54,7 +55,8 @@ import { showRecoveryWindow } from "./recovery-window";
 import { completePendingPalotReset } from "./data-recovery";
 import { createShowcaseBackdrop, resolveShowcaseConfiguration } from "./showcase-window";
 import { installNativeContextMenu } from "./native-context-menu";
-import { linuxDesktopDiagnostics } from "./linux-desktop";
+import { linuxDesktopDiagnostics, windowManagerOwnsClose } from "./linux-desktop";
+import { WINDOW_MANAGER_OWNS_CLOSE_ARGUMENT } from "../shared/window-chrome";
 import { configureSecureStorage } from "./secure-storage";
 import { DESKTOP_HELP, parseDesktopLaunch } from "./desktop-launch";
 import { stat } from "node:fs/promises";
@@ -202,6 +204,9 @@ async function createWindow(
         serializeAppearancePreferences(appearance),
         ...(hasStoredAppearance ? [APPEARANCE_STORED_ARGUMENT] : []),
         ...(reducedTransparency ? [REDUCED_TRANSPARENCY_ARGUMENT] : []),
+        ...(process.platform === "linux" && windowManagerOwnsClose()
+          ? [WINDOW_MANAGER_OWNS_CLOSE_ARGUMENT]
+          : []),
       ],
     },
   });
@@ -440,6 +445,7 @@ if (helpRequested) {
         else send();
       });
       await automationService().start();
+      sourceControlService().start();
       await createWindow();
       app.on("activate", () => {
         void showMainWindow();
@@ -471,6 +477,9 @@ if (helpRequested) {
         await trayShutdown;
         destroyOpenCodeAttentionIndex();
         await shutdownBrowserPane();
+        await shutdownSourceControlService().catch((error) =>
+          log.warn("Source control shutdown failed", error),
+        );
         await openCodeRuntime.shutdown();
         closePalotDatabase();
         await shutdownAttachmentStorage();
