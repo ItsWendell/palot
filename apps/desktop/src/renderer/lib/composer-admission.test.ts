@@ -17,7 +17,14 @@ const session: PalotSession = {
   cost: null,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
 };
-const submission: ComposerSubmission = { kind: "prompt", text: "Ship it", files: [], skills: [] };
+const submission: ComposerSubmission = {
+  kind: "prompt",
+  text: "Ship it",
+  files: [],
+  skills: [],
+  agents: [],
+  references: [],
+};
 
 function setup() {
   const order: string[] = [];
@@ -84,6 +91,8 @@ describe("composer admission", () => {
         arguments: "auth",
         files: [],
         skills: [],
+        agents: [],
+        references: [],
       },
       files: [],
       delivery: "steer",

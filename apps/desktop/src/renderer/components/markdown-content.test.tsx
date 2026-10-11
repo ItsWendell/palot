@@ -1,8 +1,11 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OpenCodeRuntimeStatus } from "../../shared";
 import { remoteMarkdownFaviconsAtom } from "../atoms/ui";
+import { runtimeAtom } from "../atoms/workspace";
 import { palot } from "../services/palot";
 import {
   isLocalMarkdownWebLink,
@@ -92,7 +95,7 @@ describe("MarkdownContent", () => {
   it("uses the shared chat typesetting rhythm", () => {
     const html = renderToStaticMarkup(<MarkdownContent value="Readable response" />);
 
-    expect(html).toContain('class="markdown typeset-chat"');
+    expect(html).toContain('class="markdown typeset-chat select-text"');
   });
 
   it("sanitizes unsafe reasoning markup", () => {
@@ -335,6 +338,12 @@ describe("MarkdownContent", () => {
     expect(view.container.textContent).toContain("Escaped $20.");
   });
 
+  it("renders math beside punctuation without turning price ranges into formulas", async () => {
+    const view = render(<MarkdownContent value={"Price $5-$10. Formula ($x^2$), then $y$!"} />);
+    await waitFor(() => expect(view.container.querySelectorAll(".katex")).toHaveLength(2));
+    expect(view.container.textContent).toContain("Price $5-$10.");
+  });
+
   it("starts rendering Mermaid diagrams without a manual activation step", () => {
     const view = render(<MarkdownContent value={"```mermaid\ngraph TD\nA --> B\n```"} />);
 
@@ -557,6 +566,86 @@ describe("MarkdownContent", () => {
     expect(screen.getByText("Architecture")).toBeTruthy();
     expect(screen.getByText("image/png")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close image preview" }));
+  });
+
+  describe("local workspace images", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    const runtime: OpenCodeRuntimeStatus = {
+      profileID: "local",
+      connectionID: "local-connection",
+      connected: true,
+      phase: "connected",
+      contractVersion: "test",
+      binaryPath: null,
+      version: null,
+      pid: null,
+      managed: false,
+      lastConnectedAt: 1,
+      error: null,
+      versionMismatch: null,
+    };
+
+    function renderInTask(value: string, openFile = vi.fn()) {
+      const store = createStore();
+      store.set(runtimeAtom, runtime);
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const view = render(
+        <QueryClientProvider client={queryClient}>
+          <Provider store={store}>
+            <MarkdownWorkspaceProvider
+              onOpenFile={openFile}
+              workspaceDirectory="/repo"
+              workspaceLocation={{ directory: "/repo" }}
+            >
+              <MarkdownContent value={value} />
+            </MarkdownWorkspaceProvider>
+          </Provider>
+        </QueryClientProvider>,
+      );
+      return { view, openFile };
+    }
+
+    it("reads workspace images through the task's server and shows them inline", async () => {
+      const read = vi
+        .spyOn(palot, "readWorkspaceFile")
+        .mockResolvedValue(new Uint8Array([137, 80, 78, 71]));
+      vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:workspace-image");
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+
+      renderInTask("![After: palette](/repo/.local/qa/palette.png)");
+
+      // The read and blob URL settle asynchronously; allow for a loaded full-suite run.
+      const image = await screen.findByRole("img", { name: "After: palette" }, { timeout: 5000 });
+      expect(image.getAttribute("src")).toBe("blob:workspace-image");
+      expect(read).toHaveBeenCalledWith(
+        { directory: "/repo", path: ".local/qa/palette.png" },
+        expect.anything(),
+        "local-connection",
+      );
+      expect(
+        screen.getByRole("button", { name: "Open image preview: After: palette" }),
+      ).toBeTruthy();
+    });
+
+    it("keeps images outside the workspace actionable without reading them", () => {
+      const read = vi.spyOn(palot, "readWorkspaceFile");
+      const { openFile } = renderInTask("![Log](/tmp/elsewhere/shot.png)");
+
+      fireEvent.click(screen.getByRole("button", { name: "Open image /tmp/elsewhere/shot.png" }));
+
+      expect(openFile).toHaveBeenCalledWith({ path: "/tmp/elsewhere/shot.png" }, expect.anything());
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it("still gates remote images inside a task", () => {
+      const read = vi.spyOn(palot, "readWorkspaceFile");
+      const { view } = renderInTask("![Tracker](https://example.com/pixel.png)");
+
+      expect(view.container.textContent).toContain("[Image: Tracker]");
+      expect(view.container.querySelector("img")).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+    });
   });
 
   it("preserves linked Markdown images as links", () => {

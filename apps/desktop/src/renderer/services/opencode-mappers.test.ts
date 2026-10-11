@@ -312,6 +312,49 @@ describe("OpenCode message mapping", () => {
     });
   });
 
+  it("maps idle turn markers and the failure newer runtimes record on them", () => {
+    // The pinned client predates Idle.error; later runtimes send it on the same wire shape.
+    const failed = {
+      id: "msg_idle_failed",
+      type: "idle",
+      outcome: "failed",
+      error: { type: "ProviderAuthError", message: " Invalid API key " },
+      time: { created: 60 },
+    } as const;
+    expect(mapMessage(failed)).toMatchObject({
+      id: "msg_idle_failed",
+      type: "idle",
+      createdAt: 60,
+      completedAt: 60,
+      finish: "error",
+      content: [],
+      data: {
+        type: "idle",
+        outcome: "failed",
+        error: { type: "ProviderAuthError", message: "Invalid API key" },
+      },
+    });
+
+    const legacy: SessionMessageInfo = {
+      id: "msg_idle_legacy",
+      type: "idle",
+      outcome: "failed",
+      time: { created: 61 },
+    };
+    expect(mapMessage(legacy).data).toEqual({
+      id: "msg_idle_legacy",
+      type: "idle",
+      outcome: "failed",
+      time: { created: 61 },
+    });
+
+    const malformed = { ...legacy, id: "msg_idle_malformed", error: { message: 42 } } as const;
+    expect(mapMessage(malformed).data).not.toHaveProperty("error");
+    expect(mapMessage({ ...legacy, id: "msg_idle_succeeded", outcome: "succeeded" })).toMatchObject(
+      { finish: null, completedAt: 61 },
+    );
+  });
+
   it.each(["completed", "failed"] as const)(
     "keeps %s compaction request usage out of message context tokens",
     (status) => {

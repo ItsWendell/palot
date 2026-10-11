@@ -59,6 +59,67 @@ afterEach(() => {
 });
 
 describe("palot over the official OpenCode client", () => {
+  it("routes external credentials through the official endpoint and the owning IPC connection", async () => {
+    setFocusedOpenCodeRuntime(connectedRuntime);
+    setFocusedOpenCodeRuntime({
+      ...connectedRuntime,
+      connectionID: "other",
+      profileID: "other-profile",
+    });
+    const request = vi.fn().mockImplementation(async (input) => ({
+      status: input.path.startsWith("/api/location") ? 200 : 204,
+      statusText: "OK",
+      headers: { "content-type": "application/json" },
+      body: input.path.startsWith("/api/location")
+        ? new TextEncoder().encode(
+            JSON.stringify({
+              directory: "/repo",
+              project: { id: "project-1", directory: "/repo", canonical: "/repo" },
+            }),
+          ).buffer
+        : null,
+    }));
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: bridge({ openCodeRequest: request }),
+    });
+    await palot.connectIntegrationExternal({
+      connectionID: connectedRuntime.connectionID,
+      projectID: "project-1",
+      directory: "/repo",
+      integrationID: "vault/profile",
+      methodID: "external-profile",
+      answer: { profile: "work", enabled: false, scopes: ["read"] },
+      label: "Work",
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+    const input = request.mock.calls[1]![0];
+    const url = new URL(input.path, "https://opencode.invalid");
+    expect(url.pathname).toBe("/api/integration/vault%2Fprofile/connect/external");
+    expect(url.searchParams.get("location[directory]")).toBe("/repo");
+    expect(input).toMatchObject({
+      connectionID: connectedRuntime.connectionID,
+      profileID: connectedRuntime.profileID,
+      method: "POST",
+    });
+    expect(JSON.parse(new TextDecoder().decode(input.body))).toEqual({
+      methodID: "external-profile",
+      answer: { profile: "work", enabled: false, scopes: ["read"] },
+      label: "Work",
+    });
+  });
+
+  it("does not pretend to connect external credentials when the bridge is unavailable", async () => {
+    await expect(
+      palot.connectIntegrationExternal({
+        projectID: "project-1",
+        directory: "/repo",
+        integrationID: "vault",
+        methodID: "profile",
+      }),
+    ).rejects.toThrow("Palot bridge is unavailable");
+  });
+
   it.each(
     (
       [

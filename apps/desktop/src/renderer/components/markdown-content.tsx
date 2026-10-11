@@ -20,6 +20,7 @@ import {
   isValidElement,
   memo,
   useContext,
+  useEffect,
   useId,
   useMemo,
   useState,
@@ -27,7 +28,9 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import type { LocationRef } from "@opencode/client";
 import { useClipboardCopy } from "../hooks/use-clipboard-copy";
+import { useWorkspaceFile } from "../hooks/use-workspace-file";
 import { remoteMarkdownFaviconsAtom } from "../atoms/ui";
 import { cn } from "../lib/cn";
 import { duckDuckGoFaviconUrl } from "../lib/markdown-favicon";
@@ -39,6 +42,7 @@ import { MarkdownCodeBlock } from "./markdown-code-block";
 import type { CodeAnimationRange } from "./highlighted-code";
 import { PalotMarkdown, useMarkdownBlockStreaming } from "./palot-markdown-react";
 import { ImageLightbox } from "./read-image-preview";
+import { workspaceRelativePath } from "./workbench-tabs/workspace-files-tab";
 import { MarkdownInlineMath, MarkdownMath } from "./markdown-rich";
 import {
   DropdownMenu,
@@ -63,6 +67,7 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "cpp",
   "cs",
   "css",
+  "docx",
   "env",
   "fish",
   "gif",
@@ -89,6 +94,7 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "opus",
   "pdf",
   "png",
+  "pptx",
   "py",
   "rb",
   "rs",
@@ -104,6 +110,7 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "webm",
   "webp",
   "xml",
+  "xlsx",
   "yaml",
   "yml",
   "zsh",
@@ -120,6 +127,7 @@ export type WorkspaceFileOpenHandler = (
   event?: ReactMouseEvent | ReactKeyboardEvent,
 ) => void;
 const MarkdownWorkspaceDirectoryContext = createContext<string | undefined>(undefined);
+const MarkdownWorkspaceLocationContext = createContext<LocationRef | undefined>(undefined);
 const MarkdownWorkspaceFileContext = createContext<WorkspaceFileOpenHandler | null>(null);
 const MarkdownWebLinkContext = createContext<((url: string) => void) | null>(null);
 const MarkdownSessionLinkContext = createContext<((sessionID: string) => void) | null>(null);
@@ -155,23 +163,28 @@ export function MarkdownWorkspaceProvider({
   onOpenWebLink,
   onOpenSession,
   workspaceDirectory,
+  workspaceLocation,
 }: {
   children?: ReactNode;
   onOpenFile(reference: MarkdownFileReference, event?: ReactMouseEvent | ReactKeyboardEvent): void;
   onOpenWebLink?(url: string): void;
   onOpenSession?(sessionID: string): void;
   workspaceDirectory?: string;
+  /** Lets local workspace images load through the task's own OpenCode server. */
+  workspaceLocation?: LocationRef;
 }) {
   return (
-    <MarkdownWorkspaceDirectoryContext.Provider value={workspaceDirectory}>
-      <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
-        <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
-          <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
-            {children}
-          </MarkdownSessionLinkContext.Provider>
-        </MarkdownWebLinkContext.Provider>
-      </MarkdownWorkspaceFileContext.Provider>
-    </MarkdownWorkspaceDirectoryContext.Provider>
+    <MarkdownWorkspaceLocationContext.Provider value={workspaceLocation}>
+      <MarkdownWorkspaceDirectoryContext.Provider value={workspaceDirectory}>
+        <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
+          <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
+            <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
+              {children}
+            </MarkdownSessionLinkContext.Provider>
+          </MarkdownWebLinkContext.Provider>
+        </MarkdownWorkspaceFileContext.Provider>
+      </MarkdownWorkspaceDirectoryContext.Provider>
+    </MarkdownWorkspaceLocationContext.Provider>
   );
 }
 
@@ -502,20 +515,157 @@ function workspaceFileIcon(path: string) {
 
 function MarkdownImage({ alt, src, className, title, ...props }: MarkdownComponentProps<"img">) {
   const { baseUrl, passiveMedia } = useContext(MarkdownRenderContext);
-  const linked = useContext(MarkdownLinkContext);
-  const [open, setOpen] = useState(false);
+  const workspaceLocation = useContext(MarkdownWorkspaceLocationContext);
+  const localImage = workspaceLocation
+    ? localMarkdownImage(src, workspaceLocation.directory)
+    : null;
+  if (localImage && workspaceLocation) {
+    return (
+      <WorkspaceMarkdownImage
+        {...props}
+        alt={alt}
+        title={title}
+        className={className}
+        image={localImage}
+        location={workspaceLocation}
+      />
+    );
+  }
+
   const placeholder = <span>{alt ? `[Image: ${alt}]` : "[Image]"}</span>;
+  // Remote images stay gated so rendering never silently fetches tracking URLs.
   if (!passiveMedia) return placeholder;
 
   const resolvedSrc = resolveMarkdownImageUrl(src, baseUrl);
   if (!resolvedSrc) return placeholder;
-  const name = markdownImageName(alt, resolvedSrc);
+  return (
+    <MarkdownImageView
+      {...props}
+      alt={alt}
+      title={title}
+      className={className}
+      src={resolvedSrc}
+      name={markdownImageName(alt, resolvedSrc)}
+      mime={markdownImageMime(resolvedSrc)}
+    />
+  );
+}
+
+interface LocalMarkdownImage {
+  /** Path shown to people and opened outside Palot when the image is not in the workspace. */
+  path: string;
+  /** Workspace-relative path read through OpenCode, or null outside the workspace. */
+  relativePath: string | null;
+}
+
+const LOCAL_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp"]);
+
+function localMarkdownImage(
+  src: string | undefined,
+  workspaceDirectory: string,
+): LocalMarkdownImage | null {
+  if (!src) return null;
+  const value = src.trim();
+  // Any other URL scheme (https:, data:, blob:, …) is not a local file reference.
+  if (
+    /^[a-z][a-z0-9+.-]*:/i.test(value) &&
+    !value.startsWith("file:") &&
+    !/^[A-Za-z]:[\\/]/.test(value)
+  )
+    return null;
+  let path = value;
+  if (value.startsWith("file:")) {
+    try {
+      path = decodeURIComponent(new URL(value).pathname);
+    } catch {
+      return null;
+    }
+  }
+  path = path.replace(/[?#].*$/, "");
+  const extension = path.split(".").at(-1)?.toLowerCase();
+  if (!extension || !LOCAL_IMAGE_EXTENSIONS.has(extension)) return null;
+  const relativePath = path.startsWith("~")
+    ? null
+    : workspaceRelativePath(workspaceDirectory, path);
+  return { path, relativePath: relativePath || null };
+}
+
+function WorkspaceMarkdownImage({
+  alt,
+  title,
+  className,
+  image,
+  location,
+  ...props
+}: Omit<MarkdownComponentProps<"img">, "src"> & {
+  image: LocalMarkdownImage;
+  location: LocationRef;
+}) {
+  const openFile = useContext(MarkdownWorkspaceFileContext);
+  const query = useWorkspaceFile(location, image.relativePath ?? "", image.relativePath !== null);
+  const mime = markdownImageMime(image.path);
+  const objectURL = useBlobURL(query.data, mime);
+  const name = markdownImageName(alt, image.path);
+
+  if (image.relativePath !== null && objectURL) {
+    return (
+      <MarkdownImageView
+        {...props}
+        alt={alt}
+        title={title}
+        className={className}
+        src={objectURL}
+        name={name}
+        mime={mime}
+      />
+    );
+  }
+
+  const loading = image.relativePath !== null && query.isPending;
+  const label = loading ? `Loading image: ${name}` : alt ? `[Image: ${alt}]` : `[Image: ${name}]`;
+  if (!openFile || loading) return <span className="text-muted-foreground">{label}</span>;
+  // Outside the workspace (or unreadable): keep the reference actionable instead of inert text.
+  return (
+    <button
+      type="button"
+      title={image.path}
+      aria-label={`Open image ${image.path}`}
+      onClick={(event) => openFile({ path: image.path }, event)}
+      className="cursor-pointer text-info underline-offset-4 outline-none hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {label}
+    </button>
+  );
+}
+
+function useBlobURL(data: Uint8Array | undefined, mime: string): string | null {
+  const [entry, setEntry] = useState<{ data: Uint8Array; url: string } | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    const url = URL.createObjectURL(new Blob([new Uint8Array(data)], { type: mime }));
+    setEntry({ data, url });
+    return () => URL.revokeObjectURL(url);
+  }, [data, mime]);
+  return entry && entry.data === data ? entry.url : null;
+}
+
+function MarkdownImageView({
+  alt,
+  src,
+  className,
+  title,
+  name,
+  mime,
+  ...props
+}: MarkdownComponentProps<"img"> & { src: string; name: string; mime: string }) {
+  const linked = useContext(MarkdownLinkContext);
+  const [open, setOpen] = useState(false);
   const dimensions = markdownImageDimensions(title);
   const image = (
     <img
       {...props}
       alt={alt}
-      src={resolvedSrc}
+      src={src}
       {...(title ? { title } : {})}
       {...(dimensions ? { width: dimensions.width, height: dimensions.height } : {})}
       draggable={false}
@@ -540,13 +690,7 @@ function MarkdownImage({ alt, src, className, title, ...props }: MarkdownCompone
           </span>
         </span>
       </button>
-      <ImageLightbox
-        src={resolvedSrc}
-        name={name}
-        mime={markdownImageMime(resolvedSrc)}
-        open={open}
-        onOpenChange={setOpen}
-      />
+      <ImageLightbox src={src} name={name} mime={mime} open={open} onOpenChange={setOpen} />
     </>
   );
 }
@@ -598,7 +742,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   baseUrl,
 }: MarkdownContentProps) {
   return (
-    <div className={cn("markdown typeset-chat", className)}>
+    <div className={cn("markdown typeset-chat select-text", className)}>
       <MarkdownBody
         value={value}
         streaming={streaming}

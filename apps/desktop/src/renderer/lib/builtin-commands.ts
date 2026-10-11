@@ -71,6 +71,41 @@ export const BUILTIN_COMMANDS: readonly PalotCommand[] = [
     model: null,
     subtask: false,
   },
+  {
+    name: "fork",
+    description: "Fork this task into a new task",
+    agent: null,
+    model: null,
+    subtask: false,
+  },
+  {
+    name: "export",
+    description: "Export this task to a file",
+    agent: null,
+    model: null,
+    subtask: false,
+  },
+  {
+    name: "agent",
+    description: "Switch agent or open agent selector",
+    agent: null,
+    model: null,
+    subtask: false,
+  },
+  {
+    name: "mcp",
+    description: "Open MCP server settings",
+    agent: null,
+    model: null,
+    subtask: false,
+  },
+  {
+    name: "open",
+    description: "Search this task's files and open one",
+    agent: null,
+    model: null,
+    subtask: false,
+  },
 ] as const;
 
 export function mergeBuiltinCommands(customCommands: PalotCommand[]): PalotCommand[] {

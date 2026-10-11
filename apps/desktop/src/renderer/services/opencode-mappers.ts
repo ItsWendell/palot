@@ -11,6 +11,7 @@ import type {
   SessionMessageAssistantText,
   SessionMessageAssistantTool,
   SessionMessageCompaction,
+  SessionMessageIdle,
   SessionMessageInfo,
   SkillInfo,
   TokenUsageInfo,
@@ -182,6 +183,31 @@ function mapCompactionContent(value: SessionMessageCompaction): PalotMessageCont
   };
 }
 
+/**
+ * Newer OpenCode releases record the failure that ended a turn on its idle marker.
+ * The pinned client predates that field, so read it structurally.
+ */
+function idleError(message: SessionMessageIdle): { type?: string; message: string } | null {
+  if (message.outcome !== "failed" || !("error" in message)) return null;
+  const error = message.error;
+  if (!error || typeof error !== "object" || Array.isArray(error)) return null;
+  const detail =
+    "message" in error && typeof error.message === "string" ? error.message.trim() : "";
+  if (!detail) return null;
+  const type = "type" in error && typeof error.type === "string" ? error.type : undefined;
+  return { ...(type ? { type } : {}), message: detail };
+}
+
+function mapIdleData(message: SessionMessageIdle): JsonValue {
+  const { error: _, ...data } = record(json(message));
+  const failure = idleError(message);
+  return failure ? { ...data, error: failure } : data;
+}
+
+function record(value: JsonValue): Record<string, JsonValue> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
 // Match the read-image preview raster allowlist and native attachment byte limit.
 const ATTACHMENT_IMAGE_MIMES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -316,6 +342,9 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
       }
       content = [mapCompactionContent(message)];
       break;
+    case "idle":
+      finish = message.outcome === "failed" ? "error" : null;
+      break;
     case "location-switched":
     case "shell":
       break;
@@ -324,7 +353,7 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
   const completedAt =
     message.type === "assistant" || message.type === "shell"
       ? (message.time.completed ?? null)
-      : message.type === "compaction" && message.status !== "running"
+      : (message.type === "compaction" && message.status !== "running") || message.type === "idle"
         ? message.time.created
         : null;
 
@@ -346,7 +375,7 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
     ...files,
     ...(skillReferences ? { skillReferences } : {}),
     content,
-    data: json(message),
+    data: message.type === "idle" ? mapIdleData(message) : json(message),
   };
 }
 

@@ -50,6 +50,33 @@ describe("composer restoration", () => {
     expect(draft.mentions).toMatchObject([{ kind: "file", value: "a.ts", start: 4, end: 9 }]);
     expect(draft.command).toBeNull();
   });
+  it("restores agent and reference mentions alongside workspace files", () => {
+    const draft = composerDraftFromMessage(
+      message({
+        text: "Ask @explore about @a.ts in @opencode-v2",
+        agents: [{ name: "explore", mention: { text: "@explore", start: 4, end: 12 } }],
+        files: [
+          {
+            name: "a.ts",
+            mime: "text/plain",
+            source: { type: "uri", uri: "file:///repo/a.ts" },
+            mention: { text: "@a.ts", start: 19, end: 24 },
+          },
+          {
+            name: "opencode-v2",
+            mime: "application/x-directory",
+            source: { type: "uri", uri: "file:///home/me/repos/opencode%40dev" },
+            mention: { text: "@opencode-v2", start: 28, end: 40 },
+          },
+        ],
+      }),
+    );
+    expect(draft.mentions).toMatchObject([
+      { kind: "agent", value: "explore", start: 4, end: 12 },
+      { kind: "file", value: "a.ts", start: 19, end: 24 },
+      { kind: "reference", value: "opencode-v2", path: "/home/me/repos/opencode@dev" },
+    ]);
+  });
   it("preserves full original text when presentation metadata is malformed", () => {
     expect(
       composerDraftFromMessage(

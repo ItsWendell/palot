@@ -12,6 +12,7 @@ import type {
   PalotSession,
   SessionRequestSnapshot,
 } from "../../shared";
+import { promptMentionParts, type PromptMentionInput } from "../lib/prompt-mentions";
 import { workspaceFileAttachments } from "../lib/workspace-references";
 import { openCodeClient } from "./opencode-client";
 import { attachmentPrompt, type AttachmentDeliveryInput } from "./opencode-attachment-delivery";
@@ -457,10 +458,11 @@ export function promptFiles(
 }
 
 export async function sendPrompt(
-  input: PromptInput & AttachmentDeliveryInput,
+  input: PromptInput & AttachmentDeliveryInput & PromptMentionInput,
 ): Promise<PromptReceipt> {
   const client = openCodeClient();
   const { inlineFiles, ...delivery } = attachmentPrompt(input.text, input);
+  const mentions = promptMentionParts(input);
   const session =
     input.fileReferences?.length || input.comments?.length
       ? await sessionLocation(input.sessionID)
@@ -480,6 +482,7 @@ export async function sendPrompt(
           };
         })
       : []),
+    ...mentions.files,
   ];
   const pending = await client.session.prompt(
     {
@@ -487,6 +490,7 @@ export async function sendPrompt(
       ...(input.id ? { id: input.id } : {}),
       ...delivery,
       ...(files.length ? { files } : {}),
+      ...(mentions.agents.length ? { agents: mentions.agents } : {}),
       ...(input.skillReferences?.length
         ? {
             skills: input.skillReferences.map((skill) => ({

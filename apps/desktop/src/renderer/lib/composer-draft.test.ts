@@ -16,7 +16,7 @@ function mention(
   value: string,
   start: number,
 ): ComposerMention {
-  const text = `${kind === "file" ? "@" : "$"}${value}`;
+  const text = `${kind === "skill" ? "$" : "@"}${value}`;
   return { localID, kind, value, text, start, end: start + text.length };
 }
 
@@ -158,7 +158,43 @@ describe("projectComposerSubmission", () => {
           text: "Pinned review skill",
         },
       ],
+      agents: [],
+      references: [],
     });
+  });
+
+  it("inserts subagent and reference choices from an @ query as their own parts", () => {
+    const empty: ComposerDraft = { text: "Ask @exp", mentions: [], command: null };
+    const agent = insertComposerSelection(
+      empty,
+      { kind: "file", start: 4, end: 8, query: "exp" },
+      { kind: "agent", name: "explore", localID: "agent-1" },
+    );
+    expect(agent.draft.text).toBe("Ask @explore ");
+    const withReference = insertComposerSelection(
+      { ...agent.draft, text: `${agent.draft.text}in @doc` },
+      { kind: "file", start: 16, end: 20, query: "doc" },
+      { kind: "reference", name: "docs", path: "/refs/docs", localID: "reference-1" },
+    );
+    expect(withReference.draft.text).toBe("Ask @explore in @docs ");
+
+    expect(projectComposerSubmission(withReference.draft)).toMatchObject({
+      kind: "prompt",
+      files: [],
+      agents: [{ name: "explore", mention: { start: 4, end: 12, text: "@explore" } }],
+      references: [
+        { name: "docs", path: "/refs/docs", mention: { start: 16, end: 21, text: "@docs" } },
+      ],
+    });
+  });
+
+  it("drops a persisted reference mention that lost its directory", () => {
+    const draft: ComposerDraft = {
+      text: "@docs",
+      mentions: [mention("reference-1", "reference", "docs", 0)],
+      command: null,
+    };
+    expect(normalizeComposerDraft(draft).mentions).toEqual([]);
   });
 
   it("projects a valid selected command and its raw arguments", () => {
@@ -198,6 +234,8 @@ describe("projectComposerSubmission", () => {
         },
       ],
       skills: [{ id: "review", mention: { start: 26, end: 33, text: "$review" } }],
+      agents: [],
+      references: [],
     });
   });
 
@@ -217,6 +255,8 @@ describe("projectComposerSubmission", () => {
       text: draft.text,
       files: [],
       skills: [],
+      agents: [],
+      references: [],
     });
   });
 

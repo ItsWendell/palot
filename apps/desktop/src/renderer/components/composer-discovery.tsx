@@ -1,5 +1,5 @@
-import { FileText, Sparkles, TerminalSquare } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Bot, FileText, FolderSymlink, Sparkles, TerminalSquare } from "lucide-react";
+import { Fragment, useEffect, useRef } from "react";
 import { cn } from "../lib/cn";
 import { SurfaceBackdrop } from "./ui/surface-backdrop";
 
@@ -23,7 +23,44 @@ export type ComposerDiscoveryItem =
       key: string;
       path: string;
       name: string;
+    }
+  | {
+      kind: "agent";
+      key: string;
+      /** Agent ID, which OpenCode prompt agent parts name. */
+      name: string;
+      description: string | null;
+    }
+  | {
+      kind: "reference";
+      key: string;
+      name: string;
+      /** Absolute directory OpenCode resolved for the reference. */
+      path: string;
+      description: string | null;
     };
+
+const GROUP_LABELS: Record<ComposerDiscoveryItem["kind"], string> = {
+  command: "Commands",
+  skill: "Skills",
+  file: "Files",
+  agent: "Agents",
+  reference: "References",
+};
+
+/** Runs of consecutive same-kind items, keeping each item's index in the full list. */
+function groupItems(items: ComposerDiscoveryItem[]) {
+  const groups: {
+    kind: ComposerDiscoveryItem["kind"];
+    items: [ComposerDiscoveryItem, number][];
+  }[] = [];
+  items.forEach((item, index) => {
+    const last = groups.at(-1);
+    if (last?.kind === item.kind) last.items.push([item, index]);
+    else groups.push({ kind: item.kind, items: [[item, index]] });
+  });
+  return groups;
+}
 
 export function ComposerDiscovery({
   id,
@@ -42,6 +79,9 @@ export function ComposerDiscovery({
   onActiveIndexChange(index: number): void;
   onSelect(item: ComposerDiscoveryItem): void;
 }) {
+  const groups = groupItems(items);
+  // A single kind needs no heading; `@` mixes references, agents, and files.
+  const labelled = groups.length > 1;
   return (
     <div
       id={id}
@@ -51,16 +91,31 @@ export function ComposerDiscovery({
     >
       <SurfaceBackdrop />
       <div className="max-h-80 overflow-y-auto overscroll-contain py-0.5">
-        {items.map((item, index) => (
-          <DiscoveryOption
-            key={item.key}
-            id={`${id}-option-${index}`}
-            item={item}
-            active={index === activeIndex}
-            onActive={() => onActiveIndexChange(index)}
-            onSelect={() => onSelect(item)}
-          />
-        ))}
+        {groups.map((group, groupIndex) => {
+          const options = group.items.map(([item, index]) => (
+            <DiscoveryOption
+              key={item.key}
+              id={`${id}-option-${index}`}
+              item={item}
+              active={index === activeIndex}
+              onActive={() => onActiveIndexChange(index)}
+              onSelect={() => onSelect(item)}
+            />
+          ));
+          if (!labelled) return <Fragment key={`${group.kind}:${groupIndex}`}>{options}</Fragment>;
+          const labelID = `${id}-group-${groupIndex}`;
+          return (
+            <div key={`${group.kind}:${groupIndex}`} role="group" aria-labelledby={labelID}>
+              <div
+                id={labelID}
+                className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground"
+              >
+                {GROUP_LABELS[group.kind]}
+              </div>
+              {options}
+            </div>
+          );
+        })}
         {loading ? (
           <div className="px-3 py-3 text-xs text-muted-foreground" role="status">
             Searching...
@@ -116,6 +171,10 @@ function DiscoveryOption({
           <TerminalSquare className="size-3.5" aria-hidden="true" />
         ) : item.kind === "skill" ? (
           <Sparkles className="size-3.5" aria-hidden="true" />
+        ) : item.kind === "agent" ? (
+          <Bot className="size-3.5" aria-hidden="true" />
+        ) : item.kind === "reference" ? (
+          <FolderSymlink className="size-3.5" aria-hidden="true" />
         ) : (
           <FileText className="size-3.5" aria-hidden="true" />
         )}
@@ -137,7 +196,13 @@ function DiscoveryOption({
           ) : null}
         </span>
         <span className="block truncate text-xs text-muted-foreground">
-          {item.kind === "file" ? item.path : (item.description ?? "No description")}
+          {item.kind === "file"
+            ? item.path
+            : item.kind === "reference"
+              ? (item.description ?? item.path)
+              : item.kind === "agent"
+                ? (item.description ?? "Subagent")
+                : (item.description ?? "No description")}
         </span>
       </span>
     </button>

@@ -73,6 +73,11 @@ import { createMarkdownSessionOpener } from "../lib/markdown-session-links";
 import { writeClipboardText } from "../lib/clipboard";
 import { likelyCacheBusts, type LikelyCacheBust } from "../lib/cache-bust";
 import { resolveSessionProjectionPreference } from "../lib/session-projection-policy";
+import { withPersistedTurnFailures } from "../lib/persisted-turn-failures";
+import { parallelActivityLabel } from "../lib/parallel-activity";
+import { canFetchOpenCode } from "../lib/opencode-runtime-query";
+import { reviewOfferUserMessageID } from "../lib/turn-review-offer";
+import { TurnReviewOffer } from "./turn-review-offer";
 import { projectToolExecution } from "../lib/tool-executions";
 import { recordStreamingCommit } from "../lib/streaming-latency";
 import {
@@ -116,6 +121,8 @@ import { useTranscriptNavigation } from "../hooks/use-transcript-navigation";
 import { useTranscriptPrompts } from "../hooks/use-transcript-prompts";
 import { useTranscriptInfiniteScroll } from "../hooks/use-transcript-infinite-scroll";
 import { TranscriptRail } from "./transcript-rail";
+import { TranscriptFindBar, useTaskViewShortcuts, useTranscriptFind } from "./transcript-find";
+import { transcriptFindPartKey, transcriptPartText } from "../lib/transcript-search";
 import { CompactionUsage } from "./compaction-usage";
 import { SessionHistoryDialog } from "./session-history-dialog";
 import { PermissionPreview } from "./permission-preview";
@@ -131,6 +138,7 @@ import {
 } from "./markdown-content";
 import { NewTask } from "./new-task";
 import { OpenInSelector } from "./open-in-selector";
+import { PullRequestControl } from "./pull-requests/pull-request-control";
 import { SessionExportMenu, type SessionHistoryActions } from "./session-context-menu";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { AttachmentGroup } from "./ui/attachment";
@@ -268,6 +276,7 @@ const SessionThread = memo(function SessionThread({ session }: { session: PalotS
     <main
       className="palot-main-surface relative flex h-full min-h-0 flex-col bg-background"
       aria-label="Current task"
+      data-palot-task-view=""
     >
       <SessionThreadContents key={`${runtime?.connectionID}:${session.id}`} session={session} />
     </main>
@@ -409,10 +418,11 @@ const SessionThreadContents = memo(function SessionThreadContents({
     () => requestViews.filter((request) => request.type === "question" || request.type === "form"),
     [requestViews],
   );
+  const projectedMessages = useMemo(() => withPersistedTurnFailures(messages), [messages]);
   const projection = useSessionTranscriptProjection({
     connectionID: transcript.connectionID,
     sessionID: session.id,
-    messages,
+    messages: projectedMessages,
     execution,
     requests: requestViews,
     diffs: EMPTY_DIFFS,
@@ -461,6 +471,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const [pinnedVirtualTurnIDs, setPinnedVirtualTurnIDs] = useState<string[]>([]);
   const [prependPinnedTurnID, setPrependPinnedTurnID] = useState<string | null>(null);
   const [navigationPinnedTurnID, setNavigationPinnedTurnID] = useState<string | null>(null);
+  const [findPinnedTurnID, setFindPinnedTurnID] = useState<string | null>(null);
   const pinVirtualTurn = useCallback((turnID: string) => {
     setPinnedVirtualTurnIDs((current) =>
       current.includes(turnID) ? current : [...current, turnID].slice(-MAX_PINNED_VIRTUAL_TURNS),
@@ -492,6 +503,10 @@ const SessionThreadContents = memo(function SessionThreadContents({
         const index = turnRows.findIndex((row) => row.id === navigationPinnedTurnID);
         if (index >= 0 && !indexes.includes(index)) indexes.push(index);
       }
+      if (findPinnedTurnID) {
+        const index = turnRows.findIndex((row) => row.id === findPinnedTurnID);
+        if (index >= 0 && !indexes.includes(index)) indexes.push(index);
+      }
       for (const turnID of pinnedVirtualTurnIDs) {
         const index = turnRows.findIndex((row) => row.id === turnID);
         if (index >= 0 && !indexes.includes(index)) indexes.push(index);
@@ -509,6 +524,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
       pinnedVirtualTurnIDs,
       prependPinnedTurnID,
       navigationPinnedTurnID,
+      findPinnedTurnID,
       turnRows,
     ],
   );
@@ -867,6 +883,23 @@ const SessionThreadContents = memo(function SessionThreadContents({
     loadOlder,
   });
 
+  const find = useTranscriptFind({
+    sessionID: session.id,
+    rows: turnRows,
+    viewport: scrollRef,
+    virtualizer,
+    bottomInset: composerDockHeight ?? 0,
+    pin: setFindPinnedTurnID,
+    unlock: () => setBottomLock(false),
+    cancelNavigation: navigation.cancel,
+  });
+  const moveTurn = (direction: "previous" | "next") => {
+    // Matches the task menu, which disables previous-turn navigation while history loads.
+    if (direction === "previous" && loadingOlder) return;
+    navigation.move(direction);
+  };
+  useTaskViewShortcuts({ onFind: find.openFind, onTurn: moveTurn });
+
   useLayoutEffect(() => {
     navigationGeometryRef.current = navigation.onGeometryChange;
     return () => {
@@ -904,6 +937,33 @@ const SessionThreadContents = memo(function SessionThreadContents({
       );
     },
     [session.location, workbench],
+  );
+  const reviewUserMessageID = session.parentID
+    ? null
+    : reviewOfferUserMessageID(turnRows, execution, runtimeStatus);
+  const reviewAvailable =
+    canFetchOpenCode(runtime) && runtime?.connectionID === transcript.connectionID;
+  const reviewOffer = useMemo(
+    () =>
+      reviewUserMessageID ? (
+        <TurnReviewOffer
+          key={reviewUserMessageID}
+          connectionID={transcript.connectionID}
+          sessionID={session.id}
+          userMessageID={reviewUserMessageID}
+          available={reviewAvailable}
+          onReview={openTurnChanges}
+          onAsked={handleMessageAdmitted}
+        />
+      ) : null,
+    [
+      handleMessageAdmitted,
+      openTurnChanges,
+      reviewAvailable,
+      reviewUserMessageID,
+      session.id,
+      transcript.connectionID,
+    ],
   );
   const openWorkspaceFile = useCallback(
     (reference: MarkdownFileReference, event?: React.MouseEvent | React.KeyboardEvent) => {
@@ -1007,6 +1067,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
       onOpenWebLink: openWebLink,
       onOpenSession: openReferencedSession,
       workspaceDirectory: session.location.directory,
+      workspaceLocation: session.location,
     },
     <>
       <SessionThreadHeader
@@ -1015,6 +1076,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
           loadingOlder,
           previousTurn: () => navigation.move("previous"),
           nextTurn: () => navigation.move("next"),
+          find: find.openFind,
           openTimeline: () => setHistoryMode("timeline"),
           forkFromPrompt: () => setHistoryMode("fork"),
         }}
@@ -1248,6 +1310,9 @@ const SessionThreadContents = memo(function SessionThreadContents({
                           }
                           onOpenCacheDiagnostic={openCacheDiagnostic}
                           onOpenTurnChanges={openTurnChanges}
+                          reviewOffer={
+                            virtualItem.index === turnRows.length - 1 ? reviewOffer : null
+                          }
                           subagentProgress={
                             virtualItem.index === turnRows.length - 1
                               ? subagentProgress
@@ -1305,6 +1370,12 @@ const SessionThreadContents = memo(function SessionThreadContents({
                 />
               </div>
             ) : null}
+            <TranscriptFindBar
+              controller={find}
+              hasOlder={cursor}
+              loadingOlder={loadingOlder}
+              onLoadOlder={() => void loadOlder()}
+            />
             {!bottomLocked && messages.length > 0 ? (
               <motion.div
                 initial={{ opacity: 0, y: 6 }}
@@ -1467,6 +1538,7 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
           </Tooltip>
         ) : null}
       </div>
+      {session.parentID ? null : <PullRequestControl session={session} />}
       {runtime?.capabilities?.localPathActions === true ? (
         <OpenInSelector key={runtime.connectionID} sessionID={session.id} />
       ) : null}
@@ -1797,6 +1869,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   cacheBust,
   onOpenCacheDiagnostic,
   onOpenTurnChanges,
+  reviewOffer,
   subagentProgress,
   virtualIndex,
   virtualSize,
@@ -1812,6 +1885,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   cacheBust: LikelyCacheBust | null;
   onOpenCacheDiagnostic: (messageID: string) => void;
   onOpenTurnChanges: (userMessageID: string) => void;
+  reviewOffer: React.ReactNode;
   subagentProgress: { active: number; total: number };
   virtualIndex: number;
   virtualSize: number;
@@ -1896,6 +1970,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
             View turn changes
           </Button>
         ) : null}
+        {reviewOffer}
       </article>
     </div>
   );
@@ -1910,6 +1985,7 @@ function sameTranscriptPresentationTurnItemProps(
     cacheBust: LikelyCacheBust | null;
     onOpenCacheDiagnostic: (messageID: string) => void;
     onOpenTurnChanges: (userMessageID: string) => void;
+    reviewOffer: React.ReactNode;
     subagentProgress: { active: number; total: number };
     virtualIndex: number;
     virtualSize: number;
@@ -1926,6 +2002,7 @@ function sameTranscriptPresentationTurnItemProps(
     cacheBust: LikelyCacheBust | null;
     onOpenCacheDiagnostic: (messageID: string) => void;
     onOpenTurnChanges: (userMessageID: string) => void;
+    reviewOffer: React.ReactNode;
     subagentProgress: { active: number; total: number };
     virtualIndex: number;
     virtualSize: number;
@@ -1944,6 +2021,7 @@ function sameTranscriptPresentationTurnItemProps(
     previous.cacheBust === next.cacheBust &&
     previous.onOpenCacheDiagnostic === next.onOpenCacheDiagnostic &&
     previous.onOpenTurnChanges === next.onOpenTurnChanges &&
+    previous.reviewOffer === next.reviewOffer &&
     previous.virtualIndex === next.virtualIndex &&
     previous.virtualSize === next.virtualSize &&
     previous.isLastTurn === next.isLastTurn &&
@@ -2076,7 +2154,11 @@ const TranscriptPresentationRowContent = memo(function TranscriptPresentationRow
   }
   const { turn } = row;
   return turn.status === "working" ? (
-    <ActiveTurnMeta startedAt={turn.startedAt} label={activeTurnLabel(turn)} />
+    <ActiveTurnMeta
+      startedAt={turn.startedAt}
+      label={activeTurnLabel(turn)}
+      activity={parallelActivityLabel(turn)}
+    />
   ) : null;
 }, sameTranscriptPresentationRowContentProps);
 
@@ -2314,9 +2396,12 @@ function useCurrentTime(active = true): number {
 export function ActiveTurnMeta({
   startedAt,
   label = "Working",
+  activity = null,
 }: {
   startedAt: number;
   label?: "Working" | "Finishing";
+  /** Concurrent tool work, such as "Reading 3 files". */
+  activity?: string | null;
 }) {
   const now = useCurrentTime();
 
@@ -2324,11 +2409,17 @@ export function ActiveTurnMeta({
   return (
     <div
       data-palot-active-turn-status
-      className="mt-1 flex h-6 items-center gap-1.5 text-xs leading-none tabular-nums text-muted-foreground/55"
+      className="mt-1 flex h-6 min-w-0 items-center gap-1.5 text-xs leading-none tabular-nums text-muted-foreground/55"
       role="status"
-      aria-label={`${label} for ${duration}`}
+      aria-label={`${label}${activity ? `, ${activity.toLowerCase()},` : ""} for ${duration}`}
     >
       <ThinkingShimmer>{label}</ThinkingShimmer>
+      {activity ? (
+        <>
+          <span aria-hidden="true">·</span>
+          <span className="min-w-0 truncate">{activity}</span>
+        </>
+      ) : null}
       <span aria-hidden="true">·</span>
       <span>{duration}</span>
     </div>
@@ -3744,9 +3835,14 @@ function MessagePartView({
     const reasoning = messageText(message, part).trim();
     return reasoning ? <ThoughtDisclosure entry={{ message, part, index }} live={live} /> : null;
   }
-  const value = messageText(message, part);
+  const value = transcriptPartText(message, part);
   if (!value) return null;
-  return <MarkdownContent value={value} streaming={live && message.type === "assistant"} />;
+  return (
+    // Find in task maps data matches to rendered text through this key.
+    <div data-transcript-find-part={transcriptFindPartKey(message, part)} className="contents">
+      <MarkdownContent value={value} streaming={live && message.type === "assistant"} />
+    </div>
+  );
 }
 
 export const PendingRequests = memo(function PendingRequests({

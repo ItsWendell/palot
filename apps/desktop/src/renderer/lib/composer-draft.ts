@@ -1,9 +1,13 @@
 import type { ComposerQuery } from "./composer-query";
 
+export type ComposerMentionKind = "file" | "skill" | "agent" | "reference";
+
 export interface ComposerMention {
   localID: string;
-  kind: "file" | "skill";
+  kind: ComposerMentionKind;
   value: string;
+  /** Absolute directory of a reference mention; its value is the reference name. */
+  path?: string;
   text: string;
   start: number;
   end: number;
@@ -31,7 +35,9 @@ export interface ComposerTextEdit {
 export type ComposerDiscoverySelection =
   | { kind: "command"; name: string }
   | { kind: "skill"; id: string; localID: string }
-  | { kind: "file"; path: string; localID: string };
+  | { kind: "file"; path: string; localID: string }
+  | { kind: "agent"; name: string; localID: string }
+  | { kind: "reference"; name: string; path: string; localID: string };
 
 export interface ComposerInsertion {
   draft: ComposerDraft;
@@ -57,10 +63,25 @@ export interface ComposerProjectedSkillReference {
   text?: string;
 }
 
+/** A subagent mention, sent as an OpenCode prompt agent part. */
+export interface ComposerProjectedAgentReference {
+  name: string;
+  mention: ComposerProjectedMention;
+}
+
+/** An OpenCode reference mention, sent as a directory file part for its absolute path. */
+export interface ComposerProjectedDirectoryReference {
+  name: string;
+  path: string;
+  mention: ComposerProjectedMention;
+}
+
 interface ComposerSubmissionBase {
   text: string;
   files: ComposerProjectedFileReference[];
   skills: ComposerProjectedSkillReference[];
+  agents: ComposerProjectedAgentReference[];
+  references: ComposerProjectedDirectoryReference[];
 }
 
 export type ComposerSubmission =
@@ -90,7 +111,8 @@ export function normalizeComposerDraft(draft: ComposerDraft): ComposerDraft {
       return (
         validRange(mention.start, mention.end, draft.text.length) &&
         draft.text.slice(mention.start, mention.end) === mention.text &&
-        mention.text === `${mention.kind === "file" ? "@" : "$"}${mention.value}`
+        mention.text === `${mention.kind === "skill" ? "$" : "@"}${mention.value}` &&
+        (mention.kind !== "reference" || Boolean(mention.path))
       );
     });
   const mentions: ComposerMention[] = [];
@@ -173,14 +195,17 @@ export function insertComposerSelection(
   query: ComposerQuery,
   selection: ComposerDiscoverySelection,
 ): ComposerInsertion {
-  if (query.kind !== selection.kind)
+  // `@` queries choose files, subagents, and references alike.
+  const selectionQueryKind =
+    selection.kind === "agent" || selection.kind === "reference" ? "file" : selection.kind;
+  if (query.kind !== selectionQueryKind)
     throw new TypeError("Composer query and selection kinds differ.");
   if (query.start < 0 || query.end > draft.text.length || query.start >= query.end) {
     throw new RangeError("Composer query is outside the draft text.");
   }
 
   const value =
-    selection.kind === "command"
+    selection.kind === "command" || selection.kind === "agent" || selection.kind === "reference"
       ? selection.name
       : selection.kind === "skill"
         ? selection.id
@@ -210,6 +235,7 @@ export function insertComposerSelection(
           text: displayText,
           start: query.start,
           end: query.start + displayText.length,
+          ...(selection.kind === "reference" ? { path: selection.path } : {}),
         },
       ],
     });
@@ -227,11 +253,17 @@ export function projectComposerSubmission(draft: ComposerDraft): ComposerSubmiss
   const normalized = normalizeComposerDraft(draft);
   const files: ComposerProjectedFileReference[] = [];
   const skills: ComposerProjectedSkillReference[] = [];
+  const agents: ComposerProjectedAgentReference[] = [];
+  const references: ComposerProjectedDirectoryReference[] = [];
 
   for (const mention of normalized.mentions) {
     const projected = { start: mention.start, end: mention.end, text: mention.text };
     if (mention.kind === "file") {
       files.push({ path: mention.value, name: basename(mention.value), mention: projected });
+    } else if (mention.kind === "agent") {
+      agents.push({ name: mention.value, mention: projected });
+    } else if (mention.kind === "reference") {
+      references.push({ name: mention.value, path: mention.path ?? "", mention: projected });
     } else {
       skills.push({
         id: mention.value,
@@ -241,33 +273,27 @@ export function projectComposerSubmission(draft: ComposerDraft): ComposerSubmiss
     }
   }
 
-  const base = { text: normalized.text, files, skills };
+  const base = { text: normalized.text, files, skills, agents, references };
   if (!normalized.command) return { kind: "prompt", ...base };
 
   const rawArguments = normalized.text.slice(normalized.command.end).replace(/^[ \t]+/, "");
   const commandText = `/${normalized.command.name}${rawArguments ? ` ${rawArguments}` : ""}`;
   const offset = normalized.command.start;
-  const commandFiles = files.map((file) => ({
-    ...file,
+  const shift = <T extends { mention: ComposerProjectedMention }>(part: T): T => ({
+    ...part,
     mention: {
-      ...file.mention,
-      start: file.mention.start - offset,
-      end: file.mention.end - offset,
+      ...part.mention,
+      start: part.mention.start - offset,
+      end: part.mention.end - offset,
     },
-  }));
-  const commandSkills = skills.map((skill) => ({
-    ...skill,
-    mention: {
-      ...skill.mention,
-      start: skill.mention.start - offset,
-      end: skill.mention.end - offset,
-    },
-  }));
+  });
   return {
     kind: "command",
     text: commandText,
-    files: commandFiles,
-    skills: commandSkills,
+    files: files.map(shift),
+    skills: skills.map(shift),
+    agents: agents.map(shift),
+    references: references.map(shift),
     command: normalized.command.name,
     ...(rawArguments ? { arguments: rawArguments } : {}),
   };

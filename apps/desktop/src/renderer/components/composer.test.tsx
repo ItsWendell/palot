@@ -22,6 +22,7 @@ import {
 } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
 import { workbenchStateAtom } from "../atoms/workbench";
+import { composerActionRequestAtom, globalCommandRequestAtom } from "../atoms/command-requests";
 import { composerStateAtomFamily } from "../atoms/composer-state";
 import { composerScope } from "../lib/composer-scope";
 import { createWorkbenchState, workbenchScopeKey } from "../lib/workbench-tabs";
@@ -535,7 +536,8 @@ describe("Composer discovery", () => {
         ],
       }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Agent: Default agent" }));
+    // OpenCode lists its resolved default agent first; the draft shows it by name.
+    await userEvent.click(await screen.findByRole("button", { name: "Agent: Plan (default)" }));
     await userEvent.click(await screen.findByRole("option", { name: "Plan" }));
     await userEvent.click(screen.getByRole("button", { name: "Model: Reasoner" }));
     await userEvent.click(screen.getByRole("button", { name: "High" }));
@@ -1093,7 +1095,7 @@ describe("Composer discovery", () => {
 
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
-    const agentSelector = screen.getByRole("button", { name: "Agent: Default agent" });
+    const agentSelector = screen.getByRole("button", { name: "Agent: Default" });
     await user.click(agentSelector);
     const buildOption = await screen.findByRole("option", { name: "Build" });
     expect(screen.queryByRole("option", { name: "Explore" })).toBeNull();
@@ -1138,6 +1140,168 @@ describe("Composer discovery", () => {
     await user.click(await screen.findByRole("option", { name: /@auth\.ts.*src\/auth\.ts/i }));
 
     expect(input.value).toBe("Check @src/auth.ts ");
+  });
+
+  it("suggests subagents and references after @ and sends them as agent and directory parts", async () => {
+    const user = userEvent.setup();
+    const prompt = vi.fn().mockResolvedValue({
+      id: "message-sent",
+      sessionID: session.id,
+      type: "user",
+      delivery: null,
+      time: { created: 2 },
+    });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(
+      client({
+        agent: {
+          list: vi.fn().mockResolvedValue({
+            data: [
+              { id: "build", name: "Build", mode: "primary", hidden: false, permissions: [] },
+              {
+                id: "explore",
+                name: "Explore",
+                description: "Read-only codebase search",
+                mode: "subagent",
+                hidden: false,
+                permissions: [],
+              },
+              { id: "secret", name: "Secret", mode: "subagent", hidden: true, permissions: [] },
+            ],
+          }),
+        },
+        reference: {
+          list: vi.fn().mockResolvedValue({
+            data: [
+              {
+                name: "docs",
+                path: "/refs/docs",
+                description: "Product docs",
+                source: { type: "local", path: "/refs/docs" },
+              },
+              {
+                name: "hidden-ref",
+                path: "/refs/hidden",
+                hidden: true,
+                source: { type: "local", path: "/refs/hidden" },
+              },
+            ],
+          }),
+        },
+        session: { prompt },
+      }),
+    );
+
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    await user.type(input, "Ask @");
+    const agents = await screen.findByRole("group", { name: "Agents" });
+    const references = screen.getByRole("group", { name: "References" });
+    expect(
+      references.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(references).getByRole("option", { name: /@docs.*Product docs/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /@build/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /@secret/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /@hidden-ref/ })).toBeNull();
+
+    await user.click(within(agents).getByRole("option", { name: /@explore/ }));
+    expect(input.value).toBe("Ask @explore ");
+    await user.type(input, "about @do");
+    await user.keyboard("{Enter}");
+    expect(input.value).toBe("Ask @explore about @docs ");
+
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(prompt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionID: session.id,
+          text: "Ask @explore about @docs ",
+          agents: [{ name: "explore", mention: { start: 4, end: 12, text: "@explore" } }],
+          files: [
+            {
+              uri: "file:///refs/docs",
+              name: "docs",
+              mention: { start: 19, end: 24, text: "@docs" },
+            },
+          ],
+        }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("routes /fork, /export, /open, and /mcp to palette commands", async () => {
+    const user = userEvent.setup();
+    const store = createStore();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    const send = vi.spyOn(palot, "sendComposerPrompt");
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+
+    for (const [name, commandID] of [
+      ["fork", "task.fork"],
+      ["export", "task.export"],
+      ["open", "task.files.open"],
+      ["mcp", "settings.open:tools"],
+    ] as const) {
+      await user.type(input, `/${name}`);
+      await screen.findByRole("option", { name: new RegExp(`/${name}`) });
+      await user.keyboard("{Enter}");
+      expect(input.value).toBe(`/${name} `);
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(store.get(globalCommandRequestAtom)?.commandID).toBe(commandID));
+      expect(input.value).toBe("");
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("opens the model and agent menus for palette task actions", async () => {
+    const store = createStore();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(
+      client({
+        agent: {
+          list: vi.fn().mockResolvedValue({
+            data: [{ id: "build", name: "Build", mode: "primary", hidden: false, permissions: [] }],
+          }),
+        },
+      }),
+    );
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+
+    act(() =>
+      store.set(composerActionRequestAtom, {
+        action: "model",
+        profileID: "test-profile",
+        sessionID: session.id,
+        requestedAt: Date.now(),
+      }),
+    );
+    expect(await screen.findByText("Model and reasoning")).toBeTruthy();
+    expect(store.get(composerActionRequestAtom)).toBeNull();
+
+    // Another task's request is left for its own composer.
+    act(() =>
+      store.set(composerActionRequestAtom, {
+        action: "agent",
+        profileID: "test-profile",
+        sessionID: "another-session",
+        requestedAt: Date.now(),
+      }),
+    );
+    expect(store.get(composerActionRequestAtom)).not.toBeNull();
+
+    act(() =>
+      store.set(composerActionRequestAtom, {
+        action: "agent",
+        profileID: "test-profile",
+        sessionID: session.id,
+        requestedAt: Date.now(),
+      }),
+    );
+    expect(await screen.findByRole("option", { name: "Build" })).toBeTruthy();
   });
 
   it("scopes the active discovery index to the current query", async () => {
@@ -2623,5 +2787,288 @@ describe("Composer blocking requests", () => {
     expect(screen.queryByRole("button", { name: "Open Context tab" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Stop task" }));
     expect(interrupt).toHaveBeenCalledWith(session.id);
+  });
+});
+
+function historyMessage(
+  id: string,
+  type: "user" | "shell",
+  text: string,
+  createdAt: number,
+): PalotMessage {
+  return {
+    id,
+    type,
+    createdAt,
+    completedAt: createdAt,
+    text: type === "user" ? text : null,
+    agent: null,
+    model: null,
+    tokens: null,
+    finish: null,
+    content: [],
+    data: type === "shell" ? { command: text, status: "exited", exit: 0 } : null,
+  };
+}
+
+const shortcutModel: PalotModel = {
+  id: "fast",
+  modelID: "fast",
+  providerID: "openai",
+  name: "Fast",
+  family: null,
+  variants: [],
+  inputLimit: null,
+  contextLimit: 100_000,
+  outputLimit: 10_000,
+  releasedAt: 0,
+  capabilities: { tools: true, input: ["text"], output: ["text"] },
+  status: "active",
+};
+
+describe("Composer shell mode", () => {
+  it("enters with a leading ! and runs the command through session.shell without suggestions", async () => {
+    const user = userEvent.setup();
+    const shell = vi.fn().mockResolvedValue(undefined);
+    const prompt = vi.fn();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ session: { shell, prompt } }));
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Palot" }), "!");
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Shell command" });
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("Run a shell command");
+    expect(screen.getByRole("button", { name: "Exit shell mode" })).toBeTruthy();
+
+    await user.type(input, "/bin/ls @src $HOME");
+    expect(screen.queryByRole("listbox", { name: "Composer suggestions" })).toBeNull();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(shell).toHaveBeenCalledWith(
+        { sessionID: session.id, command: "/bin/ls @src $HOME" },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
+    expect(prompt).not.toHaveBeenCalled();
+    await waitFor(() => expect(input.value).toBe(""));
+    expect(screen.getByRole("textbox", { name: "Shell command" })).toBe(input);
+  });
+
+  it("leaves with Backspace on an empty command or Escape, and toggles with Mod+Shift+X/E", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+
+    await user.type(input, "!");
+    await user.type(input, "ls");
+    await user.keyboard("{Backspace}{Backspace}");
+    expect(screen.getByRole("textbox", { name: "Shell command" })).toBe(input);
+    await user.keyboard("{Backspace}");
+    expect(screen.getByRole("textbox", { name: "Message Palot" })).toBe(input);
+    expect(input.value).toBe("");
+
+    fireEvent.keyDown(input, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole("textbox", { name: "Shell command" })).toBe(input);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("textbox", { name: "Message Palot" })).toBe(input);
+
+    await user.type(input, "keep this text");
+    fireEvent.keyDown(input, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Shell command" }).value).toBe(
+      "keep this text",
+    );
+    fireEvent.keyDown(input, { key: "E", code: "KeyE", ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" }).value).toBe(
+      "keep this text",
+    );
+  });
+
+  it("creates the new task first, then runs the shell command in it", async () => {
+    const shell = vi.fn().mockResolvedValue(undefined);
+    const prompt = vi.fn();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ session: { shell, prompt } }));
+    vi.spyOn(palot, "listModels").mockResolvedValue({
+      models: [shortcutModel],
+      defaultModel: shortcutModel,
+      providers: [],
+      errors: [],
+    });
+    const createSession = vi.fn().mockResolvedValue({ ...session, id: "session-created" });
+    renderComposer(
+      <Composer
+        session={{ ...session, id: "new:project-1" }}
+        messages={[]}
+        isWorking={false}
+        onCreateSession={createSession}
+      />,
+    );
+    await screen.findByRole("button", { name: "Model: Fast" });
+    const input = screen.getByRole("textbox", { name: "Message Palot" });
+    await userEvent.type(input, "!");
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Shell command" }),
+      "git status{Enter}",
+    );
+
+    await waitFor(() =>
+      expect(shell).toHaveBeenCalledWith(
+        { sessionID: "session-created", command: "git status" },
+        expect.anything(),
+      ),
+    );
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(prompt).not.toHaveBeenCalled();
+  });
+});
+
+describe("Composer prompt history", () => {
+  const messages = [
+    historyMessage("user-1", "user", "First prompt", 1),
+    historyMessage("shell-1", "shell", "pwd", 2),
+    historyMessage("user-2", "user", "Second prompt", 3),
+  ];
+
+  function press(input: HTMLTextAreaElement, key: "ArrowUp" | "ArrowDown", caret: number) {
+    input.setSelectionRange(caret, caret);
+    fireEvent.select(input);
+    fireEvent.keyDown(input, { key });
+  }
+
+  it("recalls prompts newest first from an empty composer and restores the empty draft", async () => {
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    renderComposer(<Composer session={session} messages={messages} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("Second prompt");
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("First prompt");
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("First prompt");
+    press(input, "ArrowDown", input.value.length);
+    expect(input.value).toBe("Second prompt");
+    press(input, "ArrowDown", input.value.length);
+    expect(input.value).toBe("");
+    press(input, "ArrowDown", 0);
+    expect(input.value).toBe("");
+  });
+
+  it("never replaces a draft unless the caret is at its start, and restores it afterwards", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    renderComposer(<Composer session={session} messages={messages} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    await user.type(input, "Work in progress");
+
+    press(input, "ArrowUp", input.value.length);
+    press(input, "ArrowUp", 4);
+    expect(input.value).toBe("Work in progress");
+
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("Second prompt");
+    press(input, "ArrowDown", 0);
+    expect(input.value).toBe("Work in progress");
+  });
+
+  it("keeps shell history separate from prompt history", async () => {
+    const user = userEvent.setup();
+    const shell = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ session: { shell } }));
+    renderComposer(<Composer session={session} messages={messages} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+
+    await user.type(input, "!");
+    await user.type(input, "ls -la{Enter}");
+    await waitFor(() => expect(shell).toHaveBeenCalled());
+    await waitFor(() => expect(input.value).toBe(""));
+
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("ls -la");
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("pwd");
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("pwd");
+
+    await user.keyboard("{Escape}");
+    await user.clear(input);
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("Second prompt");
+  });
+});
+
+describe("Composer shortcuts", () => {
+  it("opens the model picker from the composer but not from another text field", async () => {
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    renderComposer(
+      <>
+        <input aria-label="Other field" />
+        <Composer session={session} messages={[]} isWorking={false} />
+      </>,
+    );
+
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Other field" }), {
+      key: "'",
+      code: "Quote",
+      ctrlKey: true,
+    });
+    expect(screen.queryByText("Model and reasoning")).toBeNull();
+
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Message Palot" }), {
+      key: "'",
+      code: "Quote",
+      ctrlKey: true,
+    });
+    expect(await screen.findByText("Model and reasoning")).toBeTruthy();
+  });
+
+  it("cycles primary agents forward and backward, loading them on demand", async () => {
+    const switchAgent = vi.fn().mockResolvedValue(undefined);
+    const switchModel = vi.fn().mockResolvedValue(undefined);
+    const list = vi.fn().mockResolvedValue({
+      data: [
+        { id: "build", name: "Build", mode: "primary", hidden: false, permissions: [] },
+        { id: "explore", name: "Explore", mode: "subagent", hidden: false, permissions: [] },
+        { id: "plan", name: "Plan", mode: "primary", hidden: false, permissions: [] },
+        { id: "review", name: "Review", mode: "all", hidden: false, permissions: [] },
+      ],
+    });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(
+      client({
+        agent: { list },
+        session: { switchAgent, switchModel },
+      }),
+    );
+    vi.spyOn(palot, "listModels").mockResolvedValue({
+      models: [shortcutModel],
+      defaultModel: shortcutModel,
+      providers: [],
+      errors: [],
+    });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole("textbox", { name: "Message Palot" });
+    expect(list).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: ".", code: "Period", ctrlKey: true });
+    await waitFor(() =>
+      expect(switchAgent).toHaveBeenCalledWith({ sessionID: session.id, agent: "plan" }),
+    );
+
+    await waitFor(() => expect(switchModel).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole<HTMLButtonElement>("button", { name: /^Agent:/ }).disabled).toBe(
+        false,
+      ),
+    );
+    switchAgent.mockClear();
+    fireEvent.keyDown(input, { key: ">", code: "Period", ctrlKey: true, shiftKey: true });
+    await waitFor(() =>
+      expect(switchAgent).toHaveBeenCalledWith({ sessionID: session.id, agent: "review" }),
+    );
   });
 });

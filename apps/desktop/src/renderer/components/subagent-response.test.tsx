@@ -79,7 +79,7 @@ describe("SubagentResponse", () => {
       </QueryClientProvider>,
     );
 
-    const trigger = screen.getByRole("button", { name: /Explore returned Map the sidebar/i });
+    const trigger = screen.getByRole("button", { name: /Explore returned: Map the sidebar/i });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByText("5s").getAttribute("title")).toBe("Returned after 5s");
     expect(screen.queryByText("Use sparse metadata.")).toBeNull();
@@ -87,7 +87,7 @@ describe("SubagentResponse", () => {
     await user.click(trigger);
 
     expect(screen.getByText("Use sparse metadata.")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Open Explore subagent" }));
+    await user.click(screen.getByRole("button", { name: "Open Explore subagent task" }));
     expect(mocks.openSession).toHaveBeenCalledWith("child-1");
   });
 
@@ -126,8 +126,8 @@ describe("SubagentResponse", () => {
       );
 
       expect(screen.queryByRole("button", { name: /^Completed in / })).toBeNull();
-      expect(screen.getByRole("button", { name: "Subagent returned Inspect 0" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Subagent returned Inspect 1" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Subagent returned: Inspect 0" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Subagent returned: Inspect 1" })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

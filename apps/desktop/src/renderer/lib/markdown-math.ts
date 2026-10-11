@@ -39,6 +39,7 @@ function splitInlineMath(value: string): InlineNode[] {
       if (
         value[closing] === "$" &&
         !isEscaped(value, closing) &&
+        !/\d/.test(value[closing + 1] ?? "") &&
         !/\s/.test(value[closing - 1] ?? "")
       ) {
         break;
@@ -65,7 +66,8 @@ function splitInlineMath(value: string): InlineNode[] {
 
 function hasCompactNumericMathClose(value: string, start: number): boolean {
   for (let cursor = start; cursor < value.length && !/\s/.test(value[cursor] ?? ""); cursor += 1) {
-    if (value[cursor] === "$" && !isEscaped(value, cursor)) return true;
+    if (value[cursor] === "$" && !isEscaped(value, cursor) && !/\d/.test(value[cursor + 1] ?? ""))
+      return true;
   }
   return false;
 }

@@ -12,13 +12,16 @@ import {
   Pencil,
   Plus,
   Square,
+  SquareTerminal,
   Trash2,
+  X,
   Zap,
 } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   memo,
   useMemo,
@@ -35,6 +38,7 @@ import type {
   PalotModel,
   PalotModelCatalog,
   PalotProvider,
+  PalotReference,
   PalotSession,
 } from "../../shared";
 import type { PalotBrowserComment } from "../../shared/browser-contract";
@@ -58,6 +62,11 @@ import {
   type SessionExecutionState,
 } from "../atoms/workspace";
 import { attentionTargetAtom } from "../atoms/attention";
+import {
+  composerActionRequestAtom,
+  requestGlobalCommandAtom,
+  type ComposerActionRequest,
+} from "../atoms/command-requests";
 import { useComposerCatalog, useWorkspaceFileSearch } from "../hooks/use-composer-discovery";
 import { useModelCatalog } from "../hooks/use-model-catalog";
 import { useComposerSelection } from "../hooks/use-composer-selection";
@@ -76,8 +85,19 @@ import {
   type ComposerDraft,
   type ComposerDiscoverySelection,
 } from "../lib/composer-draft";
+import {
+  IDLE_HISTORY_CURSOR,
+  navigateComposerHistory,
+  normalPromptHistory,
+  shellCommandHistory,
+  type ComposerHistoryCursor,
+  type ComposerMode,
+} from "../lib/composer-history";
 import { detectComposerQuery } from "../lib/composer-query";
 import { composerDraftFromMessage } from "../lib/composer-restoration";
+import { COMPOSER_SHORTCUT_KEYS, matchComposerShortcut } from "../lib/composer-shortcuts";
+import { formatShortcut } from "../lib/keyboard-shortcuts";
+import { primaryAgents } from "../lib/selection-memory";
 import { reviewCommentsFromMessage, type ReviewComment } from "../lib/review-comments";
 import {
   browserCommentsFromMessage,
@@ -153,6 +173,16 @@ const EMPTY_MODEL_CATALOG: PalotModelCatalog = {
 };
 const STEER_BACKGROUND_DELAY_MS = 5_000;
 const EMPTY_AGENTS: PalotAgent[] = [];
+const EMPTY_REFERENCES: PalotReference[] = [];
+
+/** Slash commands that run a global palette command; `task` ones need an existing task. */
+const SLASH_GLOBAL_COMMANDS: Readonly<Record<string, { id: string; task: boolean }>> = {
+  fork: { id: "task.fork", task: true },
+  export: { id: "task.export", task: true },
+  open: { id: "task.files.open", task: true },
+  mcp: { id: "settings.open:tools", task: false },
+};
+const COMPOSER_ACTION_TTL_MS = 5_000;
 
 interface PendingBackgroundSteer {
   id: string;
@@ -365,6 +395,8 @@ function ComposerView({
   };
   const locationRecovery = useSessionLocationMissing(recoveryOptions);
   const setMessages = useSetAtom(messagesForProfileAtom(runtime?.profileID ?? "unscoped"));
+  const requestGlobalCommand = useSetAtom(requestGlobalCommandAtom);
+  const composerActionRequest = useAtomValue(composerActionRequestAtom);
   const [attachmentErrors, setAttachmentErrors] = useState<string[]>([]);
   const [attachmentUpload, setAttachmentUpload] = useState<{
     progress: PalotAttachmentProgress | null;
@@ -401,6 +433,28 @@ function ComposerView({
     useState<BackgroundSteerPromptState | null>(null);
   const [backgroundingSteer, setBackgroundingSteer] = useState(false);
   const [activeMenu, setActiveMenu] = useState<"agent" | "model" | "approvals" | null>(null);
+  const [agentCycleRequest, setAgentCycleRequest] = useState<{
+    scope: string;
+    direction: 1 | -1;
+  } | null>(null);
+  // Mode, history position, and local shell history belong to one draft scope.
+  const [modeState, setModeState] = useState<{ scope: string; mode: ComposerMode } | null>(null);
+  const mode: ComposerMode =
+    !requestBody && !activePendingInputEdit && modeState?.scope === draftScope
+      ? modeState.mode
+      : "normal";
+  const historyKey = `${draftScope}\0${mode}`;
+  const [historyState, setHistoryState] = useState<{
+    key: string;
+    cursor: ComposerHistoryCursor;
+  } | null>(null);
+  const historyCursor =
+    historyState?.key === historyKey ? historyState.cursor : IDLE_HISTORY_CURSOR;
+  const [submittedShell, setSubmittedShell] = useState<{ scope: string; commands: string[] }>({
+    scope: draftScope,
+    commands: [],
+  });
+  const composerShellRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef(messages);
   const backgroundWorkRef = useRef(backgroundWork);
@@ -427,7 +481,7 @@ function ComposerView({
       projectID: session.projectID,
       capabilities: ["agents"],
     },
-    Boolean(onCreateSession) || activeMenu === "agent",
+    Boolean(onCreateSession) || activeMenu === "agent" || agentCycleRequest?.scope === draftScope,
   );
   const catalog = modelCatalogQuery.data ?? EMPTY_MODEL_CATALOG;
   const preferenceProject = projectForSession(projects, session);
@@ -444,11 +498,19 @@ function ComposerView({
     () => applyModelPreference(catalog.models, pickerPreference),
     [catalog.models, pickerPreference],
   );
+  const catalogsReady = Boolean(
+    modelCatalogQuery.data &&
+    agentCatalogQuery.data &&
+    !modelCatalogQuery.error &&
+    !agentCatalogQuery.error &&
+    !agentCatalogQuery.data.errors.some((error) => error.capability === "agents"),
+  );
+  const agents = agentCatalogQuery.data?.agents ?? EMPTY_AGENTS;
   const composerSelection = useComposerSelection({
     session,
     draft: Boolean(onCreateSession),
     draftScope,
-    agents: agentCatalogQuery.data?.agents ?? EMPTY_AGENTS,
+    agents,
     models: catalog.models,
     projectDefault: defaultModels[preferenceScope] ?? null,
     forceCatalogDefault: Boolean(
@@ -460,19 +522,19 @@ function ComposerView({
       pickerPreference.hidden.includes(modelPreferenceKey(catalog.defaultModel))
         ? (pickerModels[0] ?? null)
         : (catalog.defaultModel ?? pickerModels[0] ?? null),
-    catalogsReady: Boolean(
-      modelCatalogQuery.data &&
-      agentCatalogQuery.data &&
-      !modelCatalogQuery.error &&
-      !agentCatalogQuery.error &&
-      !agentCatalogQuery.data.errors.some((error) => error.capability === "agents"),
-    ),
+    catalogsReady,
   });
   const displayedSession = composerSelection.session;
+  // OpenCode lists its resolved default agent first.
+  const defaultAgent = useMemo(() => primaryAgents(agents)[0] ?? null, [agents]);
   const activeQuery = useMemo(
-    () => detectComposerQuery(draft.text, selection.start, selection.end, { isComposing }),
-    [draft.text, isComposing, selection.end, selection.start],
+    () =>
+      mode === "shell"
+        ? null
+        : detectComposerQuery(draft.text, selection.start, selection.end, { isComposing }),
+    [draft.text, isComposing, mode, selection.end, selection.start],
   );
+
   const composerCatalogQuery = useComposerCatalog(
     displayedSession.location,
     activeQuery?.kind === "command" || activeQuery?.kind === "skill",
@@ -489,6 +551,17 @@ function ComposerView({
     activeQuery?.kind === "file",
   );
   const fileResults = (fileSearchQuery.data ?? []).map((entry) => entry.path);
+  // `@` also offers subagents and OpenCode references, sharing the per-capability settings cache.
+  const mentionCatalogQuery = useSettingsSnapshot(
+    {
+      ...session.location,
+      projectID: session.projectID,
+      capabilities: ["agents", "references"],
+    },
+    activeQuery?.kind === "file",
+  );
+  const mentionAgents = mentionCatalogQuery.data?.agents ?? EMPTY_AGENTS;
+  const mentionReferences = mentionCatalogQuery.data?.references ?? EMPTY_REFERENCES;
   const discoveryError =
     activeQuery?.kind === "file"
       ? fileSearchQuery.error instanceof Error
@@ -518,12 +591,18 @@ function ComposerView({
     if (!activeQuery) return [];
     const query = deferredQuery.toLowerCase();
     if (activeQuery.kind === "command") {
+      // Name matches lead description matches, so `/open` is not outranked by `/model`.
+      const rank = (command: (typeof discoveryCatalog.commands)[number]) => {
+        const name = command.name.toLowerCase();
+        if (name.startsWith(query)) return 0;
+        if (name.includes(query)) return 1;
+        return command.description?.toLowerCase().includes(query) ? 2 : -1;
+      };
       return discoveryCatalog.commands
-        .filter(
-          (command) =>
-            command.name.toLowerCase().includes(query) ||
-            command.description?.toLowerCase().includes(query),
-        )
+        .map((command) => ({ command, rank: rank(command) }))
+        .filter(({ rank }) => rank >= 0)
+        .toSorted((left, right) => left.rank - right.rank)
+        .map(({ command }) => command)
         .slice(0, 20)
         .map((command) => ({
           kind: "command" as const,
@@ -552,13 +631,52 @@ function ComposerView({
           description: skill.description,
         }));
     }
-    return fileResults.map((path) => ({
-      kind: "file" as const,
-      key: `file:${path}`,
-      path,
-      name: basename(path),
-    }));
-  }, [activeQuery, deferredQuery, discoveryCatalog.commands, discoveryCatalog.skills, fileResults]);
+    const matches = (...values: (string | null | undefined)[]) =>
+      values.some((value) => value?.toLowerCase().includes(query));
+    // Upstream order: references, then subagents, then workspace files.
+    const references = mentionReferences
+      .filter((reference) => !reference.hidden && matches(reference.name, reference.description))
+      .slice(0, 10)
+      .map((reference) => ({
+        kind: "reference" as const,
+        key: `reference:${reference.name}`,
+        name: reference.name,
+        path: reference.path,
+        description: reference.description ?? reference.source,
+      }));
+    const subagents = mentionAgents
+      .filter(
+        (agent) =>
+          !agent.hidden &&
+          agent.mode !== "primary" &&
+          matches(agent.id, agent.name, agent.description),
+      )
+      .slice(0, 10)
+      .map((agent) => ({
+        kind: "agent" as const,
+        key: `agent:${agent.id}`,
+        name: agent.id,
+        description: agent.description,
+      }));
+    return [
+      ...references,
+      ...subagents,
+      ...fileResults.map((path) => ({
+        kind: "file" as const,
+        key: `file:${path}`,
+        path,
+        name: basename(path),
+      })),
+    ];
+  }, [
+    activeQuery,
+    deferredQuery,
+    discoveryCatalog.commands,
+    discoveryCatalog.skills,
+    fileResults,
+    mentionAgents,
+    mentionReferences,
+  ]);
   const discoveryKey = activeQuery ? `${activeQuery.kind}\0${activeQuery.query}` : "";
   const requestedDiscoveryIndex =
     discoverySelection.key === discoveryKey ? discoverySelection.index : 0;
@@ -776,7 +894,438 @@ function ComposerView({
   ]);
   /* eslint-enable react-hooks-compiler/set-state-in-effect */
 
+  function setComposerMode(next: ComposerMode) {
+    if (next === "shell" && (requestBody || activePendingInputEdit)) return;
+    setModeState({ scope: draftScope, mode: next });
+    setHistoryState(null);
+    setAttachmentErrors([]);
+    focusComposer();
+  }
+
+  /** Returns true when the key recalled history and the default action must be suppressed. */
+  function recallHistory(direction: "up" | "down", element: HTMLTextAreaElement): boolean {
+    const entries =
+      mode === "shell"
+        ? shellCommandHistory(
+            messagesRef.current,
+            submittedShell.scope === draftScope ? submittedShell.commands : [],
+          )
+        : normalPromptHistory(messagesRef.current);
+    const result = navigateComposerHistory({
+      direction,
+      draft,
+      selectionStart: element.selectionStart,
+      selectionEnd: element.selectionEnd,
+      entries,
+      cursor: historyCursor,
+    });
+    if (!result) return false;
+    setDraft(result.draft);
+    setHistoryState({ key: historyKey, cursor: result.cursor });
+    setSelection({ start: result.caret, end: result.caret });
+    requestAnimationFrame(() => element.setSelectionRange(result.caret, result.caret));
+    return true;
+  }
+
+  async function createSubmissionTarget(): Promise<PalotSession | null> {
+    composerSelection.assertConnection();
+    permissionSelection.assertReady();
+    if (!onCreateSession) return session;
+    const created = await onCreateSession({
+      approvalMode: permissionSelection.draftMode,
+      agent: displayedSession.agent,
+      model: composerSelection.creationModel,
+    });
+    composerSelection.assertConnection();
+    if (created) {
+      composerSelection.rememberCreated();
+      permissionSelection.resetDraft();
+    }
+    return created;
+  }
+
+  async function submitShell() {
+    const command = draft.text.trim();
+    const currentState = store.get(stateAtom);
+    if (
+      !command ||
+      locationRecovery.missing ||
+      currentState.sending ||
+      currentState.cancelingID ||
+      attachmentRequestRef.current ||
+      composerSelection.blocked ||
+      permissionSelection.isBusy()
+    )
+      return;
+    setAttachmentErrors([]);
+    const submittedDraft = draft;
+    const connectionID = runtime?.connectionID;
+    await admitComposerSubmission({
+      submission: {
+        kind: "prompt",
+        text: command,
+        files: [],
+        skills: [],
+        agents: [],
+        references: [],
+      },
+      files: [],
+      delivery: "steer",
+      optimistic: false,
+      createTarget: createSubmissionTarget,
+      dispatch: async (sessionID) => {
+        composerSelection.assertConnection();
+        await palot.runShell({ sessionID, command }, connectionID);
+        return null;
+      },
+      effects: {
+        setSending,
+        clearLocal: () => {
+          // Attachments and comments stay for the next prompt; shell only consumes the text.
+          if (store.get(draftAtom) === submittedDraft) setOriginalDraft(emptyComposerDraft());
+          setHistoryState(null);
+          setSubmittedShell((current) => ({
+            scope: draftScope,
+            commands: [
+              command,
+              ...(current.scope === draftScope ? current.commands : []).filter(
+                (item) => item !== command,
+              ),
+            ].slice(0, 100),
+          }));
+          onMessageAdmitted?.();
+        },
+        admitOptimistic: () => undefined,
+        convergeReceipt: () => undefined,
+        rollbackOptimistic: () => undefined,
+        reportCreationError: (error) => onCreateSessionError?.(error),
+        reportDispatchError: (error) => {
+          setLocationFailure({ scope: draftScope, error });
+          setAttachmentErrors([
+            error instanceof Error ? error.message : "Could not run the shell command.",
+          ]);
+        },
+      },
+    });
+  }
+
+  async function cycleAgent(direction: 1 | -1) {
+    const available = primaryAgents(agents);
+    if (available.length === 0) return;
+    const currentID = displayedSession.agent ?? available[0]!.id;
+    const index = Math.max(
+      0,
+      available.findIndex((agent) => agent.id === currentID),
+    );
+    const next = available[(index + direction + available.length) % available.length];
+    if (!next || next.id === currentID) return;
+    try {
+      await composerSelection.selectAgent(next);
+    } catch (error) {
+      showErrorToast("Could not switch agents", error);
+    }
+  }
+
+  const applyPendingAgentCycle = useEffectEvent((direction: 1 | -1) => {
+    void cycleAgent(direction);
+  });
+
+  // Agents load on demand; apply a shortcut-triggered cycle once the catalogs settle.
+  /* eslint-disable react-hooks-compiler/set-state-in-effect */
+  useEffect(() => {
+    if (!agentCycleRequest || agentCycleRequest.scope !== draftScope) return;
+    if (agentCatalogQuery.error || modelCatalogQuery.error) {
+      setAgentCycleRequest(null);
+      return;
+    }
+    if (!catalogsReady) return;
+    setAgentCycleRequest(null);
+    applyPendingAgentCycle(agentCycleRequest.direction);
+  }, [
+    agentCatalogQuery.error,
+    agentCycleRequest,
+    catalogsReady,
+    draftScope,
+    modelCatalogQuery.error,
+  ]);
+  /* eslint-enable react-hooks-compiler/set-state-in-effect */
+
+  const handleComposerShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      requestBody ||
+      locationRecovery.missing ||
+      event.defaultPrevented ||
+      event.isComposing ||
+      event.getModifierState("AltGraph")
+    )
+      return;
+    const shortcut = matchComposerShortcut(event);
+    if (!shortcut) return;
+    const target = event.target;
+    if (target instanceof Element) {
+      if (target.closest("[data-workbench-terminal]")) return;
+      // Leave other text fields alone; the composer's own input and non-editable focus qualify.
+      const editable =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+      if (editable && !composerShellRef.current?.contains(target)) return;
+    }
+    if (document.querySelector('[data-slot="dialog-content"][data-open]')) return;
+    event.preventDefault();
+    const selectionDisabled = sending || composerSelection.busy;
+    switch (shortcut) {
+      case "model":
+        if (!selectionDisabled) setActiveMenu("model");
+        return;
+      case "agent-next":
+      case "agent-previous": {
+        if (selectionDisabled) return;
+        const direction = shortcut === "agent-next" ? 1 : -1;
+        if (catalogsReady) void cycleAgent(direction);
+        else setAgentCycleRequest({ scope: draftScope, direction });
+        return;
+      }
+      case "attach":
+        if (!sending && !attachmentUpload) void pickFiles();
+        return;
+      case "shell-mode":
+        setComposerMode("shell");
+        return;
+      case "normal-mode":
+        setComposerMode("normal");
+        return;
+    }
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => handleComposerShortcut(event);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  /**
+   * Runs a Palot-handled slash command. Commands from the palette leave a typed draft alone:
+   * undo and redo restore the reverted prompt only into an empty composer.
+   */
+  async function runBuiltinCommand(
+    commandName: string,
+    args: string | undefined,
+    source: "draft" | "palette",
+  ): Promise<boolean> {
+    const fromDraft = source === "draft";
+    const restoresDraft =
+      fromDraft ||
+      (!draft.text.trim() &&
+        files.length === 0 &&
+        comments.length === 0 &&
+        browserComments.length === 0);
+    if (commandName === "compact") {
+      try {
+        setSending(true);
+        await palot.compactSession(session.id);
+        if (fromDraft) clearSubmittedContents();
+      } catch (error) {
+        setAttachmentErrors([error instanceof Error ? error.message : "Compaction failed"]);
+      } finally {
+        setSending(false);
+      }
+      return true;
+    }
+    if (commandName === "new" || commandName === "clear") {
+      if (fromDraft) clearSubmittedContents();
+      if (!onCreateSession) onNavigateToNewTask?.();
+      return true;
+    }
+    if (commandName === "model") {
+      if (fromDraft) clearSubmittedContents();
+      const arg = args?.trim().toLowerCase();
+      if (arg) {
+        const matched = catalog.models.find(
+          (m) =>
+            m.id.toLowerCase() === arg ||
+            m.name.toLowerCase() === arg ||
+            `${m.providerID}/${m.id}`.toLowerCase() === arg ||
+            m.name.toLowerCase().includes(arg) ||
+            m.id.toLowerCase().includes(arg),
+        );
+        if (matched) {
+          try {
+            await composerSelection.selectModel({
+              providerID: matched.providerID,
+              id: matched.id,
+            });
+          } catch (error) {
+            showErrorToast("Could not switch models", error);
+          }
+          return true;
+        }
+      }
+      setActiveMenu("model");
+      return true;
+    }
+    if (commandName === "agent") {
+      if (fromDraft) clearSubmittedContents();
+      const arg = args?.trim().toLowerCase();
+      const matched = arg
+        ? primaryAgents(agents).find(
+            (agent) => agent.id.toLowerCase() === arg || agent.name.toLowerCase() === arg,
+          )
+        : undefined;
+      if (matched) {
+        try {
+          await composerSelection.selectAgent(matched);
+        } catch (error) {
+          showErrorToast("Could not switch agents", error);
+        }
+        return true;
+      }
+      setActiveMenu("agent");
+      return true;
+    }
+    const globalCommand = SLASH_GLOBAL_COMMANDS[commandName];
+    if (globalCommand) {
+      if (globalCommand.task && onCreateSession) {
+        setAttachmentErrors([`Open an existing conversation before using /${commandName}.`]);
+        return true;
+      }
+      if (fromDraft) clearSubmittedContents();
+      requestGlobalCommand(globalCommand.id);
+      return true;
+    }
+    if (commandName === "undo" || commandName === "revert") {
+      const userMessages = messages.filter((message) => message.type === "user");
+      const boundary = session.revert
+        ? userMessages.findIndex((message) => message.id === session.revert?.messageID)
+        : userMessages.length;
+      const target = userMessages[Math.max(0, boundary) - 1];
+      if (target) {
+        const pending = pendingInputs.find(
+          (request) => request.type === "input" && request.id === target.id,
+        );
+        if (pending) {
+          try {
+            await editPendingInput(pending);
+          } catch (error) {
+            if (activeDraftScopeRef.current === draftScope) {
+              setAttachmentErrors([error instanceof Error ? error.message : "Revert failed"]);
+            }
+          }
+          return true;
+        }
+        try {
+          setSending(true);
+          const connectionID = runtime?.connectionID;
+          await palot.interrupt(session.id, connectionID);
+          await palot.waitForSessionIdle(session.id, connectionID);
+          const updated = await palot.stageSessionRevert(
+            { sessionID: session.id, messageID: target.id },
+            connectionID,
+          );
+          if (updated) cacheSession(updated);
+          if (restoresDraft) {
+            setDraft(composerDraftWithRetainedFiles(target));
+            setFiles(retainedComposerFiles(target));
+            setComments(() => reviewCommentsFromMessage(target) ?? []);
+            setBrowserComments(() => browserCommentsFromMessage(target) ?? []);
+          }
+        } catch (error) {
+          if (activeDraftScopeRef.current === draftScope) {
+            setAttachmentErrors([error instanceof Error ? error.message : "Revert failed"]);
+          }
+        } finally {
+          setSending(false);
+        }
+      } else if (fromDraft) {
+        setDraft(emptyComposerDraft());
+      }
+      return true;
+    }
+    if (commandName === "redo") {
+      if (!session.revert) {
+        if (fromDraft) setDraft(emptyComposerDraft());
+        return true;
+      }
+      const userMessages = messages.filter((message) => message.type === "user");
+      const boundary = userMessages.findIndex(
+        (message) => message.id === session.revert?.messageID,
+      );
+      const target = boundary < 0 ? undefined : userMessages[boundary + 1];
+      try {
+        setSending(true);
+        const connectionID = runtime?.connectionID;
+        await palot.interrupt(session.id, connectionID);
+        await palot.waitForSessionIdle(session.id, connectionID);
+        const updated = target
+          ? await palot.stageSessionRevert(
+              { sessionID: session.id, messageID: target.id },
+              connectionID,
+            )
+          : await palot.clearSessionRevert(session.id, connectionID);
+        if (updated) cacheSession(updated);
+        if (restoresDraft) {
+          setDraft(target ? composerDraftWithRetainedFiles(target) : emptyComposerDraft());
+          setFiles(target ? retainedComposerFiles(target) : []);
+          setComments(() => (target ? (reviewCommentsFromMessage(target) ?? []) : []));
+          setBrowserComments(() => (target ? (browserCommentsFromMessage(target) ?? []) : []));
+        }
+      } catch (error) {
+        if (activeDraftScopeRef.current === draftScope) {
+          setAttachmentErrors([error instanceof Error ? error.message : "Redo failed"]);
+        }
+      } finally {
+        setSending(false);
+      }
+      return true;
+    }
+    if (commandName === "restore") {
+      if (!session.revert) {
+        if (fromDraft) setDraft(emptyComposerDraft());
+        return true;
+      }
+      try {
+        setSending(true);
+        const updated = await palot.clearSessionRevert(session.id);
+        if (updated) cacheSession(updated);
+        if (fromDraft) {
+          setDraft(emptyComposerDraft());
+          setFiles([]);
+        }
+      } catch (error) {
+        setAttachmentErrors([error instanceof Error ? error.message : "Restore failed"]);
+      } finally {
+        setSending(false);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // Palette task actions that need this composer's draft or menus.
+  const handleComposerAction = useEffectEvent((request: ComposerActionRequest) => {
+    if (requestBody || locationRecovery.missing) return;
+    if (request.action === "model" || request.action === "agent") {
+      if (!sending && !composerSelection.busy) setActiveMenu(request.action);
+      return;
+    }
+    void runBuiltinCommand(request.action, undefined, "palette");
+  });
+
+  useEffect(() => {
+    const request = composerActionRequest;
+    if (!request || onCreateSession || request.sessionID !== session.id) return;
+    if (request.profileID !== null && request.profileID !== runtime?.profileID) return;
+    store.set(composerActionRequestAtom, null);
+    if (Date.now() - request.requestedAt > COMPOSER_ACTION_TTL_MS) return;
+    handleComposerAction(request);
+  }, [composerActionRequest, onCreateSession, runtime?.profileID, session.id, store]);
+
   async function submit(deliveryOverride?: ComposerDelivery) {
+    if (mode === "shell") {
+      await submitShell();
+      return;
+    }
     const sideQuestion = parseBtwQuestion(draft.text);
     if (sideQuestion !== null) {
       if (store.get(stateAtom).sending || store.get(stateAtom).cancelingID) return;
@@ -834,152 +1383,11 @@ function ComposerView({
     }
     setAttachmentErrors([]);
 
-    if (submission.kind === "command") {
-      const commandName = submission.command.toLowerCase();
-      if (commandName === "compact") {
-        try {
-          setSending(true);
-          await palot.compactSession(session.id);
-          clearSubmittedContents();
-        } catch (error) {
-          setAttachmentErrors([error instanceof Error ? error.message : "Compaction failed"]);
-        } finally {
-          setSending(false);
-        }
-        return;
-      }
-      if (commandName === "new" || commandName === "clear") {
-        clearSubmittedContents();
-        if (!onCreateSession) onNavigateToNewTask?.();
-        return;
-      }
-      if (commandName === "model") {
-        clearSubmittedContents();
-        const arg = submission.arguments?.trim().toLowerCase();
-        if (arg) {
-          const matched = catalog.models.find(
-            (m) =>
-              m.id.toLowerCase() === arg ||
-              m.name.toLowerCase() === arg ||
-              `${m.providerID}/${m.id}`.toLowerCase() === arg ||
-              m.name.toLowerCase().includes(arg) ||
-              m.id.toLowerCase().includes(arg),
-          );
-          if (matched) {
-            try {
-              await composerSelection.selectModel({
-                providerID: matched.providerID,
-                id: matched.id,
-              });
-            } catch (error) {
-              showErrorToast("Could not switch models", error);
-            }
-            return;
-          }
-        }
-        setActiveMenu("model");
-        return;
-      }
-      if (commandName === "undo" || commandName === "revert") {
-        const userMessages = messages.filter((message) => message.type === "user");
-        const boundary = session.revert
-          ? userMessages.findIndex((message) => message.id === session.revert?.messageID)
-          : userMessages.length;
-        const target = userMessages[Math.max(0, boundary) - 1];
-        if (target) {
-          const pending = pendingInputs.find(
-            (request) => request.type === "input" && request.id === target.id,
-          );
-          if (pending) {
-            try {
-              await editPendingInput(pending);
-            } catch (error) {
-              if (activeDraftScopeRef.current === draftScope) {
-                setAttachmentErrors([error instanceof Error ? error.message : "Revert failed"]);
-              }
-            }
-            return;
-          }
-          try {
-            setSending(true);
-            const connectionID = runtime?.connectionID;
-            await palot.interrupt(session.id, connectionID);
-            await palot.waitForSessionIdle(session.id, connectionID);
-            const updated = await palot.stageSessionRevert(
-              { sessionID: session.id, messageID: target.id },
-              connectionID,
-            );
-            if (updated) cacheSession(updated);
-            setDraft(composerDraftWithRetainedFiles(target));
-            setFiles(retainedComposerFiles(target));
-            setComments(() => reviewCommentsFromMessage(target) ?? []);
-            setBrowserComments(() => browserCommentsFromMessage(target) ?? []);
-          } catch (error) {
-            if (activeDraftScopeRef.current === draftScope) {
-              setAttachmentErrors([error instanceof Error ? error.message : "Revert failed"]);
-            }
-          } finally {
-            setSending(false);
-          }
-        } else {
-          setDraft(emptyComposerDraft());
-        }
-        return;
-      }
-      if (commandName === "redo") {
-        if (!session.revert) {
-          setDraft(emptyComposerDraft());
-          return;
-        }
-        const userMessages = messages.filter((message) => message.type === "user");
-        const boundary = userMessages.findIndex(
-          (message) => message.id === session.revert?.messageID,
-        );
-        const target = boundary < 0 ? undefined : userMessages[boundary + 1];
-        try {
-          setSending(true);
-          const connectionID = runtime?.connectionID;
-          await palot.interrupt(session.id, connectionID);
-          await palot.waitForSessionIdle(session.id, connectionID);
-          const updated = target
-            ? await palot.stageSessionRevert(
-                { sessionID: session.id, messageID: target.id },
-                connectionID,
-              )
-            : await palot.clearSessionRevert(session.id, connectionID);
-          if (updated) cacheSession(updated);
-          setDraft(target ? composerDraftWithRetainedFiles(target) : emptyComposerDraft());
-          setFiles(target ? retainedComposerFiles(target) : []);
-          setComments(() => (target ? (reviewCommentsFromMessage(target) ?? []) : []));
-          setBrowserComments(() => (target ? (browserCommentsFromMessage(target) ?? []) : []));
-        } catch (error) {
-          if (activeDraftScopeRef.current === draftScope) {
-            setAttachmentErrors([error instanceof Error ? error.message : "Redo failed"]);
-          }
-        } finally {
-          setSending(false);
-        }
-        return;
-      }
-      if (commandName === "restore") {
-        if (!session.revert) {
-          setDraft(emptyComposerDraft());
-          return;
-        }
-        try {
-          setSending(true);
-          const updated = await palot.clearSessionRevert(session.id);
-          if (updated) cacheSession(updated);
-          setDraft(emptyComposerDraft());
-          setFiles([]);
-        } catch (error) {
-          setAttachmentErrors([error instanceof Error ? error.message : "Restore failed"]);
-        } finally {
-          setSending(false);
-        }
-        return;
-      }
-    }
+    if (
+      submission.kind === "command" &&
+      (await runBuiltinCommand(submission.command.toLowerCase(), submission.arguments, "draft"))
+    )
+      return;
 
     const effectiveDelivery =
       isWorking && !onCreateSession ? (deliveryOverride ?? composerDelivery) : "steer";
@@ -1001,6 +1409,10 @@ function ComposerView({
       catalog.defaultModel,
     ).model?.capabilities.input;
     const previousExecution = new Map<string, SessionExecutionState | undefined>();
+    const mentionInput = {
+      ...(submission.agents.length ? { agentReferences: submission.agents } : {}),
+      ...(submission.references.length ? { directoryReferences: submission.references } : {}),
+    };
     await admitComposerSubmission({
       submission,
       files: submittedFiles,
@@ -1008,22 +1420,7 @@ function ComposerView({
       browserComments: submittedBrowserComments,
       delivery: effectiveDelivery,
       optimistic: submission.kind !== "command",
-      createTarget: async () => {
-        composerSelection.assertConnection();
-        permissionSelection.assertReady();
-        if (!onCreateSession) return session;
-        const created = await onCreateSession({
-          approvalMode: permissionSelection.draftMode,
-          agent: displayedSession.agent,
-          model: composerSelection.creationModel,
-        });
-        composerSelection.assertConnection();
-        if (created) {
-          composerSelection.rememberCreated();
-          permissionSelection.resetDraft();
-        }
-        return created;
-      },
+      createTarget: createSubmissionTarget,
       dispatch: (sessionID, messageID) => {
         composerSelection.assertConnection();
         return submission.kind === "command"
@@ -1035,6 +1432,7 @@ function ComposerView({
               ...(submission.arguments ? { arguments: submission.arguments } : {}),
               ...(submission.files.length ? { fileReferences: submission.files } : {}),
               ...(submission.skills.length ? { skillReferences: submission.skills } : {}),
+              ...mentionInput,
               delivery: effectiveDelivery,
             })
           : palot.sendComposerPrompt({
@@ -1049,12 +1447,16 @@ function ComposerView({
               ...(submittedFiles.length ? { files: submittedFiles } : {}),
               ...(submission.files.length ? { fileReferences: submission.files } : {}),
               ...(submission.skills.length ? { skillReferences: submission.skills } : {}),
+              ...mentionInput,
               delivery: effectiveDelivery,
             });
       },
       effects: {
         setSending,
-        clearLocal: clearSubmittedContents,
+        clearLocal: () => {
+          clearSubmittedContents();
+          setHistoryState(null);
+        },
         admitOptimistic: ({ sessionID, message, execution }) => {
           onMessageAdmitted?.();
           let nextExecution = execution;
@@ -1167,13 +1569,19 @@ function ComposerView({
       element.selectionEnd,
       { isComposing },
     );
-    if (!freshQuery || freshQuery.kind !== item.kind) return;
+    const itemQueryKind = item.kind === "agent" || item.kind === "reference" ? "file" : item.kind;
+    if (!freshQuery || freshQuery.kind !== itemQueryKind) return;
+    const localID = crypto.randomUUID();
     const selectionValue: ComposerDiscoverySelection =
       item.kind === "command"
         ? { kind: "command", name: item.name }
         : item.kind === "skill"
-          ? { kind: "skill", id: item.id, localID: crypto.randomUUID() }
-          : { kind: "file", path: item.path, localID: crypto.randomUUID() };
+          ? { kind: "skill", id: item.id, localID }
+          : item.kind === "agent"
+            ? { kind: "agent", name: item.name, localID }
+            : item.kind === "reference"
+              ? { kind: "reference", name: item.name, path: item.path, localID }
+              : { kind: "file", path: item.path, localID };
     const inserted = insertComposerSelection(draft, freshQuery, selectionValue);
     setDraft(inserted.draft);
     setSelection({ start: inserted.selectionStart, end: inserted.selectionEnd });
@@ -1251,19 +1659,28 @@ function ComposerView({
   }
 
   const canSubmit =
-    (parseBtwQuestion(draft.text) !== null ||
-      (!attachmentUpload &&
+    mode === "shell"
+      ? Boolean(draft.text.trim()) &&
+        !attachmentUpload &&
         !composerSelection.blocked &&
         !permissionSelection.busy &&
         !locationRecovery.missing &&
-        !requestBody)) &&
-    (Boolean(draft.text.trim()) ||
-      files.length > 0 ||
-      comments.length > 0 ||
-      browserComments.length > 0) &&
-    !sending &&
-    !pendingInputEditID &&
-    runtime?.connected !== false;
+        !sending &&
+        !pendingInputEditID &&
+        runtime?.connected !== false
+      : (parseBtwQuestion(draft.text) !== null ||
+          (!attachmentUpload &&
+            !composerSelection.blocked &&
+            !permissionSelection.busy &&
+            !locationRecovery.missing &&
+            !requestBody)) &&
+        (Boolean(draft.text.trim()) ||
+          files.length > 0 ||
+          comments.length > 0 ||
+          browserComments.length > 0) &&
+        !sending &&
+        !pendingInputEditID &&
+        runtime?.connected !== false;
   const discoveryOpen = Boolean(activeQuery);
   const unifiedFocus = Boolean(contextBar && contextBarMode === "new-task");
   const handleModelOpenChange = useCallback(
@@ -1286,6 +1703,8 @@ function ComposerView({
   }, [backgroundPendingSteer, pendingBackgroundSteer]);
   return (
     <div
+      ref={composerShellRef}
+      data-palot-composer-mode={mode}
       className={cn(
         "palot-composer-shell relative mx-auto w-[calc(100%-32px)] shrink-0 pb-2 max-[720px]:w-[calc(100%-20px)]",
         contextBar ? "max-w-[860px]" : "max-w-[760px]",
@@ -1504,7 +1923,7 @@ function ComposerView({
             <InputGroupTextarea
               ref={composerRef}
               data-palot-composer-input
-              aria-label="Message Palot"
+              aria-label={mode === "shell" ? "Shell command" : "Message Palot"}
               aria-controls={
                 discoveryOpen
                   ? `composer-discovery-${session.id.replaceAll(/[^A-Za-z0-9_-]/g, "-")}`
@@ -1518,10 +1937,22 @@ function ComposerView({
               }
               value={draft.text}
               rows={2}
-              className="palot-native-scrollbar max-h-[clamp(3rem,25cqh,11rem)] min-h-[calc(2lh+--spacing(4))] flex-none resize-none overflow-y-auto overscroll-contain px-5 pt-3 pb-1"
-              placeholder="Do anything"
+              className={cn(
+                "palot-native-scrollbar max-h-[clamp(3rem,25cqh,11rem)] min-h-[calc(2lh+--spacing(4))] flex-none resize-none overflow-y-auto overscroll-contain px-5 pt-3 pb-1",
+                mode === "shell" && "font-mono text-code",
+              )}
+              placeholder={mode === "shell" ? "Run a shell command" : "Do anything"}
               disabled={locationRecovery.missing}
               onChange={(event) => {
+                if (
+                  mode === "normal" &&
+                  !draft.text &&
+                  event.target.value === "!" &&
+                  !activePendingInputEdit
+                ) {
+                  setComposerMode("shell");
+                  return;
+                }
                 setDraft((current) => applyComposerTextChange(current, event.target.value));
                 updateSelection(event.target);
               }}
@@ -1578,6 +2009,31 @@ function ComposerView({
                 if (discoveryOpen && event.key === "Escape") {
                   event.preventDefault();
                   setSelection({ start: -1, end: -1 });
+                  return;
+                }
+                if (
+                  mode === "shell" &&
+                  (event.key === "Escape" ||
+                    (event.key === "Backspace" &&
+                      !draft.text &&
+                      !event.altKey &&
+                      !event.ctrlKey &&
+                      !event.metaKey))
+                ) {
+                  event.preventDefault();
+                  setComposerMode("normal");
+                  return;
+                }
+                if (
+                  !discoveryOpen &&
+                  (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.shiftKey &&
+                  recallHistory(event.key === "ArrowUp" ? "up" : "down", event.currentTarget)
+                ) {
+                  event.preventDefault();
                   return;
                 }
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -1680,12 +2136,39 @@ function ComposerView({
                   <Plus aria-hidden="true" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  {localAttachments ? "Attach files" : "Attachments unavailable for remote servers"}
+                  {localAttachments
+                    ? `Attach files · ${formatShortcut(COMPOSER_SHORTCUT_KEYS.attach)}`
+                    : "Attachments unavailable for remote servers"}
                 </TooltipContent>
               </Tooltip>
+              {mode === "shell" ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <InputGroupButton
+                        type="button"
+                        size="composer"
+                        variant="secondary"
+                        className="gap-1 px-2"
+                        aria-label="Exit shell mode"
+                        data-palot-composer-shell-chip
+                        onClick={() => setComposerMode("normal")}
+                      />
+                    }
+                  >
+                    <SquareTerminal className="shrink-0" aria-hidden="true" />
+                    Shell
+                    <X className="shrink-0" aria-hidden="true" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {`Exit shell mode · Esc or ${formatShortcut(COMPOSER_SHORTCUT_KEYS["normal-mode"])}`}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
               <AgentSelector
                 session={displayedSession}
-                agents={agentCatalogQuery.data?.agents ?? []}
+                agents={agents}
+                defaultAgent={defaultAgent}
                 loading={agentCatalogQuery.isFetching}
                 open={activeMenu === "agent"}
                 onOpenChange={handleAgentOpenChange}
@@ -1737,7 +2220,7 @@ function ComposerView({
                   >
                     <Square className="size-3.5 fill-current" aria-hidden="true" />
                   </InputGroupButton>
-                ) : isWorking ? (
+                ) : isWorking && mode === "normal" ? (
                   <div className="flex items-center overflow-hidden rounded-full">
                     <Tooltip>
                       <TooltipTrigger
@@ -1812,7 +2295,7 @@ function ComposerView({
                     type="button"
                     size="icon-sm"
                     className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
-                    aria-label="Send message"
+                    aria-label={mode === "shell" ? "Run shell command" : "Send message"}
                     disabled={!canSubmit}
                     onClick={() => void submit()}
                   >
@@ -1885,6 +2368,15 @@ function sameComposerMessages(left: PalotMessage[], right: PalotMessage[]): bool
   if (
     leftUsers.length !== rightUsers.length ||
     leftUsers.some((message, index) => message !== rightUsers[index])
+  ) {
+    return false;
+  }
+  // Shell history only needs new commands; streaming output must not re-render the composer.
+  const leftShellIDs = left.filter((message) => message.type === "shell").map(({ id }) => id);
+  const rightShellIDs = right.filter((message) => message.type === "shell").map(({ id }) => id);
+  if (
+    leftShellIDs.length !== rightShellIDs.length ||
+    leftShellIDs.some((id, index) => id !== rightShellIDs[index])
   ) {
     return false;
   }
@@ -2193,33 +2685,42 @@ const ModelSelector = memo(function ModelSelector({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
-        render={
-          <InputGroupButton
-            type="button"
-            size="composer"
-            className="palot-model-trigger min-w-0 max-w-64 shrink gap-1.5 px-2"
-            aria-label={`Model: ${label}${unavailable ? ", unavailable" : ""}`}
-            aria-description={effort ? `Reasoning: ${effort}` : undefined}
-            disabled={switching || disabled}
-          />
-        }
-      >
-        <span className="truncate" data-palot-model-name>
-          {label}
-        </span>
-        {unavailable || usesDefault ? (
-          <span className="shrink-0 text-muted-foreground" data-palot-model-detail-label>
-            {unavailable ? "Unavailable" : "Default"}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <InputGroupButton
+                  type="button"
+                  size="composer"
+                  className="palot-model-trigger min-w-0 max-w-64 shrink gap-1.5 px-2"
+                  aria-label={`Model: ${label}${unavailable ? ", unavailable" : ""}`}
+                  aria-description={effort ? `Reasoning: ${effort}` : undefined}
+                  disabled={switching || disabled}
+                />
+              }
+            />
+          }
+        >
+          <span className="truncate" data-palot-model-name>
+            {label}
           </span>
-        ) : null}
-        {effort && (
-          <span className="shrink-0 text-muted-foreground" data-palot-model-effort>
-            {effort}
-          </span>
-        )}
-        <ChevronDown className="shrink-0" aria-hidden="true" />
-      </PopoverTrigger>
+          {unavailable || usesDefault ? (
+            <span className="shrink-0 text-muted-foreground" data-palot-model-detail-label>
+              {unavailable ? "Unavailable" : "Default"}
+            </span>
+          ) : null}
+          {effort && (
+            <span className="shrink-0 text-muted-foreground" data-palot-model-effort>
+              {effort}
+            </span>
+          )}
+          <ChevronDown className="shrink-0" aria-hidden="true" />
+        </TooltipTrigger>
+        <TooltipContent>
+          {`Choose model · ${formatShortcut(COMPOSER_SHORTCUT_KEYS.model)}`}
+        </TooltipContent>
+      </Tooltip>
       <PopoverContent
         side="top"
         align="end"
@@ -2300,6 +2801,7 @@ const ModelSelector = memo(function ModelSelector({
 const AgentSelector = memo(function AgentSelector({
   session,
   agents,
+  defaultAgent,
   loading,
   open,
   onOpenChange,
@@ -2309,6 +2811,7 @@ const AgentSelector = memo(function AgentSelector({
 }: {
   session: PalotSession;
   agents: PalotAgent[];
+  defaultAgent: PalotAgent | null;
   loading: boolean;
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -2317,12 +2820,12 @@ const AgentSelector = memo(function AgentSelector({
   disabled: boolean;
 }) {
   const [switching, setSwitching] = useState(false);
-  const available = agents.filter(
-    (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
-  );
+  const available = primaryAgents(agents);
   const selected = available.find((agent) => agent.id === session.agent) ?? null;
-  const label = selected?.name ?? session.agent ?? "Default agent";
-  const isDefaultAgent = !session.agent;
+  // Without an explicit agent, OpenCode runs its default agent; show that agent by name.
+  const label = selected?.name ?? session.agent ?? defaultAgent?.name ?? "Default";
+  const implicitDefault = !session.agent && defaultAgent !== null;
+  const shortcuts = `${formatShortcut(COMPOSER_SHORTCUT_KEYS["agent-next"])} / ${formatShortcut(COMPOSER_SHORTCUT_KEYS["agent-previous"])}`;
 
   async function selectAgent(agent: PalotAgent) {
     if (switching || disabled) return;
@@ -2340,21 +2843,28 @@ const AgentSelector = memo(function AgentSelector({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
-        render={
-          <InputGroupButton
-            type="button"
-            size="composer"
-            className="max-w-40 gap-1 px-2"
-            aria-label={`Agent: ${label}`}
-            disabled={switching || disabled}
-          />
-        }
-      >
-        <Bot className="shrink-0" aria-hidden="true" />
-        {isDefaultAgent ? null : <span className="truncate">{label}</span>}
-        <ChevronDown className="shrink-0" aria-hidden="true" />
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <InputGroupButton
+                  type="button"
+                  size="composer"
+                  className="max-w-40 gap-1 px-2"
+                  aria-label={`Agent: ${label}${implicitDefault ? " (default)" : ""}`}
+                  disabled={switching || disabled}
+                />
+              }
+            />
+          }
+        >
+          <Bot className="shrink-0" aria-hidden="true" />
+          <span className="truncate">{label}</span>
+          <ChevronDown className="shrink-0" aria-hidden="true" />
+        </TooltipTrigger>
+        <TooltipContent>{`Switch agent · ${shortcuts}`}</TooltipContent>
+      </Tooltip>
       <PopoverContent
         side="top"
         align="start"

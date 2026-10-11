@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   ArrowUpLeft,
   BrainCircuit,
   ChevronDown,
@@ -9,17 +10,19 @@ import {
   CircleHelp,
   LoaderCircle,
   SendToBack,
-  SquareArrowOutUpRight,
+  Square,
 } from "lucide-react";
+import { useAtomValue } from "jotai";
 import { memo, useMemo, useState } from "react";
 import type { PalotMessage, PalotRunningShell, PalotSession } from "../../shared";
-import { belongsToSession, type SessionExecutionState } from "../atoms/workspace";
+import { belongsToSession, runtimeAtom, type SessionExecutionState } from "../atoms/workspace";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionActivity } from "../hooks/use-session-activity";
 import { useChildSessions, useSessionCatalog } from "../hooks/use-session-catalog";
 import { useSessionFamilyRequestViews } from "../hooks/use-session-requests";
 import { cn } from "../lib/cn";
 import { writeClipboardText } from "../lib/clipboard";
+import { canFetchOpenCode } from "../lib/opencode-runtime-query";
 import { projectToolExecution, type SubagentExecution } from "../lib/tool-executions";
 import {
   type TranscriptBackgroundFacts,
@@ -28,6 +31,7 @@ import {
 } from "../lib/turn-projection";
 import { MarkdownContent } from "./markdown-content";
 import { ElapsedTime } from "./elapsed-time";
+import { interruptChildSession } from "./running-work-control";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { PulseDot } from "./ui/pulse-dot";
@@ -138,65 +142,112 @@ export function SubagentLaunch({
   const presentation = sessionPresentation(session);
   const state = childID ? states.get(childID) : undefined;
   const status = statusPresentation(state, view?.status ?? group.status);
+  const runtime = useAtomValue(runtimeAtom);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
   if (!view) return null;
   const agent = titleCase(view.agent || presentation.agent);
   const description = view.description || presentation.description;
+  const statusLabel = needsInput ? "needs input" : status.label.toLowerCase();
+  const visibleStatus = needsInput || status.failed || status.label === "Stopped";
+  const connectionID = runtime && canFetchOpenCode(runtime) ? runtime.connectionID : null;
+  const stop = async () => {
+    if (!childID || !connectionID || stopping) return;
+    setStopping(true);
+    setStopError(null);
+    try {
+      await interruptChildSession(connectionID, childID);
+    } catch (cause) {
+      setStopError(cause instanceof Error ? cause.message : "Could not stop the subagent.");
+    } finally {
+      setStopping(false);
+    }
+  };
 
   return (
-    <button
-      type="button"
-      disabled={!childID}
-      onClick={() => {
-        if (childID) void openSession(childID);
-      }}
-      className="my-1 flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-border/60 bg-muted/15 px-3 py-2.5 text-left text-xs outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-80"
-      aria-label={`${agent} subagent ${needsInput ? "needs input" : status.label.toLowerCase()}: ${description}`}
-      data-palot-subagent-launch={childID ?? group.id}
-    >
-      <BrainCircuit
-        className={cn(
-          "mt-0.5 size-3.5 shrink-0",
-          status.failed ? "text-destructive" : "text-muted-foreground",
-        )}
-        aria-hidden="true"
-      />
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span
+    <div className="my-1 min-w-0">
+      <div className="flex min-w-0 items-center rounded-md border border-border/60 bg-muted/15 transition-colors hover:bg-muted/30">
+        <button
+          type="button"
+          disabled={!childID}
+          onClick={() => {
+            if (childID) void openSession(childID);
+          }}
+          className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md pr-2 pl-2.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-80"
+          aria-label={`${agent} subagent ${statusLabel}: ${description}`}
+          data-palot-subagent-launch={childID ?? group.id}
+        >
+          <BrainCircuit
             className={cn(
-              "font-medium",
-              needsInput
-                ? "text-warning"
-                : status.failed
-                  ? "text-destructive"
-                  : "text-foreground/85",
+              "size-3.5 shrink-0",
+              status.failed ? "text-destructive" : "text-muted-foreground",
             )}
-          >
-            {agent} {needsInput ? "needs input" : status.label.toLowerCase()}
+            aria-hidden="true"
+          />
+          <span className="min-w-0 flex-1 truncate">
+            <span
+              className={cn(
+                "font-medium",
+                needsInput
+                  ? "text-warning"
+                  : status.failed
+                    ? "text-destructive"
+                    : "text-foreground/85",
+              )}
+            >
+              {agent}
+              {visibleStatus ? ` ${statusLabel}` : null}
+            </span>
+            <span className="text-muted-foreground"> · {description}</span>
           </span>
           {view.background ? (
-            <span className="rounded-sm bg-muted px-1 py-0.5 text-micro leading-none text-muted-foreground">
+            <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-micro leading-none text-muted-foreground">
               background
             </span>
           ) : null}
-        </span>
-        <span className="mt-0.5 block truncate text-muted-foreground">{description}</span>
-      </span>
-      <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-muted-foreground/70">
-        {needsInput ? (
-          <CircleHelp className="size-3.5 text-warning" aria-hidden="true" />
-        ) : status.running ? (
-          <PulseDot className="size-1.5" aria-hidden="true" />
+          <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-muted-foreground/70">
+            {needsInput ? (
+              <CircleHelp className="size-3.5 text-warning" aria-hidden="true" />
+            ) : status.running ? (
+              <PulseDot className="size-1.5" aria-hidden="true" />
+            ) : null}
+            <ElapsedTime
+              startedAt={state?.startedAt ?? view.startedAt}
+              completedAt={state?.completedAt ?? null}
+              running={status.running}
+              fallbackDurationMs={view.background ? null : view.durationMs}
+              titlePrefix={status.running ? "Running for" : "Ran for"}
+            />
+            {childID ? <ChevronRight className="size-3.5" aria-hidden="true" /> : null}
+          </span>
+        </button>
+        {status.running && childID ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="mr-1 shrink-0"
+            aria-label={`Stop ${agent} subagent`}
+            disabled={!connectionID || stopping}
+            onClick={() => void stop()}
+          >
+            {stopping ? (
+              <LoaderCircle
+                className="animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <Square aria-hidden="true" />
+            )}
+          </Button>
         ) : null}
-        <ElapsedTime
-          startedAt={state?.startedAt ?? view.startedAt}
-          completedAt={state?.completedAt ?? null}
-          running={status.running}
-          fallbackDurationMs={view.background ? null : view.durationMs}
-        />
-        {childID ? <ChevronRight className="size-3.5" aria-hidden="true" /> : null}
-      </span>
-    </button>
+      </div>
+      {stopError ? (
+        <p role="alert" className="m-0 px-2.5 pt-1 text-meta text-destructive">
+          {stopError}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -225,69 +276,49 @@ export function SubagentResponse({ group }: { group: TurnActivityGroup }) {
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      className="my-1 min-w-0 rounded-lg border border-border/60 bg-muted/15"
+      className="my-1 min-w-0 rounded-md border border-border/60 bg-muted/15"
       data-palot-subagent-response={childID ?? "unknown"}
     >
-      <div className="flex min-w-0 items-stretch">
-        <CollapsibleTrigger
-          render={
-            <button
-              type="button"
-              className="flex min-w-0 flex-1 items-start gap-2.5 rounded-l-lg px-3 py-2.5 text-left text-xs outline-none hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            />
-          }
-        >
-          <CornerDownRight
-            className={cn(
-              "mt-0.5 size-3.5 shrink-0",
-              status.failed ? "text-destructive" : "text-muted-foreground",
-            )}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1">
-            <span className="block min-w-0">
-              <span
-                className={cn(
-                  "font-medium",
-                  status.failed ? "text-destructive" : "text-foreground/85",
-                )}
-              >
-                {agent} {status.failed ? "failed" : "returned"}
-              </span>
-            </span>
-            <span className="mt-0.5 block truncate text-muted-foreground">{description}</span>
-          </span>
-          <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-muted-foreground/70">
-            <ElapsedTime
-              startedAt={state?.startedAt ?? null}
-              completedAt={state?.completedAt ?? null}
-              running={status.running}
-              fallbackDurationMs={sessionDuration}
-              titlePrefix="Returned after"
-            />
-            {open ? (
-              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-            ) : (
-              <ChevronRight
-                className="size-3.5 shrink-0 text-muted-foreground"
-                aria-hidden="true"
-              />
-            )}
-          </span>
-        </CollapsibleTrigger>
-        {childID ? (
-          <Button
+      {/* One quiet line, paired with the launch row; the task link lives in the expanded body. */}
+      <CollapsibleTrigger
+        render={
+          <button
             type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="mt-1.5 mr-1.5 shrink-0 self-start"
-            aria-label={`Open ${agent} subagent`}
-            onClick={() => void openSession(childID)}
+            aria-label={`${agent} ${status.failed ? "failed" : "returned"}: ${description}`}
+            className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md pr-2 pl-2.5 text-left text-xs outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          />
+        }
+      >
+        <CornerDownRight
+          className={cn(
+            "size-3.5 shrink-0",
+            status.failed ? "text-destructive" : "text-muted-foreground",
+          )}
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1 truncate">
+          <span
+            className={cn("font-medium", status.failed ? "text-destructive" : "text-foreground/85")}
           >
-            <SquareArrowOutUpRight aria-hidden="true" />
-          </Button>
-        ) : null}
-      </div>
+            {agent} {status.failed ? "failed" : "returned"}
+          </span>
+          <span className="text-muted-foreground"> · {description}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-muted-foreground/70">
+          <ElapsedTime
+            startedAt={state?.startedAt ?? null}
+            completedAt={state?.completedAt ?? null}
+            running={status.running}
+            fallbackDurationMs={sessionDuration}
+            titlePrefix="Returned after"
+          />
+          {open ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          )}
+        </span>
+      </CollapsibleTrigger>
       <CollapsibleContent className="border-t border-border/50 px-3 py-3">
         {response ? (
           <MarkdownContent
@@ -297,20 +328,34 @@ export function SubagentResponse({ group }: { group: TurnActivityGroup }) {
         ) : (
           <p className="m-0 text-xs text-muted-foreground">No response content was provided.</p>
         )}
-        {response ? (
-          <div className="mt-3 border-t border-border/40 pt-2.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() => {
-                void writeClipboardText(response);
-                setCopied(true);
-              }}
-            >
-              <Copy data-icon="inline-start" aria-hidden="true" />
-              {copied ? "Copied" : "Copy response"}
-            </Button>
+        {response || childID ? (
+          <div className="mt-3 flex items-center gap-1 border-t border-border/40 pt-2.5">
+            {childID ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                aria-label={`Open ${agent} subagent task`}
+                onClick={() => void openSession(childID)}
+              >
+                <ArrowRight data-icon="inline-start" aria-hidden="true" />
+                Open task
+              </Button>
+            ) : null}
+            {response ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => {
+                  void writeClipboardText(response);
+                  setCopied(true);
+                }}
+              >
+                <Copy data-icon="inline-start" aria-hidden="true" />
+                {copied ? "Copied" : "Copy response"}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </CollapsibleContent>

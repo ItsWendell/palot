@@ -19,6 +19,11 @@ interface Owner {
   connectionID: string;
 }
 
+/** Interrupts a delegated child session through the same call as the running-work menu. */
+export async function interruptChildSession(connectionID: string, childID: string) {
+  await openCodeClient(connectionID).session.interrupt({ sessionID: childID });
+}
+
 export function RunningWorkControl(
   props: Owner & {
     session: PalotSession;
@@ -237,10 +242,9 @@ function RunningWorkRow({
     setBusy(true);
     setError(null);
     try {
-      const client = openCodeClient(owner.connectionID);
-      if (childID) await client.session.interrupt({ sessionID: childID });
+      if (childID) await interruptChildSession(owner.connectionID, childID);
       else if (process?.kind === "command")
-        await client.shell.remove({
+        await openCodeClient(owner.connectionID).shell.remove({
           id: process.id,
           location: { directory: process.location.directory },
         });

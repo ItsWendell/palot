@@ -71,6 +71,7 @@ import {
   errorDiagnostic,
 } from "../../shared";
 import { mergeBuiltinCommands } from "../lib/builtin-commands";
+import { promptMentionParts, type PromptMentionInput } from "../lib/prompt-mentions";
 import { openCodeClient } from "./opencode-client";
 import { attachmentPrompt, type AttachmentDeliveryInput } from "./opencode-attachment-delivery";
 import { mapSession } from "./opencode-mappers";
@@ -101,6 +102,7 @@ import {
   checkPlugins as checkOpenCodePlugins,
   completeIntegrationOAuth as completeOpenCodeIntegrationOAuth,
   connectIntegrationCommand as connectOpenCodeIntegrationCommand,
+  connectIntegrationExternal as connectOpenCodeIntegrationExternal,
   connectIntegrationKey as connectOpenCodeIntegrationKey,
   connectIntegrationOAuth as connectOpenCodeIntegrationOAuth,
   connectMcpServer as connectOpenCodeMcpServer,
@@ -378,7 +380,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "2.0.24",
+  contractVersion: "2.0.26",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -395,7 +397,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.0.24",
+  version: "2.0.26",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,
@@ -1268,9 +1270,13 @@ export const palot = {
     return sendOpenCodePrompt(input);
   },
 
-  async runCommand(input: RunCommandInput & AttachmentDeliveryInput, connectionID?: string) {
+  async runCommand(
+    input: RunCommandInput & AttachmentDeliveryInput & PromptMentionInput,
+    connectionID?: string,
+  ) {
     if (!apiAvailable()) return undefined;
     const client = openCodeClient(connectionID);
+    const mentions = promptMentionParts(input);
     const delivery = attachmentPrompt(
       `/${input.command}${input.arguments ? ` ${input.arguments}` : ""}`,
       input,
@@ -1282,6 +1288,7 @@ export const palot = {
     const files = [
       ...delivery.inlineFiles.map(({ uri, name }) => ({ uri, name })),
       ...(location ? promptFiles(location.directory, input.fileReferences ?? []) : []),
+      ...mentions.files,
     ];
     await client.session.command(
       {
@@ -1290,6 +1297,7 @@ export const palot = {
         // The command API has no metadata/displayText field; retain fallback paths in its text.
         text: delivery.text,
         ...(files.length ? { files } : {}),
+        ...(mentions.agents.length ? { agents: mentions.agents } : {}),
         ...(input.skillReferences?.length
           ? {
               skills: input.skillReferences.map((skill) => ({
@@ -1302,6 +1310,15 @@ export const palot = {
         ...(input.delivery ? { delivery: input.delivery } : {}),
       },
       { signal },
+    );
+  },
+
+  /** Run a composer shell-mode command in the session through OpenCode's session shell. */
+  async runShell(input: { sessionID: string; command: string }, connectionID?: string) {
+    if (!apiAvailable()) return;
+    await openCodeClient(connectionID).session.shell(
+      { sessionID: input.sessionID, command: input.command },
+      { signal: openCodeRequestSignal() },
     );
   },
 
@@ -1472,6 +1489,13 @@ export const palot = {
 
   async connectIntegrationKey(input: Parameters<typeof connectOpenCodeIntegrationKey>[0]) {
     if (apiAvailable()) await connectOpenCodeIntegrationKey(input);
+  },
+
+  async connectIntegrationExternal(
+    input: Parameters<typeof connectOpenCodeIntegrationExternal>[0],
+  ) {
+    if (!apiAvailable()) throw new Error("Palot bridge is unavailable");
+    await connectOpenCodeIntegrationExternal(input);
   },
 
   async connectIntegrationOAuth(input: Parameters<typeof connectOpenCodeIntegrationOAuth>[0]) {
