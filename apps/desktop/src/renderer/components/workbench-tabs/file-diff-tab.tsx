@@ -15,6 +15,8 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { ReviewBasePicker, ReviewBaseStatus } from "./review-base-picker";
+import { DiffViewOptionsMenu, useDiffViewPreferences } from "./diff-view-options";
+import type { DiffLayout } from "../../lib/diff-layout";
 
 export function FileDiffTab({
   tab,
@@ -67,6 +69,8 @@ function FileDiffContent({
   const runtime = useAtomValue(runtimeAtom);
   const review = useReviewComments(tab.resource.profileID, tab.resource.sourceSessionID);
   const [selection, setSelection] = useState<SelectedLineRange | null>(null);
+  const [preferences] = useDiffViewPreferences();
+  const [layout, setLayout] = useState<DiffLayout>("unified");
   const diff = query.data?.find((file) => file.file === tab.resource.path);
 
   if (query.isPending) {
@@ -125,6 +129,7 @@ function FileDiffContent({
         <span className="font-mono text-diff text-success">+{diff.additions}</span>
         <span className="font-mono text-diff text-destructive">-{diff.deletions}</span>
         <DiffContextToggle expanded={expandUnchanged} onExpandedChange={setExpandUnchanged} />
+        <DiffViewOptionsMenu layout={layout} />
         <Button
           type="button"
           variant="ghost"
@@ -179,6 +184,10 @@ function FileDiffContent({
         file={diff.file}
         patch={diff.patch}
         expandUnchanged={expandUnchanged}
+        layout={preferences.layout}
+        onLayoutResolved={setLayout}
+        lineDiffType={preferences.inline}
+        hideWhitespace={preferences.hideWhitespace}
         className="min-h-0 flex-1"
         selectedLines={review.enabled ? selection : undefined}
         onSelectedLinesChange={

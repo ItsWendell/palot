@@ -1,9 +1,17 @@
 import type { CSSProperties } from "react";
+import { DIFF_FIND_ACTIVE_HIGHLIGHT, DIFF_FIND_HIGHLIGHT } from "../lib/diff-find-dom";
 
 const pierreBaseCSS = `
 [data-diff] { border: 0 !important; border-radius: 0 !important; }
 [data-line] { min-height: var(--diffs-line-height); }
 [data-column-number] { font-variant-numeric: tabular-nums; }
+/* Find in diff: document styles do not reach this shadow tree, so the rules live here. */
+::highlight(${DIFF_FIND_HIGHLIGHT}) { background-color: color-mix(in oklch, var(--warning) 30%, transparent); }
+::highlight(${DIFF_FIND_ACTIVE_HIGHLIGHT}) { background-color: var(--primary); color: var(--primary-foreground); }
+@media (forced-colors: active) {
+  ::highlight(${DIFF_FIND_HIGHLIGHT}) { background-color: Mark; color: MarkText; }
+  ::highlight(${DIFF_FIND_ACTIVE_HIGHLIGHT}) { background-color: Highlight; color: HighlightText; }
+}
 `;
 
 export const pierreViewerCSS = `
