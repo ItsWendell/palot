@@ -1,5 +1,5 @@
 import { createStore } from "jotai";
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotSession } from "../../shared";
@@ -12,6 +12,7 @@ import { renderWithRouter } from "../test-utils/render-with-router";
 import { MultiConnectionSidebar } from "./multi-connection-sidebar";
 import { palot } from "../services/palot";
 import { SidebarProvider } from "./ui/sidebar";
+import { installSourceControl, pullRequestLink } from "./pull-requests/test-fixtures";
 
 const mocks = vi.hoisted(() => ({
   overview: vi.fn(),
@@ -120,7 +121,7 @@ function renderSidebar(mode: "inbox" | "project" = "inbox", store = createStore(
   store.set(runtimeAtom, overview.connections[0]!.runtime);
   return renderWithRouter(
     <SidebarProvider>
-      <MultiConnectionSidebar searchOpen />
+      <MultiConnectionSidebar />
     </SidebarProvider>,
     store,
   );
@@ -219,32 +220,34 @@ describe("MultiConnectionSidebar", () => {
     owner.phase = "loading";
     renderSidebar("inbox", store);
     expect(overview.loadProject).not.toHaveBeenCalled();
-    const rerender = (value: string) =>
-      fireEvent.change(screen.getByRole("textbox", { name: "Search across connections" }), {
-        target: { value },
+    // Any subscribed atom write rerenders the sidebar without changing its owner.
+    const rerender = () =>
+      act(() => {
+        const shelves = store.get(inboxShelvesAtom);
+        store.set(inboxShelvesAtom, { ...shelves, settled: !shelves.settled });
       });
     owner.phase = "ready";
-    rerender("a");
+    rerender();
     expect(overview.loadProject).toHaveBeenCalledExactlyOnceWith("beta", "same-project");
     overview.connections = overview.connections.map((connection) => ({
       ...connection,
       projects: [...connection.projects],
       runtime: connection.runtime ? { ...connection.runtime } : null,
     }));
-    rerender("b");
+    rerender();
     expect(overview.loadProject).toHaveBeenCalledTimes(1);
     overview.connections[1]!.runtime = {
       ...overview.connections[1]!.runtime!,
       connectionID: "replacement-beta",
     };
-    rerender("c");
+    rerender();
     expect(overview.loadProject).toHaveBeenCalledTimes(2);
     expect(overview.loadProject).toHaveBeenLastCalledWith("beta", "same-project");
     overview.connections[1]!.phase = "error";
-    rerender("d");
+    rerender();
     expect(overview.loadProject).toHaveBeenCalledTimes(2);
     overview.connections[1]!.phase = "ready";
-    rerender("e");
+    rerender();
     expect(overview.loadProject).toHaveBeenCalledTimes(3);
   });
 
@@ -377,6 +380,35 @@ describe("MultiConnectionSidebar", () => {
     );
   });
 
+  it("badges tasks from one links query per local server and skips remote servers", async () => {
+    const local = (id: string) => {
+      const entry = connection(id);
+      entry.profile = { id, kind: "local", name: `Local ${id}` } as typeof entry.profile;
+      return entry;
+    };
+    overview.connections = [local("alpha"), local("beta"), connection("gamma")];
+    overview.includedProfileIDs = ["alpha", "beta", "gamma"];
+    const listPullRequestLinks = vi.fn(async (input?: { profileID?: string }) => ({
+      ok: true as const,
+      value:
+        input?.profileID === "beta"
+          ? [pullRequestLink("same-session", 21, { profileID: "beta" })]
+          : [],
+    }));
+    installSourceControl({ listPullRequestLinks });
+    renderSidebar("inbox");
+    const badge = await screen.findByRole("img", {
+      name: "Pull request #21, open, checks passing",
+    });
+    expect(badge.closest("[data-inbox-card]")?.getAttribute("data-profile-id")).toBe("beta");
+    expect(screen.getAllByRole("img", { name: /^Pull request/ })).toHaveLength(1);
+    expect(listPullRequestLinks.mock.calls.map(([input]) => input)).toEqual([
+      { profileID: "alpha" },
+      { profileID: "beta" },
+    ]);
+    Reflect.deleteProperty(window, "palot");
+  });
+
   it("omits redundant local badges while retaining explicit row ownership", () => {
     overview.connections[0]!.profile = { id: "alpha", name: "Local", kind: "local" };
     renderSidebar();
@@ -472,6 +504,19 @@ describe("MultiConnectionSidebar", () => {
     await userEvent.click(header("alpha"));
     expect(task("alpha")).toBeTruthy();
     expect(task("beta")).toBeTruthy();
+  });
+
+  it("keeps project row actions keyboard reachable while they are quiet at rest", async () => {
+    renderSidebar("project");
+    const row = screen.getByRole("button", { name: "Same task · Same server · beta.example" });
+    act(() => row.focus());
+    await userEvent.tab();
+    const actions = screen.getByRole("button", {
+      name: "Actions for Same task on Same server · beta.example",
+    });
+    expect(document.activeElement).toBe(actions);
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByRole("menuitem", { name: "Rename" })).toBeTruthy();
   });
 
   it("keeps the project new-task action outside its trigger without changing expansion", async () => {
@@ -610,6 +655,47 @@ describe("MultiConnectionSidebar", () => {
     );
   });
 
+  it("holds task order under the pointer and applies a finished turn on leave", () => {
+    const store = createStore();
+    const owner = connection("alpha", 2);
+    overview.connections = [owner];
+    overview.includedProfileIDs = ["alpha"];
+    const { container } = renderSidebar("inbox", store);
+    const order = () =>
+      screen
+        .getAllByRole("button", { name: /^Actions for/ })
+        .map((button) => button.getAttribute("aria-label")?.split(" on ")[0]);
+    expect(order()).toEqual(["Actions for Same task", "Actions for Task 1"]);
+
+    const list = container.querySelector<HTMLElement>('[data-sidebar="content"]')!;
+    fireEvent.pointerEnter(list);
+    const sessions = owner.sessions.map((session) =>
+      session.id === "session-1" ? { ...session, updatedAt: 50, idleAt: 50 } : session,
+    );
+    overview.connections = [
+      {
+        ...owner,
+        sessions,
+        inbox: projectSessionInbox({
+          sessions,
+          projects: owner.projects,
+          requests: new Map(),
+          activeIDs: new Set(),
+          runningSinceBySession: new Map(),
+          triage: { profileID: "alpha", bootstrapThrough: null, sessions: [] },
+          now: 1,
+        }),
+      },
+    ];
+    act(() =>
+      store.set(inboxShelvesAtom, { pinned: true, inbox: true, snoozed: true, settled: true }),
+    );
+    expect(order()).toEqual(["Actions for Same task", "Actions for Task 1"]);
+
+    fireEvent.pointerLeave(list);
+    expect(order()).toEqual(["Actions for Task 1", "Actions for Same task"]);
+  });
+
   it("bounds mounted task rows and scopes pagination to each connection", async () => {
     overview.connections = [connection("alpha", 65), connection("beta", 65)];
     renderSidebar();
@@ -627,20 +713,5 @@ describe("MultiConnectionSidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Inbox options" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Load older tasks" }));
     expect(overview.loadMore).toHaveBeenCalledWith("beta");
-  });
-
-  it("searches the hook rather than the foreground catalog only", () => {
-    renderSidebar();
-    fireEvent.change(screen.getByRole("textbox", { name: "Search across connections" }), {
-      target: { value: "beta.example" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(overview.search).toHaveBeenCalledWith("beta.example");
-    expect(
-      screen.queryByRole("button", { name: "Same task · Same server · alpha.example" }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Same task · Same server · beta.example" }),
-    ).toBeTruthy();
   });
 });

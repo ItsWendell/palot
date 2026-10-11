@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useState, type ReactElement, type ReactNode 
 import { useAtom, useAtomValue } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
 import { Check, Ellipsis, PinOff, Plus, Server, Undo2 } from "lucide-react";
-import type { SessionTriageCommand } from "../../shared";
+import type { SessionTriageCommand, SidebarMode } from "../../shared";
 import {
   inboxFiltersAtom,
   inboxShelvesAtom,
@@ -15,7 +15,14 @@ import { useConnectionOverview } from "../hooks/use-connection-overview";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionWindowDrag } from "../hooks/use-session-window-drag";
 import { useOwnedVcsInfoMap, ownedVcsLocationKey } from "../hooks/use-vcs-info";
-import { orderInboxSessions, type InboxSection, type InboxSessionView } from "../lib/session-inbox";
+import {
+  groupInboxSections,
+  orderInboxSection,
+  orderInboxSessions,
+  type InboxSection,
+  type InboxSessionView,
+} from "../lib/session-inbox";
+import { usePointerFreeze, useStableOrder } from "../hooks/use-stable-order";
 import { projectName } from "../lib/view-models";
 import { showErrorToast } from "../lib/toast-error";
 import { ConnectionBadge, connectionDescription } from "./connection-badge";
@@ -30,12 +37,19 @@ import {
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { sessionSnoozeChoices } from "../lib/session-snooze";
 import { InboxCardSurface, INBOX_CARD_ACTION_BUTTON_CLASS } from "./inbox-card-surface";
+import { PullRequestBadge } from "./pull-requests/pull-request-badge";
+import { useOwnedPullRequestLinks } from "./pull-requests/use-owned-pull-request-links";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { SidebarContent } from "./ui/sidebar";
 import { ScrollArea } from "./ui/scroll-area";
-import { sidebarItemVariants } from "./ui/sidebar-styles";
+import {
+  SidebarFluidList,
+  sidebarFluidCardClass,
+  sidebarFluidItemClass,
+  sidebarFluidRowProps,
+} from "./sidebar-fluid-list";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -68,6 +82,8 @@ type Command = SessionTriageCommand extends infer C
   : never;
 const sections: InboxSection[] = ["pinned", "inbox", "snoozed", "settled"];
 const pageSize = 40;
+const rowKey = (item: OwnedItem) => JSON.stringify([item.connection.profile.id, item.session.id]);
+const sectionRowKey = (item: OwnedItem) => `${item.section}:${rowKey(item)}`;
 
 /** The same interaction layer owns every row density, with an explicit server. */
 function OwnedSessionInteractions({
@@ -112,18 +128,18 @@ async function attempt(label: string, action: () => Promise<unknown>) {
   }
 }
 
-export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: boolean }) {
+export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarMode } = {}) {
   const overview = useConnectionOverview();
   const navigation = usePalotNavigation();
   const runtime = useAtomValue(runtimeAtom);
-  const mode = useAtomValue(sidebarModeAtom);
+  const storedMode = useAtomValue(sidebarModeAtom);
+  const mode = modeOverride ?? storedMode;
   const [preferences, setPreferences] = useAtom(inboxViewPreferencesAtom);
   const [inboxFilters, setInboxFilters] = useAtom(inboxFiltersAtom);
   const [projectFilter, setProjectFilter] = useAtom(overviewProjectFilterAtom);
   const [projectSections, setProjectSections] = useAtom(overviewProjectSectionsAtom);
   const filters = { ...inboxFilters, projectID: projectFilter };
   const [shelves, setShelves] = useAtom(inboxShelvesAtom);
-  const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(pageSize);
   const [renameItem, setRenameItem] = useState<OwnedItem | null>(null);
   const [title, setTitle] = useState("");
@@ -188,13 +204,6 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
       filters.projectID !== JSON.stringify([item.connection.profile.id, item.session.projectID])
     )
       return false;
-    if (
-      query.trim() &&
-      !`${item.session.title} ${item.projectName} ${connectionDescription(item.connection.profile)}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase())
-    )
-      return false;
     return (
       filters.states.length === 0 ||
       filters.states.some((state) =>
@@ -216,17 +225,33 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
       ),
     )
     .filter(matches);
-  const ordered = (list: OwnedItem[]) => orderInboxSessions(list, preferences) as OwnedItem[];
-  const rowKey = (item: OwnedItem) => JSON.stringify([item.connection.profile.id, item.session.id]);
+  const inProject = (connection: Connection, projectID: string) => (item: OwnedItem) =>
+    item.connection.profile.id === connection.profile.id && item.session.projectID === projectID;
+  const liveRows =
+    mode === "inbox"
+      ? sections.flatMap((section) =>
+          orderInboxSection(
+            section,
+            items.filter((item) => item.section === section),
+            preferences,
+          ),
+        )
+      : visible.flatMap((connection) =>
+          connection.projects.flatMap((project) =>
+            orderInboxSessions(items.filter(inProject(connection, project.id)), preferences),
+          ),
+        );
+  // Hold the rendered order while the pointer is over the list so rows never
+  // move under the cursor; pending reorders apply when it leaves.
+  const { frozen, freezeProps } = usePointerFreeze();
+  const stableRows = useStableOrder(liveRows, mode === "inbox" ? sectionRowKey : rowKey, frozen);
+  const sectionRows = groupInboxSections(stableRows);
   let richRemaining = limit;
   const richLocations =
     mode === "inbox"
       ? (["pinned", "inbox"] as const).flatMap((section) => {
           if (!shelves[section]) return [];
-          const rows = ordered(items.filter((item) => item.section === section)).slice(
-            0,
-            richRemaining,
-          );
+          const rows = sectionRows[section].slice(0, richRemaining);
           richRemaining -= rows.length;
           return rows.flatMap((item) => {
             const owner = item.connection.runtime;
@@ -237,6 +262,12 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
         })
       : [];
   const branches = useOwnedVcsInfoMap(richLocations);
+  // Source control is local-only: one links query per visible local server.
+  const pullRequestsByProfile = useOwnedPullRequestLinks(
+    visible
+      .filter((connection) => connection.profile.kind === "local")
+      .map((connection) => connection.profile.id),
+  );
   const run = async (item: OwnedItem, action: () => Promise<unknown>) => {
     const key = rowKey(item);
     setBusy((current) => new Set(current).add(key));
@@ -256,6 +287,10 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
     const command = (type: "pin" | "unpin" | "inbox" | "wake") =>
       dispatch(item, { type, sessionID: session.id, at: Date.now() });
     const selected = selectedID === session.id && runtime?.profileID === connection.profile.id;
+    const openTask = () =>
+      void attempt("Could not open task", () =>
+        navigation.openSession(session.id, { profileID: connection.profile.id }),
+      );
     const preload = () => {
       if (connected) void navigation.preloadSession(session.id, connection.profile.id);
     };
@@ -263,10 +298,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
       "aria-current": selected ? ("page" as const) : undefined,
       "aria-label": `${session.title} · ${connectionDescription(connection.profile)}`,
       title: `${session.title ?? "Untitled task"} · ${connectionDescription(connection.profile)} · ${connected ? "Connected" : "Disconnected"}`,
-      onClick: () =>
-        void attempt("Could not open task", () =>
-          navigation.openSession(session.id, { profileID: connection.profile.id }),
-        ),
+      onClick: openTask,
       onPointerEnter: preload,
       onFocus: preload,
     };
@@ -281,6 +313,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
         at: Date.now(),
         through: item.activityThrough,
       });
+    const pullRequestLinks = pullRequestsByProfile.get(connection.profile.id)?.get(session.id);
     const badge =
       connection.profile.kind === "local" ? null : (
         <ConnectionBadge
@@ -394,7 +427,9 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
           if (mode === "inbox" && (item.section === "pinned" || item.section === "inbox"))
             return (
               <InboxCardSurface
+                {...sidebarFluidRowProps}
                 key={rowKey(item)}
+                className={sidebarFluidCardClass}
                 item={item}
                 hint={windowDrag.hint}
                 vcs={
@@ -410,6 +445,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                 selected={selected}
                 profileID={connection.profile.id}
                 connectionBadge={badge}
+                pullRequest={<PullRequestBadge links={pullRequestLinks} onActivate={openTask} />}
                 buttonProps={{
                   ...windowDrag.handleProps,
                   ...buttonProps,
@@ -475,8 +511,9 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                 hint={windowDrag.hint}
                 buttonProps={{ ...windowDrag.handleProps, ...buttonProps }}
                 connectionBadge={badge}
+                pullRequest={<PullRequestBadge links={pullRequestLinks} />}
               >
-                <div className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/compact:opacity-100 group-has-[:focus-visible]/compact:opacity-100">
+                <div className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/compact:opacity-100 group-has-[:focus-visible]/compact:opacity-100 group-has-[[data-popup-open]]/compact:opacity-100">
                   <Button
                     variant="ghost"
                     size="icon-sm"
@@ -491,19 +528,25 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
               </InboxCompactRowSurface>
             );
           return (
-            <div key={rowKey(item)} className="group flex min-w-0 items-center gap-0.5">
+            <div
+              {...sidebarFluidRowProps}
+              key={rowKey(item)}
+              className="group/owned-row relative flex min-w-0 items-center"
+            >
               {windowDrag.hint}
               <button
                 type="button"
                 {...windowDrag.handleProps}
                 {...buttonProps}
-                className={sidebarItemVariants({
-                  className: cn(
-                    "flex min-w-0 flex-1 items-center gap-2",
+                className={sidebarFluidItemClass(
+                  cn(
+                    // The actions reserve their gutter only while shown, so titles
+                    // use the full row at rest.
+                    "flex min-w-0 flex-1 items-center gap-2 transition-[color,background-color,padding] group-hover/owned-row:pr-8 group-has-[:focus-visible]/owned-row:pr-8 group-has-[[data-popup-open]]/owned-row:pr-8",
                     connected && "cursor-grab active:cursor-grabbing",
                   ),
-                })}
-                data-active={selected}
+                )}
+                data-active={selected || undefined}
               >
                 <span className="min-w-0 flex-1 truncate text-left">
                   {session.title ?? "Untitled task"}
@@ -517,9 +560,14 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                     }
                   />
                 ) : null}
+                <PullRequestBadge links={pullRequestLinks} />
                 {badge}
               </button>
-              {menu}
+              {/* Quiet until the row is hovered or holds keyboard focus; never removed
+                  from the tab order. */}
+              <div className="absolute top-1/2 right-0.5 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/owned-row:opacity-100 group-has-[:focus-visible]/owned-row:opacity-100 group-has-[[data-popup-open]]/owned-row:opacity-100">
+                {menu}
+              </div>
             </div>
           );
         }}
@@ -686,32 +734,9 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
           </>
         }
       />
-      <SidebarContent className="min-h-0 overflow-hidden">
+      <SidebarContent className="min-h-0 overflow-hidden" {...freezeProps}>
         <ScrollArea className="h-full min-h-0">
           <div className="space-y-1 px-2 pt-0.5 pb-2">
-            {searchOpen ? (
-              <form
-                className="flex gap-1"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  setLimit(pageSize);
-                  void attempt("Could not search connections", () => overview.search(query));
-                }}
-              >
-                <Input
-                  aria-label="Search across connections"
-                  placeholder="Search all connections…"
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setLimit(pageSize);
-                  }}
-                />
-                <Button variant="ghost" size="sm" disabled={overview.searching} type="submit">
-                  {overview.searching ? "Searching…" : "Search"}
-                </Button>
-              </form>
-            ) : null}
             {visible.map((c) =>
               c.phase === "ready" && c.runtime?.connected && c.attentionState !== "ready" ? (
                 <div
@@ -753,7 +778,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                     (section === "settled" && !preferences.showSettled)
                   )
                     return null;
-                  const rows = ordered(items.filter((item) => item.section === section));
+                  const rows = sectionRows[section];
                   if (!rows.length && (section === "pinned" || section === "snoozed")) return null;
                   return (
                     <Collapsible
@@ -769,7 +794,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                       <CollapsibleContent>
                         {shelves[section] ? (
                           rows.length ? (
-                            <div
+                            <SidebarFluidList
                               className={
                                 section === "pinned" || section === "inbox"
                                   ? "space-y-0.5"
@@ -777,7 +802,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                               }
                             >
                               {boundedRows(rows)}
-                            </div>
+                            </SidebarFluidList>
                           ) : section === "inbox" ? (
                             <div className="px-2.5 py-4 text-xs text-muted-foreground">
                               {visible.some(
@@ -800,13 +825,7 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                   connection.projects.map((project) => {
                     const key = JSON.stringify([connection.profile.id, project.id]);
                     const open = projectSections[key] ?? true;
-                    const rows = ordered(
-                      items.filter(
-                        (item) =>
-                          item.connection.profile.id === connection.profile.id &&
-                          item.session.projectID === project.id,
-                      ),
-                    );
+                    const rows = stableRows.filter(inProject(connection, project.id));
                     return (
                       <Collapsible
                         key={key}
@@ -851,7 +870,9 @@ export function MultiConnectionSidebar({ searchOpen = false }: { searchOpen?: bo
                             </Button>
                           }
                         />
-                        <CollapsibleContent>{open ? boundedRows(rows) : null}</CollapsibleContent>
+                        <CollapsibleContent>
+                          {open ? <SidebarFluidList>{boundedRows(rows)}</SidebarFluidList> : null}
+                        </CollapsibleContent>
                       </Collapsible>
                     );
                   }),

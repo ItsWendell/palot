@@ -9,6 +9,7 @@ const SETTINGS_CATEGORIES = [
   "browser",
   "appearance",
   "notifications",
+  "shortcuts",
   "connections",
   "models",
   "providers",

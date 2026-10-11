@@ -14,6 +14,7 @@ import {
   MoreHorizontal,
   PanelsTopLeft,
   Plus,
+  Search,
   Trash2,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -31,6 +32,11 @@ import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { removeSession as removeCatalogSession } from "../lib/session-catalog-query";
 import { useCreateProjectCopy, useProjectWorktrees } from "../hooks/use-project-worktrees";
 import { formatSnoozeMenuTime, sessionSnoozeChoices } from "../lib/session-snooze";
+import {
+  formatShortcut,
+  useShortcutKeys,
+  type KeyboardShortcutID,
+} from "../lib/keyboard-shortcuts";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -50,6 +56,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import {
@@ -259,6 +266,15 @@ export interface SessionHistoryActions {
   nextTurn(): void;
   openTimeline(): void;
   forkFromPrompt(): void;
+  /** Opens Find in task. */
+  find?(): void;
+}
+
+/** Shortcut hint that stays out of the menu item's accessible name. */
+function MenuShortcut({ id }: { id: KeyboardShortcutID }) {
+  const keys = useShortcutKeys(id);
+  if (keys.length === 0) return null;
+  return <DropdownMenuShortcut aria-hidden="true">{formatShortcut(keys)}</DropdownMenuShortcut>;
 }
 
 async function openSessionWindow(sessionID: string, connectionID?: string): Promise<void> {
@@ -305,16 +321,25 @@ export function SessionExportMenu({
           {historyActions ? (
             <>
               <DropdownMenuGroup>
+                {historyActions.find ? (
+                  <DropdownMenuItem onClick={historyActions.find}>
+                    <Search aria-hidden="true" />
+                    Find in task
+                    <MenuShortcut id="task.find" />
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem
                   disabled={historyActions.loadingOlder}
                   onClick={historyActions.previousTurn}
                 >
                   <ArrowUp aria-hidden="true" />
                   Previous user turn
+                  <MenuShortcut id="task.turn.previous" />
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={historyActions.nextTurn}>
                   <ArrowDown aria-hidden="true" />
                   Next user turn
+                  <MenuShortcut id="task.turn.next" />
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={historyActions.openTimeline}>
                   <History aria-hidden="true" />

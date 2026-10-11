@@ -224,6 +224,85 @@ describe("ProjectSidebarContent attention", () => {
     expect(panel?.classList.contains("overflow-hidden")).toBe(true);
   });
 
+  it("moves the hover highlight with keyboard focus so focus and hover agree", async () => {
+    const store = createStore();
+    const second = { ...session, id: "session-2", title: "Second session", updatedAt: 3 };
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, { sessions: [session, second] });
+    renderWithRouter(
+      <Provider store={store}>
+        <SidebarProvider>
+          <ProjectSidebarContent onNewSession={vi.fn()} />
+        </SidebarProvider>
+      </Provider>,
+      store,
+      "/new",
+      queryClient,
+    );
+
+    const recents = screen.getByRole("navigation", { name: "Recent tasks" });
+    const rows = await waitFor(() => {
+      const rows = recents.querySelectorAll<HTMLElement>("[data-sidebar-fluid-row]");
+      expect(rows).toHaveLength(2);
+      return rows;
+    });
+    const list = recents.querySelector("[data-sidebar-fluid-list]")!;
+    const target = Array.from(rows).find((row) => row.textContent?.includes("Second session"))!;
+    const other = Array.from(rows).find((row) => row !== target)!;
+
+    act(() => target.querySelector("button")!.focus());
+    await waitFor(() => expect(target.hasAttribute("data-fluid-hover-active")).toBe(true));
+    expect(other.hasAttribute("data-fluid-hover-active")).toBe(false);
+    expect(list.getAttribute("data-fluid-hover-active-index")).toBe(
+      String(Array.from(rows).indexOf(target)),
+    );
+
+    act(() => other.querySelector("button")!.focus());
+    await waitFor(() => expect(other.hasAttribute("data-fluid-hover-active")).toBe(true));
+    expect(target.hasAttribute("data-fluid-hover-active")).toBe(false);
+
+    // Focus leaving the list clears the highlight.
+    act(() => other.querySelector("button")!.blur());
+    await waitFor(() => expect(list.hasAttribute("data-fluid-hover-active-index")).toBe(false));
+  });
+
+  it("keeps the hover-revealed project action in the tab order", async () => {
+    const store = createStore();
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, {
+      projects: [
+        {
+          id: "project-1",
+          name: "Palot",
+          canonical: "/repo",
+          sandboxes: [],
+          vcs: null,
+          updatedAt: 1,
+        },
+      ],
+      sessions: [session],
+    });
+    const onNewSession = vi.fn();
+    renderWithRouter(
+      <Provider store={store}>
+        <SidebarProvider>
+          <ProjectSidebarContent onNewSession={onNewSession} />
+        </SidebarProvider>
+      </Provider>,
+      store,
+      "/new",
+      queryClient,
+    );
+
+    const trigger = await screen.findByRole("button", { name: /^Palot/ });
+    act(() => trigger.focus());
+    await userEvent.tab();
+    const action = screen.getByRole("button", { name: "Start a new task in Palot" });
+    expect(document.activeElement).toBe(action);
+    await userEvent.keyboard("{Enter}");
+    expect(onNewSession).toHaveBeenCalledWith("/repo");
+  });
+
   it("preloads hovered sessions without selecting them", async () => {
     const store = createStore();
     const second = { ...session, id: "session-2", title: "Second session", updatedAt: 3 };

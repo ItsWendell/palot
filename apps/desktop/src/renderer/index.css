@@ -180,6 +180,8 @@
   --sidebar-accent-foreground: oklch(0.19 0.007 285.89);
   --palot-sidebar-hover: color-mix(in oklch, var(--sidebar-accent) 72%, transparent);
   --palot-sidebar-selected: var(--sidebar-accent);
+  /* Fluid hover fill for content-surface lists, derived from the theme accent. */
+  --fluid-hover: color-mix(in oklch, var(--accent) 80%, transparent);
   --sidebar-border: oklch(0.89 0.008 264.53);
   --sidebar-ring: oklch(0.62 0.17 252.37);
   --glass-sidebar-opacity: 67%;
@@ -479,10 +481,23 @@
 :root {
   --shell-header-height: 36px;
   --window-controls-width: 80px;
+  --window-close-reserve: 0px;
 }
 
-:root[data-platform="linux"] {
-  --window-controls-width: 112px;
+/* Frameless Linux windows on floating desktops own a close button at the trailing
+   edge: 1px divider + 8px gap + 24px button, plus slack so it stays clear of the
+   pane toggles. Tiling compositors close windows themselves and reserve nothing. */
+:root[data-platform="linux"][data-window-close="visible"] {
+  --window-close-reserve: 36px;
+  --window-controls-width: 124px;
+}
+
+.window-close-spacer {
+  width: var(--window-close-reserve);
+}
+
+:root:not([data-window-close="visible"]) .window-close-spacer {
+  display: none;
 }
 
 .palot-native-scrollbar {
@@ -624,17 +639,6 @@
   background-color: var(--background);
 }
 
-.palot-shell-splitter::before {
-  position: absolute;
-  top: calc(var(--shell-header-height) - 1px);
-  right: 0;
-  left: 0;
-  height: 1px;
-  background: var(--border);
-  pointer-events: none;
-  content: "";
-}
-
 :root[data-platform="linux"][data-linux-translucent="true"]:not([data-reduced-transparency="true"])
   :is(body, #root, [data-shell-panel="center"]) {
   background: transparent;
@@ -644,7 +648,7 @@
   background-color: var(--linux-window-background) !important;
 }
 :root[data-platform="linux"][data-linux-translucent="true"]:not([data-reduced-transparency="true"])
-  :is(.palot-sidebar[data-slot="sidebar"], .palot-settings-sidebar) {
+  :is(.palot-sidebar[data-slot="sidebar"], .palot-settings-sidebar, .palot-navigation-rail) {
   background-color: var(--linux-sidebar-background) !important;
   backdrop-filter: none;
 }
@@ -704,24 +708,6 @@
   bottom: 0;
   mask-image: linear-gradient(to top, black, transparent);
   -webkit-mask-image: linear-gradient(to top, black, transparent);
-}
-
-.palot-workbench-tab-separator::before {
-  position: absolute;
-  top: 25%;
-  left: -3px;
-  width: 1px;
-  height: 50%;
-  background: var(--border);
-  content: "";
-}
-
-.group\/tab button:focus-visible svg:not(:last-child) {
-  opacity: 0;
-}
-
-.group\/tab button:focus-visible svg:last-child {
-  opacity: 1;
 }
 
 .palot-workbench-tab-fade {
@@ -797,18 +783,6 @@
     inset 0 1px var(--command-highlight);
 }
 
-.palot-command-row {
-  transition:
-    background-color 100ms ease,
-    box-shadow 100ms ease,
-    color 100ms ease;
-}
-
-.palot-command-row:is(:hover, [data-selected="true"], [data-highlighted]) {
-  background: var(--command-surface-strong);
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 7%, transparent);
-}
-
 .palot-command-results [data-slot="command-group"] {
   overflow: visible;
 }
@@ -830,7 +804,7 @@
 }
 
 :root[data-sidebar-material="solid"]
-  :is(.palot-sidebar[data-slot="sidebar"], .palot-settings-sidebar) {
+  :is(.palot-sidebar[data-slot="sidebar"], .palot-settings-sidebar, .palot-navigation-rail) {
   background-color: var(--sidebar-background-opaque) !important;
 }
 
@@ -841,7 +815,7 @@
   backdrop-filter: saturate(var(--glass-sidebar-saturation)) blur(var(--glass-sidebar-blur));
 }
 
-:root[data-sidebar-material="translucent"] .palot-settings-sidebar {
+:root[data-sidebar-material="translucent"] :is(.palot-settings-sidebar, .palot-navigation-rail) {
   background-color: var(--sidebar-background-translucent) !important;
   border-color: var(--sidebar-border) !important;
   box-shadow: none;
@@ -849,7 +823,7 @@
 }
 
 :root[data-sidebar-material="transparent"]
-  :is(.palot-sidebar[data-slot="sidebar"], .palot-settings-sidebar) {
+  :is(.palot-sidebar[data-slot="sidebar"], .palot-settings-sidebar, .palot-navigation-rail) {
   background-color: transparent !important;
   box-shadow: none;
   backdrop-filter: none;
@@ -858,7 +832,7 @@
 :root[data-platform="darwin"][data-theme="macos"][data-chrome-tier="liquid-glass"][data-sidebar-material="translucent"]:not(
     [data-reduced-transparency="true"]
   )
-  :is(.palot-sidebar[data-slot="sidebar"], .palot-settings-sidebar) {
+  :is(.palot-sidebar[data-slot="sidebar"], .palot-settings-sidebar, .palot-navigation-rail) {
   background-color: transparent !important;
   background-image: none !important;
   backdrop-filter: none !important;
@@ -933,8 +907,9 @@
     background-color 120ms ease;
 }
 
+/* Project actions belong to the header row only, so hovering a task never reveals them. */
 .palot-sidebar[data-slot="sidebar"]
-  [data-palot-project-row]:is(:hover, :focus-within)
+  [data-palot-project-header]:is(:hover, :focus-within)
   [data-palot-project-action],
 .palot-sidebar[data-slot="sidebar"]
   [data-palot-task-row]:is(:hover, :focus-within)
@@ -943,9 +918,6 @@
   opacity: 1;
 }
 
-.palot-sidebar[data-slot="sidebar"]
-  [data-palot-project-row]:is(:hover, :focus-within)
-  [data-slot="sidebar-menu-badge"],
 .palot-sidebar[data-slot="sidebar"] [data-palot-task-row]:is(:hover, :focus-within) time {
   opacity: 0;
 }
@@ -1848,4 +1820,64 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Find in task (components/transcript-find.tsx): CSS Custom Highlight API ranges. */
+::highlight(palot-transcript-find) {
+  background-color: color-mix(in oklch, var(--warning) 30%, transparent);
+}
+
+::highlight(palot-transcript-find-active) {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+@media (forced-colors: active) {
+  ::highlight(palot-transcript-find) {
+    background-color: Mark;
+    color: MarkText;
+  }
+
+  ::highlight(palot-transcript-find-active) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}
+
+/* ── Sidebar fluid hover and peek ───────────────────────────────────────────
+   Owned by components/sidebar-fluid-list.tsx and components/sidebar-peek.tsx.
+   Sidebar-only rules; keep this block self-contained. */
+
+/* Rows in a fluid list share one gliding highlight, so they drop their own hover
+   fill. Selected rows keep theirs through the `[data-active]` rule above. */
+.palot-sidebar[data-slot="sidebar"]
+  [data-sidebar-fluid-list]
+  :is([data-slot="sidebar-menu-button"], [data-slot="sidebar-menu-sub-button"]):not(
+    [data-active]
+  ):hover {
+  background: transparent;
+}
+
+/* A peek floats over content, so it is never see-through without blur. Solid by
+   default and under Reduce Transparency; sidebar glass where the material allows. */
+.palot-sidebar-peek {
+  background-color: var(--sidebar-background-opaque);
+}
+
+:root:is([data-sidebar-material="translucent"], [data-sidebar-material="transparent"]):not(
+    [data-reduced-transparency="true"]
+  )
+  .palot-sidebar-peek {
+  background-color: var(--sidebar-background-translucent);
+  backdrop-filter: saturate(var(--glass-sidebar-saturation)) blur(var(--glass-sidebar-blur));
+}
+
+/* The overlay owns the material; the column inside stays clear so it is not doubled. */
+:root .palot-sidebar-peek .palot-sidebar[data-slot="sidebar"],
+:root[data-platform="linux"][data-linux-translucent="true"]
+  .palot-sidebar-peek
+  .palot-sidebar[data-slot="sidebar"] {
+  background-color: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
 }

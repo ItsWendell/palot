@@ -12,6 +12,7 @@ import {
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ActivityWatermark, PalotProject, PalotSession } from "../../shared";
+import type { PullRequestLink } from "../../shared/source-control-contract";
 import { groupedScheduledSessionIDsAtom } from "../atoms/automations";
 import { dispatchSessionTriageAtom } from "../atoms/inbox";
 import { runtimeAtom, type SessionExecutionState } from "../atoms/workspace";
@@ -26,6 +27,7 @@ import {
 import { useAttentionItems, useUnseenAttentionCount } from "../hooks/use-attention-items";
 import { useSessionInbox } from "../hooks/use-session-inbox";
 import { useSessionActivity } from "../hooks/use-session-activity";
+import { usePullRequestLinksBySession } from "../hooks/use-source-control";
 import {
   formatRelativeTime,
   groupSessions,
@@ -91,6 +93,13 @@ import {
 } from "./ui/sidebar-styles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { toast } from "./ui/toast";
+import {
+  SidebarFluidList,
+  sectionChevronRevealClass,
+  sidebarFluidItemClass,
+  sidebarFluidRowProps,
+} from "./sidebar-fluid-list";
+import { PullRequestBadge } from "./pull-requests/pull-request-badge";
 
 const EMPTY_EXECUTION_STATES = new Map<string, SessionExecutionState>();
 
@@ -100,15 +109,25 @@ function currentTimestamp(): number {
 
 interface ProjectSidebarContentProps {
   onNewSession(directory?: string): void;
+  /**
+   * Whether this instance raises desktop notifications for new requests. A peeked
+   * copy of the column turns it off so the pinned instance stays the only notifier.
+   */
+  notifyAttention?: boolean;
 }
 
-export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentProps) {
+export function ProjectSidebarContent({
+  onNewSession,
+  notifyAttention = true,
+}: ProjectSidebarContentProps) {
   const { openSession, openWorktrees, preloadSession } = usePalotNavigation();
   const projects = useProjectCatalog();
   const sessions = useSessionCatalog();
   const groupedScheduledSessionIDs = useAtomValue(groupedScheduledSessionIDsAtom);
   const runtime = useAtomValue(runtimeAtom);
   const executionStates = useSessionActivity().data?.execution ?? EMPTY_EXECUTION_STATES;
+  // One links query backs every task row's PR badge.
+  const pullRequests = usePullRequestLinksBySession().data;
   const selectedID = useRouterState({
     select: (state) => {
       const value = state.matches
@@ -176,7 +195,7 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
   useEffect(() => {
     const currentKeys = new Set(attentionItems.flatMap((item) => item.requestKeys));
     const known = knownAttentionKeys.current;
-    if (known && !document.hasFocus()) {
+    if (notifyAttention && known && !document.hasFocus()) {
       for (const item of attentionItems) {
         const request = item.requests.find((candidate) => !known.has(candidate.key));
         if (request) {
@@ -189,7 +208,7 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
       }
     }
     knownAttentionKeys.current = currentKeys;
-  }, [attentionItems]);
+  }, [attentionItems, notifyAttention]);
 
   const activeSessionID =
     pendingSelection?.originID === selectedID ? pendingSelection.targetID : selectedID;
@@ -328,6 +347,7 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
                     className={cn(
                       unseenAttentionCount === 0 && "ml-auto",
                       sidebarSectionIconVariants(),
+                      sectionChevronRevealClass(true),
                     )}
                     aria-hidden="true"
                   />
@@ -344,56 +364,58 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
               <CollapsibleContent>
                 <SidebarGroupContent className="max-h-[min(40vh,20rem)] overflow-y-auto overscroll-contain">
                   <nav aria-label="Tasks needing attention">
-                    <SidebarMenu>
-                      {attentionItems.slice(0, showAllAttention ? undefined : 5).map((item) => {
-                        const target =
-                          item.requests.find(
-                            (request) =>
-                              !attentionSeenIDs.includes(request.key) &&
-                              !attentionSeenIDs.includes(request.legacyKey),
-                          ) ?? item.requests[0]!;
-                        return (
-                          <SidebarMenuItem key={item.key}>
-                            <SidebarMenuButton
-                              data-palot-attention-row
-                              onClick={() =>
-                                selectAttention(target.sessionID, target.id, target.type)
-                              }
-                            >
-                              <CircleAlert aria-hidden="true" />
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate">{item.sessionTitle}</span>
-                                <span className="block truncate text-meta text-muted-foreground">
-                                  {item.count === 1
-                                    ? `${item.sessionID !== item.key ? "Subagent " : ""}${item.type} · ${item.projectName}`
-                                    : `${item.count} requests · ${item.types.join(" + ")}`}
-                                </span>
-                              </span>
-                            </SidebarMenuButton>
-                            {item.requests.some(
+                    <SidebarFluidList>
+                      <SidebarMenu>
+                        {attentionItems.slice(0, showAllAttention ? undefined : 5).map((item) => {
+                          const target =
+                            item.requests.find(
                               (request) =>
                                 !attentionSeenIDs.includes(request.key) &&
                                 !attentionSeenIDs.includes(request.legacyKey),
-                            ) ? (
-                              <SidebarMenuBadge className="size-2 min-w-0 rounded-full bg-destructive p-0" />
-                            ) : null}
+                            ) ?? item.requests[0]!;
+                          return (
+                            <SidebarMenuItem key={item.key} {...sidebarFluidRowProps}>
+                              <SidebarMenuButton
+                                data-palot-attention-row
+                                onClick={() =>
+                                  selectAttention(target.sessionID, target.id, target.type)
+                                }
+                              >
+                                <CircleAlert aria-hidden="true" />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">{item.sessionTitle}</span>
+                                  <span className="block truncate text-meta text-muted-foreground">
+                                    {item.count === 1
+                                      ? `${item.sessionID !== item.key ? "Subagent " : ""}${item.type} · ${item.projectName}`
+                                      : `${item.count} requests · ${item.types.join(" + ")}`}
+                                  </span>
+                                </span>
+                              </SidebarMenuButton>
+                              {item.requests.some(
+                                (request) =>
+                                  !attentionSeenIDs.includes(request.key) &&
+                                  !attentionSeenIDs.includes(request.legacyKey),
+                              ) ? (
+                                <SidebarMenuBadge className="size-2 min-w-0 rounded-full bg-destructive p-0" />
+                              ) : null}
+                            </SidebarMenuItem>
+                          );
+                        })}
+                        {attentionItems.length > 5 ? (
+                          <SidebarMenuItem {...sidebarFluidRowProps}>
+                            <SidebarMenuButton
+                              onClick={() => setShowAllAttention((current) => !current)}
+                            >
+                              <span>
+                                {showAllAttention
+                                  ? "Show less"
+                                  : `Show all (${attentionItems.length})`}
+                              </span>
+                            </SidebarMenuButton>
                           </SidebarMenuItem>
-                        );
-                      })}
-                      {attentionItems.length > 5 ? (
-                        <SidebarMenuItem>
-                          <SidebarMenuButton
-                            onClick={() => setShowAllAttention((current) => !current)}
-                          >
-                            <span>
-                              {showAllAttention
-                                ? "Show less"
-                                : `Show all (${attentionItems.length})`}
-                            </span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ) : null}
-                    </SidebarMenu>
+                        ) : null}
+                      </SidebarMenu>
+                    </SidebarFluidList>
                   </nav>
                 </SidebarGroupContent>
               </CollapsibleContent>
@@ -416,7 +438,11 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
               <span>Recents</span>
               {sectionOpen("recents") ? (
                 <ChevronDown
-                  className={cn("ml-auto", sidebarSectionIconVariants())}
+                  className={cn(
+                    "ml-auto",
+                    sidebarSectionIconVariants(),
+                    sectionChevronRevealClass(true),
+                  )}
                   aria-hidden="true"
                 />
               ) : (
@@ -429,31 +455,34 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
             <CollapsibleContent>
               <SidebarGroupContent>
                 <nav aria-label="Recent tasks">
-                  <SidebarMenu>
-                    {recentSessions.map((session) => {
-                      const item = inboxItems.get(session.id);
-                      return (
-                        <SessionRow
-                          key={session.id}
-                          session={session}
-                          project={projectForSession(projects, session)}
-                          selected={session.id === activeSessionID}
-                          status={sidebarSessionStatus(executionStates.get(session.id))}
-                          attention={attentionSessionIDs.has(session.id)}
-                          recent
-                          triageThrough={item?.activityThrough}
-                          canSettle={Boolean(item?.canSettle && item.section !== "settled")}
-                          onSelect={selectSession}
-                          onPreload={preloadSession}
-                          onSnooze={snoozeSession}
-                          onSettle={settleSession}
-                        />
-                      );
-                    })}
-                    {recentSessions.length === 0 ? (
-                      <li className="px-2 py-1 text-xs text-muted-foreground">No recent tasks</li>
-                    ) : null}
-                  </SidebarMenu>
+                  <SidebarFluidList>
+                    <SidebarMenu>
+                      {recentSessions.map((session) => {
+                        const item = inboxItems.get(session.id);
+                        return (
+                          <SessionRow
+                            key={session.id}
+                            session={session}
+                            project={projectForSession(projects, session)}
+                            selected={session.id === activeSessionID}
+                            status={sidebarSessionStatus(executionStates.get(session.id))}
+                            attention={attentionSessionIDs.has(session.id)}
+                            recent
+                            pullRequests={pullRequests?.get(session.id)}
+                            triageThrough={item?.activityThrough}
+                            canSettle={Boolean(item?.canSettle && item.section !== "settled")}
+                            onSelect={selectSession}
+                            onPreload={preloadSession}
+                            onSnooze={snoozeSession}
+                            onSettle={settleSession}
+                          />
+                        );
+                      })}
+                      {recentSessions.length === 0 ? (
+                        <li className="px-2 py-1 text-xs text-muted-foreground">No recent tasks</li>
+                      ) : null}
+                    </SidebarMenu>
+                  </SidebarFluidList>
                 </nav>
               </SidebarGroupContent>
             </CollapsibleContent>
@@ -465,7 +494,7 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
           <SidebarGroup className="min-h-0 flex-1">
-            <div className="group/projects-header relative">
+            <div className="group/projects-header group/section-row relative">
               <CollapsibleTrigger
                 render={
                   <SidebarGroupLabel
@@ -477,7 +506,11 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
                 <span>Projects</span>
                 {sectionOpen("projects") ? (
                   <ChevronDown
-                    className={cn("ml-auto", sidebarSectionIconVariants())}
+                    className={cn(
+                      "ml-auto",
+                      sidebarSectionIconVariants(),
+                      sectionChevronRevealClass(true),
+                    )}
                     aria-hidden="true"
                   />
                 ) : (
@@ -528,7 +561,10 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
                               <ContextMenu>
                                 <ContextMenuTrigger
                                   render={
-                                    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center">
+                                    <div
+                                      data-palot-project-header
+                                      className="group/section-row grid grid-cols-[minmax(0,1fr)_auto_auto] items-center"
+                                    >
                                       <CollapsibleTrigger
                                         data-palot-project-trigger
                                         render={
@@ -546,12 +582,15 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
                                         </span>
                                         <span className="w-7" aria-hidden="true" />
                                         <span className="ml-auto flex items-center">
-                                          <span className="mr-2 text-micro text-sidebar-foreground/45 tabular-nums">
+                                          <span className="mr-2 text-micro text-sidebar-foreground/45 tabular-nums transition-colors group-hover/section-row:text-sidebar-foreground/70 group-focus-visible/section-label:text-sidebar-foreground/70">
                                             {projectSessions.length}
                                           </span>
                                           {projectOpen ? (
                                             <ChevronDown
-                                              className={sidebarSectionIconVariants()}
+                                              className={cn(
+                                                sidebarSectionIconVariants(),
+                                                sectionChevronRevealClass(true),
+                                              )}
                                               aria-hidden="true"
                                             />
                                           ) : (
@@ -572,7 +611,6 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
                                                 type="button"
                                                 data-palot-project-action
                                                 aria-label={`Start a new task in ${displayName}`}
-                                                showOnHover
                                                 className="relative! top-auto! right-auto! text-sidebar-foreground/45! hover:bg-sidebar-accent/60! hover:text-sidebar-foreground/75! focus-visible:ring-inset [&>svg]:size-3!"
                                                 onClick={(event) => {
                                                   event.stopPropagation();
@@ -599,47 +637,50 @@ export function ProjectSidebarContent({ onNewSession }: ProjectSidebarContentPro
                                 </ContextMenuContent>
                               </ContextMenu>
                               <CollapsibleContent>
-                                <SidebarMenuSub className="mx-0 w-full translate-x-0 gap-px border-l-0 px-0 py-0.5">
-                                  {projectSessions.map((session) => {
-                                    const item = inboxItems.get(session.id);
-                                    return (
-                                      <SessionRow
-                                        key={session.id}
-                                        session={session}
-                                        project={project}
-                                        selected={session.id === activeSessionID}
-                                        status={sidebarSessionStatus(
-                                          executionStates.get(session.id),
-                                        )}
-                                        attention={attentionSessionIDs.has(session.id)}
-                                        triageThrough={item?.activityThrough}
-                                        canSettle={Boolean(
-                                          item?.canSettle && item.section !== "settled",
-                                        )}
-                                        onSelect={selectSession}
-                                        onPreload={preloadSession}
-                                        onSnooze={snoozeSession}
-                                        onSettle={settleSession}
-                                      />
-                                    );
-                                  })}
-                                  {projectSessions.length === 0 ? (
-                                    <li className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-muted-foreground">
-                                      <span>No tasks in this project</span>
-                                      <button
-                                        type="button"
-                                        className="text-foreground/70 hover:text-foreground"
-                                        onClick={() =>
-                                          void importTask({
-                                            directory: projectLocation(project),
-                                          })
-                                        }
-                                      >
-                                        Import
-                                      </button>
-                                    </li>
-                                  ) : null}
-                                </SidebarMenuSub>
+                                <SidebarFluidList>
+                                  <SidebarMenuSub className="mx-0 w-full translate-x-0 gap-px border-l-0 px-0 py-0.5">
+                                    {projectSessions.map((session) => {
+                                      const item = inboxItems.get(session.id);
+                                      return (
+                                        <SessionRow
+                                          key={session.id}
+                                          session={session}
+                                          project={project}
+                                          selected={session.id === activeSessionID}
+                                          status={sidebarSessionStatus(
+                                            executionStates.get(session.id),
+                                          )}
+                                          attention={attentionSessionIDs.has(session.id)}
+                                          pullRequests={pullRequests?.get(session.id)}
+                                          triageThrough={item?.activityThrough}
+                                          canSettle={Boolean(
+                                            item?.canSettle && item.section !== "settled",
+                                          )}
+                                          onSelect={selectSession}
+                                          onPreload={preloadSession}
+                                          onSnooze={snoozeSession}
+                                          onSettle={settleSession}
+                                        />
+                                      );
+                                    })}
+                                    {projectSessions.length === 0 ? (
+                                      <li className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-muted-foreground">
+                                        <span>No tasks in this project</span>
+                                        <button
+                                          type="button"
+                                          className="text-foreground/70 hover:text-foreground"
+                                          onClick={() =>
+                                            void importTask({
+                                              directory: projectLocation(project),
+                                            })
+                                          }
+                                        >
+                                          Import
+                                        </button>
+                                      </li>
+                                    ) : null}
+                                  </SidebarMenuSub>
+                                </SidebarFluidList>
                               </CollapsibleContent>
                             </Collapsible>
                           </SidebarMenuItem>
@@ -702,6 +743,7 @@ const SessionRow = memo(function SessionRow({
   status,
   attention,
   recent = false,
+  pullRequests,
   triageThrough,
   canSettle,
   onSelect,
@@ -715,6 +757,7 @@ const SessionRow = memo(function SessionRow({
   status: SidebarSessionStatus;
   attention: boolean;
   recent?: boolean;
+  pullRequests?: PullRequestLink[];
   triageThrough?: ActivityWatermark;
   canSettle: boolean;
   onSelect(id: string): void;
@@ -743,6 +786,7 @@ const SessionRow = memo(function SessionRow({
 
   const row = (
     <SidebarMenuSubItem
+      {...sidebarFluidRowProps}
       className="w-full"
       {...(recent ? { "data-palot-recent-row": true } : { "data-palot-task-row": true })}
     >
@@ -782,7 +826,7 @@ const SessionRow = memo(function SessionRow({
             isActive={selected}
             className={cn(
               "w-full translate-x-0 cursor-grab text-left active:cursor-grabbing",
-              sidebarItemVariants(),
+              sidebarFluidItemClass(),
               recent ? "pl-1.5" : "pl-8",
             )}
             onClick={() => onSelect(session.id)}
@@ -803,6 +847,7 @@ const SessionRow = memo(function SessionRow({
                 <GitBranch aria-hidden="true" />
               </span>
             ) : null}
+            <PullRequestBadge links={pullRequests} />
             <SessionStatusIndicator status={state} reserveSpace={recent} />
             {recent ? (
               <time

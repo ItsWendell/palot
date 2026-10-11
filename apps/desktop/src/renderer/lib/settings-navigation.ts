@@ -6,6 +6,7 @@ import {
   FileCog,
   Gauge,
   Globe2,
+  Keyboard,
   Palette,
   Server,
   ShieldCheck,
@@ -21,6 +22,7 @@ export type SettingsCategory =
   | "connections"
   | "appearance"
   | "notifications"
+  | "shortcuts"
   | "models"
   | "providers"
   | "tools"
@@ -80,6 +82,14 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
     description: "Native task alerts",
     icon: Bell,
     keywords: "notifications alerts macos completion permission question tray",
+    group: "Palot",
+  },
+  {
+    id: "shortcuts",
+    label: "Keyboard shortcuts",
+    description: "Every Palot keyboard shortcut",
+    icon: Keyboard,
+    keywords: "keyboard shortcuts keybindings hotkeys keys accelerators",
     group: "Palot",
   },
   {

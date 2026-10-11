@@ -1,9 +1,16 @@
 import {
   Activity,
   BarChart3,
+  Bot,
   Copy,
   Code2,
+  Cpu,
+  Download,
+  FileSearch,
   FolderTree,
+  GitFork,
+  GitPullRequest,
+  Layers2,
   Inbox,
   MessageSquare,
   PanelLeftClose,
@@ -14,19 +21,25 @@ import {
   PanelRightOpen,
   RotateCw,
   ScanSearch,
+  Redo2,
   Settings2,
+  Shrink,
   Sparkles,
   SquarePen,
   TextCursorInput,
   Trash2,
+  TextSearch,
+  Undo2,
 } from "lucide-react";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { useSyncExternalStore } from "react";
 import type { PalotSession } from "../../shared";
 import { useAttentionItems } from "./use-attention-items";
 import { catalogSessionIsUnread } from "./use-session-info";
-import { navigationOpenAtom, sidebarModeAtom } from "../atoms/ui";
+import { commandPaletteReturnFocusAtom, navigationOpenAtom, sidebarModeAtom } from "../atoms/ui";
+import { composerActionRequestAtom, type ComposerAction } from "../atoms/command-requests";
 import { runtimeAtom } from "../atoms/workspace";
 import { useWorkbenchCommands, useWorkbenchScope } from "../atoms/workbench";
 import { toast } from "../components/ui/toast";
@@ -40,6 +53,14 @@ import {
 import { palotBuild } from "../lib/build";
 import { writeClipboardText } from "../lib/clipboard";
 import type { GlobalCommand } from "../lib/global-commands";
+import { boundShortcutKeys, useShortcutOverrides } from "../lib/keyboard-shortcuts";
+import {
+  paletteTaskCommandID,
+  RECENT_TASK_LIMIT,
+  type PaletteTask,
+  type PaletteTaskStatus,
+} from "../lib/palette-tasks";
+import { cacheSessions } from "../lib/session-catalog-query";
 import { SETTINGS_NAV_ITEMS } from "../lib/settings-navigation";
 import { showErrorToast } from "../lib/toast-error";
 import {
@@ -50,18 +71,32 @@ import {
 import { palot } from "../services/palot";
 import { openNewWorkbenchTerminal } from "../services/workbench-terminal";
 import { usePalotNavigation } from "./use-navigation";
+import { openTranscriptFindAtom } from "../components/transcript-find";
 import { useSessionActivity } from "./use-session-activity";
-import { useCacheSession, useProjectCatalog, useSessionCatalog } from "./use-session-catalog";
+import { useSessionFork } from "./use-session-fork";
+import { useProjectCatalog, useSessionCatalog } from "./use-session-catalog";
 
 interface UseGlobalCommandsOptions {
-  sessions: readonly PalotSession[];
+  /** Root tasks in recent-first order, including search results; see `mergePaletteTasks`. */
+  tasks: readonly PaletteTask[];
+  /** Loaded tasks in recent-first order; the first nine own Alt+1…Alt+9. */
+  recentTasks: readonly PaletteTask[];
   onChooseProject(): void;
+  /** Shows the palette on the Files tab for the open task. */
+  onOpenFiles(): void;
 }
 
-export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalCommandsOptions) {
+export function useGlobalCommands({
+  tasks,
+  recentTasks,
+  onChooseProject,
+  onOpenFiles,
+}: UseGlobalCommandsOptions) {
+  // Command shortcuts follow personal bindings.
+  useShortcutOverrides();
   const allProjects = useProjectCatalog();
   const loadedSessions = useSessionCatalog();
-  const cacheSession = useCacheSession();
+  const queryClient = useQueryClient();
   const runtime = useAtomValue(runtimeAtom);
   const activity = useSessionActivity().data;
   const attentionItems = useAttentionItems();
@@ -79,6 +114,10 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
       return typeof projectID === "string" ? projectID : null;
     },
   });
+  const openTranscriptFind = useSetAtom(openTranscriptFindAtom);
+  const requestComposerAction = useSetAtom(composerActionRequestAtom);
+  const setPaletteReturnFocus = useSetAtom(commandPaletteReturnFocusAtom);
+  const forkSession = useSessionFork();
   const sessionID = useRouterState({
     select: (state) => {
       const value = state.matches
@@ -87,8 +126,15 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
       return typeof value === "string" ? value : null;
     },
   });
-  const { openNewTask, openSession, openSettings, openUsage, openWelcome, preloadSession } =
-    usePalotNavigation();
+  const {
+    openNewTask,
+    openPullRequests,
+    openSession,
+    openSettings,
+    openUsage,
+    openWelcome,
+    preloadSession,
+  } = usePalotNavigation();
   const projects = visibleProjects(allProjects);
   const selectedSession = loadedSessions.find((session) => session.id === sessionID) ?? null;
   const workbenchScope = runtime && sessionID ? { profileID: runtime.profileID, sessionID } : null;
@@ -135,15 +181,167 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
     run: () => openNewTask(project.id),
   }));
 
+  const sessionRunning = (id: string) => {
+    const status = activity?.statuses.get(id);
+    return (
+      activity?.execution.get(id)?.status === "running" ||
+      status?.type === "busy" ||
+      status?.type === "retry"
+    );
+  };
+
+  /** Actions on the open task. Draft and menu actions go to its composer. */
+  const taskActionCommands = (id: string): GlobalCommand[] => {
+    const connectionID = runtime?.connectionID;
+    const composerAction = (action: ComposerAction) =>
+      requestComposerAction({
+        action,
+        profileID: runtime?.profileID ?? null,
+        sessionID: id,
+        requestedAt: Date.now(),
+      });
+    return [
+      {
+        id: "task.files.open",
+        title: "Open file",
+        description: "Search this task's files and open one in the workbench",
+        group: "actions",
+        icon: FileSearch,
+        keywords: ["go to file", "quick open", "find file", "workspace", "/open"],
+        kind: "action",
+        closeOnRun: false,
+        run: onOpenFiles,
+      },
+      {
+        id: "task.fork",
+        title: "Fork task",
+        description: "Continue this task's history in a new task",
+        group: "actions",
+        icon: GitFork,
+        keywords: ["branch", "duplicate", "copy", "/fork"],
+        kind: "action",
+        run: async () => {
+          try {
+            await forkSession({ sessionID: id });
+          } catch (error) {
+            showErrorToast("Could not fork task", error);
+          }
+        },
+      },
+      {
+        id: "task.export",
+        title: "Export task",
+        description: "Save this task's transcript to a file",
+        group: "actions",
+        icon: Download,
+        keywords: ["save", "download", "transcript", "json", "/export"],
+        kind: "action",
+        run: async () => {
+          try {
+            const path = await palot.exportSession(id, selectedSession?.title, connectionID);
+            if (path) toast.add({ type: "success", title: "Task exported", description: path });
+          } catch (error) {
+            showErrorToast("Could not export task", error);
+          }
+        },
+      },
+      {
+        id: "task.compact",
+        title: "Compact task",
+        description: "Summarize the conversation history to free context space",
+        group: "actions",
+        icon: Shrink,
+        keywords: ["summarize", "context", "tokens", "/compact"],
+        kind: "action",
+        run: async () => {
+          try {
+            await palot.compactSession(id);
+          } catch (error) {
+            showErrorToast("Compaction failed", error);
+          }
+        },
+      },
+      {
+        id: "task.undo",
+        title: "Undo last step",
+        description: "Revert the last conversation step and its file changes",
+        group: "actions",
+        icon: Undo2,
+        keywords: ["revert", "rollback", "/undo"],
+        kind: "action",
+        runAfterClose: true,
+        run: () => composerAction("undo"),
+      },
+      {
+        id: "task.redo",
+        title: "Redo step",
+        description: "Redo one staged conversation step",
+        group: "actions",
+        icon: Redo2,
+        keywords: ["restore", "/redo"],
+        kind: "action",
+        disabledReason: selectedSession && !selectedSession.revert ? "Nothing to redo" : undefined,
+        runAfterClose: true,
+        run: () => composerAction("redo"),
+      },
+      {
+        id: "task.background",
+        title: "Move work to background",
+        description: "Let running subagents and shells continue without blocking the task",
+        group: "actions",
+        icon: Layers2,
+        keywords: ["subagent", "shell", "detach", "unblock"],
+        kind: "action",
+        disabledReason: sessionRunning(id) ? undefined : "Nothing is running",
+        run: async () => {
+          try {
+            await palot.backgroundSession(id);
+          } catch (error) {
+            showErrorToast("Could not move work to the background", error);
+          }
+        },
+      },
+      {
+        id: "task.model",
+        title: "Change model",
+        description: "Choose this task's model",
+        group: "actions",
+        icon: Cpu,
+        keywords: ["provider", "llm", "switch", "/model"],
+        kind: "action",
+        runAfterClose: true,
+        run: () => {
+          // The model menu takes focus; the palette must not hand it back on close.
+          setPaletteReturnFocus(null);
+          composerAction("model");
+        },
+      },
+      {
+        id: "task.agent",
+        title: "Change agent",
+        description: "Choose this task's primary agent",
+        group: "actions",
+        icon: Bot,
+        keywords: ["build", "plan", "mode", "switch", "/agent"],
+        kind: "action",
+        runAfterClose: true,
+        run: () => {
+          setPaletteReturnFocus(null);
+          composerAction("agent");
+        },
+      },
+    ];
+  };
+
   const commands: GlobalCommand[] = [];
   commands.push({
     id: "task.new",
     title: "New task",
     description: "Choose a server and project, then start a task",
-    group: "suggested",
+    group: "actions",
     icon: SquarePen,
     keywords: ["create", "conversation", "thread"],
-    shortcut: ["Meta", "N"],
+    shortcut: boundShortcutKeys("task.new"),
     suggested: true,
     kind: "action",
     run: () => openNewTask(),
@@ -152,8 +350,10 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
     commands.push({
       id: "task.choose-project",
       title: "Choose project for a new task",
-      group: "projects",
+      group: "actions",
       icon: SquarePen,
+      keywords: ["new task", "project", "folder"],
+      shortcut: boundShortcutKeys("task.choose-project"),
       defaultVisible: true,
       kind: "action",
       closeOnRun: false,
@@ -166,10 +366,10 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
       {
         id: "navigation.toggle",
         title: navigationOpen ? "Hide navigation" : "Show navigation",
-        group: "suggested",
+        group: "actions",
         icon: navigationOpen ? PanelLeftClose : PanelLeftOpen,
         keywords: ["sidebar", "panel", "projects", "inbox"],
-        shortcut: ["Meta", "B"],
+        shortcut: boundShortcutKeys("navigation.toggle"),
         suggested: true,
         kind: "action",
         run: () => setNavigationOpen(!navigationOpen),
@@ -181,7 +381,7 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
           sidebarMode === "inbox"
             ? "Switch the sidebar to projects"
             : "Switch the sidebar to inbox",
-        group: "suggested",
+        group: "actions",
         icon: sidebarMode === "inbox" ? FolderTree : Inbox,
         keywords: ["sidebar", "tasks", "attention"],
         suggested: true,
@@ -197,7 +397,7 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
         id: "task.openExternal",
         title: "Open checkout in preferred app",
         description: "Open this task's checkout in your preferred editor",
-        group: "suggested",
+        group: "actions",
         icon: Code2,
         keywords: ["editor", "IDE", "Cursor", "VS Code", "Zed", "Finder"],
         suggested: true,
@@ -219,10 +419,10 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
         description: changesOpen
           ? "Close the task changes panel"
           : "Open files changed by this task",
-        group: "suggested",
+        group: "actions",
         icon: changesOpen ? PanelRightClose : PanelRightOpen,
         keywords: ["diff", "files", "inspector"],
-        shortcut: ["Meta", "Shift", "I"],
+        shortcut: boundShortcutKeys("task.changes.toggle"),
         suggested: true,
         kind: "action",
         run: () => {
@@ -249,10 +449,10 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
         description: terminalOpen
           ? "Close the terminal pane without stopping its OpenCode PTY"
           : "Open an interactive OpenCode terminal",
-        group: "suggested",
+        group: "actions",
         icon: terminalOpen ? PanelBottomClose : PanelBottomOpen,
         keywords: ["terminal", "shell", "pty", "bottom panel"],
-        shortcut: ["Control", "`"],
+        shortcut: boundShortcutKeys("task.terminal.toggle"),
         suggested: true,
         kind: "action",
         run: async () => {
@@ -275,10 +475,23 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
         },
       },
       {
+        id: "task.find",
+        title: "Find in task",
+        description: "Search this task's messages",
+        group: "actions",
+        icon: TextSearch,
+        keywords: ["search", "find", "transcript", "messages"],
+        shortcut: boundShortcutKeys("task.find"),
+        kind: "action",
+        runAfterClose: true,
+        run: () => openTranscriptFind(),
+      },
+      ...taskActionCommands(sessionID),
+      {
         id: "task.copyId",
         title: "Copy task ID",
         description: sessionID,
-        group: "navigation",
+        group: "actions",
         icon: Copy,
         keywords: ["session", "identifier", "clipboard"],
         kind: "action",
@@ -295,9 +508,10 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
       id: "task.focusComposer",
       title: "Focus composer",
       description: "Move the cursor to the message input",
-      group: "navigation",
+      group: "actions",
       icon: TextCursorInput,
       keywords: ["prompt", "message", "input", "write"],
+      shortcut: boundShortcutKeys("composer.focus"),
       defaultVisible: true,
       kind: "action",
       runAfterClose: true,
@@ -310,7 +524,7 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
       id: "onboarding.open",
       title: "Open welcome guide",
       description: "Review projects, provider connections, and how Palot presents OpenCode work",
-      group: "settings",
+      group: "actions",
       icon: Sparkles,
       keywords: ["onboarding", "setup", "getting started", "providers"],
       kind: "setting",
@@ -320,22 +534,34 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
       id: "usage.open",
       title: "Usage",
       description: "View local OpenCode activity, model cost, and tool reliability",
-      group: "navigation",
+      group: "actions",
       icon: BarChart3,
       keywords: ["tokens", "cost", "models", "statistics", "activity"],
       defaultVisible: true,
       kind: "action",
       run: () => openUsage(),
     },
-    ...SETTINGS_NAV_ITEMS.map((item): GlobalCommand => ({
+    {
+      id: "pull-requests.open",
+      title: "Pull requests",
+      description: "Review requested, authored, and recently merged GitHub pull requests",
+      group: "actions",
+      icon: GitPullRequest,
+      keywords: ["github", "pr", "review", "merge"],
+      defaultVisible: true,
+      kind: "action",
+      run: () => openPullRequests(),
+    },
+    ...SETTINGS_NAV_ITEMS.toSorted(
+      (left, right) => Number(right.id === "general") - Number(left.id === "general"),
+    ).map((item): GlobalCommand => ({
       id: `settings.open:${item.id}`,
       title: item.id === "general" ? "Settings" : item.label,
       description: item.description,
       group: "settings",
       icon: item.id === "general" ? Settings2 : item.icon,
       keywords: [item.keywords, "preferences"],
-      shortcut: item.id === "general" ? ["Meta", ","] : undefined,
-      defaultVisible: item.id === "general" || item.id === "appearance",
+      shortcut: item.id === "general" ? boundShortcutKeys("settings.open") : undefined,
       kind: "setting",
       run: () => openSettings(item.id, routeProjectID ?? currentProject?.id),
     })),
@@ -435,7 +661,7 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
       group: "development",
       icon: RotateCw,
       keywords: ["reload", "development"],
-      shortcut: ["Meta", "Shift", "R"],
+      shortcut: boundShortcutKeys("app.restart"),
       kind: "action",
       run: () =>
         palot
@@ -444,52 +670,67 @@ export function useGlobalCommands({ sessions, onChooseProject }: UseGlobalComman
     });
   }
 
+  const focusedProfileID = runtime?.profileID ?? null;
+  const recentIndex = new Map(
+    recentTasks
+      .slice(0, RECENT_TASK_LIMIT)
+      .map((task, index) => [paletteTaskCommandID(task), index] as const),
+  );
+  const focusedStatus = (session: PalotSession): PaletteTaskStatus | undefined =>
+    attentionSessionIDs.has(session.id)
+      ? "attention"
+      : sessionRunning(session.id)
+        ? "running"
+        : catalogSessionIsUnread(session)
+          ? "unread"
+          : undefined;
   commands.push(
-    ...sessions
-      .filter((session) => !session.parentID)
-      .toSorted(
-        (left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id),
-      )
-      .map((session): GlobalCommand => {
-        const project = projectForSession(allProjects, session);
-        const runtime = activity?.statuses.get(session.id);
-        const execution = activity?.execution.get(session.id);
-        const retainSession = () => cacheSession(session);
-        return {
-          id: `session.open:${session.id}`,
-          title: session.title ?? "Untitled task",
-          description: project ? projectName(project) : session.location.directory,
-          group: "tasks",
-          icon: MessageSquare,
-          keywords: [
-            session.id,
-            project?.canonical ?? "",
-            project?.name ?? "",
-            session.location.directory,
-            "thread",
-            "conversation",
-          ],
-          trailing: formatRelativeTime(session.updatedAt),
-          status: attentionSessionIDs.has(session.id)
-            ? "attention"
-            : execution?.status === "running" ||
-                runtime?.type === "busy" ||
-                runtime?.type === "retry"
-              ? "running"
-              : catalogSessionIsUnread(session)
-                ? "unread"
-                : undefined,
-          kind: "task",
-          run: () => {
-            retainSession();
-            return openSession(session.id);
-          },
-          preload: () => {
-            retainSession();
-            return preloadSession(session.id);
-          },
-        };
-      }),
+    ...tasks.map((task): GlobalCommand => {
+      const { session } = task;
+      const id = paletteTaskCommandID(task);
+      const shortcutIndex = recentIndex.get(id);
+      const focused = task.profileID === null || task.profileID === focusedProfileID;
+      const project = focused ? projectForSession(allProjects, session) : undefined;
+      const location = task.projectName ?? (project ? projectName(project) : null);
+      const retainSession = () =>
+        cacheSessions(queryClient, task.connectionID ?? runtime?.connectionID ?? "disconnected", [
+          session,
+        ]);
+      return {
+        id,
+        title: session.title ?? "Untitled task",
+        description: [location ?? session.location.directory, task.serverName]
+          .filter(Boolean)
+          .join(" · "),
+        group: "tasks",
+        icon: MessageSquare,
+        keywords: [
+          session.id,
+          project?.canonical ?? "",
+          project?.name ?? "",
+          task.projectName ?? "",
+          task.serverName ?? "",
+          session.location.directory,
+          "thread",
+          "conversation",
+        ],
+        shortcut: shortcutIndex === undefined ? undefined : ["Alt", String(shortcutIndex + 1)],
+        trailing: formatRelativeTime(session.updatedAt),
+        status: task.status ?? (focused ? focusedStatus(session) : undefined),
+        kind: "task",
+        run: () => {
+          retainSession();
+          return task.profileID === null
+            ? openSession(session.id)
+            : openSession(session.id, { profileID: task.profileID });
+        },
+        preload: () => {
+          if (!task.connected) return;
+          retainSession();
+          return preloadSession(session.id, task.profileID ?? undefined);
+        },
+      };
+    }),
     ...projectCommands,
   );
 

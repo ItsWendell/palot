@@ -19,6 +19,8 @@ vi.mock("../hooks/use-connection-overview", () => ({
 vi.mock("../hooks/use-navigation", () => ({
   usePalotNavigation: () => ({ closeSettings: vi.fn(), openSettings: vi.fn() }),
 }));
+// These tests cover Settings content; the navigation rail belongs to the app shell.
+vi.mock("./navigation-rail", () => ({ NavigationRail: () => null }));
 vi.mock("../hooks/use-session-catalog", () => ({ useSelectedSession: () => null }));
 
 afterEach(cleanup);

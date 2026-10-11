@@ -18,6 +18,7 @@ import {
   commandPaletteOpenAtom,
   commandPaletteReturnFocusAtom,
   navigationOpenAtom,
+  sidebarModeAtom,
 } from "../atoms/ui";
 import {
   errorAtom,
@@ -48,6 +49,17 @@ import { SidebarProvider } from "./ui/sidebar";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "./ui/sheet";
 import { IconButton } from "./ui";
 import { PalotLoading } from "./branding";
+import {
+  formatShortcut,
+  matchesShortcut,
+  shortcutKeys,
+  useShortcutKeys,
+} from "../lib/keyboard-shortcuts";
+import { NavigationRail } from "./navigation-rail";
+import { SIDEBAR_PEEK_MAX_WIDTH, SidebarPeek, useSidebarPeek } from "./sidebar-peek";
+
+/** Width of the always-visible navigation rail (`w-11`). */
+const NAVIGATION_RAIL_WIDTH = 44;
 
 type WorkspaceSession = Pick<PalotSession, "id" | "projectID" | "location">;
 
@@ -150,11 +162,24 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   }, [phase]);
   const [paneGeometry, setPaneGeometry] = useAtom(paneGeometryAtom);
   const navigationCompact =
-    workspaceSize.width > 0 && workspaceSize.width < paneGeometry.navigation + 480;
+    workspaceSize.width > 0 &&
+    workspaceSize.width < NAVIGATION_RAIL_WIDTH + paneGeometry.navigation + 480;
   const navigationOpen = navigationRequestedOpen && !navigationCompact;
   const [navigationSheetHistory, setNavigationSheetHistory] = useState<number | null>(null);
   const navigationSheetOpen = navigationCompact && navigationSheetHistory === historyIndex;
   const navigationVisible = navigationOpen || navigationSheetOpen;
+  // A hidden (not compact) column can peek as an overlay without being pinned.
+  const sidebarMode = useAtomValue(sidebarModeAtom);
+  const navigationPeek = useSidebarPeek(
+    phase === "ready" && !navigationVisible && !navigationCompact,
+  );
+  const railRef = useRef<HTMLDivElement>(null);
+  const locationHref = useRouterState({ select: (state) => state.location.href });
+  const closeNavigationPeek = navigationPeek.close;
+  useEffect(() => {
+    // Choosing a task or starting one navigates; the peek has done its job.
+    closeNavigationPeek();
+  }, [closeNavigationPeek, locationHref]);
   const navigationTransitionRef = useRef<boolean | null>(navigationOpen);
   const navigationWidth = navigationOpen ? paneGeometry.navigation : 0;
   const [fullscreenScopeKey, setFullscreenScopeKey] = useState<string | null>(null);
@@ -166,7 +191,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
     fullscreenScopeKey === scopeKey &&
     rightRequestedOpen &&
     Boolean(selectedSession);
-  const rightTooNarrow = workspaceSize.width < navigationWidth + 800;
+  const rightTooNarrow = workspaceSize.width < NAVIGATION_RAIL_WIDTH + navigationWidth + 800;
   const narrowRightRef = useRef<{ scope: string; narrow: boolean } | null>(null);
   const wasRightExpandedRef = useRef(false);
   const bottomOpen =
@@ -175,6 +200,8 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const bottomTransitionRef = useRef<boolean | null>(bottomOpen);
   const canGoBack = router.history.canGoBack();
   const canGoForward = historyIndex < router.history.length - 1;
+  const backShortcut = useShortcutKeys("navigation.back");
+  const forwardShortcut = useShortcutKeys("navigation.forward");
 
   const runShellTransition = useCallback(
     async (surface: "navigation" | "right" | "bottom", open: boolean, update: () => void) => {
@@ -623,12 +650,12 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
       if (event.target instanceof Element && event.target.closest("[data-workbench-terminal]"))
         return;
       if (!event.metaKey && !event.ctrlKey) return;
-      if (!event.shiftKey && event.key === "[") {
+      if (matchesShortcut(event, shortcutKeys("navigation.back"))) {
         event.preventDefault();
         if (canGoBack) router.history.back();
         return;
       }
-      if (!event.shiftKey && event.key === "]") {
+      if (matchesShortcut(event, shortcutKeys("navigation.forward"))) {
         event.preventDefault();
         if (canGoForward) router.history.forward();
         return;
@@ -783,6 +810,25 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
         data-right-workbench-mode={rightExpanded ? "expanded" : "inline"}
         data-bottom-workbench={bottomRequestedOpen ? "open" : "closed"}
       >
+        <div
+          ref={railRef}
+          className={cn(
+            "palot-navigation-rail flex h-full shrink-0 flex-col bg-sidebar text-sidebar-foreground",
+            // With the task column open the rail shares its surface; otherwise it owns the edge.
+            !navigationOpen && "border-r border-border",
+          )}
+          data-shell-surface="rail"
+        >
+          <div className="window-drag h-(--shell-header-height) shrink-0" aria-hidden="true" />
+          <NavigationRail
+            className="min-h-0 flex-1"
+            navigationOpen={navigationVisible}
+            onNavigationOpenChange={setNavigationVisibility}
+            onViewHoverStart={navigationPeek.requestPeek}
+            onViewHoverEnd={navigationPeek.cancelPendingPeek}
+            peeking={navigationPeek.view !== null}
+          />
+        </div>
         <ResizablePanelGroup
           orientation="horizontal"
           className="@container/workspace-shell min-h-0"
@@ -839,8 +885,8 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             disabled={!navigationOpen}
             aria-hidden={!navigationOpen}
             className={cn(
-              "palot-shell-splitter transition-opacity duration-150",
-              navigationOpen ? "opacity-100" : "pointer-events-none w-0 opacity-0 after:hidden",
+              "transition-opacity duration-150",
+              navigationOpen ? "opacity-100" : "pointer-events-none w-0 opacity-0",
             )}
           />
           <ResizablePanel
@@ -877,7 +923,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
                 aria-hidden={!bottomOpen}
                 className={cn(
                   "transition-opacity duration-150",
-                  bottomOpen ? "opacity-100" : "pointer-events-none h-0 opacity-0 after:hidden",
+                  bottomOpen ? "opacity-100" : "pointer-events-none h-0 opacity-0",
                 )}
               />
               <ResizablePanel
@@ -915,10 +961,10 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             disabled={!rightRequestedOpen || rightExpanded}
             aria-hidden={!rightRequestedOpen || rightExpanded}
             className={cn(
-              "palot-shell-splitter transition-opacity duration-150",
+              "transition-opacity duration-150",
               rightRequestedOpen && !rightExpanded
                 ? "opacity-100"
-                : "pointer-events-none w-0 opacity-0 after:hidden",
+                : "pointer-events-none w-0 opacity-0",
             )}
           />
           <ResizablePanel
@@ -961,6 +1007,34 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             ) : null}
           </ResizablePanel>
         </ResizablePanelGroup>
+        {phase === "ready" && !navigationVisible && !navigationCompact ? (
+          // Hot edge just right of the rail: resting here peeks the remembered view.
+          <div
+            aria-hidden="true"
+            data-sidebar-peek-edge=""
+            className="absolute top-(--shell-header-height) bottom-0 z-30 w-1.5"
+            style={{ left: NAVIGATION_RAIL_WIDTH }}
+            onPointerEnter={(event) => {
+              if (event.pointerType !== "touch") navigationPeek.requestPeek(sidebarMode);
+            }}
+            onPointerLeave={navigationPeek.cancelPendingPeek}
+          />
+        ) : null}
+        <SidebarPeek
+          peek={navigationPeek}
+          railRef={railRef}
+          left={NAVIGATION_RAIL_WIDTH}
+          width={Math.min(paneGeometry.navigation, SIDEBAR_PEEK_MAX_WIDTH)}
+          label={navigationPeek.view === "project" ? "Projects preview" : "Inbox preview"}
+        >
+          <WorkspaceSidebar
+            open
+            presentation="peek"
+            mode={navigationPeek.view ?? sidebarMode}
+            onNewSession={startNewTask}
+            onSearchTasks={openCommandPalette}
+          />
+        </SidebarPeek>
         <Sheet
           open={navigationSheetOpen}
           onOpenChange={(open) => setNavigationSheetHistory(open ? historyIndex : null)}
@@ -990,7 +1064,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
           />
           <div className="flex items-center gap-0.5 max-[480px]:hidden">
             <IconButton
-              label={window.palot?.platform === "darwin" ? "Back (⌘[)" : "Back (Ctrl+[)"}
+              label={backShortcut.length ? `Back (${formatShortcut(backShortcut)})` : "Back"}
               appIcon="back"
               size="icon-sm"
               disabled={!canGoBack}
@@ -998,7 +1072,9 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
               onClick={goBack}
             />
             <IconButton
-              label={window.palot?.platform === "darwin" ? "Forward (⌘])" : "Forward (Ctrl+])"}
+              label={
+                forwardShortcut.length ? `Forward (${formatShortcut(forwardShortcut)})` : "Forward"
+              }
               appIcon="forward"
               size="icon-sm"
               disabled={!canGoForward}
@@ -1031,9 +1107,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             disabled={!selectedSession}
             onClick={toggleRightWorkbench}
           />
-          {window.palot?.platform === "linux" ? (
-            <span className="size-6 shrink-0" aria-hidden="true" />
-          ) : null}
+          <span className="window-close-spacer shrink-0" aria-hidden="true" />
         </div>
       </SidebarProvider>
     </div>

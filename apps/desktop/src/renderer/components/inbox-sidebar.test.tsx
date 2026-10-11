@@ -13,6 +13,7 @@ import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../service
 import { palot } from "../services/palot";
 import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router";
 import { InboxSidebarContent } from "./inbox-sidebar";
+import { installSourceControl, pullRequestLink } from "./pull-requests/test-fixtures";
 import { SidebarProvider } from "./ui/sidebar";
 
 const navigation = vi.hoisted(() => ({
@@ -194,6 +195,118 @@ describe("InboxSidebarContent", () => {
     await vi.waitFor(() =>
       expect(button.closest("[data-inbox-card]")?.getAttribute("data-selected")).toBeNull(),
     );
+  });
+
+  it("badges linked tasks from one pull request links query for the whole list", async () => {
+    const store = createStore();
+    const queryClient = createRendererQueryClient();
+    store.set(runtimeAtom, {
+      connectionID: "disconnected",
+      profileID: "profile",
+      connected: false,
+    } as OpenCodeRuntimeStatus);
+    seedCatalog(queryClient, {
+      projects: [
+        {
+          id: "project-1",
+          canonical: "/repo",
+          name: "Palot",
+          sandboxes: [],
+          vcs: null,
+          updatedAt: 1,
+        },
+      ],
+      sessions: [
+        session("open", "Open task", 30),
+        session("merged", "Merged task", 20),
+        session("plain", "Plain task", 10),
+      ],
+    });
+    const { api } = installSourceControl({
+      listPullRequestLinks: vi.fn(async () => ({
+        ok: true as const,
+        value: [
+          pullRequestLink("open", 4, {
+            watch: { startedAt: 1, commentWakes: 0, readFailures: 0, lastWakeAt: null },
+            pullRequest: { checks: "pending" },
+          }),
+          pullRequestLink("merged", 9, { pullRequest: { state: "merged" } }),
+        ],
+      })),
+    });
+    renderWithRouter(
+      <SidebarProvider>
+        <InboxSidebarContent />
+      </SidebarProvider>,
+      store,
+      "/new",
+      queryClient,
+    );
+    expect(
+      await screen.findByRole("img", { name: "Pull request #4, open, checks running, watching" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("img", { name: "Pull request #9, merged, checks passing" }),
+    ).toBeTruthy();
+    const plain = screen
+      .getByRole("button", { name: /^Open Plain task,/ })
+      .closest("[data-inbox-card]");
+    expect(plain?.querySelector("[data-pull-request-badge]")).toBeNull();
+    expect(api.listPullRequestLinks).toHaveBeenCalledTimes(1);
+    expect(api.listPullRequestLinks).toHaveBeenCalledWith({ profileID: "profile" });
+
+    fireEvent.click(screen.getByRole("img", { name: /Pull request #4/ }));
+    await waitFor(() => expect(navigation.openSession).toHaveBeenCalledWith("open"));
+  });
+
+  it("holds the task order while the pointer is over the list", async () => {
+    const store = createStore();
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, {
+      projects: [
+        {
+          id: "project-1",
+          canonical: "/repo",
+          name: "Palot",
+          sandboxes: [],
+          vcs: null,
+          updatedAt: 1,
+        },
+      ],
+      sessions: [session("older", "Older task", 10), session("newer", "Newer task", 20)],
+    });
+    store.set(sessionTriageSnapshotAtom, {
+      profileID: "local-default",
+      bootstrapThrough: null,
+      sessions: [],
+    });
+    const { container } = renderWithRouter(
+      <Provider store={store}>
+        <SidebarProvider>
+          <InboxSidebarContent />
+        </SidebarProvider>
+      </Provider>,
+      store,
+      "/new",
+      queryClient,
+    );
+    const order = () =>
+      screen
+        .getAllByRole("button", { name: /^Open .* task,/ })
+        .map((button) => button.getAttribute("aria-label")?.split(",")[0]);
+    expect(order()).toEqual(["Open Newer task", "Open Older task"]);
+
+    const list = container.querySelector<HTMLElement>('[data-sidebar="content"]')!;
+    fireEvent.pointerEnter(list);
+    openCodeReconciler(queryClient).patchSession("disconnected", "older", (current) => ({
+      ...current,
+      title: "Finished task",
+      time: { ...current.time, updated: 50, idle: 50 },
+    }));
+    await waitFor(() => expect(order()).toEqual(["Open Newer task", "Open Finished task"]));
+
+    fireEvent.pointerLeave(list);
+    await waitFor(() => expect(order()).toEqual(["Open Finished task", "Open Newer task"]));
   });
 
   it("does not show unread activity for the selected session", async () => {

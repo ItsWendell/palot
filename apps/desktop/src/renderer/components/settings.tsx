@@ -126,6 +126,7 @@ import {
 } from "../atoms/appearance";
 import { MarkdownCodeBlock } from "./markdown-code-block";
 import { runtimeAtom } from "../atoms/workspace";
+import { desktopNotificationSettingsAtom } from "../atoms/notification-sounds";
 import { cn } from "../lib/cn";
 import { showErrorToast } from "../lib/toast-error";
 import { openCodeKeys } from "../lib/opencode-query";
@@ -198,7 +199,11 @@ import { Switch } from "./ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
 import { toast } from "./ui/toast";
+import { NavigationRail } from "./navigation-rail";
 import { SettingsEmpty, SettingsGroup, SettingsRow, SettingsSection } from "./settings-layout";
+import { KeyboardShortcutsSettings } from "./keyboard-shortcuts-settings";
+import { NotificationSoundSettings } from "./notification-sound-settings";
+import { DefaultShellSetting } from "./default-shell-setting";
 
 const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: string }> = {
   general: {
@@ -223,7 +228,11 @@ const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: stri
   },
   notifications: {
     title: "Notifications",
-    description: "Choose when Palot uses native macOS alerts for tasks that need you.",
+    description: "Choose when Palot alerts you or plays a sound for tasks that need you.",
+  },
+  shortcuts: {
+    title: "Keyboard shortcuts",
+    description: "Keys Palot responds to across tasks, panels, and the composer.",
   },
   models: {
     title: "Models",
@@ -262,9 +271,10 @@ const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: stri
 const SETTINGS_APP_ICONS: Record<SettingsCategory, AppIconName> = {
   project: "config",
   general: "settings",
-  browser: "search",
+  browser: "browser",
   appearance: "appearance",
   notifications: "notifications",
+  shortcuts: "keyboard",
   connections: "servers",
   models: "models",
   providers: "providers",
@@ -430,6 +440,10 @@ export function Settings({
       className="flex size-full min-h-0 flex-col bg-transparent md:flex-row"
       aria-label="Settings"
     >
+      <div className="palot-navigation-rail hidden shrink-0 flex-col bg-sidebar md:flex">
+        <div className="window-drag h-(--shell-header-height) shrink-0" aria-hidden="true" />
+        <NavigationRail className="min-h-0 flex-1" />
+      </div>
       <aside className="palot-settings-sidebar flex max-h-[196px] shrink-0 flex-col border-b border-sidebar-border bg-sidebar pt-(--shell-header-height) md:max-h-none md:w-[248px] md:border-r md:border-b-0">
         <div className="px-3 pt-3 pb-2 md:px-3.5">
           <div className="relative">
@@ -646,6 +660,7 @@ export function Settings({
               "browser",
               "appearance",
               "notifications",
+              "shortcuts",
               "connections",
               "diagnostics",
               "about",
@@ -728,6 +743,7 @@ function SettingsContent({
   if (category === "browser") return <BrowserSettings />;
   if (category === "appearance") return <AppearanceSettings />;
   if (category === "notifications") return <NotificationSettings />;
+  if (category === "shortcuts") return <KeyboardShortcutsSettings />;
   if (category === "connections") {
     return (
       <Suspense fallback={<SettingsSkeleton />}>
@@ -1165,6 +1181,7 @@ function GeneralSettings() {
               />
             }
           />
+          <DefaultShellSetting />
         </SettingsGroup>
       </SettingsSection>
       <SettingsSection
@@ -1497,7 +1514,7 @@ const TURN_NOTIFICATION_LABELS: Record<DesktopNotificationSettings["turnCompleti
 };
 
 function NotificationSettings() {
-  const [settings, setSettings] = useState<DesktopNotificationSettings | null>(null);
+  const [settings, setSettings] = useAtom(desktopNotificationSettingsAtom);
   const [deliveryStatus, setDeliveryStatus] = useState<DesktopNotificationDeliveryStatus | null>(
     null,
   );
@@ -1515,7 +1532,7 @@ function NotificationSettings() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [setSettings]);
 
   useEffect(() => {
     if (!isMac) return;
@@ -1581,104 +1598,107 @@ function NotificationSettings() {
   const delivery = notificationDeliveryPresentation(deliveryStatus);
 
   return (
-    <SettingsSection
-      title="Native alerts"
-      description="Palot uses the macOS notification center and opens the relevant task when you click an alert."
-      icon={Bell}
-    >
-      <SettingsGroup>
-        {isMac ? (
-          <SettingsRow
-            title="Delivery check"
-            description={delivery.description}
-            control={
-              <>
-                <Badge variant={delivery.badgeVariant}>{delivery.label}</Badge>
-                {delivery.action ? (
+    <div className="space-y-8">
+      <SettingsSection
+        title="Native alerts"
+        description="Palot uses the macOS notification center and opens the relevant task when you click an alert."
+        icon={Bell}
+      >
+        <SettingsGroup>
+          {isMac ? (
+            <SettingsRow
+              title="Delivery check"
+              description={delivery.description}
+              control={
+                <>
+                  <Badge variant={delivery.badgeVariant}>{delivery.label}</Badge>
+                  {delivery.action ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={deliveryBusy || !deliveryStatus}
+                      onClick={() => void runDeliveryAction()}
+                    >
+                      {deliveryBusy ? <LoaderCircle className="animate-spin" /> : delivery.icon}
+                      {delivery.action}
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={deliveryBusy || !deliveryStatus}
-                    onClick={() => void runDeliveryAction()}
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Check notification delivery again"
+                    disabled={deliveryBusy}
+                    onClick={() => void refreshDeliveryStatus()}
                   >
-                    {deliveryBusy ? <LoaderCircle className="animate-spin" /> : delivery.icon}
-                    {delivery.action}
+                    <RefreshCw className={deliveryBusy ? "animate-spin" : undefined} />
                   </Button>
-                ) : null}
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label="Check notification delivery again"
-                  disabled={deliveryBusy}
-                  onClick={() => void refreshDeliveryStatus()}
+                </>
+              }
+            />
+          ) : null}
+          <SettingsRow
+            title="Turn completion notifications"
+            description="Set when Palot alerts you that a task has finished."
+            control={
+              <Select
+                value={settings?.turnCompletion ?? "always"}
+                disabled={!settings}
+                onValueChange={(value) =>
+                  void updateSettings({
+                    turnCompletion: value as DesktopNotificationSettings["turnCompletion"],
+                  })
+                }
+              >
+                <SelectTrigger
+                  className="w-full @lg/settings:w-48"
+                  aria-label="Turn completion notifications"
                 >
-                  <RefreshCw className={deliveryBusy ? "animate-spin" : undefined} />
-                </Button>
-              </>
+                  <SelectValue>
+                    {TURN_NOTIFICATION_LABELS[settings?.turnCompletion ?? "always"]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="never">Never</SelectItem>
+                  <SelectItem value="unfocused">Only when unfocused</SelectItem>
+                  <SelectItem value="always">Always</SelectItem>
+                </SelectContent>
+              </Select>
             }
           />
-        ) : null}
-        <SettingsRow
-          title="Turn completion notifications"
-          description="Set when Palot alerts you that a task has finished."
-          control={
-            <Select
-              value={settings?.turnCompletion ?? "always"}
-              disabled={!settings}
-              onValueChange={(value) =>
-                void updateSettings({
-                  turnCompletion: value as DesktopNotificationSettings["turnCompletion"],
-                })
-              }
-            >
-              <SelectTrigger
-                className="w-full @lg/settings:w-48"
-                aria-label="Turn completion notifications"
-              >
-                <SelectValue>
-                  {TURN_NOTIFICATION_LABELS[settings?.turnCompletion ?? "always"]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectItem value="never">Never</SelectItem>
-                <SelectItem value="unfocused">Only when unfocused</SelectItem>
-                <SelectItem value="always">Always</SelectItem>
-              </SelectContent>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Permission notifications"
-          description="Show alerts when a task needs permission to continue."
-          control={
-            <Switch
-              aria-label="Permission notifications"
-              checked={settings?.permissionRequests ?? false}
-              disabled={!settings}
-              onCheckedChange={(checked) =>
-                void updateSettings({ permissionRequests: Boolean(checked) })
-              }
-            />
-          }
-        />
-        <SettingsRow
-          title="Question notifications"
-          description="Show alerts when your input is needed to continue."
-          control={
-            <Switch
-              aria-label="Question notifications"
-              checked={settings?.questionRequests ?? false}
-              disabled={!settings}
-              onCheckedChange={(checked) =>
-                void updateSettings({ questionRequests: Boolean(checked) })
-              }
-            />
-          }
-        />
-      </SettingsGroup>
-    </SettingsSection>
+          <SettingsRow
+            title="Permission notifications"
+            description="Show alerts when a task needs permission to continue."
+            control={
+              <Switch
+                aria-label="Permission notifications"
+                checked={settings?.permissionRequests ?? false}
+                disabled={!settings}
+                onCheckedChange={(checked) =>
+                  void updateSettings({ permissionRequests: Boolean(checked) })
+                }
+              />
+            }
+          />
+          <SettingsRow
+            title="Question notifications"
+            description="Show alerts when your input is needed to continue."
+            control={
+              <Switch
+                aria-label="Question notifications"
+                checked={settings?.questionRequests ?? false}
+                disabled={!settings}
+                onCheckedChange={(checked) =>
+                  void updateSettings({ questionRequests: Boolean(checked) })
+                }
+              />
+            }
+          />
+        </SettingsGroup>
+      </SettingsSection>
+      <NotificationSoundSettings deliveryStatus={deliveryStatus} />
+    </div>
   );
 }
 

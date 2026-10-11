@@ -23,6 +23,8 @@ vi.mock("../hooks/use-connection-overview", () => ({
 vi.mock("../hooks/use-navigation", () => ({
   usePalotNavigation: () => ({ closeSettings: fixtures.navigate, openSettings: fixtures.navigate }),
 }));
+// These tests cover Settings content; the navigation rail belongs to the app shell.
+vi.mock("./navigation-rail", () => ({ NavigationRail: () => null }));
 vi.mock("../hooks/use-session-catalog", () => ({ useSelectedSession: () => fixtures.session }));
 
 function runtime(id: string): OpenCodeRuntimeStatus {

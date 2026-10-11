@@ -29,7 +29,10 @@ function ResizableHandle({
     <ResizablePrimitive.Separator
       data-slot="resizable-handle"
       className={cn(
-        "relative z-10 flex w-2.5 items-center justify-center ring-offset-background after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors after:duration-150 data-[separator=active]:after:bg-ring/55 data-[separator=focus]:after:bg-foreground/35 data-[separator=hover]:after:bg-foreground/35 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden aria-[orientation=vertical]:aria-disabled:w-0 aria-[orientation=horizontal]:h-2.5 aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:aria-disabled:h-0 aria-[orientation=horizontal]:after:top-1/2 aria-[orientation=horizontal]:after:bottom-auto aria-[orientation=horizontal]:after:left-0 aria-[orientation=horizontal]:after:h-px aria-[orientation=horizontal]:after:w-full aria-[orientation=horizontal]:after:translate-x-0 aria-[orientation=horizontal]:after:-translate-y-1/2 [&[aria-orientation=horizontal]>div]:rotate-90",
+        // The separator is the visible 1px line, so panes meet it edge to edge.
+        // react-resizable-panels expands the pointer hit area around it
+        // (Group `resizeTargetMinimumSize`), so the layout never reserves a gutter.
+        "relative z-10 flex w-px shrink-0 items-center justify-center bg-border ring-offset-background transition-colors duration-150 data-[separator=active]:bg-ring/55 data-[separator=focus]:bg-foreground/35 data-[separator=hover]:bg-foreground/35 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden aria-[orientation=vertical]:aria-disabled:w-0 aria-[orientation=horizontal]:h-px aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:aria-disabled:h-0 [&[aria-orientation=horizontal]>div]:rotate-90",
         className,
       )}
       {...props}

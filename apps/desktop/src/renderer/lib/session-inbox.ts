@@ -70,25 +70,87 @@ export interface SessionInboxSnapshot {
   nextSnoozeDeadline: number | null;
 }
 
-export function orderInboxSessions(
-  items: InboxSessionView[],
-  preferences: { ordering: InboxOrdering; unreadFirst: boolean },
-): InboxSessionView[] {
+export interface InboxOrderingPreferences {
+  ordering: InboxOrdering;
+  unreadFirst: boolean;
+}
+
+/**
+ * The time of a task's last meaningful event, used as the inbox sort key.
+ *
+ * A running task keys on when its run started, so streamed output and
+ * sub-agent activity never reorder it. An idle task keys on when its root
+ * session's last turn finished. The key therefore changes once when a run
+ * starts and once when it finishes.
+ */
+export function inboxOrderingAt(
+  item: Pick<InboxSessionView, "running" | "runningSince" | "session">,
+): number {
+  if (item.running) return item.runningSince ?? item.session.idleAt ?? item.session.createdAt;
+  return sessionActivityAt(item.session);
+}
+
+/**
+ * Orders Inbox and Settled tasks by the view preference. "Needs input first"
+ * puts tasks needing input, then failed tasks, ahead of the newest-first key.
+ */
+export function orderInboxSessions<T extends InboxSessionView>(
+  items: readonly T[],
+  preferences: InboxOrderingPreferences,
+): T[] {
   return items.toSorted((left, right) => {
     if (preferences.unreadFirst) {
       const unread = Number(catalogViewIsUnread(right)) - Number(catalogViewIsUnread(left));
       if (unread !== 0) return unread;
     }
     if (preferences.ordering === "attention") {
-      const attention = Number(right.attention) - Number(left.attention);
+      const attention =
+        Number(right.attention) - Number(left.attention) ||
+        Number(right.failed) - Number(left.failed);
       if (attention !== 0) return attention;
     }
     const activity =
       preferences.ordering === "oldest"
-        ? left.activityThrough.updatedAt - right.activityThrough.updatedAt
-        : right.activityThrough.updatedAt - left.activityThrough.updatedAt;
+        ? inboxOrderingAt(left) - inboxOrderingAt(right)
+        : inboxOrderingAt(right) - inboxOrderingAt(left);
     return activity || left.session.id.localeCompare(right.session.id);
   });
+}
+
+/**
+ * Orders one inbox section. Pinned keeps the most recently pinned first and
+ * Snoozed keeps the next wake first, whatever the view ordering.
+ */
+export function orderInboxSection<T extends InboxSessionView>(
+  section: InboxSection,
+  items: readonly T[],
+  preferences: InboxOrderingPreferences,
+): T[] {
+  if (section === "pinned") return items.toSorted(comparePinned);
+  if (section === "snoozed") return items.toSorted(compareSnoozed);
+  return orderInboxSessions(items, preferences);
+}
+
+/** Splits an ordered task list into its sections, preserving the order. */
+export function groupInboxSections<T extends InboxSessionView>(
+  items: readonly T[],
+): Record<InboxSection, T[]> {
+  const result: Record<InboxSection, T[]> = { pinned: [], inbox: [], snoozed: [], settled: [] };
+  for (const item of items) result[item.section].push(item);
+  return result;
+}
+
+function comparePinned(left: InboxSessionView, right: InboxSessionView): number {
+  return (
+    (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0) || left.session.id.localeCompare(right.session.id)
+  );
+}
+
+function compareSnoozed(left: InboxSessionView, right: InboxSessionView): number {
+  return (
+    (left.snoozedUntil ?? 0) - (right.snoozedUntil ?? 0) ||
+    left.session.id.localeCompare(right.session.id)
+  );
 }
 
 function catalogViewIsUnread(item: InboxSessionView): boolean {
@@ -189,11 +251,7 @@ export function projectSessionInbox(input: {
     }
   }
 
-  result.pinned.sort(
-    (left, right) =>
-      (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0) ||
-      left.session.id.localeCompare(right.session.id),
-  );
+  result.pinned.sort(comparePinned);
   result.inbox.sort((left, right) => {
     const priority = inboxPriority(left) - inboxPriority(right);
     if (priority !== 0) return priority;
@@ -209,11 +267,7 @@ export function projectSessionInbox(input: {
       left.session.id.localeCompare(right.session.id)
     );
   });
-  result.snoozed.sort(
-    (left, right) =>
-      (left.snoozedUntil ?? 0) - (right.snoozedUntil ?? 0) ||
-      left.session.id.localeCompare(right.session.id),
-  );
+  result.snoozed.sort(compareSnoozed);
   result.settled.sort(
     (left, right) =>
       sessionActivityAt(right.session) - sessionActivityAt(left.session) ||

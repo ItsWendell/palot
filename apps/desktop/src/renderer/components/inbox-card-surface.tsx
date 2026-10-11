@@ -31,6 +31,7 @@ export function InboxCardSurface({
   connectionBadge,
   ownerLabel,
   profileID,
+  pullRequest,
   ...props
 }: ComponentProps<"div"> & {
   item: InboxSessionView;
@@ -43,6 +44,8 @@ export function InboxCardSurface({
   connectionBadge?: ReactNode;
   ownerLabel?: string;
   profileID?: string;
+  /** A linked pull request marker, shown at the end of the location line. */
+  pullRequest?: ReactNode;
 }) {
   const unread = !selected && catalogSessionIsUnread(item.session);
   const visualState = inboxSessionState(item, unread);
@@ -141,6 +144,9 @@ export function InboxCardSurface({
           >
             {branchLabel(vcs, item)}
           </span>
+          {pullRequest ? (
+            <span className="ml-auto flex shrink-0 items-center">{pullRequest}</span>
+          ) : null}
         </div>
       </div>
       <div className="absolute top-0 right-1.5 z-20 flex items-center gap-0 opacity-0 transition-opacity group-hover/inbox-card:opacity-100 group-has-[:focus-visible]/inbox-card:opacity-100 group-has-[[data-popup-open]]/inbox-card:opacity-100">

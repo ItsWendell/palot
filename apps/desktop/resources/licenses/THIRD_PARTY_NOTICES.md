@@ -40,6 +40,37 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Fluid Functionalism
+
+`src/renderer/lib/springs.ts` and `src/renderer/hooks/use-fluid-hover.ts` are vendored,
+and `src/renderer/components/ui/fluid-hover-highlight.tsx` is adapted, from
+[`mickadesign/fluid-functionalism`](https://github.com/mickadesign/fluid-functionalism),
+commit `bf9ece46728035afef54feef6ac67e1f413cc0b0`. `src/renderer/components/ui/fluid-list.tsx`
+adapts behaviour from its Dropdown, dropdown-sub, and TabsSubtle components. Other
+components that adopt its interaction patterns are Palot implementations built on these files.
+
+MIT License
+
+Copyright (c) 2026 Micka Touillaud
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## TanStack Markdown
 
 `src/renderer/components/palot-markdown-react.tsx` is adapted from the React

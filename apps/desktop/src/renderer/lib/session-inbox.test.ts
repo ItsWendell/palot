@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { PalotSession, SessionRequestSnapshot, SessionTriageSnapshot } from "../../shared";
-import { inboxSessionState, orderInboxSessions, projectSessionInbox } from "./session-inbox";
+import {
+  inboxSessionState,
+  orderInboxSection,
+  orderInboxSessions,
+  projectSessionInbox,
+} from "./session-inbox";
 
 describe("inboxSessionState", () => {
   it("prioritizes attention, running, and failure over unread", () => {
@@ -441,5 +446,133 @@ describe("orderInboxSessions", () => {
       { session: { id: "old" } },
       { session: { id: "new" } },
     ]);
+  });
+});
+
+describe("stable inbox ordering", () => {
+  const newest = { ordering: "newest", unreadFirst: false } as const;
+  const task = (id: string, times: Partial<PalotSession> = {}): PalotSession => ({
+    ...root,
+    id,
+    createdAt: 10,
+    updatedAt: 10,
+    ...times,
+  });
+  const inbox = (input: {
+    sessions: PalotSession[];
+    running?: Record<string, number>;
+    requests?: Map<string, SessionRequestSnapshot>;
+    triage?: SessionTriageSnapshot | null;
+  }) =>
+    projectSessionInbox({
+      sessions: input.sessions,
+      projects: [],
+      requests: input.requests ?? new Map(),
+      activeIDs: new Set(Object.keys(input.running ?? {})),
+      runningSinceBySession: new Map(Object.entries(input.running ?? {})),
+      triage: input.triage ?? null,
+      now: 500,
+    });
+  const ids = (items: Array<{ session: { id: string } }>) => items.map((item) => item.session.id);
+
+  it("keeps running tasks in place while they stream and their sub-agents work", () => {
+    const early = task("early", { idleAt: 50, updatedAt: 50 });
+    const late = task("late", { idleAt: 40, updatedAt: 40 });
+    const child = task("child", { parentID: early.id, updatedAt: 60 });
+    const running = { early: 100, late: 200, child: 150 };
+    const before = inbox({ sessions: [early, late, child], running });
+    expect(ids(orderInboxSessions(before.inbox, newest))).toEqual(["late", "early"]);
+
+    const streamed = inbox({
+      sessions: [{ ...early, updatedAt: 900 }, late, { ...child, updatedAt: 950 }],
+      running,
+    });
+    expect(ids(orderInboxSessions(streamed.inbox, newest))).toEqual(["late", "early"]);
+  });
+
+  it("moves a task once when its turn finishes", () => {
+    const finished = task("finished", { idleAt: 50, updatedAt: 50 });
+    const working = task("working", { idleAt: 40, updatedAt: 40 });
+    const idle = task("idle", { idleAt: 300, updatedAt: 300 });
+    const during = inbox({
+      sessions: [finished, working, idle],
+      running: { finished: 100, working: 200 },
+    });
+    expect(ids(orderInboxSessions(during.inbox, newest))).toEqual(["idle", "working", "finished"]);
+
+    const after = inbox({
+      sessions: [{ ...finished, idleAt: 400, updatedAt: 400 }, working, idle],
+      running: { working: 200 },
+    });
+    expect(ids(orderInboxSessions(after.inbox, newest))).toEqual(["finished", "idle", "working"]);
+    expect(
+      ids(orderInboxSessions(after.inbox, { ordering: "oldest", unreadFirst: false })),
+    ).toEqual(["working", "idle", "finished"]);
+  });
+
+  it("puts needs input, then failed tasks first when ordering by attention", () => {
+    const blocked = task("blocked", { idleAt: 10 });
+    const failed = task("failed", { idleAt: 20, outcome: "failed" });
+    const recent = task("recent", { idleAt: 30 });
+    const result = inbox({
+      sessions: [recent, failed, blocked],
+      requests: new Map([
+        [
+          blocked.id,
+          {
+            ...emptyRequests,
+            permissions: [{ id: "p", sessionID: blocked.id, action: "shell", resources: [] }],
+          },
+        ],
+      ]),
+    });
+    expect(
+      ids(orderInboxSessions(result.inbox, { ordering: "attention", unreadFirst: false })),
+    ).toEqual(["blocked", "failed", "recent"]);
+  });
+
+  it("keeps pinned by pin time and snoozed by wake time regardless of view ordering", () => {
+    const record = (sessionID: string, pinnedAt: number | null, snoozedUntil: number | null) => ({
+      sessionID,
+      disposition: "inbox" as const,
+      settledThrough: null,
+      pinnedAt,
+      snoozedUntil,
+      snoozedThrough: null,
+      updatedAt: 1,
+    });
+    const result = inbox({
+      sessions: [
+        task("pin-old", { idleAt: 90, viewedAt: 0 }),
+        task("pin-new", { idleAt: 10, viewedAt: 20 }),
+        task("wake-late", { idleAt: 10, viewedAt: 0 }),
+        task("wake-soon", { idleAt: 90, viewedAt: 100 }),
+      ],
+      running: {},
+      triage: {
+        profileID: "local",
+        bootstrapThrough: null,
+        sessions: [
+          record("pin-old", 1, null),
+          record("pin-new", 2, null),
+          record("wake-late", null, 2_000),
+          record("wake-soon", null, 1_000),
+        ],
+      },
+    });
+    for (const preferences of [
+      { ordering: "newest", unreadFirst: true },
+      { ordering: "oldest", unreadFirst: false },
+      { ordering: "attention", unreadFirst: true },
+    ] as const) {
+      expect(ids(orderInboxSection("pinned", result.pinned, preferences))).toEqual([
+        "pin-new",
+        "pin-old",
+      ]);
+      expect(ids(orderInboxSection("snoozed", result.snoozed, preferences))).toEqual([
+        "wake-soon",
+        "wake-late",
+      ]);
+    }
   });
 });

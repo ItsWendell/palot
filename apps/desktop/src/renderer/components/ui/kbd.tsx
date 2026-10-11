@@ -1,4 +1,5 @@
 import { cn } from "@/lib/cn";
+import { formatShortcut, shortcutTokens, type ShortcutKeys } from "@/lib/keyboard-shortcuts";
 
 function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
@@ -23,4 +24,28 @@ function KbdGroup({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-export { Kbd, KbdGroup };
+/** Renders a shortcut as one key cap per key, labelled for the current platform. */
+function ShortcutKbd({
+  keys,
+  platform,
+  className,
+  keyClassName,
+}: {
+  keys: ShortcutKeys;
+  platform?: string;
+  className?: string;
+  keyClassName?: string;
+}) {
+  return (
+    <KbdGroup className={className}>
+      <span className="sr-only">{formatShortcut(keys, platform)}</span>
+      {shortcutTokens(keys, platform).map((token, index) => (
+        <Kbd key={`${index}:${token}`} className={keyClassName} aria-hidden="true">
+          {token}
+        </Kbd>
+      ))}
+    </KbdGroup>
+  );
+}
+
+export { Kbd, KbdGroup, ShortcutKbd };

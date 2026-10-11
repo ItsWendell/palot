@@ -2,9 +2,17 @@ import { createStore } from "jotai";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PalotProject, PalotSession } from "../../shared";
+import type { OpenCodeProfile, PalotProject, PalotSession } from "../../shared";
+import type { ConnectionOverview } from "../lib/connection-overview";
+import {
+  commandPaletteTabAtom,
+  composerActionRequestAtom,
+  globalCommandRequestAtom,
+} from "../atoms/command-requests";
 import { commandPaletteOpenAtom, navigationOpenAtom } from "../atoms/ui";
-import { newTaskDestinationAtom } from "../atoms/workspace";
+import { workbenchStateAtom } from "../atoms/workbench";
+import { newTaskDestinationAtom, runtimeAtom } from "../atoms/workspace";
+import { createWorkbenchState, workbenchScopeKey } from "../lib/workbench-tabs";
 import { createRendererQueryClient } from "../lib/query-client";
 import { sessionCatalogInfo, sessionInfoFromPalot } from "../lib/session-catalog-query";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
@@ -15,12 +23,27 @@ const mocks = vi.hoisted(() => ({
   listRootSessionInfo: vi.fn(),
   restartApp: vi.fn().mockResolvedValue(undefined),
   getSession: vi.fn(),
+  findWorkspaceFiles: vi.fn(),
+  exportSession: vi.fn(),
+  compactSession: vi.fn(),
+  overview: {
+    connections: [] as ConnectionOverview[],
+    includedProfileIDs: [] as string[],
+    visibleProfileIDs: null as string[] | null,
+  },
+}));
+
+vi.mock("../hooks/use-connection-overview", () => ({
+  useConnectionOverview: () => mocks.overview,
 }));
 
 vi.mock("../services/palot", () => ({
   palot: {
     restartApp: mocks.restartApp,
     getSession: mocks.getSession,
+    findWorkspaceFiles: mocks.findWorkspaceFiles,
+    exportSession: mocks.exportSession,
+    compactSession: mocks.compactSession,
     isPreview: () => true,
   },
 }));
@@ -77,11 +100,75 @@ function markUnread(
   }));
 }
 
+function connection(
+  id: string,
+  name: string,
+  sessions: PalotSession[],
+  connected = true,
+): ConnectionOverview {
+  const profile: OpenCodeProfile = {
+    id,
+    kind: "remote",
+    name,
+    urls: [`https://${id}.example`],
+    credentialID: null,
+    allowPlainHttp: false,
+    lastSuccessfulUrl: null,
+    lastConnectedAt: null,
+  };
+  return {
+    profile,
+    runtime: {
+      connectionID: `${id}-connection`,
+      profileID: id,
+      contractVersion: "test",
+      phase: connected ? "connected" : "stopped",
+      connected,
+      binaryPath: null,
+      version: null,
+      pid: null,
+      managed: false,
+      lastConnectedAt: 1,
+      error: null,
+      versionMismatch: null,
+    },
+    phase: connected ? "ready" : "idle",
+    error: null,
+    lastSyncedAt: 1,
+    projects: [project],
+    sessions,
+    inbox: { pinned: [], inbox: [], snoozed: [], settled: [], nextSnoozeDeadline: null },
+    hasMore: false,
+    loadingMore: false,
+    triageReady: true,
+    attentionState: "ready",
+  };
+}
+
+/** Happy DOM reports AltGraph for any Alt press; Chromium only does for AltGr. */
+function pressAltDigit(digit: number) {
+  const event = new KeyboardEvent("keydown", {
+    key: String(digit),
+    code: `Digit${digit}`,
+    altKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(event, "getModifierState", { value: () => false });
+  window.dispatchEvent(event);
+  return event;
+}
+
 describe("GlobalCommandPalette", () => {
   beforeEach(() => {
+    mocks.overview = { connections: [], includedProfileIDs: [], visibleProfileIDs: null };
     mocks.listRootSessionInfo.mockReset();
     mocks.listRootSessionInfo.mockResolvedValue({ data: [], cursor: {} });
     mocks.getSession.mockReset();
+    mocks.findWorkspaceFiles.mockReset();
+    mocks.findWorkspaceFiles.mockResolvedValue([]);
+    mocks.exportSession.mockReset();
+    mocks.compactSession.mockReset();
   });
 
   afterEach(() => cleanup());
@@ -117,12 +204,15 @@ describe("GlobalCommandPalette", () => {
 
     const options = await screen.findAllByRole("option");
     expect(options[0]?.hasAttribute("data-highlighted")).toBe(true);
-    await userEvent.keyboard("{ArrowDown}");
-    await waitFor(() => expect(options[1]?.hasAttribute("data-highlighted")).toBe(true));
+    const target = screen.getByRole("option", { name: /^Hide navigation/ });
+    const steps = options.indexOf(target);
+    expect(steps).toBeGreaterThan(0);
+    for (let index = 0; index < steps; index += 1) await userEvent.keyboard("{ArrowDown}");
+    await waitFor(() => expect(target.hasAttribute("data-highlighted")).toBe(true));
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() => expect(store.get(navigationOpenAtom)).toBe(false));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     store.set(commandPaletteOpenAtom, true);
     expect(await screen.findByRole("dialog")).toBeTruthy();
@@ -288,7 +378,7 @@ describe("GlobalCommandPalette", () => {
     ]);
     store.set(commandPaletteOpenAtom, true);
     await screen.findByText("New task");
-    await userEvent.click(screen.getByRole("option", { name: "Choose project for a new task" }));
+    await userEvent.click(screen.getByRole("option", { name: /^Choose project for a new task/ }));
 
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(screen.getByText("New task / Choose project")).toBeTruthy();
@@ -342,5 +432,321 @@ describe("GlobalCommandPalette", () => {
     setup();
 
     expect(fireEvent.keyDown(window, { key: "i", metaKey: true, shiftKey: true })).toBe(false);
+  });
+  it("lists recent tasks first, then quick actions and every settings page", async () => {
+    const { store } = setup();
+    store.set(commandPaletteOpenAtom, true);
+
+    const listbox = await screen.findByRole("listbox", { name: "Command results" });
+    const headings = [...listbox.querySelectorAll('[data-slot="command-group-heading"]')].map(
+      (heading) => heading.textContent,
+    );
+    expect(headings.slice(0, 3)).toEqual(["Recent tasksAlt+1–9", "Quick actions", "Settings"]);
+    expect(screen.getAllByRole("option")[0]?.textContent).toContain("Global commander");
+    expect(screen.getByRole("option", { name: /^Keyboard shortcuts/ })).toBeTruthy();
+  });
+
+  it("filters results by tab and switches tabs with arrows only at the caret edges", async () => {
+    const { router, store } = setup();
+    store.set(commandPaletteOpenAtom, true);
+    const input = await screen.findByRole("combobox", { name: "Search tasks and commands" });
+    const selectedTab = () =>
+      within(screen.getByRole("tablist", { name: "Filter results" }))
+        .getAllByRole("tab")
+        .find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent;
+    expect(selectedTab()).toBe("All");
+
+    // An empty field hands ← and → to the tabs.
+    expect(fireEvent.keyDown(input, { key: "ArrowRight" })).toBe(false);
+    await waitFor(() => expect(selectedTab()).toBe("Tasks"));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Global commander"),
+    ]);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(selectedTab()).toBe("Settings");
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryByRole("option", { name: /Global commander/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /^New task/ })).toBeNull();
+
+    await userEvent.type(input, "appearance");
+    const caret = (position: number) =>
+      (input as HTMLInputElement).setSelectionRange(position, position);
+    // Mid-text arrows move the caret; a modified arrow keeps extending the selection.
+    caret(3);
+    expect(fireEvent.keyDown(input, { key: "ArrowRight" })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "ArrowLeft" })).toBe(true);
+    caret("appearance".length);
+    expect(fireEvent.keyDown(input, { key: "ArrowRight", shiftKey: true })).toBe(true);
+    expect(selectedTab()).toBe("Settings");
+
+    // At the end, → wraps to All; at the start, ← comes back.
+    expect(fireEvent.keyDown(input, { key: "ArrowRight" })).toBe(false);
+    await waitFor(() => expect(selectedTab()).toBe("All"));
+    caret(0);
+    expect(fireEvent.keyDown(input, { key: "ArrowLeft" })).toBe(false);
+    await waitFor(() => expect(selectedTab()).toBe("Settings"));
+
+    const appearance = await screen.findByRole("option", { name: /^Appearance/ });
+    await waitFor(() => expect(appearance.hasAttribute("data-highlighted")).toBe(true));
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/appearance"));
+  });
+
+  it("names the Enter hint after the highlighted row and moves the fluid fill with the keyboard", async () => {
+    const { store } = setup();
+    store.set(commandPaletteOpenAtom, true);
+    const listbox = await screen.findByRole("listbox", { name: "Command results" });
+    const results = listbox.parentElement;
+    expect(results).toBeTruthy();
+    if (!results) return;
+    const enterHint = () =>
+      document.querySelector('[data-slot="command-palette-enter-hint"]')?.textContent;
+    const options = screen.getAllByRole("option");
+
+    await waitFor(() => expect(enterHint()).toContain("Open task"));
+    expect(results.getAttribute("data-fluid-hover-active-index")).toBe("0");
+
+    await userEvent.keyboard("{ArrowDown}");
+    await waitFor(() => expect(options[1]?.hasAttribute("data-highlighted")).toBe(true));
+    await waitFor(() => expect(results.getAttribute("data-fluid-hover-active-index")).toBe("1"));
+    expect(options[1]?.hasAttribute("data-fluid-hover-active")).toBe(true);
+    expect(listbox.querySelectorAll("[data-highlighted]")).toHaveLength(1);
+    expect(enterHint()).toContain("Run command");
+
+    await userEvent.type(screen.getByRole("combobox"), "appearance");
+    await waitFor(() => expect(enterHint()).toContain("Open settings"));
+    const highlighted = listbox.querySelector("[data-highlighted]");
+    expect(highlighted?.textContent).toContain("Appearance");
+    expect(highlighted?.hasAttribute("data-fluid-hover-active")).toBe(true);
+  });
+
+  it("opens a recent task with Alt and its position", async () => {
+    const { router } = setup();
+
+    const event = pressAltDigit(1);
+
+    expect(event.defaultPrevented).toBe(true);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/session-1"));
+    expect(pressAltDigit(2).defaultPrevented).toBe(false);
+  });
+
+  it("moves to the next recent task with Ctrl+Tab", async () => {
+    const { router } = setup();
+
+    fireEvent.keyDown(window, { key: "Tab", code: "Tab", ctrlKey: true });
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/session-1"));
+  });
+
+  it("focuses the composer with the primary modifier and L", async () => {
+    const composer = document.createElement("textarea");
+    composer.dataset.palotComposerInput = "";
+    document.body.append(composer);
+    setup();
+
+    expect(fireEvent.keyDown(window, { key: "l", ctrlKey: true })).toBe(false);
+
+    await waitFor(() => expect(document.activeElement).toBe(composer));
+    composer.remove();
+  });
+
+  it("searches every visible server and opens results on their own connection", async () => {
+    mocks.overview = {
+      connections: [
+        connection("work", "Work", [
+          session({ id: "work-recent", title: "Work recent", updatedAt: 5 }),
+        ]),
+        connection("home", "Home", [
+          session({ id: "home-recent", title: "Home recent", updatedAt: 9 }),
+        ]),
+        connection("hidden", "Hidden", [session({ id: "hidden-task", title: "Hidden task" })]),
+      ],
+      includedProfileIDs: ["work", "home", "hidden"],
+      visibleProfileIDs: ["work", "home"],
+    };
+    mocks.listRootSessionInfo.mockImplementation(
+      async (_input: unknown, _signal: unknown, connectionID: string) => ({
+        data:
+          connectionID === "work-connection"
+            ? [
+                sessionInfoFromPalot(
+                  session({ id: "work-deploy", title: "Deploy pipeline", updatedAt: 3 }),
+                ),
+              ]
+            : [
+                sessionInfoFromPalot(
+                  session({ id: "home-deploy", title: "Deploy dotfiles", updatedAt: 8 }),
+                ),
+              ],
+        cursor: {},
+      }),
+    );
+    const { queryClient, router, store } = setup();
+    store.set(commandPaletteOpenAtom, true);
+
+    const recent = await screen.findAllByRole("option");
+    expect(recent[0]?.textContent).toContain("Home recent");
+    expect(recent[0]?.textContent).toContain("Home");
+    expect(recent[1]?.textContent).toContain("Work recent");
+    expect(screen.queryByText("Hidden task")).toBeNull();
+
+    await userEvent.type(
+      screen.getByRole("combobox", { name: "Search tasks and commands" }),
+      "deploy",
+    );
+
+    const home = await screen.findByRole("option", { name: /Deploy dotfiles/ });
+    const work = await screen.findByRole("option", { name: /Deploy pipeline/ });
+    expect(home.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(work.textContent).toContain("Work");
+    expect(mocks.listRootSessionInfo.mock.calls.map((call) => call[2]).toSorted()).toEqual([
+      "home-connection",
+      "work-connection",
+    ]);
+
+    await userEvent.click(work);
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/work-deploy"));
+    expect(router.state.location.search).toMatchObject({ profileID: "work" });
+    expect(sessionCatalogInfo(queryClient, "work-connection").map((item) => item.id)).toContain(
+      "work-deploy",
+    );
+    expect(sessionCatalogInfo(queryClient, "home-connection").map((item) => item.id)).not.toContain(
+      "work-deploy",
+    );
+  });
+
+  it("offers task actions only while a task is open and runs them for that task", async () => {
+    const first = setup("/new");
+    first.store.set(commandPaletteOpenAtom, true);
+    const input = await screen.findByRole("combobox", { name: "Search tasks and commands" });
+    await userEvent.type(input, "compact");
+    expect(screen.queryByRole("option", { name: /^Compact task/ })).toBeNull();
+    first.unmount();
+
+    mocks.compactSession.mockResolvedValue(undefined);
+    const { router, store } = setup("/sessions/session-1");
+    await router.load();
+    store.set(commandPaletteOpenAtom, true);
+    await userEvent.type(
+      await screen.findByRole("combobox", { name: "Search tasks and commands" }),
+      "compact task",
+    );
+    await userEvent.click(await screen.findByRole("option", { name: /^Compact task/ }));
+    await waitFor(() => expect(mocks.compactSession).toHaveBeenCalledWith("session-1"));
+    // Closing animates; reopen only once the previous dialog has left, or typing can land in it.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    store.set(commandPaletteOpenAtom, true);
+    await userEvent.type(
+      await screen.findByRole("combobox", { name: "Search tasks and commands" }),
+      "undo last",
+    );
+    await userEvent.click(await screen.findByRole("option", { name: /^Undo last step/ }));
+    await waitFor(() =>
+      expect(store.get(composerActionRequestAtom)).toMatchObject({
+        action: "undo",
+        sessionID: "session-1",
+      }),
+    );
+  });
+
+  it("runs palette commands requested by slash commands", async () => {
+    mocks.exportSession.mockResolvedValue(null);
+    const { router, store } = setup("/sessions/session-1");
+    await router.load();
+    store.set(globalCommandRequestAtom, { commandID: "task.export", nonce: 1 });
+    await waitFor(() =>
+      expect(mocks.exportSession).toHaveBeenCalledWith("session-1", "Global commander", undefined),
+    );
+    expect(store.get(globalCommandRequestAtom)).toBeNull();
+
+    // /open shows the palette on the Files tab.
+    store.set(globalCommandRequestAtom, { commandID: "task.files.open", nonce: 2 });
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(store.get(commandPaletteTabAtom)).toBe("files");
+  });
+
+  it("searches the open task's files on the Files tab and opens one in the workbench", async () => {
+    mocks.findWorkspaceFiles.mockImplementation(async ({ query }: { query: string }) =>
+      [
+        { path: "src/auth.ts", type: "file" },
+        { path: "src/auth", type: "directory" },
+        { path: "README.md", type: "file" },
+      ].filter((entry) => entry.path.includes(query)),
+    );
+    const { router, store } = setup("/sessions/session-1");
+    await router.load();
+    store.set(runtimeAtom, {
+      connectionID: "disconnected",
+      profileID: "test-profile",
+      contractVersion: "test",
+      phase: "connected",
+      connected: true,
+      binaryPath: null,
+      version: null,
+      pid: null,
+      managed: true,
+      lastConnectedAt: 1,
+      error: null,
+      versionMismatch: null,
+    });
+    store.set(workbenchStateAtom, createWorkbenchState());
+    store.set(commandPaletteOpenAtom, true);
+    const input = await screen.findByRole("combobox", { name: "Search tasks and commands" });
+    const selectedTab = () =>
+      within(screen.getByRole("tablist", { name: "Filter results" }))
+        .getAllByRole("tab")
+        .find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent;
+
+    // ← and → cycle through Files, right after Tasks.
+    fireEvent.keyDown(input, { key: "ArrowRight" });
+    fireEvent.keyDown(input, { key: "ArrowRight" });
+    await waitFor(() => expect(selectedTab()).toBe("Files"));
+    await screen.findByRole("option", { name: /README\.md/ });
+    expect(screen.queryByRole("option", { name: /Global commander/ })).toBeNull();
+
+    await userEvent.type(input, "auth");
+    await waitFor(() =>
+      expect(mocks.findWorkspaceFiles).toHaveBeenLastCalledWith(
+        { directory: "/repo", query: "auth", limit: 20 },
+        expect.any(AbortSignal),
+        "disconnected",
+      ),
+    );
+    const auth = await screen.findByRole("option", { name: /auth\.ts/ });
+    await waitFor(() => expect(screen.queryByRole("option", { name: /README/ })).toBeNull());
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    await waitFor(() => expect(auth.hasAttribute("data-highlighted")).toBe(true));
+    expect(
+      document.querySelector('[data-slot="command-palette-enter-hint"]')?.textContent,
+    ).toContain("Open file");
+
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const scope =
+      store.get(workbenchStateAtom).scopes[
+        workbenchScopeKey({ profileID: "test-profile", sessionID: "session-1" })
+      ];
+    expect(scope?.right.tabs).toMatchObject([
+      { kind: "file", resource: { path: "src/auth.ts", location: { directory: "/repo" } } },
+    ]);
+  });
+
+  it("adds matching files to a typed All search after tasks and commands", async () => {
+    mocks.findWorkspaceFiles.mockResolvedValue([{ path: "docs/global.md", type: "file" }]);
+    const { router, store } = setup("/sessions/session-1");
+    await router.load();
+    store.set(commandPaletteOpenAtom, true);
+    const listbox = await screen.findByRole("listbox", { name: "Command results" });
+    expect(mocks.findWorkspaceFiles).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByRole("combobox"), "global");
+    await screen.findByRole("option", { name: /global\.md/ });
+    const headings = [...listbox.querySelectorAll('[data-slot="command-group-heading"]')].map(
+      (heading) => heading.textContent,
+    );
+    expect(headings.indexOf("Files")).toBeGreaterThan(headings.indexOf("Tasks"));
   });
 });

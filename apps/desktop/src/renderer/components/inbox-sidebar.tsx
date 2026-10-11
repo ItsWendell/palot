@@ -31,6 +31,7 @@ import {
   type ComponentProps,
 } from "react";
 import type { PalotProject } from "../../shared";
+import type { PullRequestLink } from "../../shared/source-control-contract";
 import { groupedScheduledSessionIDsAtom } from "../atoms/automations";
 import {
   attentionSyncStateAtom,
@@ -50,6 +51,7 @@ import {
 import { runtimeAtom } from "../atoms/workspace";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionInbox } from "../hooks/use-session-inbox";
+import { usePullRequestLinksBySession } from "../hooks/use-source-control";
 import { useSessionTitleEditor } from "../hooks/use-session-title-editor";
 import {
   useProjectCatalog,
@@ -68,11 +70,14 @@ import {
   sessionSnoozeChoices,
 } from "../lib/session-snooze";
 import {
+  groupInboxSections,
   inboxSessionState,
-  orderInboxSessions,
+  orderInboxSection,
   sameInboxSessionView,
+  type InboxSection,
   type InboxSessionView,
 } from "../lib/session-inbox";
+import { usePointerFreeze, useStableOrder } from "../hooks/use-stable-order";
 import { formatRelativeTime, orderProjects, sessionActivityAt } from "../lib/view-models";
 import type { OpenCodeVcsInfo } from "../services/opencode-vcs";
 import { listRootSessionInfo } from "../services/opencode-catalog";
@@ -107,7 +112,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent } from "./ui/sidebar";
 import {
-  sidebarItemVariants,
   sidebarSectionIconVariants,
   sidebarSectionLabelVariants,
   sidebarSectionTriggerVariants,
@@ -115,6 +119,18 @@ import {
 import { toast } from "./ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { Switch } from "./ui/switch";
+import {
+  SidebarFluidList,
+  sectionChevronRevealClass,
+  sidebarFluidCardClass,
+  sidebarFluidItemClass,
+  sidebarFluidRowProps,
+} from "./sidebar-fluid-list";
+import { PullRequestBadge } from "./pull-requests/pull-request-badge";
+import { samePullRequestLinks } from "./pull-requests/pull-request-presentation";
+
+const INBOX_SECTIONS: readonly InboxSection[] = ["pinned", "inbox", "snoozed", "settled"];
+const inboxRowKey = (item: InboxSessionView) => `${item.section}:${item.session.id}`;
 
 export function InboxSidebarContent() {
   const { openSession, preloadSession } = usePalotNavigation();
@@ -174,7 +190,7 @@ export function InboxSidebarContent() {
       setFilters((current) => ({ ...current, projectID: null }));
     }
   }, [filters.projectID, projectIDs, setFilters]);
-  const filtered = useMemo(() => {
+  const liveRows = useMemo(() => {
     const matchesState = (item: InboxSessionView) =>
       filters.states.length === 0 ||
       filters.states.some((state) => {
@@ -191,13 +207,15 @@ export function InboxSidebarContent() {
         if (filters.projectID && remoteSessionIDs) return remoteSessionIDs.has(item.session.id);
         return true;
       });
-    return {
-      pinned: orderInboxSessions(apply(snapshot.pinned), viewPreferences),
-      inbox: orderInboxSessions(apply(snapshot.inbox), viewPreferences),
-      snoozed: orderInboxSessions(apply(snapshot.snoozed), viewPreferences),
-      settled: orderInboxSessions(apply(snapshot.settled), viewPreferences),
-    };
+    return INBOX_SECTIONS.flatMap((section) =>
+      orderInboxSection(section, apply(snapshot[section]), viewPreferences),
+    );
   }, [filters, groupedScheduledSessionIDs, remoteSessionIDs, snapshot, viewPreferences]);
+  // Hold the rendered order while the pointer is over the list so rows never
+  // move under the cursor; pending reorders apply when it leaves.
+  const { frozen, freezeProps } = usePointerFreeze();
+  const stableRows = useStableOrder(liveRows, inboxRowKey, frozen);
+  const filtered = useMemo(() => groupInboxSections(stableRows), [stableRows]);
   const actionContext = useRef({ filtered, mutationsDisabled, selectedID });
   useLayoutEffect(() => {
     actionContext.current = { filtered, mutationsDisabled, selectedID };
@@ -210,6 +228,8 @@ export function InboxSidebarContent() {
     return [...locations.values()];
   }, [filtered.inbox, filtered.pinned]);
   const branches = useVcsInfoMap(branchLocations);
+  // One links query backs every row's PR badge.
+  const pullRequests = usePullRequestLinksBySession().data;
 
   const selectSession = useCallback(
     (sessionID: string) => {
@@ -305,7 +325,7 @@ export function InboxSidebarContent() {
         pagination={pagination}
         runtime={runtime}
       />
-      <SidebarContent className="min-h-0 overflow-hidden">
+      <SidebarContent className="min-h-0 overflow-hidden" {...freezeProps}>
         <ScrollArea className="h-full min-h-0">
           <div className="space-y-1 px-2 pt-0.5 pb-2">
             {triageError ? (
@@ -335,6 +355,7 @@ export function InboxSidebarContent() {
               onAction={runAction}
               onSnooze={snooze}
               actionsDisabled={mutationsDisabled}
+              pullRequests={pullRequests}
               branches={branches}
             />
             <RichSection
@@ -348,6 +369,7 @@ export function InboxSidebarContent() {
               onAction={runAction}
               onSnooze={snooze}
               actionsDisabled={mutationsDisabled}
+              pullRequests={pullRequests}
               empty={
                 attentionState === "ready"
                   ? pagination.hasNextPage
@@ -369,6 +391,7 @@ export function InboxSidebarContent() {
                 onAction={runAction}
                 onSnooze={snooze}
                 actionsDisabled={mutationsDisabled}
+                pullRequests={pullRequests}
               />
             ) : null}
             {viewPreferences.showSettled ? (
@@ -383,6 +406,7 @@ export function InboxSidebarContent() {
                 onAction={runAction}
                 onSnooze={snooze}
                 actionsDisabled={mutationsDisabled}
+                pullRequests={pullRequests}
               />
             ) : null}
           </div>
@@ -712,14 +736,14 @@ function RichSection({
 }) {
   if (!items.length && !empty) return null;
   const content = (
-    <div className="space-y-0.5">
+    <SidebarFluidList className="space-y-0.5">
       {items.map((item) => (
         <InboxCard key={item.session.id} item={item} {...props} />
       ))}
       {!items.length ? (
         <div className="px-2.5 py-4 text-xs text-muted-foreground">{empty}</div>
       ) : null}
-    </div>
+    </SidebarFluidList>
   );
   if (open === undefined || !onOpenChange) {
     return (
@@ -749,6 +773,8 @@ interface SectionProps {
   onSnooze?(item: InboxSessionView, until: number): void;
   actionsDisabled: boolean;
   branches?: ReadonlyMap<string, OpenCodeVcsInfo>;
+  /** Linked pull requests by session, from the list's single links query. */
+  pullRequests?: ReadonlyMap<string, PullRequestLink[]>;
 }
 
 type InboxRowProps = Omit<SectionProps, "items"> & { item: InboxSessionView };
@@ -762,6 +788,7 @@ const InboxCard = memo(function InboxCard({
   onSnooze,
   actionsDisabled,
   branches,
+  pullRequests,
 }: InboxRowProps) {
   const title = useSessionTitleEditor(item.session);
   const windowDrag = useSessionWindowDrag(item.session.id);
@@ -769,10 +796,18 @@ const InboxCard = memo(function InboxCard({
   const vcs = branches?.get(vcsLocationKey(item.session.location));
   const row = (
     <InboxCardSurface
+      {...sidebarFluidRowProps}
+      className={sidebarFluidCardClass}
       item={item}
       selected={selected}
       vcs={vcs}
       hint={windowDrag.hint}
+      pullRequest={
+        <PullRequestBadge
+          links={pullRequests?.get(item.session.id)}
+          onActivate={() => onSelect(item.session.id)}
+        />
+      }
       buttonProps={{
         ...windowDrag.handleProps,
         className: "cursor-grab active:cursor-grabbing",
@@ -880,7 +915,11 @@ function sameInboxCardProps(previous: InboxRowProps, next: InboxRowProps): boole
     previous.onSnooze === next.onSnooze &&
     previous.actionsDisabled === next.actionsDisabled &&
     location === vcsLocationKey(next.item.session.location) &&
-    previous.branches?.get(location) === next.branches?.get(location)
+    previous.branches?.get(location) === next.branches?.get(location) &&
+    samePullRequestLinks(
+      previous.pullRequests?.get(previous.item.session.id),
+      next.pullRequests?.get(next.item.session.id),
+    )
   );
 }
 
@@ -945,11 +984,11 @@ function CompactShelf({
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <SectionTrigger title={title} count={items.length} open={open} />
       <CollapsibleContent>
-        <div className="space-y-px pb-2">
+        <SidebarFluidList className="space-y-px pb-2">
           {items.map((item) => (
             <CompactRow key={item.session.id} item={item} {...props} />
           ))}
-        </div>
+        </SidebarFluidList>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -993,7 +1032,10 @@ export function SectionTrigger({
           {count}
         </span>
         {open ? (
-          <ChevronDown className={sidebarSectionIconVariants()} aria-hidden="true" />
+          <ChevronDown
+            className={cn(sidebarSectionIconVariants(), sectionChevronRevealClass(true))}
+            aria-hidden="true"
+          />
         ) : (
           <ChevronRight
             className={sidebarSectionIconVariants({ direction: "right" })}
@@ -1004,9 +1046,10 @@ export function SectionTrigger({
     </CollapsibleTrigger>
   );
   return action ? (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center">
+    <div className="group/section-row grid grid-cols-[minmax(0,1fr)_auto_auto] items-center">
       {trigger}
-      <div className="relative z-10 col-start-2 row-start-1 flex items-center justify-center">
+      {/* Quiet until the row is hovered or holds focus; never removed from the tab order. */}
+      <div className="relative z-10 col-start-2 row-start-1 flex items-center justify-center opacity-0 transition-opacity group-focus-within/section-row:opacity-100 group-hover/section-row:opacity-100">
         {action}
       </div>
     </div>
@@ -1023,6 +1066,7 @@ const CompactRow = memo(function CompactRow({
   onAction,
   onSnooze,
   actionsDisabled,
+  pullRequests,
 }: InboxRowProps) {
   const windowDrag = useSessionWindowDrag(item.session.id);
   const action = item.section === "snoozed" ? "wake" : "inbox";
@@ -1031,6 +1075,7 @@ const CompactRow = memo(function CompactRow({
       item={item}
       selected={selectedID === item.session.id}
       hint={windowDrag.hint}
+      pullRequest={<PullRequestBadge links={pullRequests?.get(item.session.id)} />}
       buttonProps={{
         ...windowDrag.handleProps,
         onClick: () => onSelect(item.session.id),
@@ -1086,6 +1131,7 @@ export function InboxCompactRowSurface({
   hint,
   buttonProps,
   connectionBadge,
+  pullRequest,
   children,
   ...props
 }: ComponentProps<"div"> & {
@@ -1094,11 +1140,14 @@ export function InboxCompactRowSurface({
   hint?: ReactNode;
   buttonProps: ComponentProps<"button">;
   connectionBadge?: ReactNode;
+  /** A linked pull request marker; stays visible while the row's metadata yields to actions. */
+  pullRequest?: ReactNode;
   children?: ReactNode;
 }) {
   const visualState = inboxSessionState(item, !selected && catalogSessionIsUnread(item.session));
   return (
     <div
+      {...sidebarFluidRowProps}
       {...props}
       className={cn("group/compact relative", props.className)}
       data-inbox-compact-row
@@ -1109,8 +1158,8 @@ export function InboxCompactRowSurface({
         type="button"
         className={cn(
           "flex w-full cursor-grab items-center text-left active:cursor-grabbing",
-          sidebarItemVariants(),
-          selected && "bg-(--palot-sidebar-selected)",
+          sidebarFluidItemClass(),
+          selected && "bg-(--palot-sidebar-selected) hover:bg-(--palot-sidebar-selected)",
           buttonProps.className,
         )}
       >
@@ -1118,8 +1167,9 @@ export function InboxCompactRowSurface({
         <span className="min-w-0 flex-1 truncate text-compact font-normal">
           {item.session.title ?? "Untitled task"}
         </span>
+        {pullRequest}
         {connectionBadge}
-        <span className="flex min-w-0 max-w-28 shrink-0 items-center gap-1 text-right text-micro text-muted-foreground group-hover/compact:opacity-0 group-has-[:focus-visible]/compact:opacity-0">
+        <span className="flex min-w-0 max-w-28 shrink-0 items-center gap-1 text-right text-micro text-muted-foreground transition-opacity group-hover/compact:opacity-0 group-has-[:focus-visible]/compact:opacity-0">
           {item.section === "snoozed" && item.snoozedUntil ? (
             <>
               <InboxStateGlyph state={visualState} />
@@ -1149,6 +1199,10 @@ function sameCompactRowProps(previous: InboxRowProps, next: InboxRowProps): bool
     previous.onPreload === next.onPreload &&
     previous.onAction === next.onAction &&
     previous.onSnooze === next.onSnooze &&
-    previous.actionsDisabled === next.actionsDisabled
+    previous.actionsDisabled === next.actionsDisabled &&
+    samePullRequestLinks(
+      previous.pullRequests?.get(previous.item.session.id),
+      next.pullRequests?.get(next.item.session.id),
+    )
   );
 }

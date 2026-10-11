@@ -12,8 +12,10 @@ import {
   Pin,
   PinOff,
   Plus,
+  RotateCcw,
   SquareTerminal,
   X,
+  GitCompareArrows,
 } from "lucide-react";
 import {
   Component,
@@ -34,6 +36,8 @@ import { useBrowserSession } from "../../hooks/use-browser-session";
 import type { Browser } from "@opencode/plugin-browser/rpc";
 import {
   workbenchTabTitle,
+  canRestoreWorkbenchTab,
+  type ClosedWorkbenchTab,
   type WorkbenchContextState,
   type WorkbenchPaneID,
   type WorkbenchScope,
@@ -56,6 +60,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -132,7 +139,10 @@ export function WorkbenchPane({
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(list);
-    for (const item of list.children) observer.observe(item);
+    // Tabs only: the list's decorative pills resize on every animation frame.
+    for (const item of list.children) {
+      if (!item.hasAttribute("aria-hidden")) observer.observe(item);
+    }
     list.addEventListener("scroll", measure, { passive: true });
     return () => {
       observer.disconnect();
@@ -235,6 +245,20 @@ export function WorkbenchPane({
       { pane },
     );
   }, [commands, location, pane, scope.sessionID]);
+  const recentlyClosed = (context.recentlyClosed ?? []).filter((entry) =>
+    canRestoreWorkbenchTab(entry.tab, scope),
+  );
+  const reopenTab = useCallback(
+    (tabID?: string) => {
+      const result = commands.reopenTab(tabID);
+      if (!result.ok && result.reason === "tab-limit")
+        showErrorToast(
+          "Could not reopen tab",
+          new Error("Close a workbench tab before reopening another"),
+        );
+    },
+    [commands],
+  );
 
   return (
     <section
@@ -242,6 +266,21 @@ export function WorkbenchPane({
       aria-label={pane === "right" ? "Right workbench" : "Bottom workbench"}
       data-workbench-pane={pane}
       data-shell-surface={pane}
+      onKeyDownCapture={(event) => {
+        if (
+          event.defaultPrevented ||
+          event.repeat ||
+          event.altKey ||
+          !(event.metaKey || event.ctrlKey) ||
+          !event.shiftKey ||
+          event.key.toLowerCase() !== "t" ||
+          !recentlyClosed.length
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        reopenTab();
+      }}
     >
       <Tabs
         value={state.activeTabID}
@@ -271,9 +310,9 @@ export function WorkbenchPane({
           >
             <TabsList
               ref={tabListRef}
-              variant="line"
+              variant="subtle"
               activateOnFocus
-              className="window-no-drag h-full! w-full min-w-0 justify-start gap-1 overflow-x-auto rounded-none px-2 pt-2 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              className="window-no-drag h-full! w-full min-w-0 items-center justify-start gap-0.5 overflow-x-auto rounded-none px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
               {state.tabs.map((tab, index) => (
                 <WorkbenchTabItem
@@ -285,11 +324,6 @@ export function WorkbenchPane({
                     tab.kind === "browser"
                       ? browser?.state.tabs.find((page) => page.id === tab.resource.browserTabID)
                       : undefined
-                  }
-                  separator={
-                    index > 0 &&
-                    state.activeTabID !== tab.id &&
-                    state.activeTabID !== state.tabs[index - 1]?.id
                   }
                   closeTab={() => closeTab(tab)}
                   moveTab={() =>
@@ -325,6 +359,8 @@ export function WorkbenchPane({
             openContext={openContext}
             openChanges={openChanges}
             openTerminal={openTerminal}
+            recentlyClosed={recentlyClosed}
+            reopenTab={reopenTab}
           />
           {pane === "right" && onToggleExpanded ? (
             <Button
@@ -394,6 +430,8 @@ function WorkbenchSurfaceMenu({
   openContext,
   openChanges,
   openTerminal,
+  recentlyClosed,
+  reopenTab,
 }: {
   changesOpen: boolean;
   contextOpen: boolean;
@@ -403,6 +441,8 @@ function WorkbenchSurfaceMenu({
   openContext(): void;
   openChanges(): void;
   openTerminal(): Promise<void>;
+  recentlyClosed: ClosedWorkbenchTab[];
+  reopenTab(tabID?: string): void;
 }) {
   return (
     <DropdownMenu>
@@ -419,7 +459,7 @@ function WorkbenchSurfaceMenu({
       >
         <Plus aria-hidden="true" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
+      <DropdownMenuContent align="end" className="w-64">
         {!contextOpen ? (
           <DropdownMenuItem onClick={openContext}>
             <Gauge /> Context
@@ -444,9 +484,44 @@ function WorkbenchSurfaceMenu({
         </DropdownMenuItem>
         {!changesOpen ? (
           <DropdownMenuItem onClick={openChanges}>
-            <FileDiff /> Changes
+            <GitCompareArrows /> Changes
           </DropdownMenuItem>
         ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          disabled={!recentlyClosed.length}
+          onClick={() => reopenTab()}
+          aria-keyshortcuts="Control+Shift+T Meta+Shift+T"
+          title="Ctrl/Cmd+Shift+T while focused in the workbench"
+        >
+          <RotateCcw /> Reopen closed tab
+        </DropdownMenuItem>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Recently closed in this task</DropdownMenuLabel>
+          {recentlyClosed.length ? (
+            recentlyClosed.map((entry) => (
+              <DropdownMenuItem
+                key={entry.tab.id}
+                onClick={() => reopenTab(entry.tab.id)}
+                title={
+                  "path" in entry.tab.resource
+                    ? entry.tab.resource.path
+                    : workbenchTabTitle(entry.tab)
+                }
+              >
+                <span className="min-w-0 flex-1 truncate">{workbenchTabTitle(entry.tab)}</span>
+                <span className="text-meta text-muted-foreground">
+                  {entry.pane === "right" ? "Right" : "Bottom"}
+                </span>
+              </DropdownMenuItem>
+            ))
+          ) : (
+            <DropdownMenuItem disabled>No recently closed tabs</DropdownMenuItem>
+          )}
+        </DropdownMenuGroup>
+        <p className="px-2 py-1.5 text-meta text-muted-foreground">
+          Browser pages cannot be reopened. Terminals reconnect only if still available.
+        </p>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -457,7 +532,6 @@ function WorkbenchTabItem({
   pane,
   active,
   browserPage,
-  separator,
   closeTab,
   moveTab,
   closeOtherTabs,
@@ -472,7 +546,6 @@ function WorkbenchTabItem({
   pane: WorkbenchPaneID;
   active: boolean;
   browserPage?: { title?: string; url?: string };
-  separator: boolean;
   closeTab(): void;
   moveTab(): void;
   closeOtherTabs(): void;
@@ -502,10 +575,8 @@ function WorkbenchTabItem({
         render={
           <div
             ref={tabRef}
-            className={cn(
-              "group/tab relative flex h-6 min-w-24 max-w-48 shrink-0 items-center rounded-md data-[popup-open]:bg-muted",
-              separator && "palot-workbench-tab-separator",
-            )}
+            data-active={active || undefined}
+            className="group/tab relative flex h-7 max-w-52 min-w-0 shrink-0 items-center rounded-md data-[popup-open]:bg-muted/60"
             onAuxClick={(event) => {
               if (event.button !== 1) return;
               event.preventDefault();
@@ -514,74 +585,44 @@ function WorkbenchTabItem({
           />
         }
       >
-        <button
-          type="button"
-          aria-label={`Close ${title}`}
-          className="absolute left-1 z-10 flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={(event) => {
-            event.stopPropagation();
-            closeTab();
-          }}
-        >
-          <span className="relative size-3.5">
-            {tab.kind === "terminal" || tab.kind === "command" ? (
-              <SquareTerminal
-                className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
-                aria-hidden="true"
-              />
-            ) : tab.kind === "btw" ? (
-              <MessageCircleQuestion
-                className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
-                aria-hidden="true"
-              />
-            ) : tab.kind === "browser" ? (
-              <Globe2
-                className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
-                aria-hidden="true"
-              />
-            ) : tab.kind === "context" ? (
-              <Gauge
-                className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
-                aria-hidden="true"
-              />
-            ) : tab.kind === "changes" || tab.kind === "workspace-files" ? (
-              <Files
-                className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
-                aria-hidden="true"
-              />
-            ) : tab.kind === "file" ? (
-              <FileCode2
-                className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
-                aria-hidden="true"
-              />
-            ) : (
-              <FileDiff
-                className="absolute inset-0 size-3.5 transition-opacity group-hover/tab:opacity-0"
-                aria-hidden="true"
-              />
-            )}
-            <X
-              className="absolute inset-0 size-3.5 opacity-0 transition-opacity group-hover/tab:opacity-100"
-              aria-hidden="true"
-            />
-          </span>
-        </button>
         <TabsTrigger
           value={tab.id}
           onFocus={() => tabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" })}
-          className="h-full min-w-0 flex-1 justify-start rounded-md py-0 pr-5 pl-7 font-normal after:hidden hover:bg-muted/60 data-active:bg-card data-active:ring-1 data-active:ring-border/70 dark:data-active:bg-card"
+          className={cn(
+            // The list draws the active pill and the hover pill; the trigger only sets text.
+            "h-full min-w-0 flex-1 justify-start gap-1.5 rounded-md py-0 pl-2 font-normal text-muted-foreground after:hidden hover:text-foreground data-active:text-foreground",
+            active ? "pr-7" : "pr-2",
+          )}
         >
-          <span className="truncate" title={tooltip}>
+          <WorkbenchTabIcon tab={tab} />
+          <span className="min-w-0 truncate" title={tooltip}>
             {title}
           </span>
           {tab.kind === "changes" || tab.kind === "file-diff" ? (
             <span
-              className="absolute right-2 size-1.5 rounded-full bg-info"
+              className="size-1.5 shrink-0 rounded-full bg-info"
               title={tab.resource.mode === "branch" ? "Branch change" : "Working tree change"}
               aria-label={tab.resource.mode === "branch" ? "Branch change" : "Working tree change"}
             />
           ) : null}
         </TabsTrigger>
+        {/* The active tab keeps its close button visible; others reveal it on hover or focus. */}
+        <button
+          type="button"
+          aria-label={`Close ${title}`}
+          className={cn(
+            "absolute right-1 z-10 flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
+            active
+              ? "opacity-100"
+              : "bg-muted opacity-0 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+            closeTab();
+          }}
+        >
+          <X className="size-3.5" aria-hidden="true" />
+        </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuGroup>
@@ -611,6 +652,26 @@ function WorkbenchTabItem({
       </ContextMenuContent>
     </ContextMenu>
   );
+}
+
+function WorkbenchTabIcon({ tab }: { tab: WorkbenchTab }) {
+  const Icon =
+    tab.kind === "terminal" || tab.kind === "command"
+      ? SquareTerminal
+      : tab.kind === "btw"
+        ? MessageCircleQuestion
+        : tab.kind === "browser"
+          ? Globe2
+          : tab.kind === "context"
+            ? Gauge
+            : tab.kind === "changes"
+              ? GitCompareArrows
+              : tab.kind === "workspace-files"
+                ? Files
+                : tab.kind === "file"
+                  ? FileCode2
+                  : FileDiff;
+  return <Icon className="size-3.5 shrink-0" aria-hidden="true" />;
 }
 
 function WorkbenchTabContent({

@@ -1,6 +1,7 @@
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { createStore } from "jotai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { navigationOpenAtom, sidebarModeAtom } from "../atoms/ui";
 import { phaseAtom, runtimeAtom } from "../atoms/workspace";
 import { renderWithRouter } from "../test-utils/render-with-router";
 import { Workspace } from "./workspace";
@@ -128,6 +129,39 @@ describe("Workspace pane visibility", () => {
         "true",
       );
     });
+  });
+
+  it("peeks the hidden column on rail hover intent without pinning it", async () => {
+    const store = createStore();
+    store.set(phaseAtom, "ready");
+    store.set(navigationOpenAtom, false);
+    store.set(sidebarModeAtom, "inbox");
+    renderWithRouter(<Workspace content={null} />, store);
+    const inbox = await screen.findByRole("button", { name: "Show inbox" });
+    const projects = screen.getByRole("button", { name: "Show projects" });
+
+    // Passing over a view button without resting does not peek.
+    fireEvent.pointerEnter(projects, { pointerType: "mouse" });
+    fireEvent.pointerLeave(projects, { pointerType: "mouse" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(screen.queryByRole("complementary", { name: "Projects preview" })).toBeNull();
+
+    // Resting on a view peeks that view; Escape dismisses it.
+    fireEvent.pointerEnter(inbox, { pointerType: "mouse" });
+    expect(await screen.findByRole("complementary", { name: "Inbox preview" })).toBeTruthy();
+    expect(inbox.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("complementary")).toBeNull());
+
+    // Hovering the other view peeks it; leaving both rail and overlay closes it.
+    fireEvent.pointerEnter(projects, { pointerType: "mouse" });
+    expect(await screen.findByRole("complementary", { name: "Projects preview" })).toBeTruthy();
+    expect(store.get(sidebarModeAtom)).toBe("inbox");
+    fireEvent.pointerMove(document, { clientX: 900, clientY: 400 });
+    await waitFor(() => expect(screen.queryByRole("complementary")).toBeNull());
+
+    expect(store.get(navigationOpenAtom)).toBe(false);
+    expect(store.get(sidebarModeAtom)).toBe("inbox");
   });
 
   it("describes service startup without showing fake progress", () => {
