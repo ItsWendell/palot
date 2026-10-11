@@ -1,6 +1,6 @@
 # Privacy
 
-This policy describes the Palot 0.16.0 source. It may change as pre-release
+This policy describes the Palot 0.17.0 source. It may change as pre-release
 features evolve.
 
 ## Data sent by Palot
@@ -71,6 +71,31 @@ data or files already exported to the OpenCode server. Interrupted cleanup or an
 app crash can leave temporary files behind; review local app and temporary data
 before disposing of a machine or sharing it.
 
+## GitHub pull requests
+
+Pull request features work only for local OpenCode connections. Palot's desktop
+process reads a GitHub token from `GH_TOKEN` or `GITHUB_TOKEN`, or asks the GitHub
+CLI (`gh auth token`). Palot does not save that token, and it is never passed to
+the app's interface. Requests go only to `github.com` or the host set in
+`GH_HOST`.
+
+While a pull request is linked to a task, Palot reads its status from GitHub in
+the background (open pull requests about once a minute). The Pull requests screen
+reads lists, details, checks, comments and changed files when you open them.
+Merging, reviewing, commenting, requesting reviewers, closing or reopening, and
+marking files viewed happen only when you choose them. Watching a pull request
+lets Palot queue a prompt into that task when checks fail or pass, someone
+comments or reviews, or the branch conflicts; that prompt goes through OpenCode
+to the task's model like any other message. GitHub's terms apply to all of these
+requests.
+
+Avatar images load from `avatars.githubusercontent.com`, which exposes normal
+network metadata such as your IP address to GitHub.
+
+Generating a commit message sends the staged files' changes through OpenCode to
+the task's model. Committing and pushing run your local `git` with your own Git
+configuration and credentials.
+
 ## Data stored on the device
 
 `/btw` side questions send the current conversation context through OpenCode for
@@ -83,6 +108,11 @@ Depending on the features used, Palot stores local settings, window and
 appearance preferences, OpenCode connection profiles, encrypted connection
 credentials, app logs, diagnostics history, automation definitions and runs,
 and a local SQLite database for Palot-owned state.
+
+Linked pull requests, their last known status, and watch state are stored in
+that local database until you unlink them. Notification sound choices and edited
+keyboard shortcuts are local preferences. Draft review comments stay in memory
+until you submit the review or quit Palot.
 
 Runtime release preferences and explicitly downloaded OpenCode executables are
 stored in Palot's application data directory. Resetting the prepared runtime

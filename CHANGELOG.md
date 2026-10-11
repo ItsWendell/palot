@@ -7,6 +7,10 @@ operations.
 
 ## Unreleased
 
+## 0.17.0
+
+This remains an experimental pre-release, not a supported stable release.
+
 ### Added
 
 - External credential setup forms for methods advertised by OpenCode, including

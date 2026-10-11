@@ -19,7 +19,7 @@ and managing local OpenCode connections.
 upgrade from Palot 0.11.x. “Palot v2” names the rebuild; the application follows
 the `0.x` SemVer release sequence. OpenCode has its own independent version.
 
-Palot 0.16.0 is open-source pre-release software under active development, with
+Palot 0.17.0 is open-source pre-release software under active development, with
 desktop packaging targets for Linux x64 and macOS Apple Silicon. Available
 packages are experimental, not supported stable releases. macOS downloads are
 ad-hoc signed, not Apple Developer ID signed or notarized. Updates are manual.
@@ -33,7 +33,24 @@ still pre-release and should not be the only protection for important work.
 The 0.12.0 release is source-only. Earlier 0.11.x downloads install the previous
 application, not Palot v2.
 
-### New in 0.16.0
+### New in 0.17.0
+
+- Review GitHub pull requests without leaving Palot: a Pull requests screen with
+  summary, checks, timeline and code, plus merge, approve, comment and viewed
+  files. Link a pull request to a task to keep its status current, settle the
+  task when it merges, and optionally watch it so the agent is woken when checks
+  fail or reviewers comment. Local connections only; Palot uses `GH_TOKEN` or the
+  GitHub CLI. Read the [privacy details](PRIVACY.md#github-pull-requests).
+- Commit and push from the Changes tab, initialize Git, and choose split or
+  unified diffs, word highlights, hidden whitespace changes and find in diff.
+- A navigation rail, a command palette with tabs and task actions, editable
+  keyboard shortcuts, and smoother hover and motion across menus and lists.
+- Mention subagents and references with `@`, get a review offer after a turn
+  that changed files, and keep failed turns visible after reloading.
+- Notification sounds, a default shell setting, Office document previews, and
+  OpenCode 2.0.26.
+
+### Added in 0.16.0
 
 - Choose projects by device/server in one searchable destination picker. Local
   tasks no longer silently reuse a similarly named remote project.
@@ -45,16 +62,6 @@ application, not Palot v2.
 - Recover missing workspaces, open linked session IDs on their originating
   connection, and inspect or stop running agents and commands from one menu.
 - See the response's actual model variant and more compact file-read activity.
-
-### Added in 0.15.0
-
-- Browse workspace files and preview images, Markdown, PDFs and supported audio/video.
-- Add diff-line comments to a task's prompt and review changes from a completed turn.
-- Compare usage with the previous period and expand or resize the workbench.
-- Enable the experimental task browser in Settings → Browser. It is off by
-  default and uses the connected OpenCode server for network access, including
-  localhost and private networks. There is no per-site approval boundary. Read
-  the [browser privacy details](PRIVACY.md#experimental-browser) before enabling it.
 
 ## Install
 
