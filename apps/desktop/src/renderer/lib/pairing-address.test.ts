@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { OpenCodeWebAccessInfo } from "../../shared";
-import { pairingInfoForAddress, suggestedPairingAddress } from "./pairing-address";
+import {
+  pairingInfoForAddress,
+  pairingQRCodePayload,
+  suggestedPairingAddress,
+} from "./pairing-address";
 
 const payload = { urls: ["http://127.0.0.1:4096"], username: "opencode", password: "test-only" };
 const info = { mode: "credentials" as const, ...payload, payload: JSON.stringify(payload) };
@@ -70,11 +74,31 @@ describe("pairing address", () => {
       urls: ["https://workstation.example:8443"],
       payload: "https://workstation.example:8443/auth/connect/abcdefghijklmnop",
     });
-    expect(pairingInfoForAddress(linkInfo, " ").payload).toBe(linkInfo.payload);
+    expect(pairingInfoForAddress(linkInfo, " ").payload).toBe(
+      "https://second.example/auth/connect/abcdefghijklmnop",
+    );
   });
 
   it("keeps the original advertised addresses when no override is selected", () => {
     expect(pairingInfoForAddress(info, " ")).toEqual(info);
+  });
+
+  it("encodes all reachable addresses but never the scanning device's loopback", () => {
+    expect(
+      JSON.parse(
+        pairingQRCodePayload({
+          ...linkInfo,
+          urls: [
+            "http://127.0.0.1:4096",
+            "http://[::1]:4096",
+            "http://dev.localhost:4096",
+            "http://192.168.1.2:4096",
+            "https://device.example",
+          ],
+        })!,
+      ),
+    ).toEqual({ code: linkInfo.code, urls: ["http://192.168.1.2:4096", "https://device.example"] });
+    expect(pairingQRCodePayload({ ...linkInfo, urls: ["http://localhost:4096"] })).toBeNull();
   });
 
   it.each([

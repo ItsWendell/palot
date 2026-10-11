@@ -71,11 +71,20 @@ export function ProviderConnectionDialog({
   const runtime = owner === undefined ? selectedRuntime : owner;
   const runtimeConnectionID = runtime?.connectionID ?? null;
   const previousConnectionID = useRef(runtimeConnectionID);
-  const supportedMethods = integration?.methods.filter((item) => item.type !== "env") ?? [];
+  const availableMethods = integration?.methods.filter((item) => item.type !== "env") ?? [];
   const method =
-    supportedMethods.find((item) => methodKey(item) === methodID) ?? supportedMethods[0];
+    availableMethods.find((item) => methodKey(item) === methodID) ??
+    availableMethods.find((item) => item.type !== "unsupported") ??
+    availableMethods[0];
 
   useEffect(() => () => workflow.dispose(), [workflow]);
+  useEffect(() => {
+    workflow.dispose();
+    setAttempt(null);
+    setBusy(false);
+    setCode("");
+    setMethodID("");
+  }, [integration?.id, workflow]);
   useEffect(() => {
     if (integration && document.activeElement instanceof HTMLElement) {
       returnFocusRef.current = document.activeElement;
@@ -144,16 +153,17 @@ export function ProviderConnectionDialog({
             connected projects.
           </DialogDescription>
         </DialogHeader>
-        {integration && supportedMethods.length > 1 && !attempt ? (
+        {integration && availableMethods.length > 1 && !attempt ? (
           <fieldset className="grid gap-2">
             <legend className="mb-1 text-xs font-medium">Choose a connection method</legend>
-            {supportedMethods.map((item) => {
+            {availableMethods.map((item) => {
               const selected = methodKey(item) === methodKey(method!);
               return (
                 <button
                   key={methodKey(item)}
                   type="button"
                   aria-pressed={selected}
+                  disabled={busy}
                   className="group grid min-h-14 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border border-border/75 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 aria-pressed:border-foreground/20 aria-pressed:bg-muted/45"
                   onClick={() => setMethodID(methodKey(item))}
                 >
@@ -174,13 +184,24 @@ export function ProviderConnectionDialog({
         {!attempt ? (
           method ? (
             <ConnectionMethodForm
-              key={methodKey(method)}
+              key={`${runtimeConnectionID}:${integration?.id}:${methodKey(method)}`}
               method={method}
-              busy={busy}
+              busy={busy || !runtime?.connected}
               onCancel={() => void close()}
               onSubmit={submit}
             />
-          ) : null
+          ) : (
+            <div className="grid gap-3">
+              <p role="status" className="text-sm text-muted-foreground">
+                No connection methods are available here. Configure this integration in OpenCode.
+              </p>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => void close()}>
+                  Cancel
+                </Button>
+              </DialogFooter>
+            </div>
+          )
         ) : (
           <div className="grid gap-3">
             <div
@@ -268,6 +289,22 @@ function ConnectionMethodForm({
     defaultFormAnswers(method.form),
   );
 
+  if (method.type === "unsupported") {
+    return (
+      <>
+        <p role="status" className="text-sm text-muted-foreground">
+          Palot does not support the {method.label} connection method ({method.methodType}). Connect
+          it in OpenCode instead.
+        </p>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="grid gap-3">
@@ -346,32 +383,42 @@ function IntegrationFormField({
   const [customValue, setCustomValue] = useState("");
   if (!formFieldVisible(field, answers)) return null;
   if (field.type === "external") {
-    if (!validHttpUrl(field.url)) {
-      return (
-        <div className="rounded-lg border px-3 py-2 text-xs">
-          <span className="block font-medium">{field.title ?? "External step"}</span>
-          {field.description ? (
-            <span className="mt-0.5 block text-muted-foreground">{field.description}</span>
-          ) : null}
-          <code className="mt-1 block break-all text-micro text-muted-foreground">{field.url}</code>
-        </div>
-      );
-    }
     return (
-      <a
-        href={field.url}
-        target="_blank"
-        rel="noreferrer"
-        className="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs hover:bg-muted/30"
-      >
-        <ExternalLink className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-        <span>
-          <span className="block font-medium">{field.title ?? "Open instructions"}</span>
-          {field.description ? (
-            <span className="mt-0.5 block text-muted-foreground">{field.description}</span>
-          ) : null}
-        </span>
-      </a>
+      <div className="grid gap-2">
+        {validHttpUrl(field.url) ? (
+          <a
+            href={field.url}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs hover:bg-muted/30"
+          >
+            <ExternalLink className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              <span className="block font-medium">{field.title ?? "Open instructions"}</span>
+              {field.description ? (
+                <span className="mt-0.5 block text-muted-foreground">{field.description}</span>
+              ) : null}
+            </span>
+          </a>
+        ) : (
+          <div className="rounded-lg border px-3 py-2 text-xs">
+            <span className="block font-medium">{field.title ?? "External step"}</span>
+            {field.description ? (
+              <span className="mt-0.5 block text-muted-foreground">{field.description}</span>
+            ) : null}
+            <code className="mt-1 block break-all text-micro text-muted-foreground">
+              {field.url}
+            </code>
+          </div>
+        )}
+        <label className="flex items-start gap-2 text-xs">
+          <Checkbox
+            checked={answers[field.key] === true}
+            onCheckedChange={(checked) => onChange(checked)}
+          />
+          <span>I completed this step: {field.title ?? field.key}</span>
+        </label>
+      </div>
     );
   }
   const title = field.title ?? field.key;
@@ -511,7 +558,8 @@ function IntegrationFormField({
 }
 
 function methodKey(method: PalotIntegrationMethod): string {
-  return `${method.type}:${method.id ?? "default"}`;
+  const type = method.type === "unsupported" ? method.methodType : method.type;
+  return `${type}:${method.id ?? "default"}`;
 }
 
 function ConnectionMethodIcon({
@@ -521,6 +569,8 @@ function ConnectionMethodIcon({
 }) {
   if (method.type === "key") return <KeyRound className="size-4" aria-hidden="true" />;
   if (method.type === "command") return <Terminal className="size-4" aria-hidden="true" />;
+  if (method.type === "external") return <ExternalLink className="size-4" aria-hidden="true" />;
+  if (method.type === "unsupported") return <CircleAlert className="size-4" aria-hidden="true" />;
   return <LogIn className="size-4" aria-hidden="true" />;
 }
 
@@ -529,6 +579,8 @@ function connectionMethodDescription(
 ): string {
   if (method.type === "key") return "Enter an API key from the provider.";
   if (method.type === "command") return "Authorize with the provider's command-line flow.";
+  if (method.type === "external") return "Connect credentials managed outside OpenCode.";
+  if (method.type === "unsupported") return "Not supported in Palot. Connect it in OpenCode.";
   return "Authorize with the provider's sign-in flow.";
 }
 

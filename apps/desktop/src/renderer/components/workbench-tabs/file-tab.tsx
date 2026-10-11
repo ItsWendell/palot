@@ -17,6 +17,7 @@ import { Spinner } from "../ui/spinner";
 import { classifyWorkspaceFile, type WorkspaceFilePreview } from "./workspace-file-preview";
 
 const PdfPreview = lazy(() => import("./pdf-preview"));
+const OfficePreview = lazy(() => import("./office-preview"));
 
 export function FileTab({
   tab,
@@ -173,7 +174,9 @@ export function FileTab({
             <RefreshCw data-icon="inline-start" /> Retry
           </Button>
         </Empty>
-      ) : preview?.kind === "too-large" || preview?.kind === "binary" ? (
+      ) : preview?.kind === "too-large" ||
+        preview?.kind === "binary" ||
+        preview?.kind === "unsupported-office" ? (
         <Empty className="rounded-none p-5">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -183,11 +186,22 @@ export function FileTab({
             <EmptyDescription>
               {preview.kind === "too-large"
                 ? `${tab.resource.path} exceeds the ${preview.limitMiB} MiB preview limit.`
-                : `${tab.resource.path} is not a supported image, PDF, audio, video, or UTF-8 text file.`}
+                : preview.kind === "unsupported-office"
+                  ? "Office previews support .docx, .xlsx and .pptx. Legacy, template and macro-enabled formats are not supported."
+                  : `${tab.resource.path} is not a supported image, PDF, Office document, audio, video, or UTF-8 text file.`}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
-      ) : !active && preview && "data" in preview ? null : preview?.kind === "pdf" ? (
+      ) : !active && preview && "data" in preview ? null : preview?.kind === "office" ? (
+        <Suspense fallback={<PreviewLoading />}>
+          <OfficePreview
+            key={tab.resource.path}
+            data={preview.data}
+            format={preview.format}
+            path={tab.resource.path}
+          />
+        </Suspense>
+      ) : preview?.kind === "pdf" ? (
         <Suspense
           fallback={
             <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-meta text-muted-foreground">
@@ -284,7 +298,9 @@ function MediaFilePreview({
   );
 }
 
-function usePreviewObjectURL(preview: Extract<WorkspaceFilePreview, { data: Uint8Array }>) {
+function usePreviewObjectURL(
+  preview: Extract<WorkspaceFilePreview, { mime: string; data: Uint8Array }>,
+) {
   const [objectURL, setObjectURL] = useState<{ data: Uint8Array; url: string } | null>(null);
 
   useEffect(() => {

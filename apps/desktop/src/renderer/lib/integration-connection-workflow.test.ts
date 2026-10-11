@@ -25,10 +25,16 @@ const key: PalotIntegrationMethod = {
   label: "API key",
   form: [],
 };
+const external: PalotIntegrationMethod = {
+  id: "profile",
+  type: "external",
+  label: "Credential profile",
+  form: [],
+};
 const integration: PalotIntegration = {
   id: "example",
   name: "Example",
-  methods: [oauth, command, key],
+  methods: [oauth, command, key, external],
   connections: [],
 };
 const location = { connectionID: "server-a", projectID: "project", directory: "/project" };
@@ -47,6 +53,7 @@ function setup() {
   const scheduled: Array<() => void> = [];
   const palot: IntegrationConnectionPalotAdapter = {
     connectIntegrationKey: vi.fn().mockResolvedValue(undefined),
+    connectIntegrationExternal: vi.fn().mockResolvedValue(undefined),
     connectIntegrationOAuth: vi.fn().mockResolvedValue({
       attemptID: "oauth-1",
       url: "https://example.com/auth",
@@ -105,6 +112,141 @@ function setup() {
 }
 
 describe("integration connection workflow", () => {
+  it("connects external forms without starting or polling an authorization attempt", async () => {
+    const { workflow, palot, callbacks, events, scheduled } = setup();
+    await workflow.start(
+      {
+        ...location,
+        workspaceID: "workspace",
+        integration,
+        method: external,
+        key: "",
+        label: "  Work  ",
+        answer: { profile: "work", enabled: false },
+      },
+      callbacks,
+    );
+    expect(palot.connectIntegrationExternal).toHaveBeenCalledExactlyOnceWith({
+      ...location,
+      workspaceID: "workspace",
+      integrationID: "example",
+      methodID: "profile",
+      label: "Work",
+      answer: { profile: "work", enabled: false },
+    });
+    expect(palot.connectIntegrationKey).not.toHaveBeenCalled();
+    expect(palot.connectIntegrationOAuth).not.toHaveBeenCalled();
+    expect(palot.connectIntegrationCommand).not.toHaveBeenCalled();
+    expect(callbacks.setAttempt).toHaveBeenCalledExactlyOnceWith(null);
+    expect(scheduled).toHaveLength(0);
+    expect(events).toEqual(["invalidate", "toast:Example connected", "close"]);
+    expect(callbacks.setBusy).toHaveBeenLastCalledWith(false);
+  });
+
+  it("rejects unsupported methods without reinterpreting them as commands", async () => {
+    const { workflow, palot, callbacks } = setup();
+    await workflow.start(
+      {
+        ...location,
+        integration,
+        method: {
+          id: "future",
+          type: "unsupported",
+          methodType: "device",
+          label: "Device",
+          form: [],
+        },
+        key: "",
+        label: "",
+        answer: {},
+      },
+      callbacks,
+    );
+    expect(callbacks.showError).toHaveBeenCalledWith(
+      "Could not connect Example",
+      expect.objectContaining({ message: expect.stringContaining("not supported") }),
+    );
+    expect(palot.connectIntegrationCommand).not.toHaveBeenCalled();
+    expect(palot.connectIntegrationExternal).not.toHaveBeenCalled();
+    expect(palot.connectIntegrationOAuth).not.toHaveBeenCalled();
+    expect(palot.connectIntegrationKey).not.toHaveBeenCalled();
+    expect(callbacks.setBusy).toHaveBeenLastCalledWith(false);
+  });
+
+  it.each(["close", "dispose", "replace"] as const)(
+    "ignores an external connection completing after %s",
+    async (action) => {
+      const { workflow, palot, callbacks } = setup();
+      const connected = deferred<void>();
+      vi.mocked(palot.connectIntegrationExternal).mockReturnValue(connected.promise);
+      const first = workflow.start(
+        { ...location, integration, method: external, key: "", label: "", answer: {} },
+        callbacks,
+      );
+      if (action === "close") await workflow.close(callbacks);
+      else if (action === "dispose") workflow.dispose();
+      else
+        await workflow.start(
+          {
+            ...location,
+            connectionID: "server-b",
+            integration,
+            method: oauth,
+            key: "",
+            label: "",
+            answer: {},
+          },
+          callbacks,
+        );
+      vi.mocked(callbacks.setBusy).mockClear();
+      connected.resolve();
+      await first;
+      expect(callbacks.invalidate).not.toHaveBeenCalled();
+      expect(callbacks.showSuccess).not.toHaveBeenCalled();
+      expect(callbacks.showError).not.toHaveBeenCalled();
+      expect(callbacks.setBusy).not.toHaveBeenCalled();
+      expect(callbacks.close).toHaveBeenCalledTimes(action === "close" ? 1 : 0);
+      expect(palot.cancelIntegrationOAuth).not.toHaveBeenCalled();
+      expect(palot.cancelIntegrationCommand).not.toHaveBeenCalled();
+      workflow.dispose();
+    },
+  );
+
+  it("ignores a rejected external request after disposal", async () => {
+    const { workflow, palot, callbacks } = setup();
+    const connected = deferred<void>();
+    vi.mocked(palot.connectIntegrationExternal).mockReturnValue(connected.promise);
+    const first = workflow.start(
+      { ...location, integration, method: external, key: "", label: "", answer: {} },
+      callbacks,
+    );
+    workflow.dispose();
+    connected.reject(new Error("Offline"));
+    await first;
+    expect(callbacks.showError).not.toHaveBeenCalled();
+    expect(callbacks.invalidate).not.toHaveBeenCalled();
+  });
+
+  it.each(["connect", "refresh"])(
+    "releases the external form after a %s failure without reporting success",
+    async (failure) => {
+      const { workflow, palot, callbacks } = setup();
+      if (failure === "connect")
+        vi.mocked(palot.connectIntegrationExternal).mockRejectedValue(
+          new Error("Profile unavailable"),
+        );
+      else vi.mocked(callbacks.invalidate).mockRejectedValue(new Error("Refresh failed"));
+      await workflow.start(
+        { ...location, integration, method: external, key: "", label: "", answer: {} },
+        callbacks,
+      );
+      expect(callbacks.showError).toHaveBeenCalledOnce();
+      expect(callbacks.showSuccess).not.toHaveBeenCalled();
+      expect(callbacks.close).not.toHaveBeenCalled();
+      expect(callbacks.setBusy).toHaveBeenLastCalledWith(false);
+    },
+  );
+
   it("keeps cancellation and late cleanup on the original server when another attempt starts", async () => {
     const { workflow, palot, callbacks } = setup();
     const pending = deferred<Awaited<ReturnType<typeof palot.connectIntegrationOAuth>>>();

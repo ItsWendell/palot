@@ -8,6 +8,10 @@ import { prepareCodeFont } from "../../lib/font-loading";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import { palot } from "../../services/palot";
 import { ptyNotFound } from "../../services/opencode-pty";
+import {
+  recoverWorkbenchTerminal,
+  type WorkbenchTerminalStatus,
+} from "../../services/workbench-terminal";
 import { Button } from "../ui/button";
 
 type TerminalTabDescriptor = Extract<WorkbenchTab, { kind: "terminal" }>;
@@ -41,9 +45,15 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
   const runtime = useAtomValue(runtimeAtom);
   const [ending, setEnding] = useState(false);
-  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [terminalVersion, setTerminalVersion] = useState(0);
+  const [viewAttempt, setViewAttempt] = useState(0);
   const canManage = runtime?.connected === true && runtime.profileID === tab.resource.profileID;
-  const snapshotKey = `${tab.resource.profileID}:${tab.resource.transport}:${tab.resource.ptyID}`;
+  const snapshotKey = JSON.stringify([
+    tab.resource.profileID,
+    tab.resource.location,
+    tab.resource.transport,
+    tab.resource.ptyID,
+  ]);
   const controlKey = `${runtime?.connectionID}:${snapshotKey}`;
   const [controlledConnection, setControlledConnection] = useState<string>();
   const readOnly = tab.resource.readOnly === true && controlledConnection !== controlKey;
@@ -51,14 +61,28 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
   const terminalRef = useRef<GhosttyTerminal | null>(null);
   const fitRef = useRef<{ fit(): void } | null>(null);
   const appearanceRef = useRef(appearance);
-  const [status, setStatus] = useState<"connecting" | "connected" | "exited" | "error">(
-    "connecting",
-  );
+  const readOnlyRef = useRef(readOnly);
+  const ownerRef = useRef(runtime?.connectionID);
+  const ownershipGenerationRef = useRef(0);
+  const recoveryRef = useRef<ReturnType<typeof recoverWorkbenchTerminal> | null>(null);
+  const cursorRef = useRef(0);
+  const seekRef = useRef(0);
+  const [status, setStatus] = useState<WorkbenchTerminalStatus>("connecting");
   const [errorMessage, setErrorMessage] = useState<string>();
 
   useLayoutEffect(() => {
     appearanceRef.current = appearance;
-  }, [appearance]);
+    readOnlyRef.current = readOnly;
+    ownerRef.current = canManage ? runtime?.connectionID : undefined;
+  }, [appearance, readOnly, canManage, runtime?.connectionID]);
+
+  useLayoutEffect(() => {
+    ownershipGenerationRef.current += 1;
+    setEnding(false);
+    return () => {
+      ownershipGenerationRef.current += 1;
+    };
+  }, [canManage, runtime?.connectionID, readOnly, terminalVersion, snapshotKey, tab.resource]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -79,41 +103,14 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !canManage) return;
-    const runtimeConnectionID = runtime?.connectionID;
+    if (!container) return;
     let disposed = false;
-    let connectionID: string | null = null;
     let terminal: GhosttyTerminal | null = null;
-    let reconnectTimer: number | undefined;
     let resizeTimer: number | undefined;
-    let attempts = 0;
     let fitFrame: number | undefined;
-    let cursor = snapshots.get(snapshotKey)?.cursor ?? 0;
-    let seek = snapshots.get(snapshotKey)?.resumable ? cursor : 0;
+    cursorRef.current = snapshots.get(snapshotKey)?.cursor ?? 0;
+    seekRef.current = snapshots.get(snapshotKey)?.resumable ? cursorRef.current : 0;
     const cleanups: Array<() => void> = [];
-    if (tab.resource.transport === "persistent") {
-      cleanups.push(
-        palot.subscribe((batch) => {
-          if (batch.connectionID !== runtimeConnectionID) return;
-          for (const event of batch.events) {
-            if (
-              event.type === "persistent-pty.added" &&
-              event.data.terminal.id === tab.resource.ptyID
-            ) {
-              // The tab resource already represents creation. Delayed delivery must not reset its status.
-              continue;
-            }
-            if (
-              event.type === "persistent-pty.removed" &&
-              event.data.ptyID === tab.resource.ptyID
-            ) {
-              setStatus("exited");
-              if (connectionID) void palot.disconnectPty(connectionID);
-            }
-          }
-        }),
-      );
-    }
 
     const scheduleFit = (fit: { fit(): void }) => {
       if (fitFrame !== undefined) return;
@@ -123,154 +120,10 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
       });
     };
 
-    const connect = async () => {
-      if (disposed) return;
-      setStatus("connecting");
-      const nextConnectionID = await palot.connectPty(
-        {
-          ptyID: tab.resource.ptyID,
-          location: tab.resource.location,
-          cursor: seek,
-          transport: tab.resource.transport,
-          ...(readOnly ? { readOnly: true } : {}),
-        },
-        runtimeConnectionID,
-      );
-      if (disposed) {
-        await palot.disconnectPty(nextConnectionID);
-        return;
-      }
-      connectionID = nextConnectionID;
-      const unsubscribe = palot.onPtyEvent((event) => {
-        if (disposed || event.connectionID !== nextConnectionID) return;
-        if (event.type === "open") {
-          attempts = 0;
-          setStatus("connected");
-          return;
-        }
-        if (event.type === "error") {
-          setStatus("error");
-          return;
-        }
-        if (event.type === "data" && terminal) {
-          if (event.data instanceof ArrayBuffer) {
-            const bytes = new Uint8Array(event.data);
-            if (bytes[0] !== 0) return;
-            try {
-              const value = JSON.parse(new TextDecoder().decode(bytes.subarray(1))) as {
-                cursor?: unknown;
-              };
-              if (typeof value.cursor === "number" && Number.isSafeInteger(value.cursor)) {
-                cursor = value.cursor;
-                seek = cursor;
-              }
-            } catch {
-              // Ignore malformed control frames; terminal output remains usable.
-            }
-            return;
-          }
-          const data = event.data;
-          if (!data) return;
-          terminal.write(data);
-          cursor += data.length;
-          seek = cursor;
-          const current = snapshots.get(snapshotKey) ?? {
-            buffer: "",
-            cursor: 0,
-            cols: terminal.cols,
-            rows: terminal.rows,
-            resumable: true,
-          };
-          const buffer = current.resumable ? current.buffer + data : "";
-          snapshots.set(snapshotKey, {
-            ...current,
-            buffer: buffer.length <= MAX_RESTORABLE_OUTPUT ? buffer : "",
-            cursor,
-            cols: terminal.cols,
-            rows: terminal.rows,
-            resumable: current.resumable && buffer.length <= MAX_RESTORABLE_OUTPUT,
-          });
-          return;
-        }
-        if (event.type === "close") {
-          connectionID = null;
-          unsubscribe();
-          void palot
-            .getPty(
-              tab.resource.location,
-              tab.resource.ptyID,
-              tab.resource.transport,
-              runtimeConnectionID,
-            )
-            .then((pty) => {
-              if (disposed) return;
-              if (pty.status === "exited") {
-                setStatus("exited");
-                return;
-              }
-              reconnectTimer = window.setTimeout(
-                () => {
-                  attempts += 1;
-                  void connect().catch(handleConnectionError);
-                },
-                Math.min(250 * 2 ** Math.min(attempts, 4), 4_000),
-              );
-            })
-            .catch((error) => {
-              if (!disposed && ptyNotFound(error)) setStatus("exited");
-              else handleConnectionError();
-            });
-        }
-      });
-      cleanups.push(unsubscribe);
-      try {
-        await palot.startPty(nextConnectionID);
-      } catch (error) {
-        connectionID = null;
-        unsubscribe();
-        await palot.disconnectPty(nextConnectionID).catch(() => undefined);
-        throw error;
-      }
-    };
-
-    const handleConnectionError = (error?: unknown) => {
-      if (!disposed) {
-        setErrorMessage(error instanceof Error ? error.message : "Terminal connection failed");
-        setStatus("error");
-      }
-    };
-
     const run = async () => {
       const loaded = await loadGhostty();
       if (disposed) return;
-      let snapshot = snapshots.get(snapshotKey);
-      if (!snapshot && tab.resource.transport === "persistent") {
-        let missing = false;
-        const remote = await palot
-          .snapshotPty(tab.resource.ptyID, runtimeConnectionID)
-          .catch((error) => {
-            if (ptyNotFound(error)) {
-              missing = true;
-            }
-            return null;
-          });
-        if (disposed) return;
-        if (remote) {
-          snapshot = {
-            buffer: remote.buffer,
-            cursor: remote.cursor,
-            cols: remote.cols,
-            rows: remote.rows,
-            resumable: true,
-          };
-          snapshots.set(snapshotKey, snapshot);
-          cursor = remote.cursor;
-          seek = remote.cursor;
-        } else if (missing) {
-          setStatus("exited");
-          return;
-        }
-      }
+      const snapshot = snapshots.get(snapshotKey);
       const currentAppearance = appearanceRef.current;
       await prepareCodeFont(currentAppearance.preferences.codeFont);
       if (disposed) return;
@@ -305,62 +158,59 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
       fit.observeResize();
       cleanups.push(() => fit.dispose());
       const dataSubscription = term.onData((data) => {
-        if (!readOnly && !disposed && connectionID) {
-          void palot.writePty({ connectionID, data, cols: term.cols, rows: term.rows });
+        const connectionID = recoveryRef.current?.connectionID();
+        if (!readOnlyRef.current && !disposed && connectionID) {
+          void palot
+            .writePty({ connectionID, data, cols: term.cols, rows: term.rows })
+            .catch(() => undefined);
         }
       });
       cleanups.push(() => dataSubscription.dispose());
       const resizeSubscription = term.onResize(({ cols, rows }) => {
-        if (readOnly || disposed) return;
+        if (readOnlyRef.current || disposed) return;
         if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
         resizeTimer = window.setTimeout(() => {
-          if (disposed) return;
+          const connectionID = recoveryRef.current?.connectionID();
+          if (disposed || readOnlyRef.current || !ownerRef.current || !connectionID) return;
           if (tab.resource.transport === "persistent" && connectionID) {
-            void palot.writePty({ connectionID, data: "", cols, rows, control: true });
+            void palot
+              .writePty({ connectionID, data: "", cols, rows, control: true })
+              .catch(() => undefined);
             return;
           }
-          void palot.resizePty(
-            tab.resource.location,
-            tab.resource.ptyID,
-            tab.resource.transport,
-            {
-              cols,
-              rows,
-            },
-            runtimeConnectionID,
-          );
+          void palot
+            .resizePty(
+              tab.resource.location,
+              tab.resource.ptyID,
+              tab.resource.transport,
+              {
+                cols,
+                rows,
+              },
+              ownerRef.current,
+            )
+            .catch(() => undefined);
         }, 100);
       });
       cleanups.push(() => resizeSubscription.dispose());
-      if (!readOnly) {
-        term.focus();
-        await palot.resizePty(
-          tab.resource.location,
-          tab.resource.ptyID,
-          tab.resource.transport,
-          {
-            cols: term.cols,
-            rows: term.rows,
-          },
-          runtimeConnectionID,
-        );
-      }
-      await connect();
+      setTerminalVersion((version) => version + 1);
     };
 
-    void run().catch(handleConnectionError);
+    void run().catch((error: unknown) => {
+      if (disposed) return;
+      setErrorMessage(error instanceof Error ? error.message : "Terminal view failed to load");
+      setStatus("error");
+    });
     return () => {
       disposed = true;
       if (fitFrame !== undefined) cancelAnimationFrame(fitFrame);
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      if (connectionID) void palot.disconnectPty(connectionID);
       for (const cleanup of cleanups) cleanup();
       if (terminal) {
         const current = snapshots.get(snapshotKey);
         snapshots.set(snapshotKey, {
           buffer: current?.buffer ?? "",
-          cursor,
+          cursor: cursorRef.current,
           cols: terminal.cols,
           rows: terminal.rows,
           resumable: current?.resumable ?? false,
@@ -370,16 +220,124 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
       terminalRef.current = null;
       fitRef.current = null;
     };
-  }, [
-    tab.resource.location,
-    tab.resource.ptyID,
-    tab.resource.transport,
-    readOnly,
-    canManage,
-    runtime?.connectionID,
-    snapshotKey,
-    connectionAttempt,
-  ]);
+  }, [snapshotKey, tab.resource.location, tab.resource.ptyID, tab.resource.transport, viewAttempt]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    const ownerConnectionID = runtime?.connectionID;
+    if (!terminal || !canManage || !ownerConnectionID) return;
+    let cancelled = false;
+    let removed = false;
+    let recovery: ReturnType<typeof recoverWorkbenchTerminal> | null = null;
+    setStatus("connecting");
+    const unsubscribe =
+      tab.resource.transport === "persistent"
+        ? palot.subscribe((batch) => {
+            if (batch.connectionID !== ownerConnectionID) return;
+            if (
+              batch.events.some(
+                (event) =>
+                  event.type === "persistent-pty.removed" &&
+                  event.data.ptyID === tab.resource.ptyID,
+              )
+            ) {
+              removed = true;
+              recovery?.exit();
+              setStatus("exited");
+            }
+          })
+        : () => {};
+    const run = async () => {
+      if (!snapshots.has(snapshotKey) && tab.resource.transport === "persistent") {
+        const remote = await palot
+          .snapshotPty(tab.resource.ptyID, ownerConnectionID)
+          .catch((error: unknown) => {
+            if (ptyNotFound(error)) removed = true;
+            return null;
+          });
+        if (cancelled || removed) {
+          if (!cancelled) setStatus("exited");
+          return;
+        }
+        if (remote) {
+          snapshots.set(snapshotKey, { ...remote, resumable: true });
+          terminal.write(remote.buffer);
+          cursorRef.current = remote.cursor;
+          seekRef.current = remote.cursor;
+        }
+      }
+      if (cancelled || removed) return;
+      if (!readOnly) {
+        terminal.focus();
+        // A failed resize must not throw away the view or prevent reattachment.
+        void palot
+          .resizePty(
+            tab.resource.location,
+            tab.resource.ptyID,
+            tab.resource.transport,
+            { cols: terminal.cols, rows: terminal.rows },
+            ownerConnectionID,
+          )
+          .catch(() => undefined);
+      }
+      recovery = recoverWorkbenchTerminal(tab.resource, ownerConnectionID, {
+        readOnly,
+        cursor: () => seekRef.current,
+        onStatus: (status, error) => {
+          if (cancelled) return;
+          setStatus(status);
+          setErrorMessage(error instanceof Error ? error.message : undefined);
+        },
+        onData: (data) => {
+          if (data instanceof ArrayBuffer) {
+            const bytes = new Uint8Array(data);
+            if (bytes[0] !== 0) return;
+            try {
+              const value = JSON.parse(new TextDecoder().decode(bytes.subarray(1))) as {
+                cursor?: unknown;
+              };
+              if (typeof value.cursor === "number" && Number.isSafeInteger(value.cursor)) {
+                cursorRef.current = value.cursor;
+                seekRef.current = value.cursor;
+                const snapshot = snapshots.get(snapshotKey);
+                if (snapshot) snapshot.cursor = value.cursor;
+              }
+            } catch {
+              // Ignore malformed control frames; terminal output remains usable.
+            }
+            return;
+          }
+          if (!data) return;
+          terminal.write(data);
+          cursorRef.current += data.length;
+          seekRef.current = cursorRef.current;
+          const current = snapshots.get(snapshotKey) ?? {
+            buffer: "",
+            cursor: 0,
+            cols: terminal.cols,
+            rows: terminal.rows,
+            resumable: true,
+          };
+          const buffer = current.resumable ? current.buffer + data : "";
+          snapshots.set(snapshotKey, {
+            buffer: buffer.length <= MAX_RESTORABLE_OUTPUT ? buffer : "",
+            cursor: cursorRef.current,
+            cols: terminal.cols,
+            rows: terminal.rows,
+            resumable: current.resumable && buffer.length <= MAX_RESTORABLE_OUTPUT,
+          });
+        },
+      });
+      recoveryRef.current = recovery;
+    };
+    void run();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      recovery?.stop();
+      if (recoveryRef.current === recovery) recoveryRef.current = null;
+    };
+  }, [canManage, runtime?.connectionID, readOnly, terminalVersion, snapshotKey, tab.resource]);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-code-background font-mono text-code-foreground">
@@ -393,7 +351,10 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
               size="xs"
               variant="outline"
               disabled={!canManage}
-              onClick={() => setConnectionAttempt((attempt) => attempt + 1)}
+              onClick={() => {
+                if (recoveryRef.current) recoveryRef.current.reconnect();
+                else setViewAttempt((attempt) => attempt + 1);
+              }}
             >
               Reconnect terminal
             </Button>
@@ -420,22 +381,34 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
                 )
               )
                 return;
+              const recovery = recoveryRef.current;
+              const generation = ownershipGenerationRef.current;
+              const ownerConnectionID = runtime?.connectionID;
+              const current = () =>
+                ownershipGenerationRef.current === generation && recoveryRef.current === recovery;
               setEnding(true);
               void palot
                 .removePty(
                   tab.resource.location,
                   tab.resource.ptyID,
                   tab.resource.transport,
-                  runtime?.connectionID,
+                  ownerConnectionID,
                 )
-                .then(() => setStatus("exited"))
+                .then(() => {
+                  if (!current()) return;
+                  recovery?.exit();
+                  setStatus("exited");
+                })
                 .catch((error: unknown) => {
+                  if (!current()) return;
                   setErrorMessage(
                     error instanceof Error ? error.message : "Could not end terminal",
                   );
                   setStatus("error");
                 })
-                .finally(() => setEnding(false));
+                .finally(() => {
+                  if (current()) setEnding(false);
+                });
             }}
           >
             End terminal

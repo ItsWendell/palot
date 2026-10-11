@@ -1,8 +1,12 @@
+import { MAX_OFFICE_BYTES, type OfficeFormat } from "./office-preview-model";
+
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
 const MAX_AUDIO_VIDEO_BYTES = 32 * 1024 * 1024;
 
 export type WorkspaceFilePreview =
+  | { kind: "office"; format: OfficeFormat; data: Uint8Array }
+  | { kind: "unsupported-office" }
   | { kind: "image" | "pdf"; mime: string; data: Uint8Array }
   | { kind: "audio" | "video"; mime: string; data: Uint8Array }
   | { kind: "markdown" | "text"; text: string }
@@ -11,6 +15,19 @@ export type WorkspaceFilePreview =
 
 /** Only sniff formats we explicitly embed; a filename/MIME hint cannot turn SVG or HTML into media. */
 export function classifyWorkspaceFile(path: string, data: Uint8Array): WorkspaceFilePreview {
+  const extension = path.split(".").at(-1)?.toLowerCase();
+  if (extension === "docx" || extension === "xlsx" || extension === "pptx") {
+    if (data.byteLength > MAX_OFFICE_BYTES) return { kind: "too-large", limitMiB: 16 };
+    return { kind: "office", format: extension, data };
+  }
+  if (
+    extension &&
+    /^(?:doc|xls|ppt|docm|xlsm|pptm|dot|dotx|dotm|xlt|xltx|xltm|xlsb|pot|potx|potm|pps|ppsx|ppsm)$/.test(
+      extension,
+    )
+  ) {
+    return { kind: "unsupported-office" };
+  }
   const mime = previewMime(data);
   if (mime) {
     if (mime.startsWith("audio/") || mime.startsWith("video/")) {

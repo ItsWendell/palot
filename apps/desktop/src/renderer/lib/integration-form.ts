@@ -36,7 +36,10 @@ export function visibleAnswers(
 ): Record<string, FormValue> {
   return Object.fromEntries(
     fields.flatMap((field) => {
-      if (field.type === "external" || !formFieldEnabled(field, answers)) return [];
+      if (field.type === "external") {
+        return answers[field.key] === true ? [[field.key, true]] : [];
+      }
+      if (!formFieldEnabled(field, answers)) return [];
       const value = answers[field.key];
       return value === undefined ? [] : [[field.key, value]];
     }),
@@ -48,7 +51,8 @@ export function integrationFormValid(
   answers: Record<string, FormValue>,
 ): boolean {
   return fields.every((field) => {
-    if (field.type === "external" || !formFieldVisible(field, answers)) return true;
+    if (field.type === "external") return answers[field.key] === true;
+    if (!formFieldVisible(field, answers)) return true;
     const value = answers[field.key];
     if (value === undefined || value === null) return !field.required;
     if (field.type === "string") {

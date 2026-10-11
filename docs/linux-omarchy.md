@@ -10,7 +10,15 @@ package format, architecture, or desktop integration.
 Palot selects native Wayland in a Wayland session. The compositor owns placement
 and dimensions; Linux windows have no native minimum-size constraint. Palot does
 not install window rules or rewrite Hyprland configuration. The application menu
-is auto-hidden and the window has a Palot close button.
+is auto-hidden.
+
+Linux windows are frameless. On tiling compositors that close windows through
+their own bindings (Hyprland, Sway, niri, i3, detected from
+`HYPRLAND_INSTANCE_SIGNATURE`, `SWAYSOCK`, `NIRI_SOCKET`, `I3SOCK`, or
+`XDG_CURRENT_DESKTOP`), Palot shows no close button; use the compositor's close
+binding. Other desktops get a close button at the top-right edge, set apart from
+the pane toggles by a divider. Launch with `PALOT_WINDOW_CLOSE_BUTTON=1` to force
+the button on, or `PALOT_WINDOW_CLOSE_BUTTON=0` to force it off.
 
 Choose **Task actions → Open in new window**, use the task's context menu, or drag
 a task out of the window to open the same session separately. Windows share the

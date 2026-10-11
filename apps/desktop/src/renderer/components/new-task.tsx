@@ -430,10 +430,13 @@ export function NewTask({
       <section className="flex min-h-0 min-w-0 flex-1 items-center justify-center px-6 pb-16 @max-[720px]/new-task:px-2 @max-[720px]/new-task:pb-8">
         <div className="flex w-full min-w-0 flex-col items-center gap-9">
           <PalotBeacon />
-          <h1 className="flex max-w-full flex-wrap items-center justify-center gap-x-1 text-center text-hero/tight font-normal tracking-[-0.035em] max-[720px]:text-2xl">
+          <h1 className="flex max-w-full flex-wrap items-center justify-center gap-x-[0.3em] text-center text-hero/tight font-normal tracking-[-0.035em] max-[720px]:text-2xl">
             <span>What should we build in</span>
-            <span className="truncate">{projectName(selectedProject)}</span>
-            <span>?</span>
+            {/* Keep "?" attached to the name; the flex gap belongs only between word groups. */}
+            <span className="flex min-w-0 max-w-full">
+              <span className="truncate">{projectName(selectedProject)}</span>
+              <span className="shrink-0">?</span>
+            </span>
           </h1>
           <Composer
             key={draftSession.id}

@@ -28,9 +28,7 @@ import QRCode from "qrcode";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   OpenCodeCredentialInput,
-  OpenCodePairImportInput,
   OpenCodePairingInfo,
-  OpenCodePairPayload,
   OpenCodeProfile,
   OpenCodeProfileCreateInput,
   OpenCodeProfileSnapshot,
@@ -38,7 +36,12 @@ import type {
   OpenCodeWebAccessInfo,
 } from "../../shared";
 import { writeClipboardText } from "../lib/clipboard";
-import { pairingInfoForAddress, suggestedPairingAddress } from "../lib/pairing-address";
+import {
+  pairingInfoForAddress,
+  pairingQRCodePayload,
+  suggestedPairingAddress,
+} from "../lib/pairing-address";
+import { parsePairingText } from "../lib/pairing-import";
 import { palot } from "../services/palot";
 import { SettingsEmpty, SettingsGroup, SettingsSection } from "./settings-layout";
 import { SshConnectionDialog } from "./ssh-connection-dialog";
@@ -55,6 +58,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { NativeSelect, NativeSelectOption } from "./ui/native-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Textarea } from "./ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -1078,8 +1082,10 @@ export function PairDialog({
       return;
     }
     if (!pairing.info) return;
+    const payload = pairingQRCodePayload(pairing.info);
+    if (!payload) return;
     try {
-      const image = qr ?? (await QRCode.toDataURL(pairing.info.payload, { margin: 1, width: 320 }));
+      const image = qr ?? (await QRCode.toDataURL(payload, { margin: 1, width: 320 }));
       if (request === qrRequest.current) {
         setQr(image);
         setShowQr(true);
@@ -1118,8 +1124,9 @@ export function PairDialog({
                     aria-describedby="pairing-address-help"
                   />
                   <p id="pairing-address-help" className="text-meta text-muted-foreground">
-                    Use an HTTPS proxy you control that forwards to this service. Leave blank to use
-                    the service address. This does not configure the proxy.
+                    Leave blank to include the service’s network addresses in the QR code, including
+                    an active OpenTunnel address. An override must be an HTTPS proxy you control.
+                    This does not configure a proxy or expose the service.
                   </p>
                   {address ? (
                     <Button variant="ghost" size="sm" onClick={() => changeAddress("")}>
@@ -1140,6 +1147,14 @@ export function PairDialog({
                     </p>
                   ) : null}
                 </div>
+                {pairing.info?.mode === "link" && !pairingQRCodePayload(pairing.info) ? (
+                  <p role="status" className="text-meta text-muted-foreground">
+                    Only local addresses are available. Set up a reachable HTTPS address first.
+                    OpenCode 2.0.25 supports <code>opencode pair --remote</code> in your terminal;
+                    enabling it exposes the service through OpenTunnel and can restart the shared
+                    service. Generate new pairing details afterward.
+                  </p>
+                ) : null}
                 {info.mode === "link" ? (
                   <>
                     <p className="text-meta text-muted-foreground">
@@ -1176,7 +1191,7 @@ export function PairDialog({
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={!pairing.info}
+                    disabled={!pairing.info || !pairingQRCodePayload(pairing.info)}
                     onClick={() => void toggleQr()}
                   >
                     <QrCode className="size-4" />
@@ -1286,25 +1301,29 @@ export function ImportPairDialog({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [allowPlainHttp, setAllowPlainHttp] = useState(false);
+  const [selectedAddress, setSelectedAddress] = useState("");
   useEffect(() => {
     if (!open) {
       setText("");
       setAllowPlainHttp(false);
+      setSelectedAddress("");
     }
   }, [open]);
   const parsed = useMemo(() => {
     if (!text.trim()) return null;
     try {
-      return { value: parsePairingText(text), error: null };
+      return { value: parsePairingText(text, selectedAddress), error: null };
     } catch (error) {
       return {
         value: null,
         error: error instanceof Error ? error.message : "Invalid pairing details",
       };
     }
-  }, [text]);
+  }, [text, selectedAddress]);
   const insecure =
-    parsed?.value?.urls.some((url) => url.startsWith("http://") && !isLoopback(url)) ?? false;
+    (parsed?.value?.selectedAddress ? [parsed.value.selectedAddress] : parsed?.value?.urls)?.some(
+      (url) => url.startsWith("http://") && !isLoopback(url),
+    ) ?? false;
   const save = async () => {
     if (!parsed?.value || busy || (insecure && !allowPlainHttp)) return;
     setBusy(true);
@@ -1332,8 +1351,8 @@ export function ImportPairDialog({
         <DialogHeader>
           <DialogTitle>Add paired server</DialogTitle>
           <DialogDescription>
-            Paste a one-time pairing URL or legacy Basic pairing JSON. The link is redeemed only
-            when you import.
+            Paste a one-time pairing URL, QR payload, or legacy Basic pairing JSON. Review the
+            target before importing. Nothing is sent when you paste.
           </DialogDescription>
         </DialogHeader>
         <Textarea
@@ -1341,11 +1360,12 @@ export function ImportPairDialog({
           onChange={(event) => {
             setText(event.target.value);
             setAllowPlainHttp(false);
+            setSelectedAddress("");
           }}
           disabled={busy}
           aria-label="Pairing link or legacy JSON"
           rows={8}
-          placeholder="https://server.example/auth/connect/… or legacy pairing JSON"
+          placeholder="https://server.example/auth/connect/… or pairing JSON"
         />
         {parsed?.error ? (
           <p role="alert" className="text-meta text-destructive">
@@ -1359,11 +1379,37 @@ export function ImportPairDialog({
                 ? "One-time link target"
                 : "Legacy Basic credential targets"}
             </p>
-            {parsed.value.urls.map((url) => (
-              <p key={url} className="break-all font-mono">
-                {url}
-              </p>
-            ))}
+            {parsed.value.selectedAddress ? (
+              <div className="space-y-2">
+                <label htmlFor="pairing-import-address">Redeem at this address</label>
+                <NativeSelect
+                  id="pairing-import-address"
+                  className="w-full"
+                  value={parsed.value.selectedAddress}
+                  disabled={busy}
+                  onChange={(event) => {
+                    setSelectedAddress(event.target.value);
+                    setAllowPlainHttp(false);
+                  }}
+                >
+                  {parsed.value.urls.map((url) => (
+                    <NativeSelectOption key={url} value={url}>
+                      {url}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                <p>
+                  Only this address receives the one-time code. Other addresses are not tried
+                  automatically.
+                </p>
+              </div>
+            ) : (
+              parsed.value.urls.map((url) => (
+                <p key={url} className="break-all font-mono">
+                  {url}
+                </p>
+              ))
+            )}
           </div>
         ) : null}
         {insecure ? (
@@ -1401,69 +1447,6 @@ export function ImportPairDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function parsePairingText(text: string): {
-  input:
-    | Omit<Extract<OpenCodePairImportInput, { link: string }>, "allowPlainHttp">
-    | Omit<Extract<OpenCodePairImportInput, { payload: OpenCodePairPayload }>, "allowPlainHttp">;
-  urls: string[];
-} {
-  if (!text.trim().startsWith("{")) {
-    let url: URL;
-    try {
-      url = new URL(text.trim());
-    } catch {
-      throw new Error("Enter a complete one-time pairing URL or legacy JSON.");
-    }
-    if (
-      !["http:", "https:"].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      !/^\/auth\/connect\/[A-Za-z0-9_-]{16,128}$/.test(url.pathname) ||
-      text.length > 2_048
-    )
-      throw new Error("Enter an OpenCode one-time pairing URL without extra parameters.");
-    return { input: { link: text.trim() }, urls: [url.origin] };
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error("Enter valid legacy pairing JSON.");
-  }
-  if (!value || typeof value !== "object") throw new Error("Invalid legacy pairing JSON.");
-  const payload = value as OpenCodePairPayload;
-  if (
-    !Array.isArray(payload.urls) ||
-    !payload.urls.length ||
-    !payload.urls.every((url) => typeof url === "string") ||
-    typeof payload.username !== "string" ||
-    !payload.username ||
-    typeof payload.password !== "string" ||
-    !payload.password
-  )
-    throw new Error("Legacy pairing JSON needs server URLs, username, and password.");
-  let urls: string[];
-  try {
-    urls = payload.urls.map((address) => {
-      const url = new URL(address.trim());
-      if (
-        !["http:", "https:"].includes(url.protocol) ||
-        url.username ||
-        url.password ||
-        url.pathname !== "/"
-      ) {
-        throw new Error("Invalid server URL");
-      }
-      return url.origin;
-    });
-  } catch {
-    throw new Error("Legacy pairing JSON contains an invalid server URL.");
-  }
-  return { input: { payload }, urls };
 }
 
 function credential(

@@ -2,6 +2,7 @@ import type { FormValue } from "@opencode/client";
 import type {
   ConnectIntegrationKeyInput,
   ConnectIntegrationCommandInput,
+  ConnectIntegrationExternalInput,
   ConnectIntegrationOAuthInput,
   CompleteIntegrationOAuthInput,
   IntegrationAttemptInput,
@@ -25,6 +26,7 @@ export interface IntegrationConnectionAttempt {
 
 export interface IntegrationConnectionPalotAdapter {
   connectIntegrationKey(input: ConnectIntegrationKeyInput): Promise<void>;
+  connectIntegrationExternal(input: ConnectIntegrationExternalInput): Promise<void>;
   connectIntegrationOAuth(
     input: ConnectIntegrationOAuthInput,
   ): Promise<PalotIntegrationOAuthAttempt>;
@@ -116,6 +118,17 @@ export class IntegrationConnectionWorkflow {
         return;
       }
 
+      if (input.method.type === "external") {
+        await this.palot.connectIntegrationExternal({
+          ...common,
+          methodID: input.method.id,
+          answer: input.answer,
+        });
+        if (generation !== this.generation) return;
+        await this.succeed(input.integration.name, callbacks);
+        return;
+      }
+
       if (input.method.type === "oauth") {
         const value = await this.palot.connectIntegrationOAuth({
           ...common,
@@ -131,6 +144,11 @@ export class IntegrationConnectionWorkflow {
         return;
       }
 
+      if (input.method.type !== "command") {
+        throw new Error(
+          "This connection method is not supported by Palot. Connect it in OpenCode.",
+        );
+      }
       const value = await this.palot.connectIntegrationCommand({
         ...common,
         methodID: input.method.id,
@@ -280,6 +298,8 @@ export class IntegrationConnectionWorkflow {
     } catch (cause) {
       if (generation !== this.generation) return;
       callbacks.showError(`Could not refresh ${integrationName} connection`, cause);
+    } finally {
+      if (generation === this.generation) callbacks.setBusy(false);
     }
   }
 

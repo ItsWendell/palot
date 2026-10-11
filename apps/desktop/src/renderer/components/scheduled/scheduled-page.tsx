@@ -154,6 +154,8 @@ function ScheduledProfilePage() {
     }
     return counts;
   }, [runs]);
+  let unreadCount = 0;
+  for (const count of unreadByAutomation.values()) unreadCount += count;
   const orderedAutomations = useMemo(
     () =>
       automations
@@ -363,15 +365,17 @@ function ScheduledProfilePage() {
                   {value}
                 </Button>
               ))}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="ml-auto text-muted-foreground"
-                onClick={() => void dispatch({ type: "mark-all-read" })}
-              >
-                <Check aria-hidden="true" /> Mark all as read
-              </Button>
+              {unreadCount > 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto text-muted-foreground"
+                  onClick={() => void dispatch({ type: "mark-all-read" })}
+                >
+                  <Check aria-hidden="true" /> Mark all as read
+                </Button>
+              ) : null}
             </div>
 
             {loading && !snapshot ? (

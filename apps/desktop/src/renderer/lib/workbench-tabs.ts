@@ -145,7 +145,15 @@ export interface WorkbenchPaneState {
 export interface WorkbenchContextState {
   right: WorkbenchPaneState;
   bottom: WorkbenchPaneState;
+  recentlyClosed?: ClosedWorkbenchTab[];
   updatedAt: number;
+}
+
+export interface ClosedWorkbenchTab {
+  tab: WorkbenchTab;
+  pane: WorkbenchPaneID;
+  index: number;
+  closedAt: number;
 }
 
 export interface WorkbenchState {
@@ -165,6 +173,7 @@ export type OpenWorkbenchTabResult =
 
 export const MAX_WORKBENCH_SCOPES = 20;
 export const MAX_WORKBENCH_TABS = 24;
+export const MAX_CLOSED_WORKBENCH_TABS = 12;
 export const EMPTY_WORKBENCH_CONTEXT: WorkbenchContextState = {
   right: { tabs: [], activeTabID: null, requestedOpen: false },
   bottom: { tabs: [], activeTabID: null, requestedOpen: false },
@@ -224,9 +233,10 @@ export function openWorkbenchTab(
   createID: () => string = defaultTabID,
 ): { state: WorkbenchState; result: OpenWorkbenchTabResult } {
   const key = workbenchScopeKey(scope);
-  const context = state.scopes[key] ?? emptyContext(now);
+  const previous = state.scopes[key] ?? emptyContext(now);
   const candidate = tabFromInput(scope, input, createID());
   const resourceKey = workbenchTabResourceKey(candidate);
+  const context = forgetClosedResource(previous, resourceKey);
   const existing = findTab(context, (tab) => workbenchTabResourceKey(tab) === resourceKey);
   if (existing) {
     const targeted = updateTabTarget(context, existing.pane, existing.tab, candidate);
@@ -386,8 +396,119 @@ export function mutateWorkbench(
   const key = workbenchScopeKey(scope);
   const context = state.scopes[key] ?? (mutation.type === "toggle-pane" ? emptyContext(now) : null);
   if (!context) return state;
-  const next = mutateContext(context, mutation);
+  let next = mutateContext(context, mutation);
+  if (
+    mutation.type === "close" ||
+    mutation.type === "close-others" ||
+    mutation.type === "close-to-end"
+  ) {
+    const retained = new Set(next[mutation.pane].tabs.map((tab) => tab.id));
+    let removedBefore = 0;
+    const closed = context[mutation.pane].tabs
+      .flatMap((tab, index) => {
+        if (retained.has(tab.id)) return [];
+        // Record left-to-right removal positions so newest-first reopen reverses the removals.
+        const restoreIndex = index - removedBefore;
+        removedBefore += 1;
+        return canRestoreWorkbenchTab(tab, scope)
+          ? [{ tab, pane: mutation.pane, index: restoreIndex, closedAt: now }]
+          : [];
+      })
+      .toReversed();
+    if (closed.length) {
+      const resources = new Set(closed.map(({ tab }) => workbenchTabResourceKey(tab)));
+      next = {
+        ...next,
+        recentlyClosed: [
+          ...closed,
+          ...(next.recentlyClosed ?? []).filter(
+            (entry) => !resources.has(workbenchTabResourceKey(entry.tab)),
+          ),
+        ].slice(0, MAX_CLOSED_WORKBENCH_TABS),
+      };
+    }
+  }
   return next === context ? state : withScope(state, key, next, now);
+}
+
+/** Browser pages are deleted on close. Restoring their saved ID cannot restore the page. */
+export function canRestoreWorkbenchTab(tab: WorkbenchTab, scope: WorkbenchScope): boolean {
+  if (tab.kind === "browser" || tab.resource.profileID !== scope.profileID) return false;
+  if (tab.kind === "btw" || tab.kind === "context" || tab.kind === "turn-diff")
+    return tab.resource.sessionID === scope.sessionID;
+  return true;
+}
+
+export function reopenWorkbenchTab(
+  state: WorkbenchState,
+  scope: WorkbenchScope,
+  tabID?: string,
+  now = Date.now(),
+): {
+  state: WorkbenchState;
+  result: OpenWorkbenchTabResult | { ok: false; reason: "no-history" };
+} {
+  const key = workbenchScopeKey(scope);
+  const context = state.scopes[key];
+  const entry = context?.recentlyClosed?.find(
+    (entry) => (!tabID || entry.tab.id === tabID) && canRestoreWorkbenchTab(entry.tab, scope),
+  );
+  if (!context || !entry) return { state, result: { ok: false, reason: "no-history" } };
+  const resourceKey = workbenchTabResourceKey(entry.tab);
+  const existing = findTab(context, (tab) => workbenchTabResourceKey(tab) === resourceKey);
+  if (existing) {
+    return {
+      state: withScope(
+        state,
+        key,
+        activateTab(forgetClosedResource(context, resourceKey), existing.pane, existing.tab.id),
+        now,
+      ),
+      result: {
+        ok: true,
+        tabID: existing.tab.id,
+        pane: existing.pane,
+        created: false,
+        moved: false,
+      },
+    };
+  }
+  if (
+    [...context.right.tabs, ...context.bottom.tabs].filter((tab) => tab.kind !== "browser")
+      .length >= MAX_WORKBENCH_TABS
+  )
+    return { state, result: { ok: false, reason: "tab-limit" } };
+  const tabs = [...context[entry.pane].tabs];
+  const tab = findTab(context, (tab) => tab.id === entry.tab.id)
+    ? { ...entry.tab, id: defaultTabID() }
+    : entry.tab;
+  tabs.splice(Math.min(entry.index, tabs.length), 0, tab);
+  return {
+    state: withScope(
+      state,
+      key,
+      {
+        ...forgetClosedResource(context, resourceKey),
+        [entry.pane]: { tabs, activeTabID: tab.id, requestedOpen: true },
+      },
+      now,
+    ),
+    result: { ok: true, tabID: tab.id, pane: entry.pane, created: true, moved: false },
+  };
+}
+
+function forgetClosedResource(
+  context: WorkbenchContextState,
+  resourceKey: string,
+): WorkbenchContextState {
+  if (!context.recentlyClosed?.some((entry) => workbenchTabResourceKey(entry.tab) === resourceKey))
+    return context;
+  return {
+    ...context,
+    recentlyClosed: context.recentlyClosed.filter(
+      (entry) => workbenchTabResourceKey(entry.tab) !== resourceKey,
+    ),
+  };
 }
 
 function mutateContext(

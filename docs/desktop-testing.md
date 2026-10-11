@@ -107,13 +107,14 @@ Use `--keep` to retain a successful run's artifacts.
 
 ### Preview, review and workbench scenarios
 
-The 0.15.0 scenarios below exercise isolated native behavior. Their definitions
+The scenarios below exercise isolated native behavior. Their definitions
 describe assertions, not qualification of every platform or release artifact.
 Release verification must run against the exact packaged build separately.
 
 - `workspace-preview` browses and searches workspace files through OpenCode,
-  renders image, Markdown, PDF and audio fixtures, refreshes Markdown, checks
-  that embedded script text does not execute, and unloads inactive media.
+  renders image, Markdown, PDF, audio and modern Office fixtures, refreshes Markdown,
+  switches sheets and slides, reopens a closed resource tab, checks that embedded
+  markup stays inert, and unloads inactive media.
   It does not check video playback or remote SSH/HTTP file previews.
 - `review-comments` selects a real diff line, edits/removes comment drafts,
   sends a comment-only prompt, verifies saved structured metadata and opens a
@@ -122,6 +123,9 @@ Release verification must run against the exact packaged build separately.
   narrow-width closure, right-pane expansion/restoration and task-local layout.
 - `usage` includes previous-period comparison and compact-layout
   assertions alongside the existing usage flow.
+- `external-credentials` registers an isolated external integration method and
+  checks form validation, connection labels, saved answers and reload persistence.
+  It does not authenticate with a real provider.
 
 ```sh
 bun run test:e2e -- workspace-preview --keep
@@ -133,7 +137,7 @@ bun run test:e2e -- usage --keep
 ### Browser scenarios
 
 `browser-native` enables Experimental Browser in an isolated Palot profile, attaches the real
-OpenCode 2.0.24 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
+OpenCode 2.0.26 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
 It checks the returned snapshot, Lighthouse category scores and JSON/HTML reports, the session
 workbench address bar, rejection of an out-of-root `file://` URL, and tab-URL restoration after
 detach/reattach when the setting changes. Use `--executable` to exercise the packaged Lighthouse

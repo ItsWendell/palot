@@ -5,6 +5,7 @@ import {
   mutateWorkbench,
   openWorkbenchTab,
   reconcileBrowserPages,
+  reopenWorkbenchTab,
   workbenchScopeKey,
   workbenchTabTitle,
   type WorkbenchScope,
@@ -14,6 +15,245 @@ const scope: WorkbenchScope = { profileID: "profile-1", sessionID: "session-1" }
 const location = { directory: "/repo" };
 
 describe("workbench tabs", () => {
+  it("restores a closed tab's pane, position, pin and resource ownership only in its task", () => {
+    const input = {
+      kind: "terminal" as const,
+      location,
+      ptyID: "child-pty",
+      sessionID: "child-session",
+      transport: "persistent" as const,
+      readOnly: true,
+    };
+    let state = openWorkbenchTab(
+      createWorkbenchState(),
+      scope,
+      input,
+      { pane: "right" },
+      1,
+      () => "terminal",
+    ).state;
+    state = mutateWorkbench(state, scope, {
+      type: "pin",
+      pane: "right",
+      tabID: "terminal",
+      pinned: true,
+    });
+    state = openWorkbenchTab(
+      state,
+      scope,
+      { kind: "file", location, path: "a.ts" },
+      {},
+      2,
+      () => "file",
+    ).state;
+    const closed = mutateWorkbench(
+      state,
+      scope,
+      { type: "close", pane: "right", tabID: "terminal" },
+      3,
+    );
+    for (const other of [
+      { ...scope, sessionID: "other" },
+      { ...scope, profileID: "other" },
+    ]) {
+      expect(reopenWorkbenchTab(closed, other).result).toEqual({ ok: false, reason: "no-history" });
+    }
+    const restored = reopenWorkbenchTab(closed, scope);
+    expect(restored.result).toMatchObject({
+      ok: true,
+      pane: "right",
+      tabID: "terminal",
+      created: true,
+    });
+    const context = restored.state.scopes[workbenchScopeKey(scope)]!;
+    expect(context.right).toMatchObject({
+      requestedOpen: true,
+      activeTabID: "terminal",
+      tabs: [
+        {
+          id: "terminal",
+          pinned: true,
+          resource: { sessionID: "child-session", readOnly: true, ptyID: "child-pty" },
+        },
+        { id: "file" },
+      ],
+    });
+    expect(context.recentlyClosed).toEqual([]);
+  });
+
+  it("bounds recent history, excludes deleted browser pages and restores the newest entry first", () => {
+    let state = createWorkbenchState();
+    for (let index = 0; index < 16; index++) {
+      state = openWorkbenchTab(
+        state,
+        scope,
+        { kind: "file", location, path: `${index}.ts` },
+        {},
+        index,
+        () => `file-${index}`,
+      ).state;
+      state = mutateWorkbench(
+        state,
+        scope,
+        { type: "close", pane: "right", tabID: `file-${index}` },
+        index,
+      );
+    }
+    state = openWorkbenchTab(
+      state,
+      scope,
+      { kind: "browser", location, browserTabID: "deleted-page" },
+      {},
+      20,
+      () => "browser",
+    ).state;
+    state = mutateWorkbench(state, scope, { type: "close", pane: "right", tabID: "browser" });
+    expect(
+      state.scopes[workbenchScopeKey(scope)]?.recentlyClosed?.map((entry) => entry.tab.id),
+    ).toEqual([
+      "file-15",
+      "file-14",
+      "file-13",
+      "file-12",
+      "file-11",
+      "file-10",
+      "file-9",
+      "file-8",
+      "file-7",
+      "file-6",
+      "file-5",
+      "file-4",
+    ]);
+    expect(reopenWorkbenchTab(state, scope).result).toMatchObject({ tabID: "file-15" });
+  });
+
+  it("deduplicates history on ordinary open and activates stale duplicates without moving them", () => {
+    const input = { kind: "file" as const, location, path: "a.ts", line: 12 };
+    const first = openWorkbenchTab(
+      createWorkbenchState(),
+      scope,
+      input,
+      { pane: "bottom" },
+      1,
+      () => "closed",
+    );
+    const closed = mutateWorkbench(first.state, scope, {
+      type: "close",
+      pane: "bottom",
+      tabID: "closed",
+    });
+    const opened = openWorkbenchTab(
+      closed,
+      scope,
+      { ...input, line: 21 },
+      { pane: "right" },
+      2,
+      () => "live",
+    );
+    const key = workbenchScopeKey(scope);
+    expect(opened.state.scopes[key]?.recentlyClosed).toEqual([]);
+    const stale = {
+      ...opened.state,
+      scopes: {
+        ...opened.state.scopes,
+        [key]: { ...opened.state.scopes[key]!, recentlyClosed: closed.scopes[key]!.recentlyClosed },
+      },
+    };
+    const restored = reopenWorkbenchTab(stale, scope, "closed");
+    expect(restored.result).toMatchObject({
+      tabID: "live",
+      pane: "right",
+      created: false,
+      moved: false,
+    });
+    expect(restored.state.scopes[key]?.right.tabs).toMatchObject([{ resource: { line: 21 } }]);
+    expect(restored.state.scopes[key]?.bottom.tabs).toEqual([]);
+    expect(restored.state.scopes[key]?.recentlyClosed).toEqual([]);
+  });
+
+  it.each(["close-others", "close-to-end"] as const)(
+    "records victims of %s and leaves move/hide operations out of history",
+    (type) => {
+      let state = createWorkbenchState();
+      for (const id of ["a", "b", "c"])
+        state = openWorkbenchTab(
+          state,
+          scope,
+          { kind: "file", location, path: `${id}.ts` },
+          {},
+          1,
+          () => id,
+        ).state;
+      state = mutateWorkbench(state, scope, {
+        type: "move",
+        from: "right",
+        to: "bottom",
+        tabID: "a",
+      });
+      state = mutateWorkbench(state, scope, { type: "toggle-pane", pane: "bottom" });
+      expect(state.scopes[workbenchScopeKey(scope)]?.recentlyClosed).toBeUndefined();
+      state = mutateWorkbench(state, scope, { type, pane: "right", tabID: "b" });
+      expect(state.scopes[workbenchScopeKey(scope)]?.recentlyClosed).toMatchObject([
+        { tab: { id: "c" }, pane: "right", index: 1 },
+      ]);
+      expect(
+        reopenWorkbenchTab(state, scope).state.scopes[workbenchScopeKey(scope)]?.right.tabs.map(
+          (tab) => tab.id,
+        ),
+      ).toEqual(["b", "c"]);
+    },
+  );
+
+  it("retains a rejected history entry at the tab limit so it can be reopened later", () => {
+    let state = openWorkbenchTab(
+      createWorkbenchState(),
+      scope,
+      { kind: "file", location, path: "closed.ts" },
+      {},
+      1,
+      () => "closed",
+    ).state;
+    state = mutateWorkbench(state, scope, { type: "close", pane: "right", tabID: "closed" });
+    for (let index = 0; index < 24; index++)
+      state = openWorkbenchTab(state, scope, { kind: "file", location, path: `${index}.ts` }).state;
+    const rejected = reopenWorkbenchTab(state, scope);
+    expect(rejected.result).toEqual({ ok: false, reason: "tab-limit" });
+    expect(rejected.state).toBe(state);
+    state = mutateWorkbench(state, scope, {
+      type: "close",
+      pane: "right",
+      tabID: state.scopes[workbenchScopeKey(scope)]!.right.tabs[0]!.id,
+    });
+    expect(reopenWorkbenchTab(state, scope, "closed").result).toMatchObject({
+      ok: true,
+      tabID: "closed",
+    });
+  });
+  it.each(["right", "bottom"] as const)(
+    "restores original order after closing others while retaining the last tab in %s",
+    (pane) => {
+      let state = createWorkbenchState();
+      for (const id of ["a", "b", "c"])
+        state = openWorkbenchTab(
+          state,
+          scope,
+          { kind: "file", location, path: `${id}.ts` },
+          { pane },
+          1,
+          () => id,
+        ).state;
+      state = mutateWorkbench(state, scope, { type: "close-others", pane, tabID: "c" });
+      const key = workbenchScopeKey(scope);
+      expect(state.scopes[key]?.[pane].tabs.map((tab) => tab.id)).toEqual(["c"]);
+      const first = reopenWorkbenchTab(state, scope);
+      expect(first.result).toMatchObject({ pane, tabID: "b" });
+      expect(first.state.scopes[key]?.[pane].tabs.map((tab) => tab.id)).toEqual(["b", "c"]);
+      const second = reopenWorkbenchTab(first.state, scope);
+      expect(second.result).toMatchObject({ pane, tabID: "a" });
+      expect(second.state.scopes[key]?.[pane].tabs.map((tab) => tab.id)).toEqual(["a", "b", "c"]);
+      expect(second.state.scopes[key]?.recentlyClosed).toEqual([]);
+    },
+  );
   it("projects browser pages by ID and preserves placement while their inventory changes", () => {
     const first = reconcileBrowserPages(
       createWorkbenchState(),

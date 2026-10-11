@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PalotEventBatch } from "../../../shared";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import { palot } from "../../services/palot";
+import * as workbenchTerminal from "../../services/workbench-terminal";
 import { TerminalTab } from "./terminal-tab";
 
 const ghostty = vi.hoisted(() => ({
@@ -13,6 +14,8 @@ const ghostty = vi.hoisted(() => ({
   writes: [] as string[],
   disposed: 0,
 }));
+
+vi.mock("../../atoms/workspace", async () => ({ runtimeAtom: (await import("jotai")).atom(null) }));
 
 vi.mock("../../lib/font-loading", () => ({
   prepareCodeFont: vi.fn().mockResolvedValue(undefined),
@@ -69,9 +72,129 @@ afterEach(() => {
   ghostty.disposed = 0;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("TerminalTab", () => {
+  it.each([
+    ["replacement", "success"],
+    ["replacement", "failure"],
+    ["disconnect-and-return", "success"],
+    ["disconnect-and-return", "failure"],
+    ["unmount", "success"],
+    ["unmount", "failure"],
+    ["same-owner", "success"],
+    ["same-owner", "failure"],
+  ] as const)(
+    "scopes pending End terminal %s/%s to its originating controller",
+    async (transition, outcome) => {
+      const store = createStore();
+      const owner = { connected: true, profileID: "profile-1", connectionID: "owner" };
+      store.set(runtimeAtom, owner as never);
+      const events: Array<Parameters<typeof palot.onPtyEvent>[0]> = [];
+      const controllers: Array<ReturnType<typeof workbenchTerminal.recoverWorkbenchTerminal>> = [];
+      const recover = workbenchTerminal.recoverWorkbenchTerminal;
+      vi.spyOn(workbenchTerminal, "recoverWorkbenchTerminal").mockImplementation((...args) => {
+        const controller = recover(...args);
+        vi.spyOn(controller, "exit");
+        controllers.push(controller);
+        return controller;
+      });
+      vi.spyOn(palot, "connectPty")
+        .mockResolvedValueOnce("owner-socket")
+        .mockResolvedValueOnce("replacement-socket");
+      vi.spyOn(palot, "startPty").mockResolvedValue();
+      vi.spyOn(palot, "resizePty").mockResolvedValue();
+      vi.spyOn(palot, "onPtyEvent").mockImplementation((listener) => {
+        events.push(listener);
+        return () => {};
+      });
+      const detach = vi.spyOn(palot, "disconnectPty").mockResolvedValue();
+      const removals: Array<{ resolve(): void; reject(error: Error): void }> = [];
+      const remove = vi.spyOn(palot, "removePty").mockImplementation(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            removals.push({ resolve, reject });
+          }),
+      );
+      vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+      const descriptor = {
+        ...tab,
+        resource: {
+          ...tab.resource,
+          ptyID: `end-${transition}-${outcome}`,
+          transport: "legacy" as const,
+        },
+      };
+      const view = render(
+        <Provider store={store}>
+          <TerminalTab tab={descriptor} />
+        </Provider>,
+      );
+      await waitFor(() => expect(palot.startPty).toHaveBeenCalledWith("owner-socket"));
+      act(() => events[0]!({ connectionID: "owner-socket", type: "open" }));
+      fireEvent.click(view.getByRole("button", { name: "End terminal" }));
+      expect(remove).toHaveBeenCalledWith(
+        descriptor.resource.location,
+        descriptor.resource.ptyID,
+        "legacy",
+        "owner",
+      );
+      expect(view.getByRole("button", { name: "End terminal" }).hasAttribute("disabled")).toBe(
+        true,
+      );
+      if (transition === "unmount") {
+        view.unmount();
+      } else if (transition !== "same-owner") {
+        if (transition === "disconnect-and-return") {
+          act(() => store.set(runtimeAtom, { ...owner, connected: false } as never));
+        }
+        act(() =>
+          store.set(runtimeAtom, {
+            ...owner,
+            connectionID: transition === "replacement" ? "replacement" : "owner",
+          } as never),
+        );
+        await waitFor(() => expect(palot.startPty).toHaveBeenCalledWith("replacement-socket"));
+        act(() => events[1]!({ connectionID: "replacement-socket", type: "open" }));
+        expect(view.getByRole("button", { name: "End terminal" }).hasAttribute("disabled")).toBe(
+          false,
+        );
+        // An old finally callback must not clear this replacement's pending action either.
+        fireEvent.click(view.getByRole("button", { name: "End terminal" }));
+      }
+      await act(async () => {
+        if (outcome === "success") removals[0]!.resolve();
+        else removals[0]!.reject(new Error("Old-owner removal failed"));
+      });
+      if (transition === "same-owner") {
+        if (outcome === "success") {
+          expect(controllers[0]!.exit).toHaveBeenCalledOnce();
+          expect(view.getByText("exited")).toBeTruthy();
+        } else {
+          expect(controllers[0]!.exit).not.toHaveBeenCalled();
+          expect(view.getByRole("button", { name: "Reconnect terminal" })).toBeTruthy();
+          expect(view.getByRole("button", { name: "End terminal" }).hasAttribute("disabled")).toBe(
+            false,
+          );
+        }
+      } else {
+        for (const controller of controllers) expect(controller.exit).not.toHaveBeenCalled();
+        if (transition !== "unmount") {
+          expect(detach).not.toHaveBeenCalledWith("replacement-socket");
+          expect(view.queryByRole("button", { name: "Reconnect terminal" })).toBeNull();
+          expect(view.queryByText("exited")).toBeNull();
+          expect(view.getByRole("button", { name: "End terminal" }).hasAttribute("disabled")).toBe(
+            true,
+          );
+          await act(async () => removals[1]!.resolve());
+          expect(controllers[1]!.exit).toHaveBeenCalledOnce();
+          expect(view.getByText("exited")).toBeTruthy();
+        }
+      }
+    },
+  );
+
   it("discards a delayed old-owner snapshot rather than caching or attaching it on another connection", async () => {
     const store = createStore();
     store.set(runtimeAtom, {
@@ -173,7 +296,7 @@ describe("TerminalTab", () => {
     expect(start).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
   });
-  it("retries a failed remote attachment without creating or ending its terminal", async () => {
+  it("automatically retries a failed remote attachment without recreating the view or ending its terminal", async () => {
     const store = createStore();
     store.set(runtimeAtom, {
       connected: true,
@@ -185,6 +308,13 @@ describe("TerminalTab", () => {
       .mockRejectedValueOnce(new Error("Tunnel interrupted"))
       .mockResolvedValueOnce("retry-connection");
     vi.spyOn(palot, "startPty").mockResolvedValue();
+    vi.spyOn(palot, "getPty").mockResolvedValue({
+      id: "remote-retry",
+      title: "Terminal",
+      status: "running",
+      transport: "legacy",
+    });
+    vi.spyOn(palot, "resizePty").mockResolvedValue();
     vi.spyOn(palot, "disconnectPty").mockResolvedValue();
     vi.spyOn(palot, "onPtyEvent").mockReturnValue(() => undefined);
     vi.spyOn(palot, "createPty");
@@ -199,8 +329,8 @@ describe("TerminalTab", () => {
         />
       </Provider>,
     );
-    fireEvent.click(await view.findByRole("button", { name: "Reconnect terminal" }));
     await waitFor(() => expect(palot.startPty).toHaveBeenCalledWith("retry-connection"));
+    expect(ghostty.disposed).toBe(0);
     expect(palot.connectPty).toHaveBeenLastCalledWith(
       expect.objectContaining({ ptyID: "remote-retry", transport: "legacy" }),
       "test",
@@ -209,6 +339,70 @@ describe("TerminalTab", () => {
     expect(palot.removePty).not.toHaveBeenCalled();
     view.unmount();
     expect(palot.disconnectPty).toHaveBeenCalledWith("retry-connection");
+  });
+  it("retains the rendered output through runtime disconnection and reattaches from the latest cursor", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connected: true,
+      profileID: "profile-1",
+      connectionID: "owner",
+    } as never);
+    const events: Array<Parameters<typeof palot.onPtyEvent>[0]> = [];
+    vi.spyOn(palot, "snapshotPty").mockResolvedValue({
+      buffer: "retained output",
+      cursor: 15,
+      cols: 80,
+      rows: 24,
+    });
+    const connect = vi
+      .spyOn(palot, "connectPty")
+      .mockResolvedValueOnce("before")
+      .mockResolvedValueOnce("after");
+    vi.spyOn(palot, "startPty").mockResolvedValue();
+    vi.spyOn(palot, "resizePty").mockResolvedValue();
+    vi.spyOn(palot, "subscribe").mockReturnValue(() => {});
+    vi.spyOn(palot, "onPtyEvent").mockImplementation((listener) => {
+      events.push(listener);
+      return () => {};
+    });
+    const detach = vi.spyOn(palot, "disconnectPty").mockResolvedValue();
+    const create = vi.spyOn(palot, "createPty");
+    const remove = vi.spyOn(palot, "removePty");
+    const view = render(
+      <Provider store={store}>
+        <TerminalTab tab={{ ...tab, resource: { ...tab.resource, ptyID: "retain-view" } }} />
+      </Provider>,
+    );
+    await waitFor(() => expect(palot.startPty).toHaveBeenCalledWith("before"));
+    act(() => events[0]!({ connectionID: "before", type: "data", data: "!" }));
+    act(() =>
+      store.set(runtimeAtom, {
+        connected: false,
+        profileID: "profile-1",
+        connectionID: "owner",
+      } as never),
+    );
+    expect(detach).toHaveBeenCalledWith("before");
+    expect(ghostty.disposed).toBe(0);
+    expect(ghostty.writes).toEqual(["retained output", "!"]);
+    act(() =>
+      store.set(runtimeAtom, {
+        connected: true,
+        profileID: "profile-1",
+        connectionID: "replacement",
+      } as never),
+    );
+    await waitFor(() => expect(palot.startPty).toHaveBeenCalledWith("after"));
+    expect(connect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: 16, ptyID: "retain-view" }),
+      "replacement",
+    );
+    expect(ghostty.disposed).toBe(0);
+    expect(ghostty.writes).toEqual(["retained output", "!"]);
+    expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    view.unmount();
+    expect(ghostty.disposed).toBe(1);
   });
   it("observes without writes or resizing until Take control, and only detaches on unmount", async () => {
     const store = createStore();

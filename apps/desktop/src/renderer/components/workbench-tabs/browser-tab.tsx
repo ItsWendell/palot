@@ -27,13 +27,14 @@ import { browserViewportsAtom, type BrowserViewport } from "../browser-webview-h
 import { useBrowserReconnect, useBrowserSession } from "../../hooks/use-browser-session";
 import { browserSearchEngineAtom, browserShowFullURLAtom } from "../../atoms/ui";
 import { runtimeAtom } from "../../atoms/workspace";
-import { isLocalBrowserURL, resolveBrowserAddress } from "../../lib/browser-address";
+import { isLocalBrowserURL } from "../../lib/browser-address";
 import type { WorkbenchScope } from "../../lib/workbench-tabs";
 import { workbenchScopeKey } from "../../lib/workbench-tabs";
 import { palot } from "../../services/palot";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
+import { BrowserAddressBar } from "./browser-address-bar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,8 +62,6 @@ export function BrowserTab({
   const searchEngine = useAtomValue(browserSearchEngineAtom);
   const showFullURL = useAtomValue(browserShowFullURLAtom);
   const runtime = useAtomValue(runtimeAtom);
-  const [address, setAddress] = useState("");
-  const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
@@ -98,10 +97,6 @@ export function BrowserTab({
       }
     });
   }, [active, bindingID, tabID]);
-
-  useEffect(() => {
-    if (!editing) setAddress(page?.url ?? "");
-  }, [editing, page?.url, page?.id]);
 
   useLayoutEffect(() => {
     if (!bindingID || !page) return;
@@ -224,10 +219,10 @@ export function BrowserTab({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" inert={!active}>
-      <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1">
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-background px-2">
         <Button
           type="button"
-          size="icon-sm"
+          size="icon-xs"
           variant="ghost"
           disabled={!page?.canGoBack}
           aria-label="Browser back"
@@ -237,7 +232,7 @@ export function BrowserTab({
         </Button>
         <Button
           type="button"
-          size="icon-sm"
+          size="icon-xs"
           variant="ghost"
           disabled={!page?.canGoForward}
           aria-label="Browser forward"
@@ -247,7 +242,7 @@ export function BrowserTab({
         </Button>
         <Button
           type="button"
-          size="icon-sm"
+          size="icon-xs"
           variant="ghost"
           disabled={!page}
           aria-label={page?.loading ? "Stop loading" : "Reload page"}
@@ -257,33 +252,18 @@ export function BrowserTab({
         >
           {page?.loading ? <X aria-hidden="true" /> : <RotateCw aria-hidden="true" />}
         </Button>
-        <form
-          className="min-w-0 flex-1"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!page || !address.trim()) return;
-            try {
-              const url = resolveBrowserAddress(address, searchEngine);
-              void command({ type: "navigate", tabID: pageID, url });
-              setEditing(false);
-            } catch (cause) {
-              setError(cause instanceof Error ? cause.message : "Invalid browser address");
-            }
-          }}
-        >
-          <Input
-            aria-label="Browser address"
-            value={editing || showFullURL ? address : displayURL(address)}
-            disabled={!page}
-            placeholder="Search or enter a URL"
-            onFocus={() => setEditing(true)}
-            onBlur={() => setEditing(false)}
-            onChange={(event) => setAddress(event.target.value)}
-          />
-        </form>
+        <BrowserAddressBar
+          key={pageID}
+          url={page?.url ?? ""}
+          searchEngine={searchEngine}
+          showFullURL={showFullURL}
+          disabled={!page}
+          onNavigate={(url) => void command({ type: "navigate", tabID: pageID, url })}
+          onError={setError}
+        />
         <Button
           type="button"
-          size="icon-sm"
+          size="icon-xs"
           variant={inspecting ? "secondary" : "ghost"}
           disabled={!page || !active || !focused || !bindingID}
           aria-label={inspecting ? "Cancel element picker" : "Comment on page element"}
@@ -295,7 +275,7 @@ export function BrowserTab({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button type="button" size="icon-sm" variant="ghost" aria-label="Browser options" />
+              <Button type="button" size="icon-xs" variant="ghost" aria-label="Browser options" />
             }
           >
             <Ellipsis aria-hidden="true" />
@@ -552,13 +532,4 @@ export function BrowserTab({
       </div>
     </div>
   );
-}
-
-function displayURL(value: string): string {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : value;
-  } catch {
-    return value;
-  }
 }

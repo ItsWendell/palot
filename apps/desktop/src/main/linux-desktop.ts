@@ -20,6 +20,30 @@ export function usesWayland(environment = process.env): boolean {
   return environment.XDG_SESSION_TYPE === "wayland" || Boolean(environment.WAYLAND_DISPLAY);
 }
 
+const TILING_DESKTOPS = ["hyprland", "sway", "niri", "i3"];
+
+/**
+ * Tiling compositors close windows through their own bindings, so a renderer
+ * close button only competes with pane controls. PALOT_WINDOW_CLOSE_BUTTON=1|0
+ * forces the button on or off for floating setups and QA.
+ */
+export function windowManagerOwnsClose(environment = process.env): boolean {
+  const override = environment.PALOT_WINDOW_CLOSE_BUTTON;
+  if (override === "1") return false;
+  if (override === "0") return true;
+  if (
+    environment.HYPRLAND_INSTANCE_SIGNATURE ||
+    environment.SWAYSOCK ||
+    environment.NIRI_SOCKET ||
+    environment.I3SOCK
+  )
+    return true;
+  return (environment.XDG_CURRENT_DESKTOP ?? "")
+    .toLowerCase()
+    .split(":")
+    .some((desktop) => TILING_DESKTOPS.includes(desktop.trim()));
+}
+
 export async function linuxDesktopDiagnostics() {
   const [omarchyVersion, theme, monitors, clients, busNames] = await Promise.all([
     readFile(path.join(process.env.OMARCHY_PATH ?? "/usr/share/omarchy", "version"), "utf8").catch(

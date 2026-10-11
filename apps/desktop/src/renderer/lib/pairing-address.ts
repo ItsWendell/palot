@@ -1,4 +1,23 @@
 import type { OpenCodePairingInfo, OpenCodeWebAccessInfo } from "../../shared";
+import { isLocalBrowserURL } from "./browser-address";
+
+/** Prefer an encrypted, reachable address without changing the server's advertised origins. */
+export function preferredPairingAddress(urls: string[]): string | undefined {
+  return (
+    urls.find(
+      (address) => address.startsWith("https://") && !isLocalBrowserURL(new URL(address)),
+    ) ??
+    urls.find((address) => !isLocalBrowserURL(new URL(address))) ??
+    urls[0]
+  );
+}
+
+export function pairingQRCodePayload(info: OpenCodePairingInfo): string | null {
+  if (info.mode === "credentials") return info.payload;
+  const urls = info.urls.filter((address) => !isLocalBrowserURL(new URL(address)));
+  // A scanning device's localhost is not the computer hosting this service.
+  return urls.length ? JSON.stringify({ code: info.code, urls }) : null;
+}
 
 export function suggestedPairingAddress(info: OpenCodeWebAccessInfo | null): string | null {
   if (!info?.local.available || info.tailscale.serveState !== "active") return null;
@@ -19,7 +38,10 @@ export function pairingInfoForAddress(
 ): OpenCodePairingInfo {
   if (!address.trim()) {
     return info.mode === "link"
-      ? { ...info, payload: `${info.urls[0]}/auth/connect/${encodeURIComponent(info.code)}` }
+      ? {
+          ...info,
+          payload: `${preferredPairingAddress(info.urls)}/auth/connect/${encodeURIComponent(info.code)}`,
+        }
       : info;
   }
   let url: URL;

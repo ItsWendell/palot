@@ -9,11 +9,13 @@ import { classifyWorkspaceFile } from "./workspace-file-preview";
 const mocks = vi.hoisted(() => ({
   file: vi.fn((_props: { file: FileContents }) => null),
   pdf: vi.fn((_props: { data: Uint8Array; path: string }) => null),
+  office: vi.fn((_props: { data: Uint8Array; path: string; format: string }) => null),
   query: { data: new Uint8Array(), isPending: false },
 }));
 
 vi.mock("@pierre/diffs/react", () => ({ File: mocks.file }));
 vi.mock("./pdf-preview", () => ({ default: mocks.pdf }));
+vi.mock("./office-preview", () => ({ default: mocks.office }));
 vi.mock("../../atoms/workspace", async () => ({
   runtimeAtom: (await import("jotai")).atom(null),
 }));
@@ -83,6 +85,30 @@ const webm = () =>
   );
 
 describe("workspace file preview classification", () => {
+  it.each(["docx", "xlsx", "pptx"])(
+    "routes .%s to the bounded Office parser, never the source or media viewer",
+    (format) => {
+      const data = text("not a valid Office package");
+      expect(classifyWorkspaceFile(`report.${format.toUpperCase()}`, data)).toEqual({
+        kind: "office",
+        format,
+        data,
+      });
+      expect(
+        classifyWorkspaceFile(`report.${format}`, new Uint8Array(16 * 1024 * 1024 + 1)),
+      ).toEqual({ kind: "too-large", limitMiB: 16 });
+    },
+  );
+
+  it.each(["doc", "xls", "ppt", "docm", "xlsm", "pptm", "xlsb"])(
+    "explicitly rejects unsupported .%s files",
+    (extension) => {
+      expect(classifyWorkspaceFile(`report.${extension}`, text("payload"))).toEqual({
+        kind: "unsupported-office",
+      });
+    },
+  );
+
   it.each([
     ["image/png", bytes(137, 80, 78, 71, 13, 10, 26, 10)],
     ["image/jpeg", bytes(255, 216, 255, 224)],
@@ -193,6 +219,7 @@ describe("FileTab previews", () => {
     vi.restoreAllMocks();
     mocks.file.mockClear();
     mocks.pdf.mockClear();
+    mocks.office.mockClear();
   });
 
   it("renders Markdown as safe content, then returns to the unchanged source viewer", async () => {
@@ -290,5 +317,30 @@ describe("FileTab previews", () => {
     mocks.query.data = new Uint8Array(2 * 1024 * 1024 + 1);
     view.rerender(<FileTab tab={tab} />);
     expect(screen.getByText(/exceeds the 2 MiB preview limit/)).toBeTruthy();
+  });
+
+  it("lazily routes Office bytes through the existing file query and releases the preview on inactive tabs", async () => {
+    mocks.query.data = text("PK\u0003\u0004document");
+    const officeTab = { ...tab, resource: { ...tab.resource, path: "report.docx" } };
+    const view = render(<FileTab tab={officeTab} active={false} />);
+    expect(mocks.office).not.toHaveBeenCalled();
+    view.rerender(<FileTab tab={officeTab} active />);
+    await vi.waitFor(() => expect(mocks.office).toHaveBeenCalled());
+    expect(mocks.office.mock.lastCall?.[0]).toMatchObject({
+      data: mocks.query.data,
+      path: "report.docx",
+      format: "docx",
+    });
+    expect(mocks.file).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    view.rerender(<FileTab tab={officeTab} active={false} />);
+    mocks.office.mockClear();
+    view.rerender(
+      <FileTab tab={{ ...officeTab, resource: { ...officeTab.resource, path: "legacy.doc" } }} />,
+    );
+    expect(
+      screen.getByText(/Legacy, template and macro-enabled formats are not supported/),
+    ).toBeTruthy();
+    expect(mocks.office).not.toHaveBeenCalled();
   });
 });

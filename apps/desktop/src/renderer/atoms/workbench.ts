@@ -2,12 +2,16 @@ import { atom, useAtomValue, useStore } from "jotai";
 import { selectAtom } from "jotai/utils";
 import { useMemo } from "react";
 import { loadPersistedValue, savePersistedValue } from "./persisted";
-import { isWorkbenchState, parseWorkbenchState } from "../lib/workbench-persistence";
+import {
+  isWorkbenchRecoveryState,
+  parseWorkbenchRecoveryState,
+} from "../lib/workbench-recovery-persistence";
 import {
   EMPTY_WORKBENCH_CONTEXT,
   createWorkbenchState,
   mutateWorkbench,
   openWorkbenchTab,
+  reopenWorkbenchTab,
   workbenchScopeKey,
   type OpenWorkbenchTabInput,
   type OpenWorkbenchTabOptions,
@@ -23,8 +27,8 @@ const valueAtom = atom(
   loadPersistedValue({
     key: PERSISTENCE_KEY,
     initialValue: createWorkbenchState(),
-    validate: isWorkbenchState,
-    migrate: (value) => parseWorkbenchState(value),
+    validate: isWorkbenchRecoveryState,
+    migrate: (value) => parseWorkbenchRecoveryState(value),
   }),
 );
 let timer: number | undefined;
@@ -68,6 +72,13 @@ export const workbenchCommandAtom = atom(
   },
 );
 
+export const workbenchReopenAtom = atom(null, (get, set, scope: WorkbenchScope, tabID?: string) => {
+  const current = get(workbenchStateAtom);
+  const next = reopenWorkbenchTab(current, scope, tabID);
+  if (next.state !== current) set(workbenchStateAtom, next.state);
+  return next.result;
+});
+
 export function useWorkbenchScope(scope: WorkbenchScope | null) {
   const key = scope ? workbenchScopeKey(scope) : null;
   const selected = useMemo(
@@ -108,6 +119,10 @@ export function useWorkbenchCommands(scope: WorkbenchScope | null) {
         mutate({ type: "close-others", pane, tabID }),
       closeTabsToEnd: (pane: WorkbenchPaneID, tabID: string) =>
         mutate({ type: "close-to-end", pane, tabID }),
+      reopenTab: (tabID?: string) =>
+        currentScope
+          ? store.set(workbenchReopenAtom, currentScope, tabID)
+          : ({ ok: false, reason: "no-history" } as const),
       moveTab: (from: WorkbenchPaneID, to: WorkbenchPaneID, tabID: string) =>
         mutate({ type: "move", from, to, tabID }),
       reorderTab: (pane: WorkbenchPaneID, tabID: string, index: number) =>
