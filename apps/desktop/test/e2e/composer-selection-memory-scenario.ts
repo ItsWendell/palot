@@ -127,13 +127,13 @@ export const composerSelectionMemoryScenario: Scenario = {
     // An untouched draft leaves automatic model selection to OpenCode rather than pinning the UI fallback.
     await openNewTask(page, projectID);
     await expect(
-      page.getByRole("button", { name: "Agent: Default agent", exact: true }),
+      page.getByRole("button", { name: `Agent: ${alpha} (default)`, exact: true }),
     ).toBeVisible();
     await useCurrentCheckout(page);
     await page.getByRole("textbox", { name: "Message Palot" }).fill(AUTOMATIC_PROMPT);
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.getByText(AUTOMATIC_RESPONSE, { exact: true })).toBeVisible();
-    const automaticID = new URL(page.url()).hash.slice("#/sessions/".length);
+    const automaticID = new URL(page.url()).hash.slice("#/sessions/".length).split("?")[0]!;
     expect((await client.session.get({ sessionID: automaticID })).model).toBeUndefined();
     const automaticRequests = llm.requests.filter(({ body }) => !isTitleRequest(body));
     expect(automaticRequests).toHaveLength(1);
@@ -142,7 +142,7 @@ export const composerSelectionMemoryScenario: Scenario = {
     expect(JSON.stringify(automaticRequests[0]!.body)).toContain(ALPHA_SYSTEM);
     await openNewTask(page, projectID);
     await expect(
-      page.getByRole("button", { name: "Agent: Default agent", exact: true }),
+      page.getByRole("button", { name: `Agent: ${alpha} (default)`, exact: true }),
     ).toBeVisible();
     await navigate(page, `#/sessions/${session.id}`);
 
@@ -191,7 +191,7 @@ export const composerSelectionMemoryScenario: Scenario = {
     await page.getByRole("textbox", { name: "Message Palot" }).fill(PROMPT);
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect.poll(() => new URL(page.url()).hash).toMatch(/^#\/sessions\//);
-    const createdID = new URL(page.url()).hash.slice("#/sessions/".length);
+    const createdID = new URL(page.url()).hash.slice("#/sessions/".length).split("?")[0]!;
     expect(createdID).not.toBe(session.id);
     expect(createdID).not.toBe(other.id);
     await expectSelection(client, createdID, BETA, ref(OTHER_MODEL));

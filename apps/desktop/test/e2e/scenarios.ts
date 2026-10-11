@@ -47,6 +47,7 @@ import { openCodeReleaseChannelScenario } from "./opencode-release-channel-scena
 import { openCodeRuntimeAcquisitionScenario } from "./opencode-runtime-acquisition-scenario.ts";
 import { openCodeLoginSettingsScenario } from "./opencode-login-settings-scenario.ts";
 import { openCodeApiMigrationScenario } from "./opencode-api-migration-scenario.ts";
+import { externalCredentialsScenario } from "./external-credentials-scenario.ts";
 import { shortTranscriptScenario } from "./short-transcript-scenario.ts";
 import { coldSessionNavigationScenario } from "./cold-session-navigation-scenario.ts";
 import { startupAttentionScenario } from "./startup-attention-scenario.ts";
@@ -185,6 +186,7 @@ export const scenarios = {
   "opencode-runtime-acquisition": openCodeRuntimeAcquisitionScenario,
   "opencode-login-settings": openCodeLoginSettingsScenario,
   "opencode-api-migration": openCodeApiMigrationScenario,
+  "external-credentials": externalCredentialsScenario,
   "short-transcript": shortTranscriptScenario,
   "cold-session-navigation": coldSessionNavigationScenario,
   "linux-desktop": linuxDesktopScenario,
@@ -785,7 +787,8 @@ export const scenarios = {
 
       await page.getByRole("button", { name: "Open Palot menu" }).click();
       await page.screenshot({ path: join(runRoot, "runtime-menu.png") });
-      await page.getByRole("menuitem", { name: "Usage" }).click();
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Usage", exact: true }).click();
       await page.getByRole("heading", { name: "Usage", level: 1 }).waitFor();
       const rangeDescription = page
         .getByRole("heading", { name: "Usage", level: 1 })
@@ -853,10 +856,12 @@ export const scenarios = {
           `#/sessions/${sessionID}`;
       }, session.id);
       await page.getByLabel("Current task").waitFor();
-      await page.getByRole("button", { name: "Open Palot menu" }).click();
-      await page.getByRole("menuitem", { name: "Usage" }).click();
+      await page.getByRole("button", { name: "Usage", exact: true }).click();
       await page.getByText("Reported cost", { exact: true }).waitFor();
-      await expect(page.getByRole("menuitem", { name: "Usage" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Usage", exact: true })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
       await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0);
 
       await page.setViewportSize({ width: 920, height: 640 });
@@ -869,8 +874,7 @@ export const scenarios = {
       await compactComparison.scrollIntoViewIfNeeded();
       await page.screenshot({ path: join(runRoot, "usage-comparison-minimum.png") });
 
-      await page.getByRole("button", { name: "Open Palot menu" }).click();
-      await page.getByRole("menuitem", { name: "Settings" }).click();
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
       await page.getByRole("heading", { name: "General", level: 1 }).waitFor();
     },
   },
@@ -1380,8 +1384,14 @@ export const scenarios = {
       await page.getByRole("button", { name: "Working", exact: true }).click();
       await page.getByRole("region", { name: "Working tree review", exact: true }).waitFor();
       await changedFile.waitFor();
-      await page.getByRole("button", { name: "Use split diff", exact: true }).click();
-      await page.getByRole("button", { name: "Use unified diff", exact: true }).click();
+      await page.getByRole("button", { name: "Diff view options", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: "Split", exact: true }).click();
+      await expect(page.getByRole("menuitemradio", { name: "Split", exact: true })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      await page.getByRole("menuitemradio", { name: "Unified", exact: true }).click();
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Collapse all diffs", exact: true }).click();
       await page.getByRole("button", { name: "Expand all diffs", exact: true }).click();
       await page
@@ -2445,8 +2455,10 @@ export const scenarios = {
       await page
         .getByText("The delegated inspection completed successfully.", { exact: true })
         .waitFor();
-      await page.getByText("inspect bug", { exact: true }).waitFor();
-      await page.getByText("General finished", { exact: true }).waitFor();
+      // The compact subagent row names agent, status, and description in one label.
+      await page
+        .getByRole("button", { name: "General subagent finished: inspect bug", exact: true })
+        .waitFor();
     },
   },
   "subagent-card-stability": {

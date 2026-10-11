@@ -190,13 +190,22 @@ export function createBrowserNativeScenario(transport: "local" | "http"): Scenar
         );
         expect(llm.scriptedCalls()).toBe(2);
         const addressBar = page.getByRole("textbox", { name: "Browser address" });
-        await expect(addressBar).toHaveValue(address);
+        await expect(addressBar).toHaveValue(new URL(address).host);
         await page.getByRole("tab", { name: "Palot hidden fixture", exact: true }).click();
-        await expect(addressBar).toHaveValue(address);
+        await expect(addressBar).toHaveValue(new URL(address).host);
         await addressBar.focus();
         await expect(addressBar).toHaveValue(`${address}/hidden`);
+        expect(
+          await addressBar.evaluate((element) => {
+            const input = element as HTMLInputElement;
+            return input.selectionStart === 0 && input.selectionEnd === input.value.length;
+          }),
+        ).toBe(true);
+        await addressBar.fill("unfinished search");
+        await addressBar.press("Escape");
+        await expect(addressBar).toHaveValue(new URL(address).host);
         await page.getByRole("tab", { name: "Palot browser fixture", exact: true }).click();
-        await expect(addressBar).toHaveValue(address);
+        await expect(addressBar).toHaveValue(new URL(address).host);
         await page.evaluate(() => {
           location.hash = "#/settings/browser";
         });

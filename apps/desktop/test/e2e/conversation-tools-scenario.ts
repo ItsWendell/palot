@@ -8,8 +8,8 @@ import { isTitleRequest } from "./test-llm-server.ts";
 const PROMPT_COUNT = 16;
 const SOURCE_DRAFT = "Keep this unsent source draft.";
 const SELECTED_TEXT = "History prompt 02: revise the boundary fixture.";
-const RESTORED_TEXT =
-  "Revise the boundary fixture.\n\nRestored file comments:\nfixture.ts (lines 2–4):\nKeep the null guard.";
+// Restored prompts keep their display text; file comments come back as structured line comments.
+const RESTORED_TEXT = "Revise the boundary fixture.";
 
 export const conversationToolsScenario: Scenario = {
   description:
@@ -110,6 +110,11 @@ export const conversationToolsScenario: Scenario = {
       await dialog.getByRole("textbox", { name: "Search prompts" }).fill("History prompt 02");
       await dialog.getByRole("button", { name: new RegExp(SELECTED_TEXT) }).click();
       await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(RESTORED_TEXT);
+      await expect(
+        page
+          .getByRole("region", { name: "Pending line comments" })
+          .getByRole("button", { name: "Remove comment on fixture.ts line 2", exact: true }),
+      ).toBeVisible();
       forkID = new URL(page.url()).hash.split("?")[0]!.slice("#/sessions/".length);
       expect(forkID).not.toBe(source.id);
       const forked = await client.session.get({ sessionID: forkID });

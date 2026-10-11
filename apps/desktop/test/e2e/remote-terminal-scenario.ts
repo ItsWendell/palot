@@ -2,27 +2,8 @@ import { expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios";
-
-type ProfileSnapshot = { activeProfileID: string; profiles: { id: string }[] };
-interface PalotApi {
-  listOpenCodeProfiles(): Promise<ProfileSnapshot>;
-  openCodePairingInfo(): Promise<{ urls: string[]; username: string; password: string }>;
-  createOpenCodeProfile(input: {
-    kind: "remote";
-    name: string;
-    urls: string[];
-    credential: { type: "basic"; username: string; password: string };
-    allowPlainHttp: boolean;
-  }): Promise<ProfileSnapshot>;
-  switchOpenCodeProfile(id: string): Promise<unknown>;
-  deleteOpenCodeProfile(id: string): Promise<unknown>;
-  runtimeStatus(): Promise<{
-    connected: boolean;
-    profileID: string;
-    topology: string;
-    capabilities?: { pty: string };
-  }>;
-}
+import type { PalotApi } from "../../src/shared/opencode-contract";
+import { useIsolatedHttpProfile } from "./isolated-http-profile.ts";
 
 export const remoteTerminalScenario: Scenario = {
   description:
@@ -32,36 +13,12 @@ export const remoteTerminalScenario: Scenario = {
   arrange() {},
   async run() {},
   async assert(page, { client, session, llm, projectDirectory, runRoot }) {
-    const initial = await page.evaluate(async () => {
-      const api = (globalThis as unknown as { palot: PalotApi }).palot;
-      const profiles = await api.listOpenCodeProfiles();
-      const pairing = await api.openCodePairingInfo();
-      const loopback = pairing.urls.find((value) =>
-        ["127.0.0.1", "localhost", "[::1]"].includes(new URL(value).hostname),
-      );
-      if (!loopback) throw new Error("Isolated service has no loopback pairing address");
-      // This is the isolated E2E service, not an external host or the shared user service.
-      const before = new Set(profiles.profiles.map((profile) => profile.id));
-      const created = await api.createOpenCodeProfile({
-        kind: "remote",
-        name: "Remote terminal fixture",
-        urls: [loopback],
-        credential: { type: "basic", username: pairing.username, password: pairing.password },
-        allowPlainHttp: true,
-      });
-      const profile = created.profiles.find((entry) => !before.has(entry.id))!;
-      // Match the harness's onboarding fixture for this additional isolated profile.
-      const key = "palot.desktop.state.onboarding.completed-profiles";
-      const completed = JSON.parse(localStorage.getItem(key) ?? '{"version":1,"value":{}}');
-      localStorage.setItem(
-        key,
-        JSON.stringify({ version: 1, value: { ...completed.value, [profile.id]: 1 } }),
-      );
-      await api.switchOpenCodeProfile(profile.id);
-      return { originalID: profiles.activeProfileID, profileID: profile.id };
-    });
-    const location = { directory: projectDirectory };
-    const before = new Set((await client.pty.list({ location })).data.map((pty) => pty.id));
+    const cleanup = await useIsolatedHttpProfile(page);
+    const before = new Set(
+      (await client.experimental.persistentPty.list({ sessionID: session.id })).map(
+        (pty) => pty.id,
+      ),
+    );
     let terminalID: string | null = null;
     try {
       await page.reload();
@@ -75,7 +32,6 @@ export const remoteTerminalScenario: Scenario = {
             const status = await api.runtimeStatus();
             return {
               connected: status.connected,
-              profileID: status.profileID,
               topology: status.topology,
               pty: status.capabilities?.pty,
             };
@@ -83,9 +39,8 @@ export const remoteTerminalScenario: Scenario = {
         )
         .toEqual({
           connected: true,
-          profileID: initial.profileID,
           topology: "remote-machine",
-          pty: "legacy",
+          pty: "persistent",
         });
       await expect(page.getByRole("textbox", { name: "Message Palot", exact: true })).toBeVisible();
       await page.keyboard.press("Control+Backquote");
@@ -95,7 +50,9 @@ export const remoteTerminalScenario: Scenario = {
       terminalID = await terminal.getAttribute("data-workbench-terminal");
       expect(terminalID).toBeTruthy();
       expect(before.has(terminalID!)).toBe(false);
-      expect((await client.pty.get({ ptyID: terminalID!, location })).data.status).toBe("running");
+      expect((await client.experimental.persistentPty.get({ ptyID: terminalID! })).status).toBe(
+        "running",
+      );
 
       const markerPath = join(projectDirectory, "remote-terminal-marker.txt");
       const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -119,14 +76,12 @@ export const remoteTerminalScenario: Scenario = {
         .toBe("remote-terminal-input-ok-reattached");
       await page.screenshot({ path: join(runRoot, "remote-terminal.png"), animations: "disabled" });
       await page.getByRole("button", { name: "Close Terminal", exact: true }).click();
-      expect((await client.pty.get({ ptyID: terminalID!, location })).data.status).toBe("running");
+      expect((await client.experimental.persistentPty.get({ ptyID: terminalID! })).status).toBe(
+        "running",
+      );
     } finally {
-      if (terminalID) await client.pty.remove({ ptyID: terminalID, location });
-      await page.evaluate(async ({ originalID, profileID }) => {
-        const api = (globalThis as unknown as { palot: PalotApi }).palot;
-        await api.switchOpenCodeProfile(originalID);
-        await api.deleteOpenCodeProfile(profileID);
-      }, initial);
+      if (terminalID) await client.experimental.persistentPty.remove({ ptyID: terminalID });
+      await cleanup();
     }
     expect(llm.requests).toHaveLength(0);
   },

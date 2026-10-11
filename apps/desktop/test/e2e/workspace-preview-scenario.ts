@@ -52,7 +52,7 @@ function pdfFixture(): string {
 
 export const workspacePreviewScenario: Scenario = {
   description:
-    "browse and preview image, Markdown, PDF, and audio workspace files through OpenCode",
+    "browse and preview media and Office workspace files, and reopen a closed resource tab",
   prompt: "",
   expectedModelCalls: 0,
   arrange() {},
@@ -62,6 +62,13 @@ export const workspacePreviewScenario: Scenario = {
     await writeFile(join(projectDirectory, "preview.png"), PNG);
     await writeFile(join(projectDirectory, "preview.pdf"), pdfFixture());
     await writeFile(join(projectDirectory, "preview.wav"), wavFixture());
+    for (const name of ["word.docx", "workbook.xlsx", "slides.pptx"]) {
+      const fixture = new URL(
+        `../../src/renderer/components/workbench-tabs/__fixtures__/office/${name}`,
+        import.meta.url,
+      );
+      await writeFile(join(projectDirectory, name), await readFile(fixture));
+    }
     await writeFile(
       join(projectDirectory, "preview.md"),
       "# Workspace preview\n\n<script>window.previewExecuted = true</script>\n",
@@ -80,7 +87,7 @@ export const workspacePreviewScenario: Scenario = {
         content: [
           {
             type: "text",
-            text: "Open `preview.png`, `preview.md`, `preview.pdf`, and `preview.wav`.",
+            text: "Open `preview.png`, `preview.md`, `preview.pdf`, `preview.wav`, `word.docx`, `workbook.xlsx`, and `slides.pptx`.",
           },
         ],
       },
@@ -162,6 +169,38 @@ export const workspacePreviewScenario: Scenario = {
       .poll(() => audio.evaluate((element) => (element as HTMLAudioElement).readyState))
       .toBeGreaterThanOrEqual(1);
     await page.screenshot({ path: join(runRoot, "workspace-audio-preview.png") });
+
+    const pane = page.locator('[data-workbench-pane="right"]');
+    await response.getByRole("link", { name: "Open word.docx" }).click();
+    const wordTab = pane.getByRole("tabpanel", { name: "word.docx" });
+    await expect(wordTab.getByRole("heading", { name: "Quarterly report" })).toBeVisible();
+    await expect(wordTab.getByText("Strong emphasis")).toBeVisible();
+    await expect(wordTab.getByRole("cell", { name: "Revenue", exact: true })).toBeVisible();
+    await page.screenshot({ path: join(runRoot, "workspace-word-preview.png") });
+    await pane.getByRole("button", { name: "Close word.docx", exact: true }).click();
+    await expect(wordTab).toHaveCount(0);
+    await pane.getByRole("button", { name: "Open workbench surface" }).click();
+    await page.getByRole("menuitem", { name: "Reopen closed tab" }).click();
+    await expect(wordTab.getByRole("heading", { name: "Quarterly report" })).toBeVisible();
+
+    await response.getByRole("link", { name: "Open workbook.xlsx" }).click();
+    const sheetTab = pane.getByRole("tabpanel", { name: "workbook.xlsx" });
+    await expect(sheetTab.getByRole("table", { name: "Sheet: Budget" })).toBeVisible();
+    await expect(sheetTab.getByRole("cell", { name: "12.5", exact: true })).toBeVisible();
+    await sheetTab
+      .getByRole("combobox", { name: "Sheet", exact: true })
+      .selectOption({ label: "Notes" });
+    await expect(sheetTab.getByText("<img src=x onerror=alert(1)>", { exact: true })).toBeVisible();
+    await expect(sheetTab.locator("img")).toHaveCount(0);
+    await page.screenshot({ path: join(runRoot, "workspace-sheet-preview.png") });
+
+    await response.getByRole("link", { name: "Open slides.pptx" }).click();
+    const slidesTab = pane.getByRole("tabpanel", { name: "slides.pptx" });
+    await expect(slidesTab.getByText("Slide 1 of 2")).toBeVisible();
+    await expect(slidesTab.getByText("First slide", { exact: true })).toBeVisible();
+    await slidesTab.getByRole("button", { name: "Next slide" }).click();
+    await expect(slidesTab.getByText("Second slide", { exact: true })).toBeVisible();
+    await page.screenshot({ path: join(runRoot, "workspace-slides-preview.png") });
 
     await page
       .locator('[data-workbench-pane="right"]')
