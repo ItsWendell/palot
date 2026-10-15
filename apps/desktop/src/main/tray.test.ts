@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   publish: vi.fn(),
 }));
 vi.mock("electron", () => ({
-  app: { isPackaged: false },
+  app: { isPackaged: false, setBadgeCount() {} },
   nativeImage: { createFromPath: () => ({ setTemplateImage() {} }) },
   Menu: { buildFromTemplate: (template: unknown) => template },
   Tray: class {

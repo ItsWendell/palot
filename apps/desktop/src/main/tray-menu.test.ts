@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatTrayRelativeTime, prioritizeTrayTasks, type TrayTaskItem } from "./tray-menu";
+import {
+  countTrayTasks,
+  formatTrayRelativeTime,
+  prioritizeTrayTasks,
+  trayToolTip,
+  type TrayTaskItem,
+} from "./tray-menu";
 
 const item = (sessionID: string): TrayTaskItem => ({
   sessionID,
@@ -52,6 +58,20 @@ describe("tray task menu", () => {
     });
 
     expect(result.recent).toHaveLength(8);
+  });
+
+  it("counts every blocked and running task before the menu cap", () => {
+    const counts = countTrayTasks({
+      attention: [item("a1"), item("a2"), item("a3"), item("a4"), item("a1")],
+      pinned: [item("p1")],
+      running: [item("a2"), item("r1")],
+      recent: [],
+    });
+
+    expect(counts).toEqual({ attention: 4, running: 1 });
+    expect(trayToolTip("Palot", counts)).toBe("Palot: 4 tasks need input, 1 running");
+    expect(trayToolTip("Palot", { attention: 1, running: 0 })).toBe("Palot: 1 task needs input");
+    expect(trayToolTip("Palot", { attention: 0, running: 0 })).toBe("Palot");
   });
 
   it("formats compact relative times", () => {

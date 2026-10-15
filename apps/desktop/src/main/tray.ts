@@ -15,8 +15,11 @@ import { DesktopStatus } from "./desktop-status";
 import { desktopProbe } from "./linux-desktop";
 import { followLinuxTrayAppearance } from "./tray-appearance";
 import {
+  countTrayTasks,
   formatTrayRelativeTime,
   prioritizeTrayTasks,
+  trayToolTip,
+  type TrayTaskCounts,
   type TrayTaskItem,
   type TrayTaskSection,
   type TrayTaskSections,
@@ -50,6 +53,9 @@ class TrayController {
   private stopFollowingAppearance?: () => void;
   private disposed = false;
   private sections: TrayTaskSections = { attention: [], pinned: [], running: [], recent: [] };
+  private counts: TrayTaskCounts = { attention: 0, running: 0 };
+  private publishedToolTip: string;
+  private publishedBadge = 0;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private refreshPromise: Promise<void> | null = null;
   private attentionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,6 +82,7 @@ class TrayController {
     private readonly displayName: string,
     private readonly status: DesktopStatus,
   ) {
+    this.publishedToolTip = displayName;
     if (iconPath) {
       const icon = nativeImage.createFromPath(iconPath);
       icon.setTemplateImage(process.platform === "darwin");
@@ -132,6 +139,7 @@ class TrayController {
     if (this.attentionRefreshTimer) clearTimeout(this.attentionRefreshTimer);
     this.refreshTimer = null;
     this.attentionRefreshTimer = null;
+    if (this.publishedBadge) app.setBadgeCount(0);
     this.tray?.destroy();
     await this.status.dispose();
   }
@@ -220,7 +228,17 @@ class TrayController {
   private publish(): void {
     if (this.disposed) return;
     if (process.platform === "linux") this.tray?.setContextMenu(this.buildMenu());
-    this.status.publish(this.sections);
+    const toolTip = trayToolTip(this.displayName, this.counts);
+    if (toolTip !== this.publishedToolTip) {
+      this.tray?.setToolTip(toolTip);
+      this.publishedToolTip = toolTip;
+    }
+    // Windows has no app badge count; macOS shows it on the Dock and Linux on Unity launchers.
+    if (process.platform !== "win32" && this.counts.attention !== this.publishedBadge) {
+      app.setBadgeCount(this.counts.attention);
+      this.publishedBadge = this.counts.attention;
+    }
+    this.status.publish(this.sections, this.counts);
   }
 
   private async loadSections(): Promise<TrayTaskSections> {
@@ -277,6 +295,7 @@ class TrayController {
       ) ?? 0;
     sections.running.sort((left, right) => timestamp(right) - timestamp(left));
     sections.recent.sort((left, right) => timestamp(right) - timestamp(left));
+    this.counts = countTrayTasks(sections);
     this.sections = prioritizeTrayTasks(sections);
     const states = [...this.connections.values()].map((entry) => entry.attentionState);
     this.attentionState = states.includes("error")
@@ -295,7 +314,7 @@ class TrayController {
           { signal: requestSignal() },
         ),
         client.session.active({ signal: requestSignal() }),
-        client.project.list({ signal: requestSignal() }),
+        client.project.list({}, { signal: requestSignal() }),
       ]);
       const recent = recentResponse.data.filter((session) => session.time.archived === undefined);
       const sessions = new Map(recent.map((session) => [session.id, session]));

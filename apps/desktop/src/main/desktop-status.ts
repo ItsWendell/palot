@@ -1,6 +1,6 @@
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { TrayTaskSections } from "./tray-menu";
+import type { TrayTaskCounts, TrayTaskSections } from "./tray-menu";
 
 /** Optional presentation-only snapshot for shell widgets. OpenCode owns all task state. */
 export class DesktopStatus {
@@ -14,15 +14,15 @@ export class DesktopStatus {
         : null;
   }
 
-  publish(sections: TrayTaskSections): void {
+  publish(sections: TrayTaskSections, counts: TrayTaskCounts): void {
     if (!this.file) return;
     const file = this.file;
     const snapshot = JSON.stringify({
       version: 1,
       pid: process.pid,
       updatedAt: Date.now(),
-      running: sections.running.length,
-      attention: sections.attention.length,
+      running: counts.running,
+      attention: counts.attention,
       tasks: [...sections.attention, ...sections.running].map((item) => ({
         sessionID: item.sessionID,
         title: item.title,
