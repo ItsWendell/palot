@@ -466,6 +466,8 @@ export class ConnectionOverviewController {
             token,
           );
         }
+        // Rows first, so readiness never announces rows built without these requests.
+        this.project(profileID);
         this.update(profileID, {
           attentionState: attention.complete
             ? this.attentionRequested.has(profileID)
@@ -480,7 +482,6 @@ export class ConnectionOverviewController {
           this.attentionRetryDelays.delete(profileID);
           this.attentionNextAttempt.set(profileID, Date.now() + ATTENTION_MIN_INTERVAL_MS);
         } else this.retryAttention(profileID, runtime, generation, epoch);
-        this.project(profileID);
       } catch {
         if (!this.current(profileID, id, generation, epoch)) return;
         this.update(profileID, { attentionState: "error" });
@@ -542,6 +543,8 @@ export class ConnectionOverviewController {
     )
       return;
     this.triage.set(profileID, snapshot);
+    // Rows first, so readiness never announces rows built without this triage.
+    this.project(profileID);
     this.update(profileID, { triageReady: true });
   }
 

@@ -1,48 +1,22 @@
 import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import {
-  SortableContext,
-  arrayMove,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import {
   ArrowLeft,
-  ArrowUpToLine,
   Bell,
-  Bot,
   Boxes,
   Braces,
   BrainCircuit,
-  Cable,
   Check,
   CircleAlert,
   Code2,
   Command,
   Download,
-  Ellipsis,
   FileCog,
   FolderGit2,
-  GripVertical,
   ExternalLink,
   Link2,
   LoaderCircle,
   Monitor,
   Moon,
   Palette,
-  Pencil,
   PlugZap,
   Plus,
   RefreshCw,
@@ -57,7 +31,7 @@ import {
 } from "lucide-react";
 import { useAtom, useAtomValue } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
-import type { LocationRef, ModelRef } from "@opencode/client";
+import type { LocationRef } from "@opencode/client";
 import {
   lazy,
   Suspense,
@@ -92,11 +66,8 @@ import type {
   AutomationHostSettings,
   DesktopNotificationDeliveryStatus,
   DesktopNotificationSettings,
-  PalotIntegration,
-  PalotIntegrationConnection,
   PalotMcpConfig,
   PalotMcpServer,
-  PalotModel,
   PalotPlugin,
   PalotProject,
   PalotSettingsSnapshot,
@@ -108,12 +79,15 @@ import {
   browserSearchEngineAtom,
   browserShowFullURLAtom,
   browserWebLinksAtom,
+  compactBeforeSendSuggestionAtom,
+  contextMeterVisibleAtom,
   defaultDeliveryAtom,
-  defaultModelsAtom,
-  modelPickerPreferencesAtom,
   remoteMarkdownFaviconsAtom,
   showTimelineCacheBustsAtom,
   defaultSidebarModeAtom,
+  autoSettleAfterDaysAtom,
+  AUTO_SETTLE_DAY_CHOICES,
+  type AutoSettleAfterDays,
   defaultWorktreeBaseAtom,
   defaultWorkspaceModeAtom,
   experimentalBrowserAtom,
@@ -131,16 +105,7 @@ import { cn } from "../lib/cn";
 import { showErrorToast } from "../lib/toast-error";
 import { openCodeKeys } from "../lib/opencode-query";
 import { isAppearanceFontAvailable } from "../lib/font-loading";
-import {
-  applyModelPreference,
-  modelPreferenceKey,
-  modelProjectPreferenceKey,
-  reconcileModelPreference,
-  reconcileModelOrder,
-  type ModelPickerPreference,
-} from "../lib/model-preferences";
 import { SETTINGS_NAV_ITEMS, type SettingsCategory } from "../lib/settings-navigation";
-import { isPopularProvider, orderProviderIntegrations } from "../lib/provider-presentation";
 import {
   ACTIVITY_CATEGORIES,
   resolveSessionProjectionPreference,
@@ -158,8 +123,6 @@ import { SettingsOwnerContext, useSettingsOwner } from "../hooks/use-settings-ow
 import { useSettingsServer } from "../hooks/use-settings-server";
 import { palot } from "../services/palot";
 import { BuildBadge, PalotMark } from "./branding";
-import { ProviderConnectionDialog } from "./provider-connection-dialog";
-import { ProviderIcon } from "./ui/provider-icon";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -182,13 +145,6 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
 import { ProjectSelect } from "./project-select";
 import { ProjectSettings, projectDetailsKey } from "./project-settings";
 import { ScrollArea } from "./ui/scroll-area";
@@ -201,6 +157,8 @@ import { Textarea } from "./ui/textarea";
 import { toast } from "./ui/toast";
 import { NavigationRail } from "./navigation-rail";
 import { SettingsEmpty, SettingsGroup, SettingsRow, SettingsSection } from "./settings-layout";
+import { ModelSettings } from "./settings/models-settings";
+import { ProviderSettings } from "./settings/providers-settings";
 import { KeyboardShortcutsSettings } from "./keyboard-shortcuts-settings";
 import { NotificationSoundSettings } from "./notification-sound-settings";
 import { DefaultShellSetting } from "./default-shell-setting";
@@ -236,11 +194,13 @@ const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: stri
   },
   models: {
     title: "Models",
-    description: "Choose project defaults and inspect the models OpenCode makes available.",
+    description:
+      "Choose the model new tasks start with and which models Palot's pickers show. Connect providers to add models.",
   },
   providers: {
     title: "Providers",
-    description: "Connect model providers and manage their authentication methods.",
+    description:
+      "Connect model providers and manage their credentials. Choose which of their models to show under Models.",
   },
   tools: {
     title: "Tools",
@@ -294,8 +254,8 @@ const ConnectionSettings = lazy(() =>
 );
 
 const SETTINGS_CAPABILITIES: Partial<Record<SettingsCategory, SettingsCapability[]>> = {
-  models: ["catalog"],
-  providers: ["integrations"],
+  models: ["catalog", "config", "agents"],
+  providers: ["integrations", "catalog", "config"],
   tools: [
     "mcp",
     "mcpResources",
@@ -844,6 +804,13 @@ const GROUP_TITLE_LABELS: Record<GroupTitleMode, string> = {
   "latest-reasoning": "Reasoning intent",
 };
 
+function autoSettleLabel(days: AutoSettleAfterDays): string {
+  if (days === null) return "Off";
+  if (days === 7) return "After 1 week";
+  if (days === 14) return "After 2 weeks";
+  return days === 1 ? "After 1 day" : `After ${days} days`;
+}
+
 const SIDEBAR_MODE_LABELS = {
   remember: "Remember",
   project: "Projects",
@@ -1043,9 +1010,12 @@ function GeneralSettings() {
   const [customizeProjection, setCustomizeProjection] = useState(false);
   const [delivery, setDelivery] = useAtom(defaultDeliveryAtom);
   const [autoBackgroundOnSteer, setAutoBackgroundOnSteer] = useAtom(autoBackgroundOnSteerAtom);
+  const [contextMeterVisible, setContextMeterVisible] = useAtom(contextMeterVisibleAtom);
+  const [compactBeforeSend, setCompactBeforeSend] = useAtom(compactBeforeSendSuggestionAtom);
   const [showTimelineCacheBusts, setShowTimelineCacheBusts] = useAtom(showTimelineCacheBustsAtom);
   const [remoteMarkdownFavicons, setRemoteMarkdownFavicons] = useAtom(remoteMarkdownFaviconsAtom);
   const [defaultSidebarMode, setDefaultSidebarMode] = useAtom(defaultSidebarModeAtom);
+  const [autoSettleAfterDays, setAutoSettleAfterDays] = useAtom(autoSettleAfterDaysAtom);
   const [automationHostSettings, setAutomationHostSettings] =
     useState<AutomationHostSettings | null>(null);
   const resolvedProjection = useMemo(
@@ -1181,6 +1151,28 @@ function GeneralSettings() {
               />
             }
           />
+          <SettingsRow
+            title="Context meter"
+            description="Show how full the model's context window is next to Send."
+            control={
+              <Switch
+                checked={contextMeterVisible}
+                aria-label="Show the context meter in the composer"
+                onCheckedChange={(checked) => setContextMeterVisible(Boolean(checked))}
+              />
+            }
+          />
+          <SettingsRow
+            title="Suggest compacting before sending"
+            description="When a large task has been idle for an hour, its prompt cache has likely expired. Offer to summarize the history first so the next message doesn't re-read all of it."
+            control={
+              <Switch
+                checked={compactBeforeSend}
+                aria-label="Suggest compacting before sending"
+                onCheckedChange={(checked) => setCompactBeforeSend(Boolean(checked))}
+              />
+            }
+          />
           <DefaultShellSetting />
         </SettingsGroup>
       </SettingsSection>
@@ -1204,6 +1196,35 @@ function GeneralSettings() {
                   <SelectItem value="remember">Remember last used</SelectItem>
                   <SelectItem value="project">Projects</SelectItem>
                   <SelectItem value="inbox">Inbox</SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Auto-settle idle tasks"
+            description="Move Inbox tasks to Settled after a while without activity. Tasks that are running, need input, failed, pinned, or that you moved back to Inbox stay put. New activity returns a task to Inbox."
+            control={
+              <Select
+                value={autoSettleAfterDays === null ? "off" : String(autoSettleAfterDays)}
+                onValueChange={(value) =>
+                  setAutoSettleAfterDays(
+                    value === "off" ? null : (Number(value) as AutoSettleAfterDays),
+                  )
+                }
+              >
+                <SelectTrigger
+                  className="w-full @lg/settings:w-44"
+                  aria-label="Auto-settle idle tasks"
+                >
+                  <SelectValue>{autoSettleLabel(autoSettleAfterDays)}</SelectValue>
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="off">Off</SelectItem>
+                  {AUTO_SETTLE_DAY_CHOICES.map((days) => (
+                    <SelectItem key={days} value={String(days)}>
+                      {autoSettleLabel(days)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             }
@@ -1258,7 +1279,7 @@ function GeneralSettings() {
         <SettingsGroup>
           <SettingsRow
             title="Likely cache busts"
-            description="Show a warning in the timeline when cache reuse drops unexpectedly between matching model steps. Context always includes these diagnostics."
+            description="Show a warning in the timeline when cache reuse drops unexpectedly between matching model steps. Selecting a warning opens it in the Context tab's diagnostics."
             control={
               <Switch
                 checked={showTimelineCacheBusts}
@@ -2483,1075 +2504,6 @@ function codeThemeOptions(preferences: AppearancePreferences, scheme: "light" | 
 function titleCase(value: string): string {
   const words = value.replaceAll("-", " ").replaceAll(/([a-z])([A-Z])/g, "$1 $2");
   return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-export function ModelSettings({
-  project,
-  snapshot,
-}: {
-  project: PalotProject;
-  snapshot: PalotSettingsSnapshot | null;
-}) {
-  const [defaults, setDefaults] = useAtom(defaultModelsAtom);
-  const owner = useSettingsOwner();
-  const preferenceScope = modelProjectPreferenceKey(owner?.profileID ?? "disconnected", project.id);
-  const [preferences, setPreferences] = useAtom(modelPickerPreferencesAtom);
-  const [query, setQuery] = useState("");
-  const [activeModelKey, setActiveModelKey] = useState<string | null>(null);
-  const selected = defaults[preferenceScope] ?? null;
-  const models = snapshot?.catalog.models ?? [];
-  const preference = reconcileModelPreference(models, preferences[preferenceScope]);
-  const orderedModels = applyModelPreference(models, preference, true);
-  const hidden = new Set(preference?.hidden ?? []);
-  const visibleModels = orderedModels.filter((model) => !hidden.has(modelPreferenceKey(model)));
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredModels = normalizedQuery
-    ? orderedModels.filter((model) =>
-        `${model.name} ${model.id} ${model.providerID}`.toLowerCase().includes(normalizedQuery),
-      )
-    : orderedModels;
-  const selectedModel = selected
-    ? (models.find(
-        (model) => model.id === selected.id && model.providerID === selected.providerID,
-      ) ?? null)
-    : null;
-  const providers = new Map(
-    snapshot?.catalog.providers.map((provider) => [provider.id, provider.name]) ?? [],
-  );
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-  const activeModel = activeModelKey
-    ? (orderedModels.find((model) => modelPreferenceKey(model) === activeModelKey) ?? null)
-    : null;
-
-  function updatePreference(next: ModelPickerPreference) {
-    setPreferences((current) => ({ ...current, [preferenceScope]: next }));
-  }
-
-  function setModelEnabled(model: PalotModel, enabled: boolean) {
-    const key = modelPreferenceKey(model);
-    const nextHidden = new Set(preference?.hidden ?? []);
-    if (enabled) nextHidden.delete(key);
-    else {
-      nextHidden.add(key);
-      const fallback = orderedModels.find(
-        (candidate) => !nextHidden.has(modelPreferenceKey(candidate)),
-      );
-      const hidesSelected = selected?.id === model.id && selected.providerID === model.providerID;
-      const hidesOpenCodeDefault =
-        !selected &&
-        snapshot?.catalog.defaultModel?.id === model.id &&
-        snapshot.catalog.defaultModel.providerID === model.providerID;
-      if (hidesSelected || hidesOpenCodeDefault) {
-        setDefaults((current) => {
-          if (fallback) return { ...current, [preferenceScope]: modelRef(fallback) };
-          const next = { ...current };
-          delete next[preferenceScope];
-          return next;
-        });
-      }
-    }
-    updatePreference({
-      hidden: [...nextHidden],
-      order: reconcileModelOrder(models, preference),
-    });
-  }
-
-  function setAllModelsEnabled(enabled: boolean) {
-    if (!enabled && selected) {
-      setDefaults((current) => {
-        const next = { ...current };
-        delete next[preferenceScope];
-        return next;
-      });
-    }
-    const nextHidden = new Set(preference.hidden);
-    for (const model of models) {
-      const key = modelPreferenceKey(model);
-      if (enabled) nextHidden.delete(key);
-      else nextHidden.add(key);
-    }
-    updatePreference({
-      hidden: [...nextHidden],
-      order: reconcileModelOrder(models, preference),
-    });
-  }
-
-  function moveModelToTop(model: PalotModel) {
-    const order = reconcileModelOrder(models, preference);
-    const from = order.indexOf(modelPreferenceKey(model));
-    if (from <= 0) return;
-    updatePreference({ hidden: preference?.hidden ?? [], order: arrayMove(order, from, 0) });
-  }
-
-  function finishSorting(event: DragEndEvent) {
-    setActiveModelKey(null);
-    if (!event.over || event.active.id === event.over.id) return;
-    const order = reconcileModelOrder(models, preference);
-    const from = order.indexOf(String(event.active.id));
-    const to = order.indexOf(String(event.over.id));
-    if (from < 0 || to < 0) return;
-    updatePreference({ hidden: preference?.hidden ?? [], order: arrayMove(order, from, to) });
-  }
-
-  return (
-    <>
-      <SettingsSection
-        title="Task default"
-        description="Palot applies this model and effort after creating a task. Clear it to use OpenCode's resolved location default."
-        icon={Sparkles}
-      >
-        <SettingsGroup>
-          <SettingsRow
-            title="Default model"
-            description={
-              snapshot?.catalog.defaultModel
-                ? `OpenCode currently resolves ${snapshot.catalog.defaultModel.name}.`
-                : "OpenCode will resolve the model from the project and global configuration."
-            }
-            control={
-              <Select
-                value={selected ? `${selected.providerID}/${selected.id}` : "opencode-default"}
-                onValueChange={(value) => {
-                  const key = String(value);
-                  if (key === "opencode-default") {
-                    const next = { ...defaults };
-                    delete next[preferenceScope];
-                    setDefaults(next);
-                    return;
-                  }
-                  const model = models.find((item) => `${item.providerID}/${item.id}` === key);
-                  if (model) setDefaults({ ...defaults, [preferenceScope]: modelRef(model) });
-                }}
-              >
-                <SelectTrigger className="w-full @lg/settings:w-64" aria-label="Default model">
-                  <SelectValue>
-                    {selected
-                      ? `${providers.get(selected.providerID) ?? selected.providerID} · ${selectedModel?.name ?? selected.id}`
-                      : "OpenCode default"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent align="end" className="max-h-80">
-                  <SelectItem value="opencode-default">OpenCode default</SelectItem>
-                  {visibleModels.map((model) => (
-                    <SelectItem
-                      key={`${model.providerID}/${model.id}`}
-                      value={`${model.providerID}/${model.id}`}
-                    >
-                      {providers.get(model.providerID) ?? model.providerID} · {model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            }
-          />
-          {selectedModel && selectedModel.variants.length > 0 ? (
-            <SettingsRow
-              title="Default effort"
-              description="Choose the reasoning effort Palot applies with this model when creating a task."
-              control={
-                <Select
-                  value={selected?.variant ?? "model-default"}
-                  onValueChange={(value) => {
-                    const variant = String(value);
-                    setDefaults({
-                      ...defaults,
-                      [preferenceScope]: modelRef(
-                        selectedModel,
-                        variant === "model-default" ? undefined : variant,
-                      ),
-                    });
-                  }}
-                >
-                  <SelectTrigger className="w-full @lg/settings:w-64" aria-label="Default effort">
-                    <SelectValue>
-                      {selected?.variant ? sentenceCase(selected.variant) : "Model default"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent align="end">
-                    <SelectItem value="model-default">Model default</SelectItem>
-                    {selectedModel.variants.map((variant) => (
-                      <SelectItem key={variant} value={variant}>
-                        {sentenceCase(variant)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              }
-            />
-          ) : null}
-        </SettingsGroup>
-      </SettingsSection>
-      <SettingsSection
-        title="Available models"
-        description={`${visibleModels.length} of ${models.length} models shown in Palot pickers. Drag to set picker order.`}
-        icon={Bot}
-        action={<Badge variant="outline">{visibleModels.length} enabled</Badge>}
-      >
-        <div className="space-y-3">
-          <div className="flex flex-col gap-2 @lg/settings:flex-row @lg/settings:items-center">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={query}
-                placeholder="Search models"
-                aria-label="Search models"
-                className="h-8 pl-8"
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </div>
-            <div className="flex shrink-0 items-center self-end rounded-lg border bg-card p-0.5 @lg/settings:self-auto">
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                disabled={models.length === 0 || visibleModels.length === models.length}
-                onClick={() => setAllModelsEnabled(true)}
-              >
-                Select all
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                disabled={models.length === 0 || visibleModels.length === 0}
-                onClick={() => setAllModelsEnabled(false)}
-              >
-                Deselect all
-              </Button>
-            </div>
-          </div>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-            accessibility={{
-              screenReaderInstructions: {
-                draggable:
-                  "Press space to pick up a model. Use the arrow keys to move it, space to drop it, or escape to cancel.",
-              },
-              announcements: {
-                onDragStart({ active }) {
-                  const model = orderedModels.find(
-                    (candidate) => modelPreferenceKey(candidate) === active.id,
-                  );
-                  return `Picked up ${model?.name ?? "model"}.`;
-                },
-                onDragOver({ active, over }) {
-                  if (!over) return;
-                  const model = orderedModels.find(
-                    (candidate) => modelPreferenceKey(candidate) === active.id,
-                  );
-                  const position = filteredModels.findIndex(
-                    (candidate) => modelPreferenceKey(candidate) === over.id,
-                  );
-                  return `${model?.name ?? "Model"} is over position ${position + 1} of ${filteredModels.length}.`;
-                },
-                onDragEnd({ active, over }) {
-                  if (!over) return "Model was not moved.";
-                  const model = orderedModels.find(
-                    (candidate) => modelPreferenceKey(candidate) === active.id,
-                  );
-                  const position = filteredModels.findIndex(
-                    (candidate) => modelPreferenceKey(candidate) === over.id,
-                  );
-                  return `${model?.name ?? "Model"} was dropped at position ${position + 1} of ${filteredModels.length}.`;
-                },
-                onDragCancel({ active }) {
-                  const model = orderedModels.find(
-                    (candidate) => modelPreferenceKey(candidate) === active.id,
-                  );
-                  return `Sorting cancelled. ${model?.name ?? "Model"} returned to its original position.`;
-                },
-              },
-            }}
-            onDragStart={(event: DragStartEvent) => setActiveModelKey(String(event.active.id))}
-            onDragCancel={() => setActiveModelKey(null)}
-            onDragEnd={finishSorting}
-          >
-            <SortableContext
-              items={filteredModels.map(modelPreferenceKey)}
-              strategy={verticalListSortingStrategy}
-            >
-              <SettingsGroup>
-                {filteredModels.map((model) => (
-                  <SortableModelRow
-                    key={modelPreferenceKey(model)}
-                    model={model}
-                    providerName={providers.get(model.providerID) ?? model.providerID}
-                    enabled={!hidden.has(modelPreferenceKey(model))}
-                    sortingDisabled={Boolean(normalizedQuery)}
-                    moveToTopDisabled={
-                      !orderedModels[0] ||
-                      modelPreferenceKey(model) === modelPreferenceKey(orderedModels[0])
-                    }
-                    onEnabledChange={(enabled) => setModelEnabled(model, enabled)}
-                    onMoveToTop={() => moveModelToTop(model)}
-                  />
-                ))}
-                <InventoryState
-                  title="Models"
-                  state={inventoryState(snapshot, "catalog")}
-                  count={filteredModels.length}
-                  total={models.length}
-                  empty="OpenCode returned no models for this project."
-                />
-              </SettingsGroup>
-            </SortableContext>
-            <DragOverlay>
-              {activeModel ? (
-                <div className="rounded-xl border bg-card shadow-xl">
-                  <ModelInventoryRow
-                    model={activeModel}
-                    providerName={providers.get(activeModel.providerID) ?? activeModel.providerID}
-                    enabled={!hidden.has(modelPreferenceKey(activeModel))}
-                    overlay
-                  />
-                </div>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-          {normalizedQuery ? (
-            <p className="text-meta text-muted-foreground">Clear search to reorder models.</p>
-          ) : null}
-        </div>
-      </SettingsSection>
-    </>
-  );
-}
-
-function SortableModelRow({
-  model,
-  providerName,
-  enabled,
-  sortingDisabled,
-  moveToTopDisabled,
-  onEnabledChange,
-  onMoveToTop,
-}: {
-  model: PalotModel;
-  providerName: string;
-  enabled: boolean;
-  sortingDisabled: boolean;
-  moveToTopDisabled: boolean;
-  onEnabledChange(enabled: boolean): void;
-  onMoveToTop(): void;
-}) {
-  const id = modelPreferenceKey(model);
-  const {
-    attributes,
-    listeners,
-    setActivatorNodeRef,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id, disabled: sortingDisabled });
-  return (
-    <div
-      ref={setNodeRef}
-      className="border-b border-border/70 last:border-b-0"
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      data-dragging={isDragging || undefined}
-    >
-      <ModelInventoryRow
-        model={model}
-        providerName={providerName}
-        enabled={enabled}
-        moveToTopDisabled={moveToTopDisabled}
-        handle={
-          <Button
-            ref={setActivatorNodeRef}
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
-            aria-label={`Reorder ${model.name}`}
-            disabled={sortingDisabled}
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical aria-hidden="true" />
-          </Button>
-        }
-        onEnabledChange={onEnabledChange}
-        onMoveToTop={onMoveToTop}
-      />
-    </div>
-  );
-}
-
-function ModelInventoryRow({
-  model,
-  providerName,
-  enabled,
-  overlay = false,
-  handle,
-  moveToTopDisabled = false,
-  onEnabledChange,
-  onMoveToTop,
-}: {
-  model: PalotModel;
-  providerName: string;
-  enabled: boolean;
-  overlay?: boolean;
-  handle?: ReactNode;
-  moveToTopDisabled?: boolean;
-  onEnabledChange?(enabled: boolean): void;
-  onMoveToTop?(): void;
-}) {
-  return (
-    <div className={cn("flex min-w-0 items-start gap-3 px-3 py-3", !enabled && "opacity-60")}>
-      {handle ?? (
-        <span className="flex size-6 items-center justify-center text-muted-foreground">
-          <GripVertical aria-hidden="true" />
-        </span>
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm font-medium wrap-anywhere">{model.name}</span>
-          {model.status !== "active" ? <Badge variant="outline">{model.status}</Badge> : null}
-        </div>
-        <div className="mt-1 text-compact wrap-anywhere text-muted-foreground">
-          {providerName} · <span className="font-mono">{model.id}</span>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-meta text-muted-foreground">
-          <span>{formatTokens(model.contextLimit)} context</span>
-          {model.inputLimit ? <span>{formatTokens(model.inputLimit)} input limit</span> : null}
-          <span>{formatTokens(model.outputLimit)} output</span>
-          {model.variants.length ? <span>{model.variants.length} reasoning levels</span> : null}
-          {model.capabilities.tools ? <span>tools</span> : null}
-          {model.capabilities.input.map((capability) => (
-            <span key={`input:${capability}`}>{capability} input</span>
-          ))}
-          {model.capabilities.output.map((capability) => (
-            <span key={`output:${capability}`}>{capability} output</span>
-          ))}
-        </div>
-      </div>
-      {overlay ? null : (
-        <div className="flex shrink-0 items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground"
-            aria-label={`Move ${model.name} to top`}
-            title="Move to top"
-            disabled={moveToTopDisabled}
-            onClick={onMoveToTop}
-          >
-            <ArrowUpToLine aria-hidden="true" />
-          </Button>
-          <Switch
-            checked={enabled}
-            aria-label={`${enabled ? "Disable" : "Enable"} ${model.name}`}
-            onCheckedChange={(checked) => onEnabledChange?.(Boolean(checked))}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-const COLLAPSED_PROVIDER_COUNT = 8;
-
-type CredentialActionTarget = {
-  integration: PalotIntegration;
-  connection: PalotIntegrationConnection;
-};
-
-function ProviderSettings({
-  project,
-  location,
-  snapshot,
-  refresh,
-}: {
-  project: PalotProject;
-  location: LocationRef;
-  snapshot: PalotSettingsSnapshot | null;
-  refresh(): Promise<void>;
-}) {
-  const owner = useSettingsOwner();
-  const [dialog, setDialog] = useState<PalotIntegration | null>(null);
-  const [wellknownOpen, setWellknownOpen] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [providerQuery, setProviderQuery] = useState("");
-  const [activatingCredentialID, setActivatingCredentialID] = useState<string | null>(null);
-  const [removingCredentialID, setRemovingCredentialID] = useState<string | null>(null);
-  const [removing, setRemoving] = useState<CredentialActionTarget | null>(null);
-  const [rename, setRename] = useState<{
-    integrationName: string;
-    credentialID: string;
-    label: string;
-  } | null>(null);
-  const integrations = snapshot?.integrations ?? [];
-  const orderedIntegrations = orderProviderIntegrations(integrations);
-  const normalizedQuery = providerQuery.trim().toLowerCase();
-  const filteredIntegrations = normalizedQuery
-    ? orderedIntegrations.filter((integration) =>
-        `${integration.name} ${integration.id}`.toLowerCase().includes(normalizedQuery),
-      )
-    : orderedIntegrations;
-  const connectedIntegrations = filteredIntegrations.filter(
-    (integration) => integration.connections.length > 0,
-  );
-  const availableIntegrations = filteredIntegrations.filter(
-    (integration) =>
-      integration.connections.length === 0 &&
-      integration.methods.some((method) => method.type !== "env"),
-  );
-  const visibleAvailableIntegrations =
-    expanded || normalizedQuery
-      ? availableIntegrations
-      : availableIntegrations
-          .filter((integration) => isPopularProvider(integration.id))
-          .slice(0, COLLAPSED_PROVIDER_COUNT);
-  const connectedCount = integrations.filter(
-    (integration) => integration.connections.length,
-  ).length;
-  const storedCredentialCount = integrations.reduce(
-    (count, integration) =>
-      count +
-      integration.connections.filter((connection) => connection.type === "credential").length,
-    0,
-  );
-
-  async function activate(connection: PalotIntegrationConnection) {
-    if (!connection.id || connection.active) return;
-    setActivatingCredentialID(connection.id);
-    try {
-      await palot.activateCredential({
-        connectionID: owner?.connectionID,
-        credentialID: connection.id,
-        projectID: project.id,
-        directory: location.directory,
-        ...(location.workspaceID ? { workspaceID: location.workspaceID } : {}),
-      });
-      await refresh();
-      toast.add({ type: "success", title: `${connection.label} is now in use` });
-    } catch (cause) {
-      showError("Could not switch credential", cause);
-    } finally {
-      setActivatingCredentialID(null);
-    }
-  }
-
-  async function removeCredential(target: CredentialActionTarget) {
-    if (!target.connection.id) return;
-    const credentialID = target.connection.id;
-    setRemoving(null);
-    setRemovingCredentialID(credentialID);
-    try {
-      await palot.removeCredential({
-        connectionID: owner?.connectionID,
-        credentialID,
-        projectID: project.id,
-        directory: location.directory,
-        ...(location.workspaceID ? { workspaceID: location.workspaceID } : {}),
-      });
-      await refresh();
-      toast.add({ type: "success", title: `${target.connection.label} removed` });
-    } catch (cause) {
-      showError("Could not remove credential", cause);
-    } finally {
-      setRemovingCredentialID(null);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-8">
-      <SettingsSection
-        title="Provider connections"
-        description="Credentials belong to this OpenCode service and are shared by every project connected to it."
-        icon={Cable}
-        action={
-          <Badge variant="outline">
-            {connectedCount} connected · {storedCredentialCount} stored
-          </Badge>
-        }
-      >
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={providerQuery}
-                placeholder="Search providers"
-                aria-label="Search providers"
-                className="h-8 pl-8"
-                onChange={(event) => setProviderQuery(event.target.value)}
-              />
-            </div>
-            {integrations.length > COLLAPSED_PROVIDER_COUNT ? (
-              <Button
-                type="button"
-                variant="outline"
-                className="shrink-0"
-                aria-pressed={expanded}
-                onClick={() => setExpanded((current) => !current)}
-              >
-                {expanded ? "Popular only" : "Browse all"}
-              </Button>
-            ) : null}
-          </div>
-
-          {connectedIntegrations.length > 0 ? (
-            <ProviderGroupLabel
-              label="Connected"
-              detail={`${connectedIntegrations.length} provider${connectedIntegrations.length === 1 ? "" : "s"}`}
-            />
-          ) : null}
-          {connectedIntegrations.length > 0 ? (
-            <div className="space-y-3">
-              {connectedIntegrations.map((integration) => (
-                <ConnectedProviderCard
-                  key={integration.id}
-                  integration={integration}
-                  activatingCredentialID={activatingCredentialID}
-                  removingCredentialID={removingCredentialID}
-                  onActivate={(connection) => void activate(connection)}
-                  onConnect={() => setDialog(integration)}
-                  onRename={(connection) =>
-                    setRename({
-                      integrationName: integration.name,
-                      credentialID: connection.id!,
-                      label: connection.label,
-                    })
-                  }
-                  onRemove={(connection) => setRemoving({ integration, connection })}
-                />
-              ))}
-            </div>
-          ) : null}
-
-          {visibleAvailableIntegrations.length > 0 ? (
-            <ProviderGroupLabel
-              label={expanded || normalizedQuery ? "Available providers" : "Popular providers"}
-              detail={`${visibleAvailableIntegrations.length} shown`}
-            />
-          ) : null}
-          {visibleAvailableIntegrations.length > 0 ? (
-            <div className="grid gap-px overflow-hidden rounded-xl border border-border bg-border @3xl/settings:grid-cols-2">
-              {visibleAvailableIntegrations.map((integration, index) => (
-                <AvailableProviderRow
-                  key={integration.id}
-                  integration={integration}
-                  className={cn(
-                    visibleAvailableIntegrations.length % 2 === 1 &&
-                      index === visibleAvailableIntegrations.length - 1 &&
-                      "@3xl/settings:col-span-2",
-                  )}
-                  onConnect={() => setDialog(integration)}
-                />
-              ))}
-            </div>
-          ) : null}
-
-          <InventoryState
-            title="Providers"
-            state={inventoryState(snapshot, "integrations")}
-            count={connectedIntegrations.length + visibleAvailableIntegrations.length}
-            total={integrations.length}
-            empty="OpenCode returned no available provider integrations."
-          />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Advanced provider sources"
-        description="Add a custom integration catalog from a trusted well-known URL. Most providers do not need this."
-        icon={Braces}
-      >
-        <SettingsGroup>
-          <SettingsRow
-            title="Custom integration catalog"
-            description="OpenCode fetches and persists the integrations published by this source."
-            control={
-              <Button type="button" variant="outline" onClick={() => setWellknownOpen(true)}>
-                <Plus data-icon="inline-start" aria-hidden="true" />
-                Add source
-              </Button>
-            }
-          />
-        </SettingsGroup>
-      </SettingsSection>
-
-      <ProviderConnectionDialog
-        key={`connect:${dialog?.id ?? "closed"}`}
-        integration={dialog}
-        projectID={project.id}
-        location={location}
-        onOpenChange={(open) => !open && setDialog(null)}
-        onComplete={refresh}
-      />
-      <WellknownIntegrationDialog
-        open={wellknownOpen}
-        project={project}
-        location={location}
-        onOpenChange={setWellknownOpen}
-        onComplete={refresh}
-      />
-      <CredentialLabelDialog
-        key={`rename:${rename?.credentialID ?? "closed"}`}
-        credential={rename}
-        project={project}
-        location={location}
-        onOpenChange={(open) => !open && setRename(null)}
-        onComplete={refresh}
-      />
-      <AlertDialog open={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove “{removing?.connection.label}”?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {removing ? credentialRemovalDescription(removing) : null}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={removingCredentialID !== null}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={removingCredentialID !== null}
-              onClick={() => removing && void removeCredential(removing)}
-            >
-              Remove credential
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
-
-function ProviderGroupLabel({ label, detail }: { label: string; detail: string }) {
-  return (
-    <div className="flex flex-wrap items-baseline gap-2">
-      <h3 className="text-sm font-medium">{label}</h3>
-      <span className="text-meta text-muted-foreground">{detail}</span>
-    </div>
-  );
-}
-
-function ConnectedProviderCard({
-  integration,
-  activatingCredentialID,
-  removingCredentialID,
-  onActivate,
-  onConnect,
-  onRename,
-  onRemove,
-}: {
-  integration: PalotIntegration;
-  activatingCredentialID: string | null;
-  removingCredentialID: string | null;
-  onActivate(connection: PalotIntegrationConnection): void;
-  onConnect(): void;
-  onRename(connection: PalotIntegrationConnection): void;
-  onRemove(connection: PalotIntegrationConnection): void;
-}) {
-  const credentials = integration.connections.filter(
-    (connection) => connection.type === "credential",
-  );
-  const environment = integration.connections.filter((connection) => connection.type === "env");
-  const connectable = integration.methods.some((method) => method.type !== "env");
-  const summary = [
-    credentials.length
-      ? `${credentials.length} stored credential${credentials.length === 1 ? "" : "s"}`
-      : null,
-    environment.length
-      ? `${environment.length} environment fallback${environment.length === 1 ? "" : "s"}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <article
-      className="overflow-hidden rounded-xl border border-border bg-card"
-      aria-label={`${integration.name} connections`}
-    >
-      <header className="flex flex-wrap items-center gap-3 p-4">
-        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted/55 text-foreground">
-          <ProviderIcon id={integration.id} className="size-5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold wrap-anywhere">{integration.name}</h3>
-          <p className="mt-1 text-compact text-muted-foreground">{summary}</p>
-        </div>
-        {connectable ? (
-          <Button type="button" variant="outline" size="sm" onClick={onConnect}>
-            <Plus data-icon="inline-start" aria-hidden="true" />
-            Add credential
-          </Button>
-        ) : null}
-      </header>
-      <div className="divide-y divide-border/60 border-t border-border/60 bg-muted/10">
-        {integration.connections.map((connection) => {
-          const selectable = connection.type === "credential" && !connection.active;
-          const busy =
-            connection.id === activatingCredentialID || connection.id === removingCredentialID;
-          return (
-            <div
-              key={connection.id ?? `${connection.type}:${connection.label}`}
-              role="group"
-              aria-label={`${connection.label} connection`}
-              className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3"
-            >
-              <span
-                className={cn(
-                  "size-2.5 shrink-0",
-                  connection.type === "env" ? "rotate-45 rounded-[2px]" : "rounded-full",
-                  connection.active
-                    ? "bg-primary ring-2 ring-primary/15"
-                    : "border border-muted-foreground/45 bg-background",
-                )}
-                aria-hidden="true"
-              />
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="text-sm font-medium wrap-anywhere">{connection.label}</span>
-                  {connection.active ? <Badge variant="secondary">In use</Badge> : null}
-                </div>
-                <p className="mt-1 text-compact text-muted-foreground">
-                  {connection.type === "credential"
-                    ? "Stored credential"
-                    : connection.active
-                      ? "Environment variable"
-                      : "Environment fallback · used when stored credentials are removed"}
-                </p>
-              </div>
-              <div className="flex items-center gap-1">
-                {selectable ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy || activatingCredentialID !== null}
-                    onClick={() => onActivate(connection)}
-                  >
-                    {connection.id === activatingCredentialID ? (
-                      <LoaderCircle className="animate-spin" aria-hidden="true" />
-                    ) : null}
-                    Use
-                  </Button>
-                ) : null}
-                {connection.type === "credential" && connection.id ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Manage ${connection.label}`}
-                          disabled={busy}
-                        />
-                      }
-                    >
-                      <Ellipsis aria-hidden="true" />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuItem onClick={() => onRename(connection)}>
-                        <Pencil aria-hidden="true" />
-                        Rename
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem variant="destructive" onClick={() => onRemove(connection)}>
-                        <Trash2 aria-hidden="true" />
-                        Remove credential
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </article>
-  );
-}
-
-function AvailableProviderRow({
-  integration,
-  className,
-  onConnect,
-}: {
-  integration: PalotIntegration;
-  className?: string;
-  onConnect(): void;
-}) {
-  return (
-    <div className={cn("flex min-w-0 items-center gap-3 bg-card p-4", className)}>
-      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted/50 text-foreground">
-        <ProviderIcon id={integration.id} className="size-4" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium wrap-anywhere">{integration.name}</div>
-        <div className="font-mono text-code-compact wrap-anywhere text-muted-foreground">
-          {integration.id}
-        </div>
-      </div>
-      <Button type="button" variant="ghost" size="sm" onClick={onConnect}>
-        Connect
-      </Button>
-    </div>
-  );
-}
-
-function credentialRemovalDescription({ integration, connection }: CredentialActionTarget): string {
-  if (!connection.active) {
-    return `This removes the stored credential from OpenCode. ${integration.name} will keep using its current credential.`;
-  }
-  const next = integration.connections.find(
-    (candidate) => candidate.id !== connection.id && candidate.type === "credential",
-  );
-  if (next) {
-    return `“${next.label}” will become active for ${integration.name} across this OpenCode service.`;
-  }
-  const environment = integration.connections.find((candidate) => candidate.type === "env");
-  if (environment) {
-    return `${integration.name} will fall back to ${environment.label} from the environment across this OpenCode service.`;
-  }
-  return `${integration.name} will no longer have a connection on this OpenCode service.`;
-}
-
-function WellknownIntegrationDialog({
-  open,
-  project,
-  location,
-  onOpenChange,
-  onComplete,
-}: {
-  open: boolean;
-  project: PalotProject;
-  location: LocationRef;
-  onOpenChange(open: boolean): void;
-  onComplete(): Promise<void>;
-}) {
-  const owner = useSettingsOwner();
-  const [url, setUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function submit() {
-    setBusy(true);
-    try {
-      await palot.addWellknownIntegration({
-        connectionID: owner?.connectionID,
-        url: url.trim(),
-        projectID: project.id,
-        directory: location.directory,
-        ...(location.workspaceID ? { workspaceID: location.workspaceID } : {}),
-      });
-      await onComplete();
-      setUrl("");
-      onOpenChange(false);
-      toast.add({ type: "success", title: "Integration source added" });
-    } catch (cause) {
-      showError("Could not add integration source", cause);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Add integration source</DialogTitle>
-          <DialogDescription>
-            OpenCode fetches the source's well-known document and persists the discovered
-            integration configuration.
-          </DialogDescription>
-        </DialogHeader>
-        <label className="grid gap-1.5 text-xs font-medium">
-          Source URL
-          <Input
-            type="url"
-            value={url}
-            placeholder="https://example.com"
-            onChange={(event) => setUrl(event.target.value)}
-          />
-        </label>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="button" disabled={busy || !validHttpUrl(url)} onClick={() => void submit()}>
-            {busy ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
-            Add source
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function CredentialLabelDialog({
-  credential,
-  project,
-  location,
-  onOpenChange,
-  onComplete,
-}: {
-  credential: { integrationName: string; credentialID: string; label: string } | null;
-  project: PalotProject;
-  location: LocationRef;
-  onOpenChange(open: boolean): void;
-  onComplete(): Promise<void>;
-}) {
-  const owner = useSettingsOwner();
-  const [label, setLabel] = useState(() => credential?.label ?? "");
-  const [busy, setBusy] = useState(false);
-  async function submit() {
-    if (!credential) return;
-    setBusy(true);
-    try {
-      await palot.updateCredential({
-        connectionID: owner?.connectionID,
-        credentialID: credential.credentialID,
-        label: label.trim(),
-        projectID: project.id,
-        directory: location.directory,
-        ...(location.workspaceID ? { workspaceID: location.workspaceID } : {}),
-      });
-      await onComplete();
-      onOpenChange(false);
-      toast.add({ type: "success", title: `${credential.integrationName} credential renamed` });
-    } catch (cause) {
-      showError("Could not rename credential", cause);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Dialog open={Boolean(credential)} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Rename credential</DialogTitle>
-          <DialogDescription>
-            The secret stays in OpenCode. Only its display label changes.
-          </DialogDescription>
-        </DialogHeader>
-        <label className="grid gap-1.5 text-xs font-medium">
-          Label
-          <Input value={label} onChange={(event) => setLabel(event.target.value)} />
-        </label>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="button" disabled={busy || !label.trim()} onClick={() => void submit()}>
-            {busy ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
-            Save
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 const TOOL_TABS = [
@@ -5128,34 +4080,8 @@ function StatusDot({ status }: { status: PalotMcpServer["status"] }) {
   );
 }
 
-function validHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function modelRef(
-  model: PalotSettingsSnapshot["catalog"]["models"][number],
-  variant?: string,
-): ModelRef {
-  return {
-    id: model.id,
-    providerID: model.providerID,
-    ...(variant ? { variant } : {}),
-  };
-}
-
 function sentenceCase(value: string): string {
   return value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
-}
-
-function formatTokens(value: number) {
-  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
-    value,
-  );
 }
 
 function parseKeyValues(value: string): Record<string, string> {

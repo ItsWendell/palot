@@ -18,17 +18,36 @@ const badgeVariants = cva(
           "border-border/80 bg-input/12 text-foreground backdrop-blur-sm dark:bg-input/18 [a]:hover:bg-muted/60 [a]:hover:text-muted-foreground",
         ghost: "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // Status tints: a light wash of the status color; text mixes toward the foreground
+        // so small labels keep their contrast on every theme.
+        neutral: "bg-muted text-muted-foreground [a]:hover:bg-muted/80",
+        info: "bg-info/12 text-[color-mix(in_oklch,var(--info)_72%,var(--foreground))] dark:bg-info/18",
+        success:
+          "bg-success/12 text-[color-mix(in_oklch,var(--success)_72%,var(--foreground))] dark:bg-success/18",
+        warning:
+          "bg-warning/14 text-[color-mix(in_oklch,var(--warning)_68%,var(--foreground))] dark:bg-warning/18",
+      },
+      size: {
+        default: "",
+        sm: "h-4 gap-0.5 px-1.5 py-0 has-data-[icon=inline-end]:pr-1 has-data-[icon=inline-start]:pl-1 [&>svg]:size-2!",
       },
     },
     defaultVariants: {
       variant: "default",
+      size: "default",
     },
   },
 );
 
+/**
+ * Short status or metadata label. Status variants (`neutral`, `info`, `success`,
+ * `warning`, `destructive`) tint the pill; `outline` stays neutral; `size="sm"` fits
+ * dense rows.
+ */
 function Badge({
   className,
   variant = "default",
+  size = "default",
   render,
   ...props
 }: useRender.ComponentProps<"span"> & VariantProps<typeof badgeVariants>) {
@@ -36,7 +55,7 @@ function Badge({
     defaultTagName: "span",
     props: mergeProps<"span">(
       {
-        className: cn(badgeVariants({ variant }), className),
+        className: cn(badgeVariants({ variant, size }), className),
       },
       props,
     ),
@@ -44,6 +63,7 @@ function Badge({
     state: {
       slot: "badge",
       variant,
+      size,
     },
   });
 }

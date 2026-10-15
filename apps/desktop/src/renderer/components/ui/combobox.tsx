@@ -152,7 +152,15 @@ function ComboboxList({
   );
 }
 
-function ComboboxItem({ className, children, ...props }: ComboboxPrimitive.Item.Props) {
+function ComboboxItem({
+  className,
+  children,
+  hideIndicator = false,
+  ...props
+}: ComboboxPrimitive.Item.Props & {
+  /** Rows that draw their own selection mark (rich picker rows) skip the trailing check. */
+  hideIndicator?: boolean;
+}) {
   return (
     <ComboboxPrimitive.Item
       data-slot="combobox-item"
@@ -163,13 +171,15 @@ function ComboboxItem({ className, children, ...props }: ComboboxPrimitive.Item.
       {...props}
     >
       {children}
-      <ComboboxPrimitive.ItemIndicator
-        render={
-          <span className="pointer-events-none absolute right-2 flex items-center justify-center" />
-        }
-      >
-        <CheckIcon className="pointer-events-none" />
-      </ComboboxPrimitive.ItemIndicator>
+      {hideIndicator ? null : (
+        <ComboboxPrimitive.ItemIndicator
+          render={
+            <span className="pointer-events-none absolute right-2 flex items-center justify-center" />
+          }
+        >
+          <CheckIcon className="pointer-events-none" />
+        </ComboboxPrimitive.ItemIndicator>
+      )}
     </ComboboxPrimitive.Item>
   );
 }

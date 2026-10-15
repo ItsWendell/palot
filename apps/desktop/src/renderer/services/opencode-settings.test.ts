@@ -121,6 +121,49 @@ describe("renderer OpenCode settings service", () => {
     expect(result.configSources[0]?.summary).toEqual({ update });
   });
 
+  it("maps configured providers and provider.use policies, ignoring other policy actions", async () => {
+    setOpenCodeClientForTest(
+      client({
+        config: {
+          get: vi.fn().mockResolvedValue([
+            {
+              type: "document",
+              path: "/home/me/.config/opencode/opencode.json",
+              info: {
+                model: { providerID: "openai", model: "gpt-5" },
+                providers: { "workflow-beta": {}, "workflow-alpha": { env: ["ALPHA_KEY"] } },
+                experimental: {
+                  policies: [
+                    { action: "provider.use", resource: "openrouter", effect: "deny" },
+                    { action: "tool.use", resource: "bash:*", effect: "deny" },
+                    { action: "provider.use", resource: "open*", effect: "allow" },
+                  ],
+                },
+              },
+            },
+            { type: "document", path: "/repo/opencode.json", info: {} },
+          ]),
+        },
+      }),
+    );
+    const result = await loadSettings({
+      directory: "/repo",
+      projectID: "project-1",
+      capabilities: ["config"],
+    });
+    expect(result.configSources[0]).toMatchObject({
+      path: "/home/me/.config/opencode/opencode.json",
+      summary: { model: "openai/gpt-5", providerCount: 2 },
+      providerIDs: ["workflow-alpha", "workflow-beta"],
+      providerPolicies: [
+        { resource: "openrouter", effect: "deny" },
+        { resource: "open*", effect: "allow" },
+      ],
+    });
+    expect(result.configSources[1]).not.toHaveProperty("providerIDs");
+    expect(result.configSources[1]).not.toHaveProperty("providerPolicies");
+  });
+
   it("keeps failed and non-server plugins in the typed inventory without checking or updating", async () => {
     const data = [
       {

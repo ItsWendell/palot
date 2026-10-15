@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotFormField, PalotIntegration } from "../../shared";
@@ -13,6 +13,8 @@ vi.mock("../services/palot", () => ({
     connectIntegrationKey: vi.fn(),
     connectIntegrationOAuth: vi.fn(),
     connectIntegrationCommand: vi.fn(),
+    integrationOAuthStatus: vi.fn(),
+    cancelIntegrationOAuth: vi.fn(),
   },
 }));
 
@@ -282,8 +284,8 @@ describe("external provider connection dialog", () => {
         })}
       />,
     );
-    expect(screen.getByLabelText("Credential profile")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: /Device sign-in/ }));
+    expect(screen.getByRole("textbox", { name: "Credential profile" })).toBeTruthy();
+    await user.click(screen.getByRole("radio", { name: /Device sign-in/ }));
     expect(screen.getByRole("status").textContent).toContain("Connect it in OpenCode instead.");
     expect(screen.queryByRole("button", { name: "Add and use" })).toBeNull();
   });
@@ -321,4 +323,124 @@ describe("external provider connection dialog", () => {
       expect(input.onOpenChange).toHaveBeenCalledTimes(action === "cancel" ? 1 : 0);
     },
   );
+});
+
+describe("provider connection methods", () => {
+  const keyAndOAuth: PalotIntegration = {
+    id: "acme",
+    name: "Acme",
+    methods: [
+      { id: null, type: "key", label: "API key", form: [] },
+      { id: "browser", type: "oauth", label: "Sign in with Acme", form: [] },
+      { id: null, type: "env", label: "ACME_API_KEY", names: ["ACME_API_KEY"], form: [] },
+    ],
+    connections: [],
+  };
+
+  it("switches methods from the keyboard as a radio group", async () => {
+    const user = userEvent.setup();
+    render(<ProviderConnectionDialog {...props(keyAndOAuth)} />);
+    const group = screen.getByRole("radiogroup", { name: "Choose a connection method" });
+    const radios = within(group).getAllByRole("radio");
+    expect(radios.map((radio) => radio.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+    expect(screen.getByLabelText("API key", { selector: "input" })).toBeTruthy();
+    await user.click(radios[0]!);
+    await user.keyboard("{ArrowDown}");
+    expect(radios[1]!.getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(radios[1]);
+    expect(screen.queryByLabelText("API key", { selector: "input" })).toBeNull();
+    await user.keyboard("{ArrowUp}");
+    expect(radios[0]!.getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByLabelText("API key", { selector: "input" })).toBeTruthy();
+  });
+
+  it("shows the OAuth URL and device code as copyable fields while waiting", async () => {
+    const user = userEvent.setup();
+    const clipboard = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: { writeClipboardText: clipboard },
+    });
+    const url = "https://auth.example.com/device?user_code=WXYZ-1234";
+    vi.mocked(palot.connectIntegrationOAuth).mockResolvedValue({
+      attemptID: "attempt-1",
+      url,
+      instructions: "Enter code: WXYZ-1234",
+      mode: "auto",
+      createdAt: 1,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    });
+    vi.mocked(palot.integrationOAuthStatus).mockResolvedValue({
+      status: "pending",
+      message: null,
+      createdAt: 1,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    });
+    vi.mocked(palot.cancelIntegrationOAuth).mockResolvedValue(undefined);
+    render(<ProviderConnectionDialog {...props(keyAndOAuth)} />);
+    await user.click(screen.getByRole("radio", { name: /Sign in with Acme/ }));
+    await user.click(screen.getByRole("button", { name: "Add and use" }));
+    expect(await screen.findByText("Waiting for authorization")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open authorization page" }).getAttribute("href")).toBe(
+      url,
+    );
+    expect(screen.getByRole("group", { name: "Device code" }).textContent).toContain("WXYZ-1234");
+    await user.click(screen.getByRole("button", { name: "Copy Authorization URL" }));
+    expect(clipboard).toHaveBeenCalledWith(url);
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+  });
+
+  it("collects multiselect answers with a check list, keeping custom values", async () => {
+    const user = userEvent.setup();
+    render(
+      <ProviderConnectionDialog
+        {...props({
+          ...integration,
+          methods: [
+            {
+              id: "scopes",
+              type: "external",
+              label: "Scoped profile",
+              form: [
+                {
+                  key: "scopes",
+                  type: "multiselect",
+                  title: "Scopes",
+                  description: null,
+                  required: false,
+                  when: [],
+                  options: [
+                    { value: "read", label: "Read", description: null },
+                    { value: "write", label: "Write", description: "Change resources" },
+                  ],
+                  minItems: null,
+                  maxItems: null,
+                  custom: true,
+                  defaultValue: ["read"],
+                },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+    const scopes = screen.getByRole("group", { name: "Scopes" });
+    const read = within(scopes).getByRole("checkbox", { name: "Read" });
+    const write = within(scopes).getByRole("checkbox", { name: "Write" });
+    expect(read.getAttribute("aria-checked")).toBe("true");
+    expect(write.getAttribute("aria-checked")).toBe("false");
+    await user.click(write);
+    expect(write.getAttribute("aria-checked")).toBe("true");
+    await user.keyboard(" ");
+    expect(write.getAttribute("aria-checked")).toBe("false");
+    await user.keyboard(" ");
+    expect(write.getAttribute("aria-checked")).toBe("true");
+    await user.type(screen.getByRole("textbox", { name: "Custom Scopes" }), "admin");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(read);
+    await user.click(screen.getByRole("button", { name: "Add and use" }));
+    expect(palot.connectIntegrationExternal).toHaveBeenCalledWith(
+      expect.objectContaining({ methodID: "scopes", answer: { scopes: ["write", "admin"] } }),
+    );
+  });
 });

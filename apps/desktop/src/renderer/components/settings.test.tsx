@@ -21,7 +21,8 @@ import { createRendererQueryClient } from "../lib/query-client";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { checkPlugins, loadSettings } from "../services/opencode-settings";
 import { palot } from "../services/palot";
-import { ModelSettings, PluginSettings, ToolSettings } from "./settings";
+import { PluginSettings, ToolSettings } from "./settings";
+import { ModelSettings } from "./settings/models-settings";
 
 const project: PalotProject = {
   id: "project-1",
@@ -566,7 +567,7 @@ describe("Settings inventory", () => {
         </Provider>,
       );
       expect(
-        screen.getByRole("switch", { name: "Enable Direct reasoner" }).getAttribute("aria-checked"),
+        screen.getByRole("switch", { name: "Show Direct reasoner" }).getAttribute("aria-checked"),
       ).toBe("false");
       view.rerender(
         <Provider store={store}>
@@ -581,12 +582,10 @@ describe("Settings inventory", () => {
       );
       for (const alias of aliases) {
         expect(
-          screen
-            .getByRole("switch", { name: `Disable ${alias.name}` })
-            .getAttribute("aria-checked"),
+          screen.getByRole("switch", { name: `Show ${alias.name}` }).getAttribute("aria-checked"),
         ).toBe("true");
       }
-      const control = screen.getByRole("switch", { name: "Disable Other model" });
+      const control = screen.getByRole("switch", { name: "Show Other model" });
       const user = userEvent.setup();
       await user.click(control);
       await waitFor(() => expect(control.getAttribute("aria-checked")).toBe("false"));
@@ -594,11 +593,11 @@ describe("Settings inventory", () => {
         "openai/reasoner",
         "anthropic/other",
       ]);
-      await user.click(screen.getByRole("button", { name: "Deselect all" }));
+      await user.click(screen.getByRole("button", { name: "Hide all models" }));
       expect(store.get(modelPickerPreferencesAtom)[preferenceScope]?.hidden).toEqual(
         expect.arrayContaining(["openai/reasoner", "anthropic/other", "company-openai/reasoner"]),
       );
-      await user.click(screen.getByRole("button", { name: "Select all" }));
+      await user.click(screen.getByRole("button", { name: "Show all models" }));
       expect(store.get(modelPickerPreferencesAtom)[preferenceScope]?.hidden).toEqual([
         "openai/reasoner",
       ]);
@@ -608,17 +607,15 @@ describe("Settings inventory", () => {
         </Provider>,
       );
       expect(
-        screen.getByRole("switch", { name: "Enable Direct reasoner" }).getAttribute("aria-checked"),
+        screen.getByRole("switch", { name: "Show Direct reasoner" }).getAttribute("aria-checked"),
       ).toBe("false");
       for (const alias of aliases) {
         expect(
-          screen
-            .getByRole("switch", { name: `Disable ${alias.name}` })
-            .getAttribute("aria-checked"),
+          screen.getByRole("switch", { name: `Show ${alias.name}` }).getAttribute("aria-checked"),
         ).toBe("true");
       }
       expect(
-        screen.getByRole("switch", { name: "Disable Other model" }).getAttribute("aria-checked"),
+        screen.getByRole("switch", { name: "Show Other model" }).getAttribute("aria-checked"),
       ).toBe("true");
     },
   );

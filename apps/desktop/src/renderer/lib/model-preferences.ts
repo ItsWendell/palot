@@ -1,4 +1,5 @@
 import type { PalotModel } from "../../shared";
+import { persistedAtom } from "../atoms/persisted";
 
 export interface ModelPickerPreference {
   hidden: string[];
@@ -49,4 +50,81 @@ export function applyModelPreference(
 /** Project IDs are local to their OpenCode server. */
 export function modelProjectPreferenceKey(profileID: string, projectID: string): string {
   return JSON.stringify([profileID, projectID]);
+}
+
+/**
+ * Picker shortcuts per preference scope, kept apart from visibility and order so Settings
+ * edits of `ModelPickerPreference` never drop them. Keys are `modelPreferenceKey` values.
+ */
+export interface ModelPickerUsage {
+  favorites: string[];
+  /** Most recent first. */
+  recent: string[];
+}
+
+export type ModelPickerUsages = Record<string, ModelPickerUsage>;
+
+export const RECENT_MODEL_LIMIT = 5;
+const USAGE_SCOPE_LIMIT = 100;
+const EMPTY_USAGE: ModelPickerUsage = { favorites: [], recent: [] };
+
+function isKeyList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((key) => typeof key === "string");
+}
+
+export function isModelPickerUsages(value: unknown): value is ModelPickerUsages {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value).every(
+    (usage) =>
+      Boolean(usage) &&
+      typeof usage === "object" &&
+      isKeyList((usage as ModelPickerUsage).favorites) &&
+      isKeyList((usage as ModelPickerUsage).recent),
+  );
+}
+
+export const modelPickerUsageAtom = persistedAtom({
+  key: "models.picker-usage",
+  initialValue: {} as ModelPickerUsages,
+  validate: isModelPickerUsages,
+});
+
+export function modelPickerUsage(usages: ModelPickerUsages, scope: string): ModelPickerUsage {
+  return usages[scope] ?? EMPTY_USAGE;
+}
+
+function updateUsage(
+  usages: ModelPickerUsages,
+  scope: string,
+  update: (usage: ModelPickerUsage) => ModelPickerUsage,
+): ModelPickerUsages {
+  const next = { ...usages };
+  delete next[scope];
+  next[scope] = update(usages[scope] ?? EMPTY_USAGE);
+  // The most recently touched scopes win; older projects age out.
+  return Object.fromEntries(Object.entries(next).slice(-USAGE_SCOPE_LIMIT));
+}
+
+export function toggleFavoriteModel(
+  usages: ModelPickerUsages,
+  scope: string,
+  key: string,
+): ModelPickerUsages {
+  return updateUsage(usages, scope, (usage) => ({
+    ...usage,
+    favorites: usage.favorites.includes(key)
+      ? usage.favorites.filter((entry) => entry !== key)
+      : [...usage.favorites, key],
+  }));
+}
+
+export function rememberRecentModel(
+  usages: ModelPickerUsages,
+  scope: string,
+  key: string,
+): ModelPickerUsages {
+  return updateUsage(usages, scope, (usage) => ({
+    ...usage,
+    recent: [key, ...usage.recent.filter((entry) => entry !== key)].slice(0, RECENT_MODEL_LIMIT),
+  }));
 }

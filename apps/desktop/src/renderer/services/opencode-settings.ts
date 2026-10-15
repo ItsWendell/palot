@@ -245,6 +245,42 @@ function configLanguageServers(value: unknown): PalotConfigSource["languageServe
   });
 }
 
+/**
+ * Providers a config document defines and its `provider.use` policies. OpenCode removes
+ * providers a deny policy matches from `provider.list`, so the policy is the only
+ * readable record of why a connected provider is unavailable.
+ */
+function configProviderFacts(
+  info: unknown,
+): Pick<PalotConfigSource, "providerIDs" | "providerPolicies"> {
+  if (!info || typeof info !== "object" || Array.isArray(info)) return {};
+  const record = info as Record<string, unknown>;
+  const experimental =
+    record.experimental &&
+    typeof record.experimental === "object" &&
+    !Array.isArray(record.experimental)
+      ? (record.experimental as Record<string, unknown>)
+      : null;
+  const policies: NonNullable<PalotConfigSource["providerPolicies"]> = Array.isArray(
+    experimental?.policies,
+  )
+    ? experimental.policies.flatMap((item: unknown) => {
+        if (!item || typeof item !== "object") return [];
+        const policy = item as Record<string, unknown>;
+        return policy.action === "provider.use" &&
+          typeof policy.resource === "string" &&
+          (policy.effect === "allow" || policy.effect === "deny")
+          ? [{ resource: policy.resource, effect: policy.effect as "allow" | "deny" }]
+          : [];
+      })
+    : [];
+  const providerIDs = keys(record.providers);
+  return {
+    ...(providerIDs.length ? { providerIDs } : {}),
+    ...(policies.length ? { providerPolicies: policies } : {}),
+  };
+}
+
 function mapFormField(field: FormField): PalotFormField {
   const base = {
     key: field.key,
@@ -464,6 +500,7 @@ export async function loadSettings(
               "info" in entry && Array.isArray(entry.info.permissions)
                 ? entry.info.permissions.map((rule) => ({ ...rule }))
                 : [],
+            ...("info" in entry ? configProviderFacts(entry.info) : {}),
           }))
         : [],
     catalog:

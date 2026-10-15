@@ -19,6 +19,10 @@ const alertVariants = cva(
   },
 );
 
+/**
+ * Legacy notice kept for existing callers. New notices use `Banner` from `./banner`
+ * (statuses, roles, actions, dismiss and motion); migrate callers when touching them.
+ */
 function Alert({
   className,
   variant,

@@ -13,9 +13,12 @@ export async function listProjectInfo(
   requestSignal?: AbortSignal,
   connectionID?: string,
 ): Promise<Project[]> {
-  return openCodeClient(connectionID).project.list({
-    signal: openCodeRequestSignal(requestSignal),
-  });
+  return openCodeClient(connectionID).project.list(
+    {},
+    {
+      signal: openCodeRequestSignal(requestSignal),
+    },
+  );
 }
 
 export async function listRootSessionInfo(

@@ -8,7 +8,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ComponentType } from "react";
 import type {
   OpenCodeRuntimeStatus,
   PalotFormField,
@@ -26,10 +26,15 @@ import {
   IntegrationConnectionWorkflow,
   type IntegrationConnectionAttempt,
 } from "../lib/integration-connection-workflow";
+import { cn } from "../lib/cn";
 import { showErrorToast } from "../lib/toast-error";
 import { palot } from "../services/palot";
+import { Banner } from "./ui/banner";
 import { Button } from "./ui/button";
+import { CheckList } from "./ui/check-list";
 import { Checkbox } from "./ui/checkbox";
+import { ChoiceGroup } from "./ui/choice-group";
+import { CopyField } from "./ui/copy-field";
 import {
   Dialog,
   DialogContent,
@@ -66,6 +71,7 @@ export function ProviderConnectionDialog({
   });
   const [attempt, setAttempt] = useState<IntegrationConnectionAttempt | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const methodLabelID = useId();
   const workflow = useMemo(() => new IntegrationConnectionWorkflow(palot), []);
   const selectedRuntime = useSettingsOwner();
   const runtime = owner === undefined ? selectedRuntime : owner;
@@ -154,32 +160,24 @@ export function ProviderConnectionDialog({
           </DialogDescription>
         </DialogHeader>
         {integration && availableMethods.length > 1 && !attempt ? (
-          <fieldset className="grid gap-2">
-            <legend className="mb-1 text-xs font-medium">Choose a connection method</legend>
-            {availableMethods.map((item) => {
-              const selected = methodKey(item) === methodKey(method!);
-              return (
-                <button
-                  key={methodKey(item)}
-                  type="button"
-                  aria-pressed={selected}
-                  disabled={busy}
-                  className="group grid min-h-14 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border border-border/75 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 aria-pressed:border-foreground/20 aria-pressed:bg-muted/45"
-                  onClick={() => setMethodID(methodKey(item))}
-                >
-                  <span className="grid size-8 place-items-center rounded-lg bg-muted text-muted-foreground group-aria-pressed:text-foreground">
-                    <ConnectionMethodIcon method={item} />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{item.label}</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {connectionMethodDescription(item)}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </fieldset>
+          <div className="grid gap-2">
+            <p id={methodLabelID} className="text-xs font-medium">
+              Choose a connection method
+            </p>
+            <ChoiceGroup
+              aria-labelledby={methodLabelID}
+              variant="card"
+              disabled={busy}
+              value={method ? methodKey(method) : null}
+              onValueChange={setMethodID}
+              options={availableMethods.map((item) => ({
+                value: methodKey(item),
+                label: item.label,
+                description: connectionMethodDescription(item),
+                icon: connectionMethodIcon(item),
+              }))}
+            />
+          </div>
         ) : null}
         {!attempt ? (
           method ? (
@@ -192,9 +190,9 @@ export function ProviderConnectionDialog({
             />
           ) : (
             <div className="grid gap-3">
-              <p role="status" className="text-sm text-muted-foreground">
+              <Banner status="neutral">
                 No connection methods are available here. Configure this integration in OpenCode.
-              </p>
+              </Banner>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => void close()}>
                   Cancel
@@ -204,29 +202,35 @@ export function ProviderConnectionDialog({
           )
         ) : (
           <div className="grid gap-3">
-            <div
-              className="rounded-xl border bg-muted/25 p-3 text-xs"
-              role={attempt.status === "pending" ? "status" : "alert"}
-              aria-live={attempt.status === "pending" ? "polite" : "assertive"}
+            <Banner
+              status={
+                attempt.status === "pending"
+                  ? "info"
+                  : attempt.status === "complete"
+                    ? "success"
+                    : "error"
+              }
+              icon={attempt.status === "pending" ? PendingIcon : undefined}
+              title={
+                attempt.status === "pending"
+                  ? "Waiting for authorization"
+                  : attempt.status === "complete"
+                    ? "Authorized"
+                    : attempt.status === "expired"
+                      ? "Authorization expired"
+                      : "Authorization failed"
+              }
               aria-busy={attempt.status === "pending"}
             >
-              <div className="flex items-center gap-2">
-                {attempt.status === "pending" ? (
-                  <LoaderCircle className="size-4 animate-spin text-info" aria-hidden="true" />
-                ) : (
-                  <CircleAlert className="size-4 text-destructive" aria-hidden="true" />
-                )}
-                <span className="font-medium">
-                  {attempt.status === "pending" ? "Waiting for authorization" : attempt.status}
-                </span>
-              </div>
-              {attempt.instructions ? (
-                <p className="mt-2 whitespace-pre-wrap text-muted-foreground">
-                  {attempt.instructions}
-                </p>
-              ) : null}
-              {attempt.message ? <p className="mt-2 text-destructive">{attempt.message}</p> : null}
-            </div>
+              {attempt.instructions || attempt.message ? (
+                <>
+                  {attempt.instructions ? (
+                    <p className="whitespace-pre-wrap">{attempt.instructions}</p>
+                  ) : null}
+                  {attempt.message ? <p>{attempt.message}</p> : null}
+                </>
+              ) : undefined}
+            </Banner>
             {attempt.url && validHttpUrl(attempt.url) ? (
               <a
                 href={attempt.url}
@@ -237,10 +241,12 @@ export function ProviderConnectionDialog({
                 <ExternalLink className="size-4" aria-hidden="true" />
                 Open authorization page
               </a>
-            ) : attempt.url ? (
-              <code className="block break-all rounded-lg border px-3 py-2 text-micro text-muted-foreground">
-                {attempt.url}
-              </code>
+            ) : null}
+            {attempt.url ? (
+              <CopyField label="Authorization URL" value={attempt.url} monospace />
+            ) : null}
+            {attempt.status === "pending" && deviceCode(attempt) ? (
+              <CopyField label="Device code" value={deviceCode(attempt)!} />
             ) : null}
             {attempt.type === "oauth" && attempt.mode === "code" ? (
               <label className="grid gap-1.5 text-xs font-medium">
@@ -292,10 +298,10 @@ function ConnectionMethodForm({
   if (method.type === "unsupported") {
     return (
       <>
-        <p role="status" className="text-sm text-muted-foreground">
+        <Banner status="neutral">
           Palot does not support the {method.label} connection method ({method.methodType}). Connect
           it in OpenCode instead.
-        </p>
+        </Banner>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onCancel}>
             Cancel
@@ -343,9 +349,7 @@ function ConnectionMethodForm({
           />
         </label>
         {method.type === "command" ? (
-          <div className="rounded-lg border bg-muted/30 px-3 py-2 font-mono text-code-compact text-muted-foreground">
-            {method.command.join(" ")}
-          </div>
+          <CopyField label="Command OpenCode runs" value={method.command.join(" ")} />
         ) : null}
       </div>
       <DialogFooter>
@@ -381,6 +385,7 @@ function IntegrationFormField({
   onChange(value: FormValue | undefined): void;
 }) {
   const [customValue, setCustomValue] = useState("");
+  const labelID = useId();
   if (!formFieldVisible(field, answers)) return null;
   if (field.type === "external") {
     return (
@@ -441,35 +446,31 @@ function IntegrationFormField({
   }
   if (field.type === "multiselect") {
     const selected = Array.isArray(answers[field.key]) ? (answers[field.key] as string[]) : [];
+    const custom = selected.filter(
+      (value) => !field.options.some((option) => option.value === value),
+    );
     return (
-      <fieldset className="grid gap-2 rounded-lg border p-3 text-xs">
-        <legend className="px-1 font-medium">{title}</legend>
-        {description}
-        {field.options.map((option) => (
-          <label key={option.value} className="flex items-start gap-2">
-            <Checkbox
-              checked={selected.includes(option.value)}
-              onCheckedChange={(checked) =>
-                onChange(
-                  checked
-                    ? [...selected, option.value]
-                    : selected.filter((value) => value !== option.value),
-                )
-              }
-            />
-            <span>
-              <span className="block font-medium">{option.label}</span>
-              {option.description ? (
-                <span className="block text-micro text-muted-foreground">{option.description}</span>
-              ) : null}
-            </span>
-          </label>
-        ))}
+      <div className="grid gap-2 rounded-lg border p-2 text-xs">
+        <span id={labelID} className="px-1 pt-1 font-medium">
+          {title}
+        </span>
+        {field.description ? <span className="px-1">{description}</span> : null}
+        <CheckList
+          aria-labelledby={labelID}
+          options={field.options.map((option) => ({
+            value: option.value,
+            label: option.label,
+            ...(option.description ? { description: option.description } : {}),
+          }))}
+          value={selected}
+          onValueChange={(next) => onChange(next)}
+        />
         {field.custom ? (
-          <div className="flex gap-2">
+          <div className="flex gap-2 px-1 pb-1">
             <Input
               value={customValue}
               placeholder="Custom value"
+              aria-label={`Custom ${title}`}
               onChange={(event) => setCustomValue(event.target.value)}
             />
             <Button
@@ -486,20 +487,23 @@ function IntegrationFormField({
             </Button>
           </div>
         ) : null}
-        {selected
-          .filter((value) => !field.options.some((option) => option.value === value))
-          .map((value) => (
-            <button
-              key={value}
-              type="button"
-              className="flex items-center gap-1 justify-self-start rounded-md border px-2 py-1 text-micro"
-              onClick={() => onChange(selected.filter((item) => item !== value))}
-            >
-              {value}
-              <X className="size-3" aria-hidden="true" />
-            </button>
-          ))}
-      </fieldset>
+        {custom.length ? (
+          <div className="flex flex-wrap gap-1.5 px-1 pb-1">
+            {custom.map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-label={`Remove ${value}`}
+                className="flex items-center gap-1 rounded-md border px-2 py-1 text-micro"
+                onClick={() => onChange(selected.filter((item) => item !== value))}
+              >
+                {value}
+                <X className="size-3" aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
     );
   }
   if (field.type === "string" && field.options.length > 0 && !field.custom) {
@@ -562,16 +566,35 @@ function methodKey(method: PalotIntegrationMethod): string {
   return `${type}:${method.id ?? "default"}`;
 }
 
-function ConnectionMethodIcon({
-  method,
-}: {
-  method: Exclude<PalotIntegrationMethod, { type: "env" }>;
-}) {
-  if (method.type === "key") return <KeyRound className="size-4" aria-hidden="true" />;
-  if (method.type === "command") return <Terminal className="size-4" aria-hidden="true" />;
-  if (method.type === "external") return <ExternalLink className="size-4" aria-hidden="true" />;
-  if (method.type === "unsupported") return <CircleAlert className="size-4" aria-hidden="true" />;
-  return <LogIn className="size-4" aria-hidden="true" />;
+function connectionMethodIcon(
+  method: Exclude<PalotIntegrationMethod, { type: "env" }>,
+): ComponentType<{ className?: string }> {
+  if (method.type === "key") return KeyRound;
+  if (method.type === "command") return Terminal;
+  if (method.type === "external") return ExternalLink;
+  if (method.type === "unsupported") return CircleAlert;
+  return LogIn;
+}
+
+function PendingIcon({ className }: { className?: string }) {
+  return <LoaderCircle className={cn(className, "animate-spin")} aria-hidden="true" />;
+}
+
+/**
+ * The code a device flow asks people to enter: the `user_code` URL parameter, or a short
+ * code at the end of the instructions ("Enter code: ABCD-1234").
+ */
+function deviceCode(attempt: IntegrationConnectionAttempt): string | null {
+  if (attempt.url) {
+    try {
+      const code = new URL(attempt.url).searchParams.get("user_code");
+      if (code) return code;
+    } catch {
+      // Not a URL; fall back to the instructions.
+    }
+  }
+  const match = attempt.instructions?.match(/:\s*([A-Z0-9]{4,}(?:-[A-Z0-9]{3,})*)\s*$/);
+  return match?.[1] ?? null;
 }
 
 function connectionMethodDescription(

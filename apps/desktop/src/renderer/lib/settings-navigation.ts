@@ -103,17 +103,19 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   {
     id: "models",
     label: "Models",
-    description: "Project defaults and catalog",
+    description: "Default model and which models pickers show",
     icon: Sparkles,
-    keywords: "model provider context output default variant",
+    keywords:
+      "model default override variant effort context output price cost visibility hide show picker order agent",
     group: "OpenCode",
   },
   {
     id: "providers",
     label: "Providers",
-    description: "Provider credentials and models",
+    description: "Provider connections and credentials",
     icon: Cable,
-    keywords: "provider api key oauth environment credential integration",
+    keywords:
+      "provider connect disconnect api key oauth account environment variable env credential integration source policy",
     group: "OpenCode",
   },
   {
