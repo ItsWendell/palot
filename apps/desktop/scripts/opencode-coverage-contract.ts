@@ -637,7 +637,8 @@ async function generateRemoteContract(
       helper,
       [
         'import { ClientApi } from "@opencode/protocol/client";',
-        'import { OpenApi } from "effect/unstable/httpapi";',
+        // Effect 4.0 stable moved HttpApi out of `unstable`; older contracts still use the RC path.
+        'const { OpenApi } = await import("effect/http-api").catch(() => import("effect/unstable/httpapi"));',
         "process.stdout.write(JSON.stringify(OpenApi.fromApi(ClientApi)));",
       ].join("\n"),
     );

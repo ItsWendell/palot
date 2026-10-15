@@ -49,9 +49,16 @@ export function resolveCoveragePackages(from = fileURLToPath(import.meta.url)) {
       Object.entries(packages).map(([name, value]) => [name, value.manifest]),
     ),
     declarations: path.join(path.dirname(client.entry), "generated/types.d.ts"),
-    effectOpenApi: import.meta.resolve(
-      "effect/unstable/httpapi",
-      pathToFileURL(protocol.entry).href,
-    ),
+    effectOpenApi: resolveEffectOpenApi(protocol.entry),
   };
+}
+
+/** Effect 4.0 stable moved HttpApi out of `unstable`; release candidates keep the old path. */
+function resolveEffectOpenApi(from: string): string {
+  const parent = pathToFileURL(from).href;
+  try {
+    return import.meta.resolve("effect/http-api", parent);
+  } catch {
+    return import.meta.resolve("effect/unstable/httpapi", parent);
+  }
 }

@@ -46,8 +46,13 @@ SOFTWARE.
 and `src/renderer/components/ui/fluid-hover-highlight.tsx` is adapted, from
 [`mickadesign/fluid-functionalism`](https://github.com/mickadesign/fluid-functionalism),
 commit `bf9ece46728035afef54feef6ac67e1f413cc0b0`. `src/renderer/components/ui/fluid-list.tsx`
-adapts behaviour from its Dropdown, dropdown-sub, and TabsSubtle components. Other
-components that adopt its interaction patterns are Palot implementations built on these files.
+adapts behaviour from its Dropdown, dropdown-sub, and TabsSubtle components. The following
+are adapted from the same commit: `src/renderer/components/ui/banner.tsx` (Banner),
+`src/renderer/components/ui/choice-group.tsx` (RadioGroup),
+`src/renderer/components/ui/check-list.tsx` (CheckboxGroup),
+`src/renderer/components/ui/copy-field.tsx` (InputCopy), and the panel motion in
+`src/renderer/components/ui/accordion.tsx` (Accordion). Other components that adopt its
+interaction patterns are Palot implementations built on these files.
 
 MIT License
 

@@ -1,5 +1,5 @@
 import type { IntegrationExternalMethod } from "@opencode/plugin/promise/integration";
-import { expect } from "@playwright/test";
+import { expect, type Locator } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
@@ -46,9 +46,17 @@ const METHOD = {
   ],
 } satisfies IntegrationExternalMethod;
 
+/** The method picker is a radio group that only appears when several methods remain. */
+async function chooseFixtureMethod(dialog: Locator): Promise<void> {
+  const method = dialog.getByRole("radio", { name: /^Fixture credential profile/ });
+  if ((await method.count()) === 0) return;
+  await method.click();
+  await expect(method).toHaveAttribute("aria-checked", "true");
+}
+
 export const externalCredentialsScenario: Scenario = {
   description:
-    "connect a dummy external credential through native settings, verify form metadata and label on OpenCode 2.0.26, and reload hydration without provider login",
+    "connect a dummy external credential through native settings, verify form metadata and label on OpenCode 2.0.29, and reload hydration without provider login",
   prompt: "",
   expectedModelCalls: 0,
   arrange() {},
@@ -94,7 +102,7 @@ export const externalCredentialsScenario: Scenario = {
     );
   },
   async seed(client, { projectDirectory }) {
-    expect((await client.server.info()).version).toBe("2.0.26");
+    expect((await client.server.info()).version).toBe("2.0.29");
     const input = { integrationID: INTEGRATION_ID, location: { directory: projectDirectory } };
     await expect
       .poll(async () => (await client.integration.get(input)).data, {
@@ -129,7 +137,7 @@ export const externalCredentialsScenario: Scenario = {
         exact: true,
       });
       await expect(dialog).toBeVisible();
-      await dialog.getByRole("button", { name: /^Fixture credential profile/ }).click();
+      await chooseFixtureMethod(dialog);
       await expect(
         dialog.getByRole("link", { name: "Fixture setup instructions", exact: true }),
       ).toHaveAttribute("href", METHOD.form[0].url);
@@ -216,7 +224,7 @@ export const externalCredentialsScenario: Scenario = {
       await expect(connection.getByText("In use", { exact: true })).toBeVisible();
       await expect(card.getByText("1 stored credential", { exact: true })).toBeVisible();
       await card.getByRole("button", { name: "Add credential", exact: true }).click();
-      await dialog.getByRole("button", { name: /^Fixture credential profile/ }).click();
+      await chooseFixtureMethod(dialog);
       await expect(
         dialog.getByRole("textbox", { name: "Credential profile", exact: true }),
       ).toHaveValue("");

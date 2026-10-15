@@ -22,7 +22,7 @@ explicitly signed with a local certificate.
 
 Palot 0.17.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
-release-smoke runtime are pinned to **2.0.26** for repeatable checks. Stable
+release-smoke runtime are pinned to **2.0.29** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
 tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
 versions require explicit consent; V1, unknown majors and malformed versions are
@@ -124,6 +124,26 @@ offers Google Cloud credentials (gcloud or environment) as an external Vertex
 connection method, which Palot renders through the existing external-method flow.
 Remote access through `opencode pair --remote` now uses a random, unguessable
 subdomain. Snapshot and diff performance fixes require updating the running service
+separately. The connection minimum remains 2.0.7.
+
+The 2.0.27 and 2.0.28 packages move to stable Effect 4.0.1, whose HTTP and encoding
+modules leave `effect/unstable/*`; Palot pins the same Effect release. The contract
+changes are additive: `project.list` takes an optional `archived` filter and hides
+archived projects (all directories missing) by default, projects report `archived`,
+idle messages can carry a structured `error`, and providers and models gain
+`encoding` and `compatibility` settings. Event payloads are unchanged. The service
+also adds per-project permission auto-accept, includes subagent sessions in costs,
+and asks before `opencode pair --remote` exposes it (`--yes` skips the prompt).
+Those and the streaming fixes require updating the running service separately. The
+connection minimum remains 2.0.7.
+
+The 2.0.29 client declarations and event payloads are unchanged from 2.0.28. The
+protocol exports `PTY_CONNECT_PATH` and `PAIRING_CONNECT_PATH`, and the schema
+stabilizes top-level `policies` (`provider.use`, `tool.use`, `integration.use`), which
+deprecates `experimental.policies`. The service continues a response after an
+output-token limit with a synthetic instruction that has no description; Palot keeps
+such synthetic messages out of the transcript. Plugins can assert permissions, and
+managed configuration takes precedence. These require updating the running service
 separately. The connection minimum remains 2.0.7.
 
 ### One-time pairing and OpenTunnel

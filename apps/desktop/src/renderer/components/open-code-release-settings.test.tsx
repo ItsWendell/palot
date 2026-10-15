@@ -403,6 +403,7 @@ describe("OpenCodeReleaseSettings", () => {
     expect(palot.inspectOpenCodeInstallations).toHaveBeenCalledOnce();
     expect(palot.checkOpenCodeRelease).not.toHaveBeenCalled();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog")).toBeNull();
+    // The dialog unmounts after its exit motion.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

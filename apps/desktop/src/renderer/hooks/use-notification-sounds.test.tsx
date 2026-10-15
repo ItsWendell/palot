@@ -50,7 +50,7 @@ function mount() {
   const live = (...events: PalotEvent[]) =>
     reconciler.applyBatch({
       connectionID,
-      contractVersion: "2.0.26",
+      contractVersion: "2.0.29",
       streamEpoch: 1,
       batchSequence: ++batchSequence,
       receivedAt: Date.now(),
@@ -82,7 +82,7 @@ it("plays once for a live event and never for replayed history", async () => {
   // A reconnect that delivers the same event again stays silent.
   reconciler.applyBatch({
     connectionID,
-    contractVersion: "2.0.26",
+    contractVersion: "2.0.29",
     streamEpoch: 2,
     batchSequence: 1,
     receivedAt: Date.now(),
