@@ -28,8 +28,12 @@ async function checkNewTaskDestination(
   const main = page.getByRole("main", { name: "New task", exact: true });
   const picker = main.getByRole("combobox", { name: "Task destination", exact: true });
   const search = page.getByRole("combobox", { name: "Search destinations", exact: true });
+  // Destination rows group under a heading that names their server.
   const projectOption = (server: string) =>
-    page.getByRole("option", { name: new RegExp(server) }).filter({ hasText: projectDirectory });
+    page
+      .getByRole("group", { name: new RegExp(server) })
+      .getByRole("option")
+      .filter({ hasText: projectDirectory });
   const destination = () => {
     const route = new URL(page.url().split("#")[1]!, "http://e2e.invalid");
     return {
@@ -318,9 +322,7 @@ async function captureOverview(page: Page, runRoot: string) {
       );
       await expect(page.locator("html")).toHaveAttribute("data-resolved-theme", scheme);
       for (const mode of ["inbox", "projects"] as const) {
-        await page
-          .getByRole("button", { name: mode === "inbox" ? /^Show inbox/ : "Show projects" })
-          .click();
+        await showColumnView(page, mode === "inbox" ? /^Show inbox/ : "Show projects");
         await expect(
           page.getByRole("button", { name: new RegExp(`^${remoteTitle} · ${remoteName}`) }),
         ).toBeVisible();
@@ -596,7 +598,7 @@ export const multiConnectionScenario: Scenario = {
       if (!(await showInbox.isVisible())) {
         await page.getByRole("button", { name: "Show navigation", exact: true }).click();
       }
-      await showInbox.click();
+      await showColumnView(page, /^Show inbox/);
       const options = page.getByRole("button", { name: "Inbox options", exact: true });
       await expect(page.getByRole("button", { name: "Connection scope", exact: true })).toHaveCount(
         0,
@@ -670,6 +672,8 @@ export const multiConnectionScenario: Scenario = {
       // Native visual capture requires a mapped window. Hidden Electron windows
       // on Linux can service DOM commands but stall Chromium's screenshot request.
       if (visible) await captureOverview(page, runRoot);
+      // The capture ends on the Projects view; the inbox actions below need Inbox.
+      await showColumnView(page, /^Show inbox/);
       await page
         .getByRole("button", { name: new RegExp(`^Actions for ${remoteTitle} on ${remoteName}`) })
         .click();
@@ -1013,3 +1017,9 @@ export const multiConnectionScenario: Scenario = {
     }
   },
 };
+
+/** Opens a rail column view. Pressing the active view hides the column, so press only when needed. */
+async function showColumnView(page: Page, name: string | RegExp) {
+  const button = page.getByRole("button", { name, exact: typeof name === "string" });
+  if ((await button.getAttribute("aria-pressed")) !== "true") await button.click();
+}

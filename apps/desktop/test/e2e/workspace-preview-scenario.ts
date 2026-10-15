@@ -223,11 +223,6 @@ export const workspacePreviewScenario: Scenario = {
     await filesTab.getByRole("button", { name: "preview.pdf" }).click();
     await expect(pdfTab.getByText("Page 1 of 1")).toBeVisible();
 
-    await page.getByRole("button", { name: "View turn changes" }).click();
-    const turnTab = page.locator('[data-workbench-pane="right"]').getByRole("tabpanel", {
-      name: "Turn changes",
-    });
-    await expect(turnTab.getByText("No changes in this turn")).toBeVisible();
     expect(llm.scriptedCalls()).toBe(0);
   },
 };

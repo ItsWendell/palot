@@ -140,7 +140,7 @@ export const subagentRequestsScenario: Scenario = {
     await expect(page.locator(`[data-palot-subagent-session="${child.id}"]`)).toBeVisible();
     await expect(extraCard).toContainText("Should the coordinator include a separate appendix?");
     await expect(delegatedCard).toContainText(`Subagent · ${grandchild.title}`);
-    await page.getByRole("button", { name: "Parent task", exact: true }).click();
+    await page.getByRole("button", { name: /^Open parent task: / }).click();
     await assertParentSelected(page, parentHash, this.prompt);
     await expect(page.locator(REQUESTS)).toHaveCount(3);
     await captureLayout(page, delegatedCard, runRoot);

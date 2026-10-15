@@ -69,13 +69,13 @@ export const destinationRecoveryScenario: Scenario = {
     await picker.click();
     const search = page.getByRole("combobox", { name: "Search destinations", exact: true });
     await search.fill(projectDirectory);
+    // Destination rows group under a heading that names their server.
     const destination = page
+      .getByRole("group", { name: profile.name })
       .getByRole("option")
-      .filter({ hasText: projectDirectory })
-      .filter({ hasText: profile.name });
+      .filter({ hasText: projectDirectory });
     await expect(destination).toBeVisible();
     await expect(destination).toContainText(projectDirectory);
-    await expect(destination).toContainText(profile.name);
     await destination.click();
     await expect
       .poll(() => routeOwner(page))

@@ -201,11 +201,11 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       await expect(page.getByRole("region", { name: "Pending messages", exact: true })).toHaveCount(
         0,
       );
-      const completed = page.getByRole("button", { name: "Compaction completed", exact: true });
+      const completed = page.getByRole("button", { name: "Context compacted", exact: true });
       await expect(completed).toBeVisible();
-      await expect(page.getByText("Compaction completed", { exact: true })).toHaveCount(1);
+      await expect(page.getByText("Context compacted", { exact: true })).toHaveCount(1);
       await completed.click();
-      await expect(page.getByText(/^Compaction request tokens:/)).toBeVisible();
+      await expect(page.getByText(/^Summarizing used /)).toBeVisible();
       await expect(
         page.getByText("The active shell gate completed. Pending work is not summarized.", {
           exact: true,
@@ -402,8 +402,9 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
         await expect(page.getByRole("region", { name: "Pending messages" })).toBeVisible();
         await page.screenshot({ path: join(runRoot, "pending-queue.png") });
         await composer.fill(ORIGINAL_DRAFT);
-        await pending.getByRole("button", { name: "More pending message actions" }).click();
-        await page.getByRole("menuitem", { name: "Cancel and edit" }).click();
+        // The action reads "Steer now" while a turn runs and "Send now" while the task is idle.
+        await expect(pending.getByRole("button", { name: /^(Steer|Send) now$/ })).toBeVisible();
+        await pending.getByRole("button", { name: "Edit pending message", exact: true }).click();
         await expect(composer).toHaveValue(QUEUED_INPUT);
         await expect(page.getByText(EDIT_NOTICE, { exact: true })).toBeVisible();
         await expect
@@ -511,10 +512,12 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
         await page
           .getByRole("combobox", { name: "Choose model", exact: true })
           .fill("workflow-shared");
-        const suggestions = page.getByRole("listbox", { name: "Suggestions", exact: true });
+        const suggestions = page.getByRole("listbox", { name: "Models", exact: true });
         await expect(suggestions.getByRole("option")).toHaveCount(2);
+        // Search results stay grouped under their provider's heading.
         await suggestions
-          .getByRole("option", { name: new RegExp(`${SHARED_MODEL}.*Workflow ${provider}`) })
+          .getByRole("group", { name: `Workflow ${provider}` })
+          .getByRole("option", { name: new RegExp(SHARED_MODEL) })
           .click();
         await expect
           .poll(async () => (await client.session.get({ sessionID: session.id })).model)
@@ -528,13 +531,18 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       await page.getByRole("heading", { name: "Models", level: 1 }).waitFor();
       const search = page.getByRole("searchbox", { name: "Search models" });
       await search.fill("workflow-alpha");
-      await page.getByRole("switch", { name: `Disable ${SHARED_MODEL}`, exact: true }).click();
-      await expect(
-        page.getByRole("switch", { name: `Enable ${SHARED_MODEL}`, exact: true }),
-      ).not.toBeChecked();
+      // Search keeps provider groups; each group holds only its own same-ID model.
+      const alpha = page.getByRole("region", { name: "Workflow Alpha models", exact: true });
+      await expect(page.getByRole("region", { name: "Workflow Beta models" })).toHaveCount(0);
+      const alphaModel = alpha.getByRole("switch", { name: `Show ${SHARED_MODEL}`, exact: true });
+      await alphaModel.click();
+      await expect(alphaModel).not.toBeChecked();
+      await expect(alpha.getByText("0 of 1 shown", { exact: true })).toBeVisible();
       await search.fill("workflow-beta");
       await expect(
-        page.getByRole("switch", { name: `Disable ${SHARED_MODEL}`, exact: true }),
+        page
+          .getByRole("region", { name: "Workflow Beta models", exact: true })
+          .getByRole("switch", { name: `Show ${SHARED_MODEL}`, exact: true }),
       ).toBeChecked();
       await switchTask(page, session.id, "Palot E2E: model-provider-identity");
     },
@@ -543,12 +551,12 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       await page
         .getByRole("combobox", { name: "Choose model", exact: true })
         .fill("workflow-shared");
-      const suggestions = page.getByRole("listbox", { name: "Suggestions", exact: true });
+      const suggestions = page.getByRole("listbox", { name: "Models", exact: true });
+      await expect(suggestions.getByRole("group", { name: "Workflow Alpha" })).toHaveCount(0);
       await expect(
-        suggestions.getByRole("option", { name: new RegExp(`${SHARED_MODEL}.*Workflow Alpha`) }),
-      ).toHaveCount(0);
-      await expect(
-        suggestions.getByRole("option", { name: new RegExp(`${SHARED_MODEL}.*Workflow Beta`) }),
+        suggestions
+          .getByRole("group", { name: "Workflow Beta" })
+          .getByRole("option", { name: new RegExp(SHARED_MODEL) }),
       ).toBeVisible();
       expect((await client.session.get({ sessionID: session.id })).model).toMatchObject({
         id: "workflow-shared",

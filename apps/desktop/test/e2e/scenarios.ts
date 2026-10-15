@@ -24,6 +24,7 @@ import { browserNativeHttpScenario, browserNativeScenario } from "./browser-nati
 import { btwScenario } from "./btw-scenario.ts";
 import { destinationRecoveryScenario } from "./destination-recovery-scenario.ts";
 import { projectSettingsScenario } from "./project-settings-scenario.ts";
+import { projectScriptsScenario } from "./project-scripts-scenario.ts";
 import { streamingPatchScenario } from "./streaming-patch-scenario.ts";
 import type { TestLLMServer } from "./test-llm-server";
 import { workflowScenarios } from "./workflow-scenarios.ts";
@@ -214,6 +215,7 @@ export const scenarios = {
   "destination-recovery": destinationRecoveryScenario,
   "browser-native-http": browserNativeHttpScenario,
   "project-settings": projectSettingsScenario,
+  "project-scripts": projectScriptsScenario,
   "streaming-patch": streamingPatchScenario,
   "accessibility-keyboard": {
     description: "use major routes and dialogs by keyboard with compact accessibility checks",
@@ -485,13 +487,35 @@ export const scenarios = {
         "Adding it makes it active across all connected projects.",
       );
       await expect(addCredential.getByText("Choose a connection method")).toBeVisible();
+      const methods = addCredential.getByRole("radiogroup", { name: "Choose a connection method" });
+      await expect(methods.getByRole("radio", { checked: true })).toHaveCount(1);
       await page.screenshot({ path: join(runRoot, "provider-add-credential.png") });
       await addCredential.getByRole("button", { name: "Cancel" }).click();
+
+      // Key credentials are labelled by source, and disconnect needs an armed second press.
+      await expect(openAI.getByText("API key", { exact: true })).toBeVisible();
+      await openAI.getByRole("button", { name: "Disconnect", exact: true }).click();
+      await expect(openAI.getByRole("alert")).toContainText("This removes 2 stored credentials");
+      await expect(openAI.getByRole("button", { name: "Confirm disconnect" })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(openAI.getByRole("button", { name: "Disconnect", exact: true })).toBeVisible();
+      await expect(openAI.getByRole("group", { name: "Work connection" })).toBeVisible();
 
       await page.screenshot({ path: join(runRoot, "provider-settings.png") });
       await page.setViewportSize({ width: 920, height: 640 });
       await openAI.scrollIntoViewIfNeeded();
       await page.screenshot({ path: join(runRoot, "provider-settings-minimum.png") });
+
+      // The model count deep-links to the Models page with OpenAI expanded.
+      await openAI.getByRole("button", { name: /^\d+ of \d+ models shown$/ }).click();
+      await page.getByRole("heading", { name: "Models", level: 1 }).waitFor();
+      await expect.poll(() => new URL(page.url()).hash).toContain("provider=openai");
+      const openAIModels = page.getByRole("region", { name: "OpenAI models", exact: true });
+      await expect(openAIModels.locator('[data-slot="accordion-trigger"]').first()).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+      await page.screenshot({ path: join(runRoot, "model-settings-openai.png") });
     },
   },
   smoke: {
@@ -1343,7 +1367,7 @@ export const scenarios = {
       await client.session.wait({ sessionID: session.id });
       await page.getByRole("button", { name: "Show changes" }).click();
     },
-    async assert(page, { client, session, projectDirectory }) {
+    async assert(page, { client, session, projectDirectory, runRoot }) {
       const probe = await client.experimental.persistentPty
         .create({
           sessionID: session.id,
@@ -1444,6 +1468,25 @@ export const scenarios = {
       await page.getByRole("button", { name: "Refresh file", exact: true }).click();
       await expect(filePane.getByText("Refreshed workbench E2E", { exact: true })).toBeVisible();
       await expect(filePane.getByText("Palot workbench E2E", { exact: true })).toHaveCount(0);
+
+      // "+" opens a New tab page; a Tools tile turns it into that surface in place.
+      const rightPane = page.locator('[data-workbench-pane="right"]');
+      await rightPane.getByRole("button", { name: "New tab", exact: true }).click();
+      const newTab = rightPane.getByRole("tab", { name: "New tab", exact: true });
+      await expect(newTab).toHaveAttribute("aria-selected", "true");
+      const newTabPage = rightPane.locator("[data-new-tab-page]:visible");
+      await expect(newTabPage.getByRole("textbox", { name: "Browser address" })).toBeVisible();
+      const tools = newTabPage.getByRole("group", { name: "Tools" });
+      await tools.getByRole("button", { name: "Files" }).focus();
+      await page.keyboard.press("ArrowLeft");
+      await expect(tools.getByRole("button", { name: /^Terminal/ })).toBeFocused();
+      await page.screenshot({ path: join(runRoot, "workbench-new-tab.png") });
+      await tools.getByRole("button", { name: "Files" }).click();
+      await expect(newTab).toHaveCount(0);
+      await expect(rightPane.getByRole("tab", { name: "Files", exact: true })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
     },
   },
   "parallel-session-performance": parallelSessionPerformanceScenario(1),
@@ -2108,7 +2151,7 @@ export const scenarios = {
         summary: compactionSummaryChunks().join(""),
       });
       expect(llm.scriptedCalls()).toBe(callsBeforeCompaction + 1);
-      await page.getByRole("button", { name: "Compaction completed" }).waitFor();
+      await page.getByRole("button", { name: "Context compacted", exact: true }).waitFor();
       await finishReactScanPhase(page, "alpha-manual-compaction", {
         visibleSession: "alpha",
         activitySession: "alpha",
@@ -2157,7 +2200,7 @@ export const scenarios = {
       });
     },
     async assert(page, { client, reactProfile, runRoot }) {
-      const compaction = page.getByRole("button", { name: "Compaction completed" });
+      const compaction = page.getByRole("button", { name: "Context compacted", exact: true });
       expect(await compaction.getAttribute("aria-expanded")).toBe("false");
       expect(
         await page
@@ -2516,7 +2559,7 @@ export const scenarios = {
       await card.click();
       await expect(page.locator("[data-palot-subagent-session]")).toContainText("General subagent");
       await expect(page.getByText(/The child inspection is progressing/).first()).toBeVisible();
-      await page.getByRole("button", { name: "Parent task", exact: true }).click();
+      await page.getByRole("button", { name: /^Open parent task: / }).click();
       await expect(card).toBeVisible();
     },
   },

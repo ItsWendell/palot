@@ -57,7 +57,10 @@ export const reviewCommentsScenario: Scenario = {
     expect(editMessage).toBeDefined();
     const turnDiffs = await client.session.diff({ sessionID: session.id, from: editMessage!.id });
     expect(turnDiffs.map((diff) => diff.file)).toContain(FILE);
-    await page.getByRole("button", { name: "View turn changes" }).click();
+    await page
+      .getByRole("group", { name: "Review this turn's changes" })
+      .getByRole("button", { name: "Review changes" })
+      .click();
     const turnTab = page.locator('[data-workbench-pane="right"]').getByRole("tabpanel", {
       name: "Turn changes",
     });
