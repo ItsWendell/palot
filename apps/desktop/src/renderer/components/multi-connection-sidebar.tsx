@@ -1,8 +1,12 @@
 import { useEffect, useEffectEvent, useState, type ReactElement, type ReactNode } from "react";
 import { useAtom, useAtomValue } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
-import { Check, Ellipsis, PinOff, Plus, Server, Undo2 } from "lucide-react";
-import type { SessionTriageCommand, SidebarMode } from "../../shared";
+import { BellRing, Check, Ellipsis, PinOff, Plus, Server, Undo2 } from "lucide-react";
+import {
+  SESSION_TRIAGE_BATCH_LIMIT,
+  type SessionTriageCommand,
+  type SidebarMode,
+} from "../../shared";
 import {
   inboxFiltersAtom,
   inboxShelvesAtom,
@@ -11,6 +15,7 @@ import {
 } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
 import { overviewProjectFilterAtom, overviewProjectSectionsAtom } from "../atoms/connections";
+import { useTriageDispatcher } from "../hooks/use-auto-settle";
 import { useConnectionOverview } from "../hooks/use-connection-overview";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionWindowDrag } from "../hooks/use-session-window-drag";
@@ -38,6 +43,7 @@ import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { sessionSnoozeChoices } from "../lib/session-snooze";
 import { InboxCardSurface, INBOX_CARD_ACTION_BUTTON_CLASS } from "./inbox-card-surface";
 import { PullRequestBadge } from "./pull-requests/pull-request-badge";
+import { announceSettledBatch, SettleIdleMenu } from "./settle-idle-menu";
 import { useOwnedPullRequestLinks } from "./pull-requests/use-owned-pull-request-links";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
@@ -130,6 +136,7 @@ async function attempt(label: string, action: () => Promise<unknown>) {
 
 export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarMode } = {}) {
   const overview = useConnectionOverview();
+  const dispatchTriage = useTriageDispatcher();
   const navigation = usePalotNavigation();
   const runtime = useAtomValue(runtimeAtom);
   const storedMode = useAtomValue(sidebarModeAtom);
@@ -280,6 +287,54 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
   };
   const dispatch = (item: OwnedItem, command: Command) =>
     void run(item, () => overview.dispatch(item.connection.profile.id, command));
+  const canMutate = (connection: Connection) =>
+    connection.runtime?.connected === true &&
+    connection.phase === "ready" &&
+    connection.triageReady;
+  const settleIdle = async (selected: OwnedItem[]) => {
+    const byProfile = new Map<string, OwnedItem[]>();
+    for (const item of selected) {
+      if (!canMutate(item.connection) || busy.has(rowKey(item))) continue;
+      const group = byProfile.get(item.connection.profile.id) ?? [];
+      if (group.length < SESSION_TRIAGE_BATCH_LIMIT) group.push(item);
+      byProfile.set(item.connection.profile.id, group);
+    }
+    const settled = await Promise.all(
+      [...byProfile].map(async ([profileID, group]) => {
+        try {
+          await dispatchTriage(profileID, {
+            type: "settle-many",
+            at: Date.now(),
+            trigger: "bulk",
+            sessions: group.map((item) => ({
+              sessionID: item.session.id,
+              through: item.activityThrough,
+            })),
+          });
+          return { profileID, sessionIDs: group.map((item) => item.session.id) };
+        } catch (error) {
+          showErrorToast(`Could not settle tasks on ${group[0]!.connection.profile.name}`, error);
+          return null;
+        }
+      }),
+    );
+    const batches = settled.filter((batch) => batch !== null);
+    const count = batches.reduce((total, batch) => total + batch.sessionIDs.length, 0);
+    if (count === 0) return;
+    announceSettledBatch({
+      count,
+      undo: () =>
+        Promise.all(
+          batches.map((batch) =>
+            dispatchTriage(batch.profileID, {
+              type: "inbox-many",
+              at: Date.now(),
+              sessionIDs: batch.sessionIDs,
+            }),
+          ),
+        ),
+    });
+  };
   const renderRow = (item: OwnedItem) => {
     const { connection, session } = item;
     const connected = connection.runtime?.connected === true && connection.phase === "ready";
@@ -408,6 +463,42 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
         </DropdownMenuContent>
       </DropdownMenu>
     );
+    // Project rows lead with the one triage step that fits the task's shelf.
+    const quickAction =
+      item.section === "settled" ? (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Unsettle task"
+          title="Unsettle"
+          disabled={disabled}
+          onClick={() => command("inbox")}
+        >
+          <Undo2 aria-hidden="true" />
+        </Button>
+      ) : item.section === "snoozed" ? (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Wake task"
+          title="Wake now"
+          disabled={disabled}
+          onClick={() => command("wake")}
+        >
+          <BellRing aria-hidden="true" />
+        </Button>
+      ) : item.canSettle ? (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Settle task"
+          title="Settle"
+          disabled={disabled}
+          onClick={settle}
+        >
+          <Check aria-hidden="true" />
+        </Button>
+      ) : null;
     return (
       <OwnedSessionInteractions
         key={rowKey(item)}
@@ -521,7 +612,11 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
                     disabled={disabled}
                     onClick={() => command(item.section === "snoozed" ? "wake" : "inbox")}
                   >
-                    <Undo2 aria-hidden="true" />
+                    {item.section === "snoozed" ? (
+                      <BellRing aria-hidden="true" />
+                    ) : (
+                      <Undo2 aria-hidden="true" />
+                    )}
                   </Button>
                   {menu}
                 </div>
@@ -542,7 +637,10 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
                   cn(
                     // The actions reserve their gutter only while shown, so titles
                     // use the full row at rest.
-                    "flex min-w-0 flex-1 items-center gap-2 transition-[color,background-color,padding] group-hover/owned-row:pr-8 group-has-[:focus-visible]/owned-row:pr-8 group-has-[[data-popup-open]]/owned-row:pr-8",
+                    "flex min-w-0 flex-1 items-center gap-2 transition-[color,background-color,padding]",
+                    quickAction
+                      ? "group-hover/owned-row:pr-14 group-has-[:focus-visible]/owned-row:pr-14 group-has-[[data-popup-open]]/owned-row:pr-14"
+                      : "group-hover/owned-row:pr-8 group-has-[:focus-visible]/owned-row:pr-8 group-has-[[data-popup-open]]/owned-row:pr-8",
                     connected && "cursor-grab active:cursor-grabbing",
                   ),
                 )}
@@ -566,6 +664,7 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
               {/* Quiet until the row is hovered or holds keyboard focus; never removed
                   from the tab order. */}
               <div className="absolute top-1/2 right-0.5 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/owned-row:opacity-100 group-has-[:focus-visible]/owned-row:opacity-100 group-has-[[data-popup-open]]/owned-row:opacity-100">
+                {quickAction}
                 {menu}
               </div>
             </div>
@@ -790,6 +889,15 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
                         title={section[0]!.toUpperCase() + section.slice(1)}
                         count={rows.length}
                         open={shelves[section]}
+                        action={
+                          section === "inbox" ? (
+                            <SettleIdleMenu
+                              items={rows}
+                              disabled={!rows.some((item) => canMutate(item.connection))}
+                              onSettle={(selected) => void settleIdle(selected)}
+                            />
+                          ) : undefined
+                        }
                       />
                       <CollapsibleContent>
                         {shelves[section] ? (

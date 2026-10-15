@@ -414,7 +414,9 @@ export function useFluidHover<T extends HTMLElement>(
     (index: number, element: HTMLElement | null) => {
       if (element) {
         itemsRef.current.set(index, element);
-        getItemRo()?.observe(element);
+        // Border box: rows often change size through padding alone (an active tab reserves
+        // room for its close button), which leaves the default content box unchanged.
+        getItemRo()?.observe(element, { box: "border-box" });
         if (index === activeIndexRef.current) element.setAttribute(ACTIVE_ATTR, "");
       } else {
         const previous = itemsRef.current.get(index);

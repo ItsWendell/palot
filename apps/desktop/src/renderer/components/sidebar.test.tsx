@@ -1,12 +1,12 @@
 import { Provider, createStore } from "jotai";
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { FormInfo, PermissionRequest } from "@opencode/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotSession } from "../../shared";
 import { attentionTargetAtom } from "../atoms/attention";
 import { attentionSeenIDsAtom, sidebarSectionsAtom } from "../atoms/attention";
-import { sessionTriageSnapshotAtom } from "../atoms/inbox";
+import { inboxClockAtom, sessionTriageSnapshotAtom } from "../atoms/inbox";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { ProjectSidebarContent } from "./sidebar";
 import { SidebarProvider } from "./ui/sidebar";
@@ -15,6 +15,7 @@ import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { setSessionRequestSnapshot } from "../lib/session-request-query";
 import { palot } from "../services/palot";
+import { toast as toastManager } from "./ui/toast";
 
 let showAttentionNotification: ReturnType<typeof vi.fn>;
 let dispatchSessionTriage: ReturnType<typeof vi.fn>;
@@ -266,6 +267,52 @@ describe("ProjectSidebarContent attention", () => {
     await waitFor(() => expect(list.hasAttribute("data-fluid-hover-active-index")).toBe(false));
   });
 
+  it("routes a click in the gap beside a lit task row to that row's primary action only", async () => {
+    const store = createStore();
+    const second = { ...session, id: "session-2", title: "Second session", updatedAt: 3 };
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, { sessions: [session, second] });
+    renderWithRouter(
+      <Provider store={store}>
+        <SidebarProvider>
+          <ProjectSidebarContent onNewSession={vi.fn()} />
+        </SidebarProvider>
+      </Provider>,
+      store,
+      "/new",
+      queryClient,
+    );
+
+    const recents = screen.getByRole("navigation", { name: "Recent tasks" });
+    const rows = await waitFor(() => {
+      const rows = recents.querySelectorAll<HTMLElement>("[data-sidebar-fluid-row]");
+      expect(rows).toHaveLength(2);
+      return rows;
+    });
+    const list = recents.querySelector<HTMLElement>("[data-sidebar-fluid-list]")!;
+    const target = Array.from(rows).find((row) => row.textContent?.includes("Second session"))!;
+    const primary = target.querySelector("button")!;
+    const clicks = Array.from(recents.querySelectorAll("button")).map((button) =>
+      vi.spyOn(button, "click"),
+    );
+    const primaryClick = clicks[Array.from(recents.querySelectorAll("button")).indexOf(primary)]!;
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue(
+      DOMRect.fromRect({ x: 0, y: 100, width: 200, height: 28 }),
+    );
+
+    act(() => primary.focus());
+    await waitFor(() => expect(target.hasAttribute("data-fluid-hover-active")).toBe(true));
+
+    // One pixel below the lit row: the gap between rows.
+    fireEvent.click(list, { clientX: 20, clientY: 129 });
+    expect(primaryClick).toHaveBeenCalledTimes(1);
+    expect(clicks.filter((click) => click !== primaryClick && click.mock.calls.length)).toEqual([]);
+
+    // Farther than the gap stays inert.
+    fireEvent.click(list, { clientX: 20, clientY: 140 });
+    expect(primaryClick).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the hover-revealed project action in the tab order", async () => {
     const store = createStore();
     const queryClient = createRendererQueryClient();
@@ -371,6 +418,130 @@ describe("ProjectSidebarContent attention", () => {
       }),
     );
   });
+
+  it.each([
+    { section: "inbox", action: "Settle task", command: "settle", toast: "Task settled" },
+    { section: "settled", action: "Unsettle task", command: "inbox", toast: "Task moved to Inbox" },
+    { section: "snoozed", action: "Wake task", command: "wake", toast: "Task woken" },
+  ] as const)(
+    "keeps the $section row's $action quick action in the tab order and dispatches it",
+    async ({ section, action, command, toast }) => {
+      const addToast = vi.spyOn(toastManager, "add");
+      const store = createStore();
+      store.set(runtimeAtom, {
+        connectionID: "disconnected",
+        profileID: "local-default",
+        contractVersion: "0.0.0-beta-19425",
+        phase: "idle",
+        connected: false,
+        binaryPath: null,
+        version: null,
+        pid: null,
+        managed: false,
+        lastConnectedAt: null,
+        error: null,
+        versionMismatch: null,
+      });
+      store.set(inboxClockAtom, Date.now());
+      const wakeAt = Date.now() + 3_600_000;
+      const through = { updatedAt: session.updatedAt, sessionID: session.id };
+      store.set(sessionTriageSnapshotAtom, {
+        profileID: "local-default",
+        bootstrapThrough: null,
+        sessions:
+          section === "inbox"
+            ? []
+            : [
+                {
+                  sessionID: session.id,
+                  disposition: section === "settled" ? "settled" : null,
+                  settledThrough: section === "settled" ? through : null,
+                  pinnedAt: null,
+                  snoozedUntil: section === "snoozed" ? wakeAt : null,
+                  snoozedThrough: section === "snoozed" ? through : null,
+                  updatedAt: 3,
+                },
+              ],
+      });
+      const queryClient = createRendererQueryClient();
+      seedCatalog(queryClient, {
+        projects: [
+          {
+            id: "project-1",
+            name: "Palot",
+            canonical: "/repo",
+            sandboxes: [],
+            vcs: null,
+            updatedAt: 1,
+          },
+        ],
+        sessions: [session],
+      });
+      renderWithRouter(
+        <Provider store={store}>
+          <SidebarProvider>
+            <ProjectSidebarContent onNewSession={vi.fn()} />
+          </SidebarProvider>
+        </Provider>,
+        store,
+        "/new",
+        queryClient,
+      );
+
+      const row = await waitFor(() => {
+        const row = document.querySelector<HTMLElement>("[data-palot-task-row]");
+        expect(row?.getAttribute("data-palot-triage-section")).toBe(section);
+        return row!;
+      });
+      // Rendered at rest, before any hover: the actions are quiet through opacity only.
+      const button = within(row).getByRole("button", { name: action });
+      expect(
+        within(row).queryAllByRole("button", { name: /Settle task|Unsettle task|Wake task/ }),
+      ).toHaveLength(1);
+      act(() =>
+        within(row)
+          .getByRole("button", { name: /Release verification/ })
+          .focus(),
+      );
+      await userEvent.tab();
+      expect(document.activeElement).toBe(button);
+      if (section === "inbox") {
+        await userEvent.tab();
+        expect(document.activeElement).toBe(
+          within(row).getByRole("button", { name: "Snooze task" }),
+        );
+        await userEvent.tab({ shift: true });
+      }
+      await userEvent.keyboard("{Enter}");
+      await waitFor(() =>
+        expect(dispatchSessionTriage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: command,
+            profileID: "local-default",
+            sessionID: session.id,
+            ...(command === "settle" ? { through } : {}),
+          }),
+        ),
+      );
+      await waitFor(() =>
+        expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: toast })),
+      );
+      // Undo restores the previous shelf.
+      const undo = addToast.mock.calls.at(-1)![0].actionProps!;
+      dispatchSessionTriage.mockClear();
+      act(() => (undo.onClick as () => void)());
+      await waitFor(() =>
+        expect(dispatchSessionTriage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: { settle: "inbox", inbox: "settle", wake: "snooze" }[command],
+            sessionID: session.id,
+            ...(command === "wake" ? { until: wakeAt, through } : {}),
+            ...(command === "inbox" ? { through } : {}),
+          }),
+        ),
+      );
+    },
+  );
 
   it("snoozes sessions from a nested context menu", async () => {
     const store = createStore();

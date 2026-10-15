@@ -30,7 +30,7 @@ import {
   type ReactNode,
   type ComponentProps,
 } from "react";
-import type { PalotProject } from "../../shared";
+import { SESSION_TRIAGE_BATCH_LIMIT, type PalotProject } from "../../shared";
 import type { PullRequestLink } from "../../shared/source-control-contract";
 import { groupedScheduledSessionIDsAtom } from "../atoms/automations";
 import {
@@ -49,6 +49,7 @@ import {
   type InboxViewPreferences,
 } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
+import { useTriageDispatcher } from "../hooks/use-auto-settle";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionInbox } from "../hooks/use-session-inbox";
 import { usePullRequestLinksBySession } from "../hooks/use-source-control";
@@ -127,6 +128,7 @@ import {
   sidebarFluidRowProps,
 } from "./sidebar-fluid-list";
 import { PullRequestBadge } from "./pull-requests/pull-request-badge";
+import { announceSettledBatch, SettleIdleMenu } from "./settle-idle-menu";
 import { samePullRequestLinks } from "./pull-requests/pull-request-presentation";
 
 const INBOX_SECTIONS: readonly InboxSection[] = ["pinned", "inbox", "snoozed", "settled"];
@@ -170,6 +172,7 @@ export function InboxSidebarContent() {
   const attentionState = useAtomValue(attentionSyncStateAtom);
   const pagination = useRootSessionPagination();
   const dispatch = useSetAtom(dispatchSessionTriageAtom);
+  const dispatchTriage = useTriageDispatcher();
   const [shelves, setShelves] = useAtom(inboxShelvesAtom);
   const [viewPreferences, setViewPreferences] = useAtom(inboxViewPreferencesAtom);
   const [pendingSessionID, setPendingSessionID] = useState<string | null>(null);
@@ -284,6 +287,42 @@ export function InboxSidebarContent() {
               void dispatch({ type: "inbox", sessionID: item.session.id, at: Date.now() }),
           },
         });
+      } else if (action === "inbox" && item.section === "settled") {
+        toast.add({
+          type: "success",
+          title: "Task moved to Inbox",
+          actionProps: {
+            children: "Undo",
+            onClick: () =>
+              void dispatch({
+                type: "settle",
+                sessionID: item.session.id,
+                at: Date.now(),
+                through: item.activityThrough,
+              }),
+          },
+        });
+      } else if (action === "wake") {
+        const until = item.snoozedUntil;
+        toast.add({
+          type: "success",
+          title: "Task woken",
+          ...(until !== null && until > Date.now()
+            ? {
+                actionProps: {
+                  children: "Undo",
+                  onClick: () =>
+                    void dispatch({
+                      type: "snooze",
+                      sessionID: item.session.id,
+                      at: Date.now(),
+                      until,
+                      through: item.activityThrough,
+                    }),
+                },
+              }
+            : {}),
+        });
       }
     },
     [dispatch, openSession],
@@ -311,6 +350,47 @@ export function InboxSidebarContent() {
       });
     },
     [dispatch, mutationsDisabled],
+  );
+
+  const settleIdle = useCallback(
+    async (items: InboxSessionView[]) => {
+      const current = actionContext.current;
+      const batch = items.slice(0, SESSION_TRIAGE_BATCH_LIMIT);
+      // Captured now, so Undo still targets these tasks after switching connections.
+      const profileID = runtime?.profileID;
+      if (current.mutationsDisabled || batch.length === 0 || !profileID) return;
+      const sessionIDs = batch.map((item) => item.session.id);
+      const settledIDs = new Set(sessionIDs);
+      try {
+        await dispatchTriage(profileID, {
+          type: "settle-many",
+          at: Date.now(),
+          trigger: "bulk",
+          sessions: batch.map((item) => ({
+            sessionID: item.session.id,
+            through: item.activityThrough,
+          })),
+        });
+      } catch (error) {
+        toast.add({
+          type: "error",
+          title: "Could not settle tasks",
+          description: error instanceof Error ? error.message : undefined,
+        });
+        return;
+      }
+      if (current.selectedID && settledIDs.has(current.selectedID)) {
+        const next = [...current.filtered.inbox, ...current.filtered.pinned].find(
+          (candidate) => !settledIDs.has(candidate.session.id),
+        );
+        if (next) void openSession(next.session.id);
+      }
+      announceSettledBatch({
+        count: batch.length,
+        undo: () => dispatchTriage(profileID, { type: "inbox-many", at: Date.now(), sessionIDs }),
+      });
+    },
+    [dispatchTriage, openSession, runtime?.profileID],
   );
 
   return (
@@ -360,6 +440,13 @@ export function InboxSidebarContent() {
             />
             <RichSection
               title="Inbox"
+              action={
+                <SettleIdleMenu
+                  items={filtered.inbox}
+                  disabled={mutationsDisabled}
+                  onSettle={(items) => void settleIdle(items)}
+                />
+              }
               open={shelves.inbox}
               onOpenChange={(value) => setShelves((current) => ({ ...current, inbox: value }))}
               items={filtered.inbox}
@@ -726,6 +813,7 @@ function RichSection({
   empty,
   open,
   onOpenChange,
+  action,
   items,
   ...props
 }: SectionProps & {
@@ -733,6 +821,8 @@ function RichSection({
   empty?: string;
   open?: boolean;
   onOpenChange?(value: boolean): void;
+  /** Header action, revealed on hover or focus. */
+  action?: ReactNode;
 }) {
   if (!items.length && !empty) return null;
   const content = (
@@ -758,7 +848,7 @@ function RichSection({
   }
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
-      <SectionTrigger title={title} count={items.length} open={open} />
+      <SectionTrigger title={title} count={items.length} open={open} action={action} />
       <CollapsibleContent>{content}</CollapsibleContent>
     </Collapsible>
   );
@@ -932,6 +1022,25 @@ export function SnoozeButton({
   onSnooze(item: InboxSessionView, until: number): void;
   disabled: boolean;
 }) {
+  return (
+    <SnoozeMenuButton
+      className={cn("-mr-0.5", INBOX_ACTION_BUTTON_CLASS)}
+      disabled={disabled}
+      onSnooze={(until) => onSnooze(item, until)}
+    />
+  );
+}
+
+/** The shared Snooze row action: a clock button opening the snooze-until choices. */
+export function SnoozeMenuButton({
+  onSnooze,
+  disabled = false,
+  className,
+}: {
+  onSnooze(until: number): void;
+  disabled?: boolean;
+  className?: string;
+}) {
   const [displayNow] = useState(() => Date.now());
   return (
     <DropdownMenu>
@@ -944,7 +1053,7 @@ export function SnoozeButton({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className={cn("-mr-0.5", INBOX_ACTION_BUTTON_CLASS)}
+                  className={className}
                   aria-label="Snooze task"
                   disabled={disabled}
                 />
@@ -960,7 +1069,7 @@ export function SnoozeButton({
         <DropdownMenuGroup>
           <DropdownMenuLabel>Snooze until</DropdownMenuLabel>
           {sessionSnoozeChoices.map(([label, resolve]) => (
-            <DropdownMenuItem key={label} onClick={() => void onSnooze(item, resolve(Date.now()))}>
+            <DropdownMenuItem key={label} onClick={() => void onSnooze(resolve(Date.now()))}>
               <span>{label}</span>
               <span className="ml-auto text-muted-foreground tabular-nums">
                 {formatSnoozeMenuTime(resolve(displayNow))}

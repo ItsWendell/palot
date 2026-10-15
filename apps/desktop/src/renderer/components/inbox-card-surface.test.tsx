@@ -48,6 +48,7 @@ describe("InboxCardSurface", () => {
         canSettle: false,
         pinnedAt: null,
         snoozedUntil: null,
+        keptInInboxAt: null,
         activityThrough: { updatedAt: 1, sessionID: "task-1" },
       };
       const { rerender } = render(

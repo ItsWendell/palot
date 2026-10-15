@@ -8,6 +8,7 @@ import { navigationOpenAtom, sidebarModeAtom } from "../atoms/ui";
 import { useConnectionOverview } from "../hooks/use-connection-overview";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionInbox } from "../hooks/use-session-inbox";
+import { isFullPageRoute } from "../lib/full-page-routes";
 import { cn } from "../lib/cn";
 import { PalotMark } from "./branding";
 import { Button } from "./ui/button";
@@ -59,8 +60,7 @@ export function NavigationRail({
   const pullRequestsActive = pathname === "/pull-requests";
   const settingsActive = pathname.startsWith("/settings");
   // Route destinations own the strong selected state; the column view stays pressed.
-  const routeDestinationActive =
-    scheduledActive || usageActive || worktreesActive || pullRequestsActive;
+  const routeDestinationActive = isFullPageRoute(pathname);
   const showMode = (next: typeof mode) => {
     if (!workspaceRoute) {
       setMode(next);

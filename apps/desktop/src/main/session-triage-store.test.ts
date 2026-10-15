@@ -2,7 +2,7 @@
 
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { migrate } from "drizzle-orm/node-sqlite/migrator";
 import { SessionTriageStore } from "./session-triage-store";
@@ -243,5 +243,93 @@ describe("SessionTriageStore", () => {
 
     expect(store.load("remote-a").sessions).toEqual([]);
     expect(store.load("remote-b").sessions).toHaveLength(1);
+  });
+  it("notifies each new settlement once, not when a settle is replayed", () => {
+    const settled = vi.fn();
+    const observed = new SessionTriageStore(drizzle({ client: sqlite }), settled);
+    const through = { updatedAt: 100, sessionID: "session-1" };
+    const settle = (at: number, watermark = through) =>
+      observed.dispatch({
+        type: "settle",
+        profileID: "local",
+        sessionID: "session-1",
+        at,
+        through: watermark,
+      });
+
+    settle(200);
+    settle(201);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(settled).toHaveBeenCalledWith({
+      profileID: "local",
+      sessionID: "session-1",
+      through,
+      batch: null,
+    });
+
+    // Newer activity, then settling again, is a new settlement.
+    settle(300, { updatedAt: 250, sessionID: "session-1" });
+    expect(settled).toHaveBeenCalledTimes(2);
+
+    // Moving back to the inbox and settling again also notifies.
+    observed.dispatch({ type: "inbox", profileID: "local", sessionID: "session-1", at: 400 });
+    settle(500, { updatedAt: 250, sessionID: "session-1" });
+    expect(settled).toHaveBeenCalledTimes(3);
+
+    // Pins and snoozes never notify, and a stale settle is ignored.
+    observed.dispatch({ type: "pin", profileID: "local", sessionID: "session-2", at: 600 });
+    observed.dispatch({
+      type: "settle",
+      profileID: "local",
+      sessionID: "session-2",
+      at: 10,
+      through: { updatedAt: 5, sessionID: "session-2" },
+    });
+    expect(settled).toHaveBeenCalledTimes(3);
+  });
+
+  it("settles a batch in one command, tags its notices, and undoes it together", () => {
+    const settled = vi.fn();
+    const observed = new SessionTriageStore(drizzle({ client: sqlite }), settled);
+    observed.dispatch({ type: "pin", profileID: "local", sessionID: "session-2", at: 50 });
+    const batch = (at: number) =>
+      observed.dispatch({
+        type: "settle-many",
+        profileID: "local",
+        at,
+        trigger: "auto",
+        sessions: ["session-1", "session-2"].map((sessionID) => ({
+          sessionID,
+          through: { updatedAt: 100, sessionID },
+        })),
+      });
+
+    const snapshot = batch(200);
+    expect(snapshot.sessions.map((record) => [record.sessionID, record.disposition])).toEqual([
+      ["session-1", "settled"],
+      ["session-2", "settled"],
+    ]);
+    expect(snapshot.sessions.find((record) => record.sessionID === "session-2")?.pinnedAt).toBe(
+      null,
+    );
+    const events = settled.mock.calls.map(([event]) => event);
+    expect(events.map((event) => event.sessionID)).toEqual(["session-1", "session-2"]);
+    expect(events[0].batch).toEqual({ id: expect.any(String), trigger: "auto" });
+    expect(events[1].batch).toEqual(events[0].batch);
+
+    // Replaying the batch changes nothing and does not notify again.
+    batch(201);
+    expect(settled).toHaveBeenCalledTimes(2);
+
+    const undone = observed.dispatch({
+      type: "inbox-many",
+      profileID: "local",
+      at: 300,
+      sessionIDs: ["session-1", "session-2"],
+    });
+    expect(undone.sessions.map((record) => [record.disposition, record.settledThrough])).toEqual([
+      ["inbox", null],
+      ["inbox", null],
+    ]);
   });
 });

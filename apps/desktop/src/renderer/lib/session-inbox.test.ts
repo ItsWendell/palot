@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PalotSession, SessionRequestSnapshot, SessionTriageSnapshot } from "../../shared";
 import {
+  autoSettleCandidates,
+  idleInboxTasks,
   inboxSessionState,
+  type InboxSessionView,
   orderInboxSection,
   orderInboxSessions,
   projectSessionInbox,
@@ -574,5 +577,65 @@ describe("stable inbox ordering", () => {
         "wake-late",
       ]);
     }
+  });
+});
+
+describe("autoSettleCandidates", () => {
+  const DAY = 24 * 60 * 60 * 1_000;
+  const now = 20 * DAY;
+  const idleFor = (days: number) => now - days * DAY;
+  const view = (id: string, overrides: Partial<InboxSessionView> = {}): InboxSessionView => ({
+    session: { ...root, id, updatedAt: idleFor(4) },
+    project: null,
+    projectName: "Palot",
+    section: "inbox",
+    attention: false,
+    attentionCount: 0,
+    running: false,
+    runningSince: null,
+    failed: false,
+    canSettle: true,
+    pinnedAt: null,
+    snoozedUntil: null,
+    keptInInboxAt: null,
+    activityThrough: { updatedAt: idleFor(4), sessionID: id },
+    ...overrides,
+  });
+  const ids = (items: InboxSessionView[]) => items.map((item) => item.session.id);
+
+  it("settles Inbox tasks idle for the configured days, counting sub-task activity", () => {
+    const recentChild = view("recent-child", {
+      activityThrough: { updatedAt: idleFor(1), sessionID: "child" },
+    });
+    expect(ids(autoSettleCandidates([view("idle"), recentChild], now, 3))).toEqual(["idle"]);
+    expect(ids(autoSettleCandidates([view("idle")], now, 7))).toEqual([]);
+  });
+
+  it("leaves running, blocked, failed, and other-shelf tasks alone", () => {
+    const items = [
+      view("running", { running: true, canSettle: false }),
+      view("blocked", { attention: true, canSettle: false }),
+      view("failed", { failed: true }),
+      view("pinned", { section: "pinned" }),
+      view("snoozed", { section: "snoozed", snoozedUntil: now + DAY }),
+    ];
+    expect(autoSettleCandidates(items, now, 1)).toEqual([]);
+    // A person settling in bulk can still choose failed tasks.
+    expect(ids(idleInboxTasks(items, now, DAY))).toEqual(["failed"]);
+  });
+
+  it("keeps a task moved back to Inbox until it has new activity", () => {
+    const kept = view("kept", { keptInInboxAt: idleFor(2) });
+    expect(autoSettleCandidates([kept], now, 3)).toEqual([]);
+    const active = view("kept", {
+      keptInInboxAt: idleFor(10),
+      session: { ...root, id: "kept", updatedAt: idleFor(5) },
+      activityThrough: { updatedAt: idleFor(5), sessionID: "kept" },
+    });
+    expect(ids(autoSettleCandidates([active], now, 3))).toEqual(["kept"]);
+  });
+
+  it("restarts the idle clock when a snooze wakes", () => {
+    expect(autoSettleCandidates([view("woke", { snoozedUntil: idleFor(1) })], now, 3)).toEqual([]);
   });
 });

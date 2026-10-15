@@ -509,7 +509,11 @@ describe("MultiConnectionSidebar", () => {
   it("keeps project row actions keyboard reachable while they are quiet at rest", async () => {
     renderSidebar("project");
     const row = screen.getByRole("button", { name: "Same task · Same server · beta.example" });
+    // Present before any hover: the quiet actions are hidden with opacity only.
+    const settle = within(row.parentElement!).getByRole("button", { name: "Settle task" });
     act(() => row.focus());
+    await userEvent.tab();
+    expect(document.activeElement).toBe(settle);
     await userEvent.tab();
     const actions = screen.getByRole("button", {
       name: "Actions for Same task on Same server · beta.example",
@@ -517,7 +521,41 @@ describe("MultiConnectionSidebar", () => {
     expect(document.activeElement).toBe(actions);
     await userEvent.keyboard("{Enter}");
     expect(await screen.findByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(settle);
+    expect(overview.dispatch).toHaveBeenCalledWith(
+      "beta",
+      expect.objectContaining({
+        type: "settle",
+        sessionID: "same-session",
+        through: overview.connections[1]!.inbox.inbox[0]!.activityThrough,
+      }),
+    );
   });
+
+  it.each([
+    ["settled", "Unsettle task", "inbox"],
+    ["snoozed", "Wake task", "wake"],
+  ] as const)(
+    "offers the %s project row's quick action to its owner",
+    async (section, name, type) => {
+      const owner = overview.connections[1]!;
+      const item = owner.inbox.inbox.pop()!;
+      owner.inbox[section].push({
+        ...item,
+        section,
+        snoozedUntil: section === "snoozed" ? 9 : null,
+      });
+      renderSidebar("project");
+      const row = screen.getByRole("button", { name: "Same task · Same server · beta.example" });
+      expect(within(row.parentElement!).queryByRole("button", { name: "Settle task" })).toBeNull();
+      await userEvent.click(within(row.parentElement!).getByRole("button", { name }));
+      expect(overview.dispatch).toHaveBeenCalledWith(
+        "beta",
+        expect.objectContaining({ type, sessionID: "same-session" }),
+      );
+    },
+  );
 
   it("keeps the project new-task action outside its trigger without changing expansion", async () => {
     renderSidebar("project");

@@ -1,6 +1,7 @@
 import type { OpenCodeClient } from "@opencode/client";
 import { Provider, createStore } from "jotai";
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotSession } from "../../shared";
 import { sessionTriageSnapshotAtom } from "../atoms/inbox";
@@ -15,6 +16,7 @@ import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router"
 import { InboxSidebarContent } from "./inbox-sidebar";
 import { installSourceControl, pullRequestLink } from "./pull-requests/test-fixtures";
 import { SidebarProvider } from "./ui/sidebar";
+import { toast } from "./ui/toast";
 
 const navigation = vi.hoisted(() => ({
   openSession: vi.fn(),
@@ -659,4 +661,106 @@ describe("InboxSidebarContent", () => {
     expect(screen.getByRole("menuitem", { name: "Unsettle" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Move to worktree" })).toBeTruthy();
   });
+  it.each([
+    { shelf: "Snoozed", title: "Snoozed task", action: "Wake task", type: "wake", undo: "snooze" },
+    {
+      shelf: "Settled",
+      title: "Settled task",
+      action: "Unsettle task",
+      type: "inbox",
+      undo: "settle",
+    },
+  ] as const)(
+    "reaches the $shelf shelf's $action by keyboard and offers Undo",
+    async ({ shelf, title, action, type, undo }) => {
+      const addToast = vi.spyOn(toast, "add");
+      const store = createStore();
+      const dispatchSessionTriage = vi.fn(async () => store.get(sessionTriageSnapshotAtom)!);
+      Object.assign(window.palot, { dispatchSessionTriage });
+      store.set(runtimeAtom, {
+        connectionID: "disconnected",
+        profileID: "local-default",
+        contractVersion: "test",
+        phase: "connected",
+        connected: true,
+        binaryPath: null,
+        version: null,
+        pid: null,
+        managed: false,
+        lastConnectedAt: 1,
+        error: null,
+        versionMismatch: null,
+      });
+      const queryClient = createRendererQueryClient();
+      const snoozedUntil = Date.now() + 60_000;
+      seedCatalog(queryClient, {
+        projects: [
+          {
+            id: "project-1",
+            canonical: "/repo",
+            name: "Palot",
+            sandboxes: [],
+            vcs: null,
+            updatedAt: 1,
+          },
+        ],
+        sessions: [session("snoozed", "Snoozed task", 10), session("settled", "Settled task", 10)],
+      });
+      store.set(sessionTriageSnapshotAtom, {
+        profileID: "local-default",
+        bootstrapThrough: { updatedAt: 100, sessionID: "z" },
+        sessions: [
+          {
+            sessionID: "snoozed",
+            disposition: "inbox",
+            settledThrough: null,
+            pinnedAt: null,
+            snoozedUntil,
+            snoozedThrough: { updatedAt: 10, sessionID: "snoozed" },
+            updatedAt: 100,
+          },
+        ],
+      });
+      renderWithRouter(
+        <Provider store={store}>
+          <SidebarProvider>
+            <InboxSidebarContent />
+          </SidebarProvider>
+        </Provider>,
+        store,
+        "/new",
+        queryClient,
+      );
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${shelf} 1$`) }));
+      const row = screen
+        .getByRole("button", { name: new RegExp(title) })
+        .closest<HTMLElement>("[data-inbox-compact-row]")!;
+      act(() =>
+        within(row)
+          .getByRole("button", { name: new RegExp(title) })
+          .focus(),
+      );
+      await userEvent.tab();
+      expect(document.activeElement).toBe(within(row).getByRole("button", { name: action }));
+      await userEvent.keyboard("{Enter}");
+      const id = title === "Snoozed task" ? "snoozed" : "settled";
+      await waitFor(() =>
+        expect(dispatchSessionTriage).toHaveBeenCalledWith(
+          expect.objectContaining({ type, sessionID: id }),
+        ),
+      );
+      await waitFor(() => expect(addToast).toHaveBeenCalled());
+      const onClick = addToast.mock.calls.at(-1)![0].actionProps!.onClick as () => void;
+      act(() => onClick());
+      await waitFor(() =>
+        expect(dispatchSessionTriage).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            type: undo,
+            sessionID: id,
+            ...(undo === "snooze" ? { until: snoozedUntil } : {}),
+          }),
+        ),
+      );
+    },
+  );
 });

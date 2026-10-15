@@ -28,6 +28,8 @@ export interface InboxSessionView {
   canSettle: boolean;
   pinnedAt: number | null;
   snoozedUntil: number | null;
+  /** When a person last moved the task to Inbox (unsettle, undo, pin), if it stayed there. */
+  keptInInboxAt: number | null;
   activityThrough: ActivityWatermark;
 }
 
@@ -45,6 +47,7 @@ export function sameInboxSessionView(left: InboxSessionView, right: InboxSession
     left.canSettle === right.canSettle &&
     left.pinnedAt === right.pinnedAt &&
     left.snoozedUntil === right.snoozedUntil &&
+    left.keptInInboxAt === right.keptInInboxAt &&
     left.activityThrough.updatedAt === right.activityThrough.updatedAt &&
     left.activityThrough.sessionID === right.activityThrough.sessionID
   );
@@ -239,6 +242,7 @@ export function projectSessionInbox(input: {
       canSettle: !running && !attention,
       pinnedAt: record?.pinnedAt ?? null,
       snoozedUntil: record?.snoozedUntil ?? null,
+      keptInInboxAt: record?.disposition === "inbox" ? record.updatedAt : null,
       activityThrough,
     };
     result[section].push(view);
@@ -274,6 +278,49 @@ export function projectSessionInbox(input: {
       left.session.id.localeCompare(right.session.id),
   );
   return result;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
+/**
+ * When a task was last active: its newest family activity, or a snooze wake that has
+ * passed, which restarts the idle clock.
+ */
+export function inboxIdleSince(
+  item: Pick<InboxSessionView, "session" | "activityThrough" | "snoozedUntil">,
+  now: number,
+): number {
+  const activity = Math.max(sessionActivityAt(item.session), item.activityThrough.updatedAt);
+  const woke = item.snoozedUntil !== null && item.snoozedUntil <= now ? item.snoozedUntil : 0;
+  return Math.max(activity, woke);
+}
+
+/** Inbox tasks that can settle now and have been idle for at least `idleForMs`. */
+export function idleInboxTasks<T extends InboxSessionView>(
+  items: readonly T[],
+  now: number,
+  idleForMs: number,
+): T[] {
+  return items.filter(
+    (item) =>
+      item.section === "inbox" && item.canSettle && now - inboxIdleSince(item, now) >= idleForMs,
+  );
+}
+
+/**
+ * Inbox tasks the inactivity sweep settles. Beyond the idle check, failed tasks stay for a
+ * look, and a task a person moved back to Inbox stays until it has new activity.
+ */
+export function autoSettleCandidates<T extends InboxSessionView>(
+  items: readonly T[],
+  now: number,
+  afterDays: number,
+): T[] {
+  return idleInboxTasks(items, now, afterDays * DAY_MS).filter(
+    (item) =>
+      !item.failed &&
+      (item.keptInInboxAt === null || item.keptInInboxAt < inboxIdleSince(item, now)),
+  );
 }
 
 function inboxPriority(item: InboxSessionView): number {

@@ -1,4 +1,6 @@
 import {
+  BellRing,
+  Check,
   CircleAlert,
   CircleStop,
   ChevronDown,
@@ -7,10 +9,11 @@ import {
   FolderGit2,
   GitBranch,
   Plus,
+  Undo2,
   Upload,
 } from "lucide-react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ActivityWatermark, PalotProject, PalotSession } from "../../shared";
 import type { PullRequestLink } from "../../shared/source-control-contract";
 import { groupedScheduledSessionIDsAtom } from "../atoms/automations";
@@ -48,6 +51,7 @@ import { cn } from "../lib/cn";
 import { ScrollArea } from "./ui/scroll-area";
 import { showErrorToast } from "../lib/toast-error";
 import { formatSnoozeWakeTime } from "../lib/session-snooze";
+import type { InboxSection } from "../lib/session-inbox";
 import { palot } from "../services/palot";
 import { useSessionTitleEditor } from "../hooks/use-session-title-editor";
 import { catalogSessionIsUnread } from "../hooks/use-session-info";
@@ -93,6 +97,8 @@ import {
 } from "./ui/sidebar-styles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { toast } from "./ui/toast";
+import { INBOX_CARD_ACTION_BUTTON_CLASS } from "./inbox-card-surface";
+import { SnoozeMenuButton } from "./inbox-sidebar";
 import {
   SidebarFluidList,
   sectionChevronRevealClass,
@@ -319,6 +325,56 @@ export function ProjectSidebarContent({
     [dispatchTriage],
   );
 
+  const wakeSession = useCallback(
+    async (sessionID: string, through: ActivityWatermark, snoozedUntil: number | null) => {
+      try {
+        await dispatchTriage({ type: "wake", sessionID, at: currentTimestamp() });
+        toast.add({
+          type: "success",
+          title: "Task woken",
+          ...(snoozedUntil !== null && snoozedUntil > currentTimestamp()
+            ? {
+                actionProps: {
+                  children: "Undo",
+                  onClick: () =>
+                    void dispatchTriage({
+                      type: "snooze",
+                      sessionID,
+                      at: currentTimestamp(),
+                      until: snoozedUntil,
+                      through,
+                    }),
+                },
+              }
+            : {}),
+        });
+      } catch (error) {
+        showErrorToast("Could not wake task", error);
+      }
+    },
+    [dispatchTriage],
+  );
+
+  const unsettleSession = useCallback(
+    async (sessionID: string, through: ActivityWatermark) => {
+      try {
+        await dispatchTriage({ type: "inbox", sessionID, at: currentTimestamp() });
+        toast.add({
+          type: "success",
+          title: "Task moved to Inbox",
+          actionProps: {
+            children: "Undo",
+            onClick: () =>
+              void dispatchTriage({ type: "settle", sessionID, at: currentTimestamp(), through }),
+          },
+        });
+      } catch (error) {
+        showErrorToast("Could not unsettle task", error);
+      }
+    },
+    [dispatchTriage],
+  );
+
   return (
     <>
       <SidebarContent className="overflow-hidden">
@@ -364,7 +420,9 @@ export function ProjectSidebarContent({
               <CollapsibleContent>
                 <SidebarGroupContent className="max-h-[min(40vh,20rem)] overflow-y-auto overscroll-contain">
                   <nav aria-label="Tasks needing attention">
-                    <SidebarFluidList>
+                    {/* Task rows sit 1px apart (project lists add a 2px inset). A click in that
+                        space opens the lit row; anything farther stays inert. */}
+                    <SidebarFluidList gapClick={{ maxDistance: 2 }}>
                       <SidebarMenu>
                         {attentionItems.slice(0, showAllAttention ? undefined : 5).map((item) => {
                           const target =
@@ -455,7 +513,7 @@ export function ProjectSidebarContent({
             <CollapsibleContent>
               <SidebarGroupContent>
                 <nav aria-label="Recent tasks">
-                  <SidebarFluidList>
+                  <SidebarFluidList gapClick={{ maxDistance: 2 }}>
                     <SidebarMenu>
                       {recentSessions.map((session) => {
                         const item = inboxItems.get(session.id);
@@ -470,11 +528,15 @@ export function ProjectSidebarContent({
                             recent
                             pullRequests={pullRequests?.get(session.id)}
                             triageThrough={item?.activityThrough}
+                            triageSection={item?.section}
+                            snoozedUntil={item?.snoozedUntil ?? null}
                             canSettle={Boolean(item?.canSettle && item.section !== "settled")}
                             onSelect={selectSession}
                             onPreload={preloadSession}
                             onSnooze={snoozeSession}
                             onSettle={settleSession}
+                            onWake={wakeSession}
+                            onUnsettle={unsettleSession}
                           />
                         );
                       })}
@@ -637,7 +699,7 @@ export function ProjectSidebarContent({
                                 </ContextMenuContent>
                               </ContextMenu>
                               <CollapsibleContent>
-                                <SidebarFluidList>
+                                <SidebarFluidList gapClick={{ maxDistance: 2 }}>
                                   <SidebarMenuSub className="mx-0 w-full translate-x-0 gap-px border-l-0 px-0 py-0.5">
                                     {projectSessions.map((session) => {
                                       const item = inboxItems.get(session.id);
@@ -653,6 +715,8 @@ export function ProjectSidebarContent({
                                           attention={attentionSessionIDs.has(session.id)}
                                           pullRequests={pullRequests?.get(session.id)}
                                           triageThrough={item?.activityThrough}
+                                          triageSection={item?.section}
+                                          snoozedUntil={item?.snoozedUntil ?? null}
                                           canSettle={Boolean(
                                             item?.canSettle && item.section !== "settled",
                                           )}
@@ -660,6 +724,8 @@ export function ProjectSidebarContent({
                                           onPreload={preloadSession}
                                           onSnooze={snoozeSession}
                                           onSettle={settleSession}
+                                          onWake={wakeSession}
+                                          onUnsettle={unsettleSession}
                                         />
                                       );
                                     })}
@@ -745,11 +811,15 @@ const SessionRow = memo(function SessionRow({
   recent = false,
   pullRequests,
   triageThrough,
+  triageSection,
+  snoozedUntil = null,
   canSettle,
   onSelect,
   onPreload,
   onSnooze,
   onSettle,
+  onWake,
+  onUnsettle,
 }: {
   session: PalotSession;
   project?: PalotProject;
@@ -759,11 +829,16 @@ const SessionRow = memo(function SessionRow({
   recent?: boolean;
   pullRequests?: PullRequestLink[];
   triageThrough?: ActivityWatermark;
+  /** The task's triage shelf; rows without triage state show no quick actions. */
+  triageSection?: InboxSection;
+  snoozedUntil?: number | null;
   canSettle: boolean;
   onSelect(id: string): void;
   onPreload(id: string): void;
   onSnooze(sessionID: string, through: ActivityWatermark, until: number): void;
   onSettle(sessionID: string, through: ActivityWatermark): void;
+  onWake?(sessionID: string, through: ActivityWatermark, snoozedUntil: number | null): void;
+  onUnsettle?(sessionID: string, through: ActivityWatermark): void;
 }) {
   const title = useSessionTitleEditor(session);
   const windowDrag = useSessionWindowDrag(session.id);
@@ -783,11 +858,49 @@ const SessionRow = memo(function SessionRow({
   const settle = useCallback(() => {
     if (triageThrough !== undefined) onSettle(session.id, triageThrough);
   }, [onSettle, session.id, triageThrough]);
+  // One triage step per shelf, plus Snooze for tasks still in the inbox.
+  let actions: ReactNode = null;
+  if (!title.editing && triageThrough !== undefined && triageSection) {
+    if (triageSection === "settled") {
+      actions = onUnsettle ? (
+        <RowAction
+          label="Unsettle task"
+          tooltip="Unsettle"
+          onClick={() => onUnsettle(session.id, triageThrough)}
+        >
+          <Undo2 aria-hidden="true" />
+        </RowAction>
+      ) : null;
+    } else if (triageSection === "snoozed") {
+      actions = onWake ? (
+        <RowAction
+          label="Wake task"
+          tooltip="Wake now"
+          onClick={() => onWake(session.id, triageThrough, snoozedUntil)}
+        >
+          <BellRing aria-hidden="true" />
+        </RowAction>
+      ) : null;
+    } else {
+      actions = (
+        <>
+          {canSettle ? (
+            <RowAction label="Settle task" tooltip="Settle" onClick={settle}>
+              <Check aria-hidden="true" />
+            </RowAction>
+          ) : null}
+          <SnoozeMenuButton onSnooze={snooze} className={INBOX_CARD_ACTION_BUTTON_CLASS} />
+        </>
+      );
+    }
+  }
+  const twoActions = triageSection !== "settled" && triageSection !== "snoozed" && canSettle;
 
   const row = (
     <SidebarMenuSubItem
       {...sidebarFluidRowProps}
       className="w-full"
+      data-palot-triage-section={triageSection}
       {...(recent ? { "data-palot-recent-row": true } : { "data-palot-task-row": true })}
     >
       {windowDrag.hint}
@@ -828,6 +941,11 @@ const SessionRow = memo(function SessionRow({
               "w-full translate-x-0 cursor-grab text-left active:cursor-grabbing",
               sidebarFluidItemClass(),
               recent ? "pl-1.5" : "pl-8",
+              // Actions reserve their width only while shown; the row never moves.
+              actions &&
+                (twoActions
+                  ? "group-hover/menu-sub-item:pr-14 group-has-[:focus-visible]/menu-sub-item:pr-14 group-has-[[data-popup-open]]/menu-sub-item:pr-14 pointer-coarse:pr-14"
+                  : "group-hover/menu-sub-item:pr-8 group-has-[:focus-visible]/menu-sub-item:pr-8 group-has-[[data-popup-open]]/menu-sub-item:pr-8 pointer-coarse:pr-8"),
             )}
             onClick={() => onSelect(session.id)}
             onMouseEnter={() => onPreload(session.id)}
@@ -838,26 +956,42 @@ const SessionRow = memo(function SessionRow({
             }}
           >
             <span className="min-w-0 flex-1 truncate">{session.title ?? "Untitled task"}</span>
-            {isAdditionalCheckout ? (
-              <span
-                className="flex shrink-0 text-muted-foreground"
-                title="Additional checkout"
-                aria-label="Additional checkout"
-              >
-                <GitBranch aria-hidden="true" />
-              </span>
-            ) : null}
-            <PullRequestBadge links={pullRequests} />
-            <SessionStatusIndicator status={state} reserveSpace={recent} />
-            {recent ? (
-              <time
-                className="w-6 shrink-0 text-right text-meta text-muted-foreground tabular-nums"
-                dateTime={new Date(recentAt).toISOString()}
-              >
-                {formatRelativeTime(recentAt)}
-              </time>
-            ) : null}
+            {/* Metadata yields to the actions with opacity only, so nothing visibly moves. */}
+            <span
+              className={cn(
+                "flex shrink-0 items-center gap-2 empty:hidden",
+                actions &&
+                  "transition-opacity group-hover/menu-sub-item:opacity-0 group-has-[:focus-visible]/menu-sub-item:opacity-0 group-has-[[data-popup-open]]/menu-sub-item:opacity-0 pointer-coarse:opacity-0",
+              )}
+            >
+              {isAdditionalCheckout ? (
+                <span
+                  className="flex shrink-0 text-muted-foreground"
+                  title="Additional checkout"
+                  aria-label="Additional checkout"
+                >
+                  <GitBranch aria-hidden="true" />
+                </span>
+              ) : null}
+              <PullRequestBadge links={pullRequests} />
+              <SessionStatusIndicator status={state} reserveSpace={recent} />
+              {recent ? (
+                <time
+                  className="w-6 shrink-0 text-right text-meta text-muted-foreground tabular-nums"
+                  dateTime={new Date(recentAt).toISOString()}
+                >
+                  {formatRelativeTime(recentAt)}
+                </time>
+              ) : null}
+            </span>
           </SidebarMenuSubButton>
+          {actions ? (
+            // Quiet until the row is hovered or holds keyboard focus; never removed from the
+            // tab order or the accessibility tree.
+            <div className="absolute inset-y-0 right-1 z-10 flex items-center opacity-0 transition-opacity group-hover/menu-sub-item:opacity-100 group-has-[:focus-visible]/menu-sub-item:opacity-100 group-has-[[data-popup-open]]/menu-sub-item:opacity-100 pointer-coarse:opacity-100">
+              {actions}
+            </div>
+          ) : null}
         </>
       )}
     </SidebarMenuSubItem>
@@ -878,6 +1012,38 @@ const SessionRow = memo(function SessionRow({
     </SessionContextMenu>
   );
 });
+
+function RowAction({
+  label,
+  tooltip,
+  onClick,
+  children,
+}: {
+  label: string;
+  tooltip: string;
+  onClick(): void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={INBOX_CARD_ACTION_BUTTON_CLASS}
+            aria-label={label}
+            onClick={onClick}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 function SessionStatusIndicator({
   status,
