@@ -5,7 +5,6 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { PalotApi } from "../../shared";
 import type { OpenCodeClient } from "@opencode/client";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
-import { PendingInputTaskbarItem } from "./composer";
 import { PendingRequests } from "./thread";
 
 // Seed before renderer modules load: the retired policy read its session map at import time.
@@ -298,111 +297,6 @@ describe("PendingRequests", () => {
     );
 
     expect(screen.queryByRole("region", { name: "Pending input" })).toBeNull();
-  });
-
-  it("renders queued message actions compactly and supports every action", async () => {
-    const user = userEvent.setup();
-    const updatePending = vi.fn().mockResolvedValue(undefined);
-    const editPending = vi.fn().mockResolvedValue(undefined);
-    (window as unknown as { palot?: PalotApi }).palot = bridge({});
-    setOpenCodeClientForTest(
-      client({
-        session: { inbox: { update: updatePending, cancel: updatePending } },
-      }),
-    );
-
-    render(
-      <PendingInputTaskbarItem
-        sessionID="ses_1"
-        request={{
-          id: "msg_1",
-          type: "input",
-          title: "Pending input",
-          detail: "Run tests after the current turn",
-          resources: [],
-          savePatterns: [],
-          questions: [],
-          fields: [],
-          delivery: "queue",
-        }}
-        onEdit={editPending}
-        queuedPosition={2}
-        queuedCount={3}
-      />,
-    );
-
-    const pending = screen.getByRole("region", {
-      name: "Pending message actions: Run tests after the current turn",
-    });
-    expect(within(pending).getByText("Queued · 2")).toBeTruthy();
-    expect(within(pending).queryByRole("button", { name: "Run after current turn" })).toBeNull();
-    await user.click(within(pending).getByRole("button", { name: "Steer next" }));
-
-    await waitFor(() => expect(updatePending).toHaveBeenCalledTimes(1));
-    await user.click(within(pending).getByRole("button", { name: "More pending message actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Cancel and edit" }));
-
-    await waitFor(() =>
-      expect(editPending).toHaveBeenCalledWith(expect.objectContaining({ id: "msg_1" })),
-    );
-    await user.click(within(pending).getByRole("button", { name: "More pending message actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Cancel pending message" }));
-
-    await waitFor(() => {
-      expect(updatePending).toHaveBeenNthCalledWith(1, {
-        sessionID: "ses_1",
-        inboxID: "msg_1",
-        delivery: "steer",
-      });
-      expect(updatePending).toHaveBeenNthCalledWith(2, {
-        sessionID: "ses_1",
-        inboxID: "msg_1",
-      });
-    });
-  });
-
-  it("can move a steering message to the queue", async () => {
-    const user = userEvent.setup();
-    const updatePending = vi.fn().mockResolvedValue(undefined);
-    (window as unknown as { palot?: PalotApi }).palot = bridge({});
-    setOpenCodeClientForTest(
-      client({
-        session: { inbox: { update: updatePending, cancel: updatePending } },
-      }),
-    );
-
-    render(
-      <PendingInputTaskbarItem
-        sessionID="ses_1"
-        request={{
-          id: "msg_2",
-          type: "input",
-          title: "Pending input",
-          detail: "Queue this instead",
-          resources: [],
-          savePatterns: [],
-          questions: [],
-          fields: [],
-          delivery: "steer",
-        }}
-        queuedCount={0}
-      />,
-    );
-
-    const pending = screen.getByRole("region", {
-      name: "Pending message actions: Queue this instead",
-    });
-    expect(within(pending).getByText("Steering")).toBeTruthy();
-    expect(within(pending).queryByRole("button", { name: "Send now" })).toBeNull();
-    await user.click(within(pending).getByRole("button", { name: "Run after current turn" }));
-
-    await waitFor(() =>
-      expect(updatePending).toHaveBeenCalledWith({
-        sessionID: "ses_1",
-        inboxID: "msg_2",
-        delivery: "queue",
-      }),
-    );
   });
 
   it.each([

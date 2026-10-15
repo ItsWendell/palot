@@ -41,9 +41,12 @@ export async function loadProjectDetails(
   signal?: AbortSignal,
   connectionID?: string,
 ): Promise<ProjectDetails> {
-  const projects = await openCodeClient(connectionID).project.list({
-    signal: openCodeRequestSignal(signal),
-  });
+  const projects = await openCodeClient(connectionID).project.list(
+    {},
+    {
+      signal: openCodeRequestSignal(signal),
+    },
+  );
   const project = projects.find((item) => item.id === projectID);
   if (!project) throw new Error("This project is no longer available on the connected server.");
   return project;

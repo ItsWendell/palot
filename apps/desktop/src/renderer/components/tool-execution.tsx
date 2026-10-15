@@ -69,6 +69,7 @@ import {
 import { ReadImagePreview } from "./read-image-preview";
 import { StreamingPatchView } from "./streaming-patch-view";
 import { TerminalOutput } from "./terminal-output";
+import { isPlanToolPart, planItems, summarizePlan } from "./transcript/plan";
 
 const MAX_HIGHLIGHTED_JSON_LENGTH = 256_000;
 const MAX_CACHED_DETAIL_HEIGHTS = 512;
@@ -564,6 +565,24 @@ export const ToolExecution = memo(function ToolExecution({
   defaultOpen?: boolean;
 }) {
   const view = useMemo(() => projectToolExecution(part, index), [index, part]);
+  const plan = useMemo(() => {
+    const items = planItems(part);
+    return items ? summarizePlan(view.id, items) : null;
+  }, [part, view.id]);
+  if (isPlanToolPart(part)) {
+    // The pinned plan card lists the items; the transcript only records the update.
+    const active = view.status === "running" || view.status === "pending";
+    return (
+      <ToolExecutionCard
+        view={view}
+        defaultOpen={defaultOpen}
+        title={
+          active ? "Updating plan" : view.status === "error" ? "Plan update failed" : "Updated plan"
+        }
+        meta={plan ? `${plan.done}/${plan.total} done` : null}
+      />
+    );
+  }
   return <ToolExecutionCard view={view} defaultOpen={defaultOpen} />;
 });
 

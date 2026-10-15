@@ -392,6 +392,14 @@ export function mapModel(model: ModelInfo): PalotModel {
     contextLimit: model.limit.context,
     outputLimit: model.limit.output,
     releasedAt: model.time.released,
+    // A malformed catalog entry should not hide the model, only its price.
+    cost: (Array.isArray(model.cost) ? model.cost : []).map((cost) => ({
+      contextOver: cost.tier?.size ?? null,
+      input: cost.input,
+      output: cost.output,
+      cacheRead: cost.cache.read,
+      cacheWrite: cost.cache.write,
+    })),
     capabilities: {
       tools: model.capabilities.tools,
       input: [...model.capabilities.input],

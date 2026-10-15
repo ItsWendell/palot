@@ -10,7 +10,6 @@ import {
   CircleAlert,
   CircleStop,
   Copy,
-  FileDiff,
   FileText,
   FolderGit2,
   GitBranch,
@@ -27,6 +26,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -49,7 +49,11 @@ import {
   subagentProgress as calculateSubagentProgress,
   type SessionExecutionState,
 } from "../atoms/workspace";
-import { contextMessageTargetAtom, useWorkbenchCommands } from "../atoms/workbench";
+import {
+  contextMessageTargetAtom,
+  transcriptJumpTargetAtom,
+  useWorkbenchCommands,
+} from "../atoms/workbench";
 import { attentionTargetAtom } from "../atoms/attention";
 import { resolvedAppearanceAtom } from "../atoms/appearance";
 import { retainedTranscriptLayouts } from "../lib/transcript-layout-cache";
@@ -69,6 +73,7 @@ import {
   useSessionCatalogSelector,
 } from "../hooks/use-session-catalog";
 import { cn } from "../lib/cn";
+import { BoundedScroll } from "./transcript/bounded-scroll";
 import { createMarkdownSessionOpener } from "../lib/markdown-session-links";
 import { writeClipboardText } from "../lib/clipboard";
 import { likelyCacheBusts, type LikelyCacheBust } from "../lib/cache-bust";
@@ -123,7 +128,16 @@ import { useTranscriptInfiniteScroll } from "../hooks/use-transcript-infinite-sc
 import { TranscriptRail } from "./transcript-rail";
 import { TranscriptFindBar, useTaskViewShortcuts, useTranscriptFind } from "./transcript-find";
 import { transcriptFindPartKey, transcriptPartText } from "../lib/transcript-search";
-import { CompactionUsage } from "./compaction-usage";
+import {
+  CompactionBoundary,
+  CompactionTranscriptContext,
+  type CompactionTranscriptActions,
+} from "./transcript/compaction-row";
+import { compactionAnchorSelector, turnIndexForMessage } from "./transcript/compaction-anchor";
+import { compactionHistory } from "../lib/context-usage";
+import { latestTurnThought } from "./transcript/live-thought";
+import { ParentTaskBreadcrumb } from "./transcript/parent-breadcrumb";
+import { PlanCard } from "./transcript/plan-card";
 import { SessionHistoryDialog } from "./session-history-dialog";
 import { PermissionPreview } from "./permission-preview";
 import { useVcsInfo } from "../hooks/use-vcs-info";
@@ -178,6 +192,8 @@ import {
   SubagentSessionDock,
   type BackgroundWorkItem,
 } from "./subagent-activity";
+
+export { CompactionBoundary };
 
 const EMPTY_DIFFS: FileDiffInfo[] = [];
 const EMPTY_EXECUTION_STATES = new Map<string, SessionExecutionState>();
@@ -882,6 +898,48 @@ const SessionThreadContents = memo(function SessionThreadContents({
     historyStartID: messages[0]?.id ?? null,
     loadOlder,
   });
+  const [transcriptJumpTarget, setTranscriptJumpTarget] = useAtom(transcriptJumpTargetAtom);
+  const compactionJumpFrameRef = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(compactionJumpFrameRef.current), []);
+  // Compaction rows live inside a turn's activity, not at a prompt, so prompt
+  // navigation cannot reach them. Scroll their turn into range, then the row.
+  const jumpToCompaction = (messageID: string): boolean => {
+    if (!messages.some((message) => message.id === messageID && message.type === "compaction")) {
+      return false;
+    }
+    const index = turnIndexForMessage(turnRows, messageID);
+    const row = turnRows[index];
+    if (!row) return false;
+    navigation.cancel();
+    setBottomLock(false);
+    pinVirtualTurn(row.id);
+    virtualizer.scrollToIndex(index, { align: "center" });
+    cancelAnimationFrame(compactionJumpFrameRef.current);
+    const startedAt = performance.now();
+    const reveal = () => {
+      const element = scrollRef.current?.querySelector<HTMLElement>(
+        compactionAnchorSelector(messageID),
+      );
+      if (element) {
+        element.scrollIntoView({ block: "center" });
+        element.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+        return;
+      }
+      if (performance.now() - startedAt < 700) {
+        compactionJumpFrameRef.current = requestAnimationFrame(reveal);
+      }
+    };
+    compactionJumpFrameRef.current = requestAnimationFrame(reveal);
+    return true;
+  };
+  const jumpToRequestedTurn = useEffectEvent((messageID: string) => {
+    if (!jumpToCompaction(messageID)) navigation.jump(messageID);
+  });
+  useEffect(() => {
+    if (transcriptJumpTarget?.sessionID !== session.id) return;
+    setTranscriptJumpTarget(null);
+    jumpToRequestedTurn(transcriptJumpTarget.messageID);
+  }, [session.id, setTranscriptJumpTarget, transcriptJumpTarget]);
 
   const find = useTranscriptFind({
     sessionID: session.id,
@@ -1059,6 +1117,43 @@ const SessionThreadContents = memo(function SessionThreadContents({
   );
 
   const coldTranscriptLoading = coldTranscriptPendingRef.current && loading;
+  const latestCompaction = messages.findLast((message) => message.type === "compaction");
+  const retryableCompactionID =
+    latestCompaction && !isWorking && latestCompaction.content[0]?.status === "failed"
+      ? latestCompaction.id
+      : null;
+  const retryCompaction = useCallback(async () => {
+    try {
+      await palot.compactSession(session.id);
+      handleMessageAdmitted();
+    } catch (error) {
+      showErrorToast("Could not compact context", error);
+    }
+  }, [handleMessageAdmitted, session.id]);
+  // Keep the context value stable while text streams; windows change only per step.
+  const compactionWindowsKey = compactionHistory(messages)
+    .map((record) => `${record.messageID}\0${record.before ?? ""}\0${record.after ?? ""}`)
+    .join("\n");
+  const compactionWindows = useMemo(
+    () =>
+      new Map(
+        compactionWindowsKey
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => {
+            const [messageID = "", before = "", after = ""] = line.split("\0");
+            return [
+              messageID,
+              { before: before ? Number(before) : null, after: after ? Number(after) : null },
+            ] as const;
+          }),
+      ),
+    [compactionWindowsKey],
+  );
+  const compactionActions = useMemo<CompactionTranscriptActions>(
+    () => ({ retryableCompactionID, retry: retryCompaction, windows: compactionWindows }),
+    [compactionWindows, retryCompaction, retryableCompactionID],
+  );
 
   return createElement(
     MarkdownWorkspaceProvider,
@@ -1069,7 +1164,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
       workspaceDirectory: session.location.directory,
       workspaceLocation: session.location,
     },
-    <>
+    <CompactionTranscriptContext.Provider value={compactionActions}>
       <SessionThreadHeader
         session={session}
         historyActions={{
@@ -1309,7 +1404,6 @@ const SessionThreadContents = memo(function SessionThreadContents({
                             showTimelineCacheBusts ? turnCacheBust(turnRow.turn, cacheBusts) : null
                           }
                           onOpenCacheDiagnostic={openCacheDiagnostic}
-                          onOpenTurnChanges={openTurnChanges}
                           reviewOffer={
                             virtualItem.index === turnRows.length - 1 ? reviewOffer : null
                           }
@@ -1425,7 +1519,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
           />
         </div>
       </div>
-    </>,
+    </CompactionTranscriptContext.Provider>,
   );
 });
 
@@ -1509,6 +1603,8 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
               }
             }}
           />
+        ) : session.parentID ? (
+          <ParentTaskBreadcrumb session={session} onRename={title.start} />
         ) : (
           <strong
             className="window-no-drag truncate text-compact font-semibold"
@@ -1586,6 +1682,7 @@ const SessionDockContents = memo(function SessionDockContents({
     <>
       <PendingRequests sessionID={session.id} requests={floatingRequests} />
       <SessionRevertDock session={session} messages={revertMessages} />
+      <PlanCard key={session.id} sessionID={session.id} messages={revertMessages} />
       {session.parentID ? (
         <>
           <PendingRequests sessionID={session.id} requests={dockRequests} />
@@ -1868,7 +1965,6 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   sessionID,
   cacheBust,
   onOpenCacheDiagnostic,
-  onOpenTurnChanges,
   reviewOffer,
   subagentProgress,
   virtualIndex,
@@ -1884,7 +1980,6 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   sessionID: string;
   cacheBust: LikelyCacheBust | null;
   onOpenCacheDiagnostic: (messageID: string) => void;
-  onOpenTurnChanges: (userMessageID: string) => void;
   reviewOffer: React.ReactNode;
   subagentProgress: { active: number; total: number };
   virtualIndex: number;
@@ -1956,20 +2051,6 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
             subagentProgress={row.kind === "activity" ? subagentProgress : EMPTY_SUBAGENT_PROGRESS}
           />
         ))}
-        {turn.status === "completed" && turn.user ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            className="mt-1 text-muted-foreground"
-            onClick={() => {
-              if (turn.user) onOpenTurnChanges(turn.user.id);
-            }}
-          >
-            <FileDiff data-icon="inline-start" aria-hidden="true" />
-            View turn changes
-          </Button>
-        ) : null}
         {reviewOffer}
       </article>
     </div>
@@ -1984,7 +2065,6 @@ function sameTranscriptPresentationTurnItemProps(
     sessionID: string;
     cacheBust: LikelyCacheBust | null;
     onOpenCacheDiagnostic: (messageID: string) => void;
-    onOpenTurnChanges: (userMessageID: string) => void;
     reviewOffer: React.ReactNode;
     subagentProgress: { active: number; total: number };
     virtualIndex: number;
@@ -2001,7 +2081,6 @@ function sameTranscriptPresentationTurnItemProps(
     sessionID: string;
     cacheBust: LikelyCacheBust | null;
     onOpenCacheDiagnostic: (messageID: string) => void;
-    onOpenTurnChanges: (userMessageID: string) => void;
     reviewOffer: React.ReactNode;
     subagentProgress: { active: number; total: number };
     virtualIndex: number;
@@ -2020,7 +2099,6 @@ function sameTranscriptPresentationTurnItemProps(
     previous.sessionID === next.sessionID &&
     previous.cacheBust === next.cacheBust &&
     previous.onOpenCacheDiagnostic === next.onOpenCacheDiagnostic &&
-    previous.onOpenTurnChanges === next.onOpenTurnChanges &&
     previous.reviewOffer === next.reviewOffer &&
     previous.virtualIndex === next.virtualIndex &&
     previous.virtualSize === next.virtualSize &&
@@ -2158,6 +2236,7 @@ const TranscriptPresentationRowContent = memo(function TranscriptPresentationRow
       startedAt={turn.startedAt}
       label={activeTurnLabel(turn)}
       activity={parallelActivityLabel(turn)}
+      thought={latestTurnThought(turn)}
     />
   ) : null;
 }, sameTranscriptPresentationRowContentProps);
@@ -2397,11 +2476,14 @@ export function ActiveTurnMeta({
   startedAt,
   label = "Working",
   activity = null,
+  thought = null,
 }: {
   startedAt: number;
   label?: "Working" | "Finishing";
   /** Concurrent tool work, such as "Reading 3 files". */
   activity?: string | null;
+  /** The agent's latest reasoning line while reasoning summaries are shown. */
+  thought?: string | null;
 }) {
   const now = useCurrentTime();
 
@@ -2410,18 +2492,35 @@ export function ActiveTurnMeta({
     <div
       data-palot-active-turn-status
       className="mt-1 flex h-6 min-w-0 items-center gap-1.5 text-xs leading-none tabular-nums text-muted-foreground/55"
-      role="status"
-      aria-label={`${label}${activity ? `, ${activity.toLowerCase()},` : ""} for ${duration}`}
     >
-      <ThinkingShimmer>{label}</ThinkingShimmer>
-      {activity ? (
+      <span
+        className="flex min-w-0 items-center gap-1.5"
+        role="status"
+        aria-label={`${label}${activity ? `, ${activity.toLowerCase()},` : ""} for ${duration}`}
+      >
+        <ThinkingShimmer>{label}</ThinkingShimmer>
+        {activity ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="min-w-0 truncate">{activity}</span>
+          </>
+        ) : null}
+        <span aria-hidden="true">·</span>
+        <span className="shrink-0">{duration}</span>
+      </span>
+      {thought ? (
+        // Outside the live region so streaming thoughts do not interrupt screen readers.
         <>
           <span aria-hidden="true">·</span>
-          <span className="min-w-0 truncate">{activity}</span>
+          <span
+            className="min-w-0 flex-1 basis-0 truncate text-muted-foreground/70"
+            title={thought}
+            data-palot-active-turn-thought
+          >
+            {thought}
+          </span>
         </>
       ) : null}
-      <span aria-hidden="true">·</span>
-      <span>{duration}</span>
     </div>
   );
 }
@@ -3098,94 +3197,6 @@ function entryID(entry: TurnPart): string {
   return entry.part.id ?? `${entry.message.id}:${entry.part.type}:${entry.index}`;
 }
 
-export function CompactionBoundary({ group }: { group: TurnActivityGroup }) {
-  const [open, setOpen] = useState(false);
-  const [recentOpen, setRecentOpen] = useState(false);
-  const part = group.entries.find((entry) => entry.part.type === "compaction")?.part;
-  const failed = group.status === "failed";
-  const running = group.status === "running";
-  const label = failed ? "Compaction failed" : running ? "Compacting..." : "Compaction completed";
-  const error = part?.error?.trim();
-  const summary = part?.text?.trim();
-  const recent = part?.recent?.trim();
-  const recentTokens = recent ? Math.round(recent.length / 4) : 0;
-  const recentLabel = `Approximately ${recentTokens.toLocaleString()} tokens of recent context are kept verbatim`;
-  const hasDetails = Boolean(
-    summary || recent || error || part?.cost !== undefined || part?.tokens,
-  );
-
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="my-3 min-w-0"
-      data-palot-compaction={group.status}
-    >
-      <div className="flex items-center gap-3 text-xs text-muted-foreground/65">
-        <span className="h-px min-w-6 flex-1 bg-border/70" aria-hidden="true" />
-        <CollapsibleTrigger
-          disabled={!hasDetails}
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-1.5 text-xs font-normal text-muted-foreground/65 hover:bg-transparent hover:text-muted-foreground aria-expanded:bg-transparent"
-            />
-          }
-        >
-          {running ? <ThinkingShimmer>{label}</ThinkingShimmer> : <span>{label}</span>}
-          {hasDetails ? (
-            open ? (
-              <ChevronDown data-icon="inline-end" aria-hidden="true" />
-            ) : (
-              <ChevronRight data-icon="inline-end" aria-hidden="true" />
-            )
-          ) : null}
-        </CollapsibleTrigger>
-        <span className="h-px min-w-6 flex-1 bg-border/70" aria-hidden="true" />
-      </div>
-      {hasDetails ? (
-        <CollapsibleContent className="mx-auto mt-1.5 max-h-[32rem] max-w-3xl overflow-y-auto rounded-lg border border-border/50 bg-muted/15 px-3 py-2.5">
-          <CompactionUsage part={part} />
-          {error ? <p className="m-0 text-xs/relaxed text-destructive">{error}</p> : null}
-          {summary ? (
-            <MarkdownContent value={summary} className="text-xs/relaxed text-foreground/75" />
-          ) : null}
-          {recent ? (
-            <Collapsible
-              open={recentOpen}
-              onOpenChange={setRecentOpen}
-              className={cn(summary || error ? "mt-2 border-t border-border/40 pt-2" : undefined)}
-            >
-              <CollapsibleTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 max-w-full justify-start px-0 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent"
-                  />
-                }
-              >
-                <span className="min-w-0 truncate text-left">{recentLabel}</span>
-                {recentOpen ? (
-                  <ChevronDown data-icon="inline-end" aria-hidden="true" />
-                ) : (
-                  <ChevronRight data-icon="inline-end" aria-hidden="true" />
-                )}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="pt-1">
-                <MarkdownContent value={recent} className="text-xs/relaxed text-foreground/70" />
-              </CollapsibleContent>
-            </Collapsible>
-          ) : null}
-        </CollapsibleContent>
-      ) : null}
-    </Collapsible>
-  );
-}
-
 export function TimelineBoundary({ group }: { group: TurnActivityGroup }) {
   const part = group.entries[0]?.part;
   if (!part) return null;
@@ -3336,8 +3347,13 @@ function SyntheticUpdate({ group }: { group: TurnActivityGroup }) {
         ) : null}
       </CollapsibleTrigger>
       {detail ? (
-        <CollapsibleContent className="ml-5 max-h-[32rem] max-w-3xl overflow-y-auto rounded-lg border border-border/50 bg-muted/15 px-3 py-2.5">
-          <MarkdownContent value={detail} className="text-xs/relaxed text-foreground/75" />
+        <CollapsibleContent className="ml-5 max-w-3xl">
+          <BoundedScroll
+            className="rounded-lg border border-border/50 bg-muted/15"
+            viewportClassName="max-h-[32rem] px-3 py-2.5"
+          >
+            <MarkdownContent value={detail} className="text-xs/relaxed text-foreground/75" />
+          </BoundedScroll>
         </CollapsibleContent>
       ) : null}
     </Collapsible>
@@ -3428,26 +3444,34 @@ function ThoughtGroupDisclosure({
         )}
       </CollapsibleTrigger>
       <CollapsibleContent smooth animate={animate} className="min-w-0 pt-1">
-        <div className="flex flex-col gap-3 py-1">
-          {thoughts.map((thought) => (
-            <div
-              key={thought.id}
-              className="border-l border-border/70 pl-3 text-xs/relaxed text-muted-foreground"
-            >
-              {thought.content.title ? (
-                <div className="font-medium text-foreground/80">{thought.content.title}</div>
-              ) : null}
-              {thought.content.body ? (
-                <MarkdownContent
-                  value={thought.content.body}
-                  className="mt-1 max-h-80 overflow-y-auto pr-2 text-xs/relaxed text-muted-foreground"
-                />
-              ) : thought.content.title ? null : (
-                thought.title
-              )}
-            </div>
-          ))}
-        </div>
+        {/* One train of thought: every step shares a single capped scroll region. */}
+        <BoundedScroll
+          label="Reasoning steps"
+          follow={!done}
+          className="my-1 border-l border-border/70"
+          viewportClassName="max-h-96"
+        >
+          <div className="flex flex-col gap-3 pr-3 pl-3 text-xs/relaxed text-muted-foreground">
+            {thoughts.map((thought) => (
+              <div key={thought.id}>
+                {thought.content.title ? (
+                  <div className="font-medium text-foreground/80">{thought.content.title}</div>
+                ) : null}
+                {thought.content.body ? (
+                  <MarkdownContent
+                    value={thought.content.body}
+                    className={cn(
+                      "text-xs/relaxed text-muted-foreground",
+                      thought.content.title && "mt-1",
+                    )}
+                  />
+                ) : thought.content.title ? null : (
+                  thought.title
+                )}
+              </div>
+            ))}
+          </div>
+        </BoundedScroll>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -3553,10 +3577,12 @@ export function ThoughtDisclosure({
             </div>
           ) : null}
           {content.body ? (
-            <MarkdownContent
-              value={content.body}
-              className="max-h-80 overflow-y-auto pr-2 text-xs/relaxed text-muted-foreground"
-            />
+            <BoundedScroll label="Reasoning" follow={!done} viewportClassName="max-h-80">
+              <MarkdownContent
+                value={content.body}
+                className="pr-3 text-xs/relaxed text-muted-foreground"
+              />
+            </BoundedScroll>
           ) : null}
         </div>
       </CollapsibleContent>
@@ -3601,6 +3627,12 @@ export const MessageRow = memo(function MessageRow({
     (message.content.length > 0 ? message.content : [{ type: "text", text: message.text ?? "" }]);
   const align = role === "user" ? "end" : "start";
   const userContentSummary = role === "user" ? summarizeMessageParts(parts) : null;
+  const hasUserText =
+    role === "user" &&
+    (Boolean(message.fileReferences?.length || message.skillReferences?.length) ||
+      parts.some(
+        (part) => !("text" in part) || (typeof part.text === "string" && part.text.trim() !== ""),
+      ));
   const userContent = (
     <>
       {message.fileReferences?.length || message.skillReferences?.length ? (
@@ -3629,8 +3661,9 @@ export const MessageRow = memo(function MessageRow({
           className={cn(role === "assistant" && "w-full")}
         >
           <BubbleContent className={cn(role === "assistant" && "w-full")}>
-            {role !== "user" && message.files?.length ? (
-              <MessageAttachments files={message.files} />
+            {/* Attachments lead the text, matching the composer. */}
+            {message.files?.length ? (
+              <MessageAttachments files={message.files} className={cn(hasUserText && "mb-2")} />
             ) : null}
             {userContentSummary ? (
               <ExpandableUserMessageContent
@@ -3642,9 +3675,6 @@ export const MessageRow = memo(function MessageRow({
             ) : (
               userContent
             )}
-            {role === "user" && message.files?.length ? (
-              <MessageAttachments files={message.files} className="mt-2" />
-            ) : null}
           </BubbleContent>
         </Bubble>
       </MessageContent>
@@ -3735,6 +3765,19 @@ function ExpandableUserMessageContent({
   );
 }
 
+/**
+ * Keys by URI plus its occurrence, not list position. The server echo lists inline-delivered files
+ * before path-delivered ones, so positional keys would remount (and flash) optimistic previews.
+ */
+function attachmentKeys(files: NonNullable<PalotMessage["files"]>) {
+  const seen = new Map<string, number>();
+  return files.map((file) => {
+    const occurrence = seen.get(file.uri) ?? 0;
+    seen.set(file.uri, occurrence + 1);
+    return { key: `${file.uri}#${occurrence}`, file };
+  });
+}
+
 function MessageAttachments({
   files,
   className,
@@ -3747,8 +3790,8 @@ function MessageAttachments({
       className={cn("max-w-full justify-start py-0", className)}
       aria-label="Attachments"
     >
-      {files.map((file, index) => (
-        <FileAttachment key={`${file.uri}:${index}`} file={file} />
+      {attachmentKeys(files).map(({ key, file }) => (
+        <FileAttachment key={key} file={file} />
       ))}
     </AttachmentGroup>
   );

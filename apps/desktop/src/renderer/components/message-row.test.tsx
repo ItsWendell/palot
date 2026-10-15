@@ -65,7 +65,7 @@ describe("MessageRow", () => {
     expect(view.container.querySelector("[data-markdown-stream-word]")).toBeNull();
   });
 
-  it("renders user attachments inside the bottom of the message bubble", () => {
+  it("renders user attachments at the top of the message bubble", () => {
     const message: PalotMessage = {
       id: "user-message",
       type: "user",
@@ -93,7 +93,7 @@ describe("MessageRow", () => {
     const bubble = screen.getByText("Review this file").closest('[data-slot="bubble-content"]');
     const attachments = screen.getByLabelText("Attachments");
     expect(bubble?.contains(attachments)).toBe(true);
-    expect(bubble?.lastElementChild).toBe(attachments);
+    expect(bubble?.firstElementChild).toBe(attachments);
     expect(attachments.classList.contains("justify-start")).toBe(true);
     expect(attachments.querySelector('[data-slot="attachment"]')?.getAttribute("data-size")).toBe(
       "sm",
@@ -132,7 +132,7 @@ describe("MessageRow", () => {
     const readMore = within(row).getByRole("button", { name: "Read more" });
     const attachments = within(row).getByLabelText("Attachments");
     expect(readMore.getAttribute("aria-expanded")).toBe("false");
-    expect(attachments.previousElementSibling?.contains(readMore)).toBe(true);
+    expect(attachments.nextElementSibling?.contains(readMore)).toBe(true);
     expect(row.querySelector("[inert]")?.getAttribute("aria-hidden")).toBe("true");
 
     fireEvent.click(readMore);

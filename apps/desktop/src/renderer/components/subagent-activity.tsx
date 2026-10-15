@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  ArrowUpLeft,
   BrainCircuit,
   ChevronDown,
   ChevronLeft,
@@ -62,7 +61,8 @@ function titleCase(value: string): string {
     .join(" ");
 }
 
-function sessionPresentation(session: PalotSession | undefined) {
+/** Agent and task description for a child session, parsed from OpenCode's subagent title. */
+export function sessionPresentation(session: PalotSession | undefined) {
   const title = session?.title?.trim() || "Delegated task";
   const match = title.match(/^(.*?)\s+\(@([^()]+) subagent\)$/i);
   return {
@@ -741,15 +741,7 @@ export function SubagentSessionDock({ session }: { session: PalotSession }) {
             {presentation.description} · Read-only session
           </span>
         </span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => void openSession(parentID)}
-        >
-          <ArrowUpLeft data-icon="inline-start" aria-hidden="true" />
-          Parent task
-        </Button>
+        {/* The task header's breadcrumb owns navigation back to the parent. */}
         {index >= 0 && siblings.length > 1 ? (
           <>
             <Button

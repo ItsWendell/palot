@@ -345,6 +345,11 @@ describe("ActivityGroup", () => {
     expect(screen.getByText("Evaluating database options")).toBeTruthy();
     expect(screen.getByText("Designing shared database services")).toBeTruthy();
     expect(screen.getAllByText("Planning middleware layering")).toHaveLength(2);
+    // Every step reads as one train of thought in a single scroll region.
+    const steps = screen.getByLabelText("Reasoning steps");
+    expect(within(steps).getByText("Evaluating database options")).toBeTruthy();
+    expect(within(steps).getByText("Designing shared database services")).toBeTruthy();
+    expect(within(steps).getByText("Planning middleware layering")).toBeTruthy();
     await user.click(trigger);
     expect(
       screen.getByRole("button", {
@@ -377,13 +382,13 @@ describe("ActivityGroup", () => {
     );
 
     const boundary = within(result.container);
-    const trigger = boundary.getByRole("button", { name: "Compaction completed" });
+    const trigger = boundary.getByRole("button", { name: "Context compacted" });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(boundary.queryByText("Compacted summary")).toBeNull();
     expect(boundary.queryByText("Recent context preserved")).toBeNull();
     await user.click(trigger);
     expect(boundary.getByText("Compacted summary")).toBeTruthy();
-    expect(boundary.getByText(/Compaction request:.*0\.001/)).toBeTruthy();
+    expect(boundary.getByText(/^Summarizing used .*0\.001/)).toBeTruthy();
     expect(boundary.queryByText("Recent context preserved")).toBeNull();
     const recentTrigger = boundary.getByRole("button", {
       name: "Approximately 6 tokens of recent context are kept verbatim",
@@ -416,7 +421,7 @@ describe("ActivityGroup", () => {
     );
 
     const boundary = within(result.container);
-    const trigger = boundary.getByRole("button", { name: "Compacting..." });
+    const trigger = boundary.getByRole("button", { name: "Compacting context" });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(boundary.queryByText("Partial streamed summary")).toBeNull();
     await user.click(trigger);
@@ -448,7 +453,7 @@ describe("ActivityGroup", () => {
     );
 
     const boundary = within(result.container);
-    const trigger = boundary.getByRole("button", { name: "Compaction failed" });
+    const trigger = boundary.getByRole("button", { name: "Context compaction failed" });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(boundary.queryByText("Context is too large")).toBeNull();
     expect(boundary.queryByText("Partial summary")).toBeNull();
@@ -506,7 +511,7 @@ describe("ActivityGroup", () => {
     );
 
     const boundary = within(result.container);
-    expect(boundary.getByRole("button", { name: "Compaction completed" })).toBeTruthy();
+    expect(boundary.getByRole("button", { name: "Context compacted" })).toBeTruthy();
     expect(boundary.getAllByRole("button")).toHaveLength(1);
     expect(boundary.queryByText("Hydrated summary")).toBeNull();
   });

@@ -348,7 +348,12 @@ describe("OpenCode message mapping", () => {
       time: { created: 61 },
     });
 
-    const malformed = { ...legacy, id: "msg_idle_malformed", error: { message: 42 } } as const;
+    // Deliberately outside the published type: a server may still send a malformed error.
+    const malformed = {
+      ...legacy,
+      id: "msg_idle_malformed",
+      error: { message: 42 },
+    } as unknown as SessionMessageInfo;
     expect(mapMessage(malformed).data).not.toHaveProperty("error");
     expect(mapMessage({ ...legacy, id: "msg_idle_succeeded", outcome: "succeeded" })).toMatchObject(
       { finish: null, completedAt: 61 },
@@ -391,7 +396,7 @@ describe("OpenCode model mapping", () => {
       time: { released: 1 },
       capabilities: { tools: true, input: ["text"], output: ["text"] },
       compatibility: { requireAssistantAfterTool: true, requireReasoning: true },
-      cost: { input: 0, output: 0 },
+      cost: [{ input: 1.25, output: 10, cache: { read: 0.125, write: 0 } }],
       enabled: true,
       status: "active",
     } as unknown as ModelInfo;
@@ -400,6 +405,9 @@ describe("OpenCode model mapping", () => {
       requireAssistantAfterTool: true,
       requireReasoning: true,
     });
+    expect(mapModel(model).cost).toEqual([
+      { contextOver: null, input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
+    ]);
   });
 
   it("preserves canonical provider identity for models and providers", () => {

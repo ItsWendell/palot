@@ -39,7 +39,7 @@ const errorMessage = (error: unknown) =>
 
 export async function listProjects(requestSignal?: AbortSignal) {
   return (
-    await openCodeClient().project.list({ signal: openCodeRequestSignal(requestSignal) })
+    await openCodeClient().project.list({}, { signal: openCodeRequestSignal(requestSignal) })
   ).map(mapProject);
 }
 
