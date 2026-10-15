@@ -20,7 +20,7 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot 0.17.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
+Palot 0.18.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
 release-smoke runtime are pinned to **2.0.29** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously

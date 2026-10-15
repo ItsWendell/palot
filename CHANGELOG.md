@@ -7,6 +7,10 @@ operations.
 
 ## Unreleased
 
+## 0.18.0
+
+This remains an experimental pre-release, not a supported stable release.
+
 ### Added
 
 - Workbench: "+" opens a New tab page with a centred address field, quick tools (Changes,

@@ -1,6 +1,6 @@
 # Privacy
 
-This policy describes the Palot 0.17.0 source. It may change as pre-release
+This policy describes the Palot 0.18.0 source. It may change as pre-release
 features evolve.
 
 ## Data sent by Palot
@@ -92,6 +92,11 @@ requests.
 Avatar images load from `avatars.githubusercontent.com`, which exposes normal
 network metadata such as your IP address to GitHub.
 
+Writing a review guide sends the pull request's title, description, branch names,
+and changed-file patches (within a size limit) through OpenCode to the model you
+choose for the guide. The finished guide
+is stored in Palot's local app storage on this device.
+
 Generating a commit message sends the staged files' changes through OpenCode to
 the task's model. Committing and pushing run your local `git` with your own Git
 configuration and credentials.
@@ -111,7 +116,11 @@ and a local SQLite database for Palot-owned state.
 
 Linked pull requests, their last known status, and watch state are stored in
 that local database until you unlink them. Notification sound choices and edited
-keyboard shortcuts are local preferences. Draft review comments stay in memory
+keyboard shortcuts are local preferences. Project scripts are stored in the
+local database and run on this device, with your user account, in the task's
+directory after the task settles. Palot's app log records each run's script name,
+task, directory, and result; the script's output is shown in the result notice
+and is not saved. Draft review comments stay in memory
 until you submit the review or quit Palot.
 
 Runtime release preferences and explicitly downloaded OpenCode executables are

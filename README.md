@@ -19,7 +19,7 @@ and managing local OpenCode connections.
 upgrade from Palot 0.11.x. “Palot v2” names the rebuild; the application follows
 the `0.x` SemVer release sequence. OpenCode has its own independent version.
 
-Palot 0.17.0 is open-source pre-release software under active development, with
+Palot 0.18.0 is open-source pre-release software under active development, with
 desktop packaging targets for Linux x64 and macOS Apple Silicon. Available
 packages are experimental, not supported stable releases. macOS downloads are
 ad-hoc signed, not Apple Developer ID signed or notarized. Updates are manual.
@@ -33,7 +33,20 @@ still pre-release and should not be the only protection for important work.
 The 0.12.0 release is source-only. Earlier 0.11.x downloads install the previous
 application, not Palot v2.
 
-### New in 0.17.0
+### New in 0.18.0
+
+- Settle idle tasks automatically after a few days, or all at once from the
+  Inbox, and run a project script each time a task settles.
+- A review Guide tab (beta) that tours a pull request in reading order, and
+  pull request filters by repository, organization, review state, and checks.
+- Separate model and reasoning pickers, a queued-message stack, and context
+  tokens and cost beside the composer's context ring.
+- A workbench New tab page, Mod+W and Ctrl+Tab that act on workbench tabs,
+  pinch-zoom image previews, and clearer diff colors.
+- Redesigned Providers and Models settings, a tray and app badge count of tasks
+  waiting for input, and OpenCode 2.0.29.
+
+### Added in 0.17.0
 
 - Review GitHub pull requests without leaving Palot: a Pull requests screen with
   summary, checks, timeline and code, plus merge, approve, comment and viewed
@@ -49,19 +62,6 @@ application, not Palot v2.
   that changed files, and keep failed turns visible after reloading.
 - Notification sounds, a default shell setting, Office document previews, and
   OpenCode 2.0.26.
-
-### Added in 0.16.0
-
-- Choose projects by device/server in one searchable destination picker. Local
-  tasks no longer silently reuse a similarly named remote project.
-- Ask quick side questions with `/btw`, in separate tabs without adding normal
-  conversation turns or running tools.
-- Attach element comments and page previews from the experimental browser to
-  your next prompt. Browser access remains off by default; read the
-  [privacy details](PRIVACY.md#experimental-browser) before enabling it.
-- Recover missing workspaces, open linked session IDs on their originating
-  connection, and inspect or stop running agents and commands from one menu.
-- See the response's actual model variant and more compact file-read activity.
 
 ## Install
 
