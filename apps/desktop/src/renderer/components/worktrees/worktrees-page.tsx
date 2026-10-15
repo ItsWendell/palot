@@ -7,10 +7,11 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import { useAtomValue } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PalotProject, PalotSession } from "../../../shared";
-import { runtimeAtom } from "../../atoms/workspace";
+import { persistedAtom } from "../../atoms/persisted";
+import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { useProjectWorktrees, useRemoveProjectCopy } from "../../hooks/use-project-worktrees";
 import { useProjectCatalogState, useSessionCatalog } from "../../hooks/use-session-catalog";
 import { useSessionActivityForSession } from "../../hooks/use-session-activity";
@@ -38,6 +39,27 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/colla
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { toast } from "../ui/toast";
 
+const MAX_REMEMBERED_PROFILES = 20;
+
+/** The project last shown on the Worktrees page, per connection profile. */
+export const worktreesProjectAtom = persistedAtom({
+  key: "worktrees.last-project",
+  initialValue: {} as Record<string, string>,
+  validate: (value: unknown): value is Record<string, string> =>
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value as object).length <= MAX_REMEMBERED_PROFILES &&
+    Object.entries(value as object).every(
+      ([key, projectID]) =>
+        key.length > 0 &&
+        key.length <= 512 &&
+        typeof projectID === "string" &&
+        projectID.length > 0 &&
+        projectID.length <= 512,
+    ),
+});
+
 interface RemovalTarget {
   connectionID: string;
   projectID: string;
@@ -50,6 +72,9 @@ export function WorktreesPage() {
   const search = useRouterState({
     select: (state) => validateProjectSearch(state.location.search as Record<string, unknown>),
   });
+  const onWorktreesRoute = useRouterState({
+    select: (state) => state.location.pathname === "/worktrees",
+  });
   const navigate = useNavigate();
   const runtime = useAtomValue(runtimeAtom);
   const catalog = useProjectCatalogState();
@@ -59,6 +84,46 @@ export function WorktreesPage() {
     [catalog.projects, sessions],
   );
   const project = projects.find((candidate) => candidate.id === search.projectID) ?? null;
+  const selectedSessionID = useAtomValue(selectedSessionIDAtom);
+  const [rememberedProjects, setRememberedProjects] = useAtom(worktreesProjectAtom);
+  const profileID = runtime?.profileID ?? null;
+  // Without a project in the route, open on the current task's project, else the last one shown.
+  const defaultProjectID = useMemo(() => {
+    const taskProjectID = sessions.find((session) => session.id === selectedSessionID)?.projectID;
+    const remembered = profileID ? rememberedProjects[profileID] : undefined;
+    return (
+      [taskProjectID, remembered].find(
+        (candidate) => candidate && projects.some((item) => item.id === candidate),
+      ) ?? null
+    );
+  }, [profileID, projects, rememberedProjects, selectedSessionID, sessions]);
+  const routeProfileID = search.profileID;
+  useEffect(() => {
+    if (!onWorktreesRoute || search.projectID || !catalog.ready || !defaultProjectID) return;
+    void navigate({
+      to: "/worktrees",
+      search: { profileID: routeProfileID, projectID: defaultProjectID },
+      replace: true,
+    });
+  }, [
+    catalog.ready,
+    defaultProjectID,
+    navigate,
+    onWorktreesRoute,
+    routeProfileID,
+    search.projectID,
+  ]);
+  useEffect(() => {
+    if (!profileID || !project) return;
+    setRememberedProjects((current) => {
+      if (current[profileID] === project.id) return current;
+      const others = Object.entries(current).filter(([key]) => key !== profileID);
+      return {
+        ...Object.fromEntries(others.slice(-(MAX_REMEMBERED_PROFILES - 1))),
+        [profileID]: project.id,
+      };
+    });
+  }, [profileID, project, setRememberedProjects]);
   const worktreesQuery = useProjectWorktrees(project);
   const removeProjectCopy = useRemoveProjectCopy(project);
   const [target, setTarget] = useState<RemovalTarget | null>(null);
@@ -82,7 +147,11 @@ export function WorktreesPage() {
 
   const updateProject = (projectID: string | null) => {
     if (!projectID) return;
-    void navigate({ to: "/worktrees", search: { projectID }, replace: true });
+    void navigate({
+      to: "/worktrees",
+      search: { profileID: search.profileID, projectID },
+      replace: true,
+    });
   };
 
   const remove = useCallback(async () => {

@@ -56,6 +56,7 @@ import {
   useShortcutKeys,
 } from "../lib/keyboard-shortcuts";
 import { NavigationRail } from "./navigation-rail";
+import { isFullPageRoute } from "../lib/full-page-routes";
 import { SIDEBAR_PEEK_MAX_WIDTH, SidebarPeek, useSidebarPeek } from "./sidebar-peek";
 
 /** Width of the always-visible navigation rail (`w-11`). */
@@ -164,9 +165,15 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const navigationCompact =
     workspaceSize.width > 0 &&
     workspaceSize.width < NAVIGATION_RAIL_WIDTH + paneGeometry.navigation + 480;
-  const navigationOpen = navigationRequestedOpen && !navigationCompact;
+  // Full-page destinations keep the column hidden without changing the saved preference;
+  // like a compact window, showing navigation there opens it as an overlay sheet.
+  const fullPageRoute = useRouterState({
+    select: (state) => isFullPageRoute(state.location.pathname),
+  });
+  const navigationOverlay = navigationCompact || fullPageRoute;
+  const navigationOpen = navigationRequestedOpen && !navigationOverlay;
   const [navigationSheetHistory, setNavigationSheetHistory] = useState<number | null>(null);
-  const navigationSheetOpen = navigationCompact && navigationSheetHistory === historyIndex;
+  const navigationSheetOpen = navigationOverlay && navigationSheetHistory === historyIndex;
   const navigationVisible = navigationOpen || navigationSheetOpen;
   // A hidden (not compact) column can peek as an overlay without being pinned.
   const sidebarMode = useAtomValue(sidebarModeAtom);
@@ -404,7 +411,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
 
   const setNavigationVisibility = useCallback(
     (open: boolean) => {
-      if (navigationCompact) {
+      if (navigationOverlay) {
         setNavigationSheetHistory(open ? historyIndex : null);
         return;
       }
@@ -415,7 +422,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
         else navigationPanelRef.current?.collapse();
       });
     },
-    [historyIndex, navigationCompact, navigationPanelRef, runShellTransition, setNavigationOpen],
+    [historyIndex, navigationOverlay, navigationPanelRef, runShellTransition, setNavigationOpen],
   );
 
   const startNewTask = useCallback(
@@ -867,7 +874,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
               if (!previousSize) return;
               const open = inPixels > 1;
               if (
-                !navigationCompact &&
+                !navigationOverlay &&
                 navigationTransitionRef.current === null &&
                 open !== navigationOpen
               ) {
@@ -1007,7 +1014,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
             ) : null}
           </ResizablePanel>
         </ResizablePanelGroup>
-        {phase === "ready" && !navigationVisible && !navigationCompact ? (
+        {phase === "ready" && !navigationVisible && !navigationOverlay ? (
           // Hot edge just right of the rail: resting here peeks the remembered view.
           <div
             aria-hidden="true"

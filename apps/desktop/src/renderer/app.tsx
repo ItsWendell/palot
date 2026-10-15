@@ -14,6 +14,7 @@ import { Toaster } from "./components/ui/toast";
 import { SurfaceBackdropFilters } from "./components/ui/surface-backdrop";
 import { DEFAULT_APPEARANCE_PREFERENCES, effectiveCodeTheme } from "../shared";
 import { AppearanceSync, PierreAppearanceSync } from "./components/appearance-sync";
+import { MotionPreferences } from "./components/motion-preferences";
 import { useWindowChrome } from "./hooks/use-window-chrome";
 import { useDesktopPresentation } from "./hooks/use-desktop-presentation";
 import { rendererStore, router } from "./router";
@@ -54,30 +55,32 @@ export function App() {
           poolOptions={diffWorkerPoolOptions}
           highlighterOptions={diffHighlighterOptions}
         >
-          <TooltipProvider delay={150}>
-            <SurfaceBackdropFilters />
-            <OpenCodeQueryEvents />
-            <AppearanceSync />
-            <PierreAppearanceSync />
-            <RouterProvider router={router} />
-            {showWindowCloseButton ? (
-              <div className="window-close-cluster pointer-events-none fixed top-0 right-3 z-40 flex h-(--shell-header-height) w-(--window-close-reserve) items-center justify-end gap-2">
-                {/* Separates the window action from pane toggles that sit beside it. */}
-                <span className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Close window"
-                  title="Close window"
-                  className="pointer-events-auto hover:bg-destructive/10 hover:text-destructive [-webkit-app-region:no-drag]"
-                  onClick={() => void palot.closeWindow()}
-                >
-                  <X aria-hidden="true" />
-                </Button>
-              </div>
-            ) : null}
-            <Toaster />
-          </TooltipProvider>
+          <MotionPreferences>
+            <TooltipProvider delay={150}>
+              <SurfaceBackdropFilters />
+              <OpenCodeQueryEvents />
+              <AppearanceSync />
+              <PierreAppearanceSync />
+              <RouterProvider router={router} />
+              {showWindowCloseButton ? (
+                <div className="window-close-cluster pointer-events-none fixed top-0 right-3 z-40 flex h-(--shell-header-height) w-(--window-close-reserve) items-center justify-end gap-2">
+                  {/* Separates the window action from pane toggles that sit beside it. */}
+                  <span className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Close window"
+                    title="Close window"
+                    className="pointer-events-auto hover:bg-destructive/10 hover:text-destructive [-webkit-app-region:no-drag]"
+                    onClick={() => void palot.closeWindow()}
+                  >
+                    <X aria-hidden="true" />
+                  </Button>
+                </div>
+              ) : null}
+              <Toaster />
+            </TooltipProvider>
+          </MotionPreferences>
         </WorkerPoolContextProvider>
       </JotaiProvider>
     </QueryClientProvider>

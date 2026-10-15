@@ -164,6 +164,27 @@ describe("Workspace pane visibility", () => {
     expect(store.get(sidebarModeAtom)).toBe("inbox");
   });
 
+  it("keeps the task column hidden on full-page routes and shows it as an overlay", async () => {
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    const store = createStore();
+    store.set(phaseAtom, "ready");
+    store.set(navigationOpenAtom, true);
+    renderWithRouter(<Workspace content={null} />, store, "/pull-requests");
+
+    const toggle = await screen.findByRole("button", { name: "Show navigation" });
+    await waitFor(() =>
+      expect(screen.getByTestId("navigation-panel").getAttribute("data-collapsed")).toBe("true"),
+    );
+    // Showing navigation here opens an overlay; the saved column preference is untouched.
+    fireEvent.click(toggle);
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(screen.getByTestId("navigation-panel").getAttribute("data-collapsed")).toBe("true");
+    expect(store.get(navigationOpenAtom)).toBe(true);
+  });
+
   it("describes service startup without showing fake progress", () => {
     const store = createStore();
     store.set(runtimeAtom, {

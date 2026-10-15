@@ -3,12 +3,12 @@ import { createStore } from "jotai";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runtimeAtom } from "../../atoms/workspace";
+import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { createRendererQueryClient } from "../../lib/query-client";
 import { palot } from "../../services/palot";
 import * as opencodeVcs from "../../services/opencode-vcs";
 import { renderWithRouter, seedCatalog } from "../../test-utils/render-with-router";
-import { WorktreesPage } from "./worktrees-page";
+import { WorktreesPage, worktreesProjectAtom } from "./worktrees-page";
 
 const project: PalotProject = {
   id: "project-1",
@@ -192,6 +192,58 @@ describe("WorktreesPage", () => {
         "connection",
       ),
     );
+  });
+});
+
+describe("WorktreesPage default project", () => {
+  const other: PalotProject = { ...project, id: "project-2", canonical: "/other", name: "Other" };
+  const otherTask: PalotSession = {
+    ...attachedSession,
+    id: "other-task",
+    projectID: other.id,
+    location: { directory: "/other" },
+  };
+
+  function setup(store = createConnectedStore()) {
+    vi.spyOn(palot, "refreshProjectCopies").mockResolvedValue(undefined);
+    vi.spyOn(palot, "listProjectDirectories").mockResolvedValue([]);
+    const queryClient = createRendererQueryClient();
+    seedCatalog(
+      queryClient,
+      { projects: [project, other], sessions: [attachedSession, otherTask] },
+      "connection",
+    );
+    const view = renderWithRouter(<WorktreesPage />, store, "/worktrees", queryClient);
+    return { ...view, store };
+  }
+
+  it("opens on the current task's project instead of asking for one", async () => {
+    const store = createConnectedStore();
+    store.set(selectedSessionIDAtom, otherTask.id);
+    const { router } = setup(store);
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ projectID: other.id }),
+    );
+    expect(screen.queryByText("Select a project")).toBeNull();
+    expect(store.get(worktreesProjectAtom)).toEqual({ profile: other.id });
+  });
+
+  it("falls back to the project last shown for this profile", async () => {
+    const store = createConnectedStore();
+    store.set(worktreesProjectAtom, { profile: project.id, "other-profile": other.id });
+    const { router } = setup(store);
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ projectID: project.id }),
+    );
+  });
+
+  it("keeps asking when nothing points at a known project", async () => {
+    const store = createConnectedStore();
+    store.set(worktreesProjectAtom, { profile: "removed-project" });
+    store.set(selectedSessionIDAtom, "unknown-task");
+    const { router } = setup(store);
+    expect(await screen.findByText("Select a project")).toBeTruthy();
+    expect(router.state.location.search).not.toHaveProperty("projectID");
   });
 });
 

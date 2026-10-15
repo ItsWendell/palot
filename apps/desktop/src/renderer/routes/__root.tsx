@@ -8,9 +8,11 @@ import { defaultSidebarModeAtom, sidebarModeAtom } from "../atoms/ui";
 import { BrowserSessionManager } from "../components/browser-session-manager";
 import { GlobalCommandPalette } from "../components/global-command-palette";
 import { OnboardingController } from "../components/onboarding-controller";
+import { ProjectScriptNotices } from "../components/project-script-notices";
 import { SshPrompts } from "../components/ssh-prompts";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useWorkspaceController } from "../hooks/use-workspace";
+import { useAutoSettle } from "../hooks/use-auto-settle";
 import { useInboxController } from "../hooks/use-inbox-controller";
 import { palot } from "../services/palot";
 import { showErrorToast } from "../lib/toast-error";
@@ -168,6 +170,7 @@ function RuntimeLayout() {
         />
       ) : null}
       <InboxController />
+      <ProjectScriptNotices />
       <OnboardingController
         initialTargetHandled={initialTarget.handled}
         allowAutomatic={initialTarget.allowAutomatic}
@@ -186,5 +189,6 @@ function WorkspaceController({ sessionID }: { sessionID: string | null }) {
 
 function InboxController() {
   useInboxController();
+  useAutoSettle();
   return null;
 }

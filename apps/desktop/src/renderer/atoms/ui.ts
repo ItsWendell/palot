@@ -135,6 +135,15 @@ export const inboxViewPreferencesAtom = persistedAtom({
     );
   },
 });
+export const AUTO_SETTLE_DAY_CHOICES = [1, 3, 7, 14] as const;
+export type AutoSettleAfterDays = (typeof AUTO_SETTLE_DAY_CHOICES)[number] | null;
+/** Settle idle Inbox tasks after this many days without activity; `null` turns it off. */
+export const autoSettleAfterDaysAtom = persistedAtom({
+  key: "inbox.auto-settle-after-days",
+  initialValue: 3 as AutoSettleAfterDays,
+  validate: (value): value is AutoSettleAfterDays =>
+    value === null || AUTO_SETTLE_DAY_CHOICES.some((days) => days === value),
+});
 export const inboxShelvesAtom = persistedAtom({
   key: "ui.inbox-shelves",
   initialValue: { pinned: true, inbox: true, snoozed: false, settled: false },
@@ -178,6 +187,17 @@ export const defaultDeliveryAtom = persistedAtom({
 export const autoBackgroundOnSteerAtom = persistedAtom({
   key: "composer.auto-background-on-steer",
   initialValue: false,
+  validate: (value): value is boolean => typeof value === "boolean",
+});
+export const contextMeterVisibleAtom = persistedAtom({
+  key: "composer.context-meter",
+  initialValue: true,
+  validate: (value): value is boolean => typeof value === "boolean",
+});
+/** Offer "Compact and send" when a large, idle task's prompt cache has likely expired. */
+export const compactBeforeSendSuggestionAtom = persistedAtom({
+  key: "composer.compact-before-send",
+  initialValue: true,
   validate: (value): value is boolean => typeof value === "boolean",
 });
 export const defaultWorkspaceModeAtom = persistedAtom({
