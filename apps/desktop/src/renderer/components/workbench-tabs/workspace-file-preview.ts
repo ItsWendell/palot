@@ -2,7 +2,8 @@ import { MAX_OFFICE_BYTES, type OfficeFormat } from "./office-preview-model";
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
-const MAX_AUDIO_VIDEO_BYTES = 32 * 1024 * 1024;
+const MAX_AUDIO_VIDEO_MIB = 256;
+const MAX_AUDIO_VIDEO_BYTES = MAX_AUDIO_VIDEO_MIB * 1024 * 1024;
 
 export type WorkspaceFilePreview =
   | { kind: "office"; format: OfficeFormat; data: Uint8Array }
@@ -31,7 +32,8 @@ export function classifyWorkspaceFile(path: string, data: Uint8Array): Workspace
   const mime = previewMime(data);
   if (mime) {
     if (mime.startsWith("audio/") || mime.startsWith("video/")) {
-      if (data.byteLength > MAX_AUDIO_VIDEO_BYTES) return { kind: "too-large", limitMiB: 32 };
+      if (data.byteLength > MAX_AUDIO_VIDEO_BYTES)
+        return { kind: "too-large", limitMiB: MAX_AUDIO_VIDEO_MIB };
       return { kind: mime.startsWith("audio/") ? "audio" : "video", mime, data };
     }
     if (data.byteLength > MAX_MEDIA_BYTES) return { kind: "too-large", limitMiB: 16 };

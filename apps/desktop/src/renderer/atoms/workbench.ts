@@ -1,7 +1,8 @@
 import { atom, useAtomValue, useStore } from "jotai";
 import { selectAtom } from "jotai/utils";
 import { useMemo } from "react";
-import { loadPersistedValue, savePersistedValue } from "./persisted";
+import { loadPersistedValue, persistedAtom, savePersistedValue } from "./persisted";
+import { isBrowserRecentSites, type BrowserRecentSites } from "../lib/browser-recent-sites";
 import {
   isWorkbenchRecoveryState,
   parseWorkbenchRecoveryState,
@@ -12,6 +13,7 @@ import {
   mutateWorkbench,
   openWorkbenchTab,
   reopenWorkbenchTab,
+  replaceWorkbenchTab,
   workbenchScopeKey,
   type OpenWorkbenchTabInput,
   type OpenWorkbenchTabOptions,
@@ -48,12 +50,33 @@ export const contextMessageTargetAtom = atom<{
   messageID: string;
 } | null>(null);
 
+/** Asks the task's transcript to scroll to a user message's turn or a compaction row. */
+export const transcriptJumpTargetAtom = atom<{
+  sessionID: string;
+  messageID: string;
+} | null>(null);
+
+/** Sites opened in the task browser, per connection profile, for New tab suggestions. */
+export const browserRecentSitesAtom = persistedAtom<BrowserRecentSites>({
+  key: "browser.recent-sites",
+  initialValue: {},
+  validate: isBrowserRecentSites,
+});
+
 type WorkbenchCommand =
   | {
       type: "open";
       scope: WorkbenchScope;
       input: OpenWorkbenchTabInput;
       options?: OpenWorkbenchTabOptions;
+    }
+  | {
+      type: "replace";
+      scope: WorkbenchScope;
+      pane: WorkbenchPaneID;
+      tabID: string;
+      input: OpenWorkbenchTabInput;
+      options?: Pick<OpenWorkbenchTabOptions, "moveExisting">;
     }
   | { type: "mutate"; scope: WorkbenchScope; mutation: WorkbenchMutation };
 
@@ -64,6 +87,18 @@ export const workbenchCommandAtom = atom(
     if (command.type === "open") {
       const next = openWorkbenchTab(current, command.scope, command.input, command.options);
       set(workbenchStateAtom, next.state);
+      return next.result;
+    }
+    if (command.type === "replace") {
+      const next = replaceWorkbenchTab(
+        current,
+        command.scope,
+        command.pane,
+        command.tabID,
+        command.input,
+        command.options,
+      );
+      if (next.state !== current) set(workbenchStateAtom, next.state);
       return next.result;
     }
     const next = mutateWorkbench(current, command.scope, command.mutation);
@@ -108,6 +143,23 @@ export function useWorkbenchCommands(scope: WorkbenchScope | null) {
           ? store.set(workbenchCommandAtom, {
               type: "open",
               scope: currentScope,
+              input,
+              options,
+            })
+          : ({ ok: false, reason: "tab-limit" } as const),
+      /** Turns a tab (a New tab page) into another surface, or focuses that surface. */
+      replaceTab: (
+        pane: WorkbenchPaneID,
+        tabID: string,
+        input: OpenWorkbenchTabInput,
+        options?: Pick<OpenWorkbenchTabOptions, "moveExisting">,
+      ) =>
+        currentScope
+          ? store.set(workbenchCommandAtom, {
+              type: "replace",
+              scope: currentScope,
+              pane,
+              tabID,
               input,
               options,
             })

@@ -1,5 +1,5 @@
 import type { FileContents } from "@pierre/diffs";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
@@ -196,11 +196,14 @@ describe("workspace file preview classification", () => {
       kind: "too-large",
       limitMiB: 16,
     });
-    const oversizedVideo = new Uint8Array(32 * 1024 * 1024 + 1);
+    const largeVideo = new Uint8Array(32 * 1024 * 1024 + 1);
+    largeVideo.set(mp4());
+    expect(classifyWorkspaceFile("sample.mp4", largeVideo)).toMatchObject({ kind: "video" });
+    const oversizedVideo = new Uint8Array(256 * 1024 * 1024 + 1);
     oversizedVideo.set(mp4());
     expect(classifyWorkspaceFile("sample.mp4", oversizedVideo)).toEqual({
       kind: "too-large",
-      limitMiB: 32,
+      limitMiB: 256,
     });
   });
 });
@@ -250,6 +253,33 @@ describe("FileTab previews", () => {
     expect(screen.getByRole("img", { name: "notes.md" }).getAttribute("src")).toBe("blob:two");
     view.unmount();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:two");
+  });
+
+  it("consumes pinch zoom over an image and pans until it is fitted again", () => {
+    mocks.query.data = bytes(137, 80, 78, 71, 13, 10, 26, 10);
+    render(<FileTab tab={tab} />);
+    const stage = screen.getByRole("img", { name: "notes.md" }).parentElement!;
+    const wheel = (init: WheelEventInit) => {
+      const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, ...init });
+      // The test DOM drops modifier keys from WheelEvent's init dictionary.
+      Object.defineProperty(event, "ctrlKey", { value: init.ctrlKey ?? false });
+      act(() => {
+        stage.dispatchEvent(event);
+      });
+      return event.defaultPrevented;
+    };
+
+    // Fitted scrolling stays native.
+    expect(wheel({ deltaY: 40 })).toBe(false);
+    // Chromium reports a trackpad pinch as Ctrl-wheel; the window must not zoom.
+    expect(wheel({ ctrlKey: true, deltaY: -40 })).toBe(true);
+    const fit = screen.getByRole("button", { name: "Fit image to pane" });
+    expect(fit.hasAttribute("disabled")).toBe(false);
+    expect(wheel({ deltaY: 40 })).toBe(true);
+
+    fireEvent.click(fit);
+    expect(fit.hasAttribute("disabled")).toBe(true);
+    expect(wheel({ deltaY: 40 })).toBe(false);
   });
 
   it("releases a media preview when its workbench tab becomes inactive", () => {

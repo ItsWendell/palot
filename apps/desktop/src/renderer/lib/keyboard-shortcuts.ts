@@ -46,11 +46,13 @@ export type KeyboardShortcutID =
   | "task.previous"
   | "task.changes.toggle"
   | "task.terminal.toggle"
+  | "workbench.tab.close"
   | "composer.focus"
   | "composer.send"
   | "composer.newline"
   | "composer.steer"
   | "composer.model"
+  | "composer.reasoning.cycle"
   | "composer.agent.next"
   | "composer.agent.previous"
   | "composer.attach"
@@ -89,6 +91,8 @@ export interface KeyboardShortcut {
 }
 
 const COMPOSER_TYPING = "Part of typing in the composer";
+const WORKBENCH_TAB_CYCLING =
+  "Switches workbench tabs instead while a workbench with several tabs has focus";
 
 export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   {
@@ -127,12 +131,19 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     note: "Same order as Recent tasks in the command palette",
     locked: "Uses the number keys as a range",
   },
-  { id: "task.next", group: "tasks", label: "Next recent task", keys: ["Control", "Tab"] },
+  {
+    id: "task.next",
+    group: "tasks",
+    label: "Next recent task",
+    keys: ["Control", "Tab"],
+    note: WORKBENCH_TAB_CYCLING,
+  },
   {
     id: "task.previous",
     group: "tasks",
     label: "Previous recent task",
     keys: ["Control", "Shift", "Tab"],
+    note: WORKBENCH_TAB_CYCLING,
   },
   {
     id: "task.changes.toggle",
@@ -145,6 +156,14 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     group: "panels",
     label: "Show or hide terminal",
     keys: ["Control", "`"],
+  },
+  {
+    id: "workbench.tab.close",
+    group: "panels",
+    label: "Close workbench tab",
+    keys: ["Mod", "W"],
+    note: "While the workbench has focus; elsewhere it closes the window",
+    locked: "Shares the system Close window shortcut",
   },
   {
     id: "composer.focus",
@@ -176,6 +195,13 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     locked: COMPOSER_TYPING,
   },
   { id: "composer.model", group: "composer", label: "Choose model", keys: ["Mod", "'"] },
+  {
+    id: "composer.reasoning.cycle",
+    group: "composer",
+    label: "Cycle reasoning effort",
+    keys: ["Mod", "Shift", "D"],
+    note: "For models with reasoning options",
+  },
   { id: "composer.agent.next", group: "composer", label: "Cycle agent", keys: ["Mod", "."] },
   {
     id: "composer.agent.previous",
@@ -689,7 +715,7 @@ const SYSTEM_SHORTCUTS: readonly { keys: ShortcutKeys; label: string; macOnly?: 
   { keys: ["Mod", "A"], label: "Select all" },
   { keys: ["Mod", "Z"], label: "Undo" },
   { keys: ["Mod", "Shift", "Z"], label: "Redo" },
-  { keys: ["Mod", "W"], label: "Close window" },
+  { keys: ["Mod", "W"], label: "Close window or workbench tab" },
   { keys: ["Mod", "M"], label: "Minimize" },
   { keys: ["Mod", "Q"], label: "Quit", macOnly: true },
   { keys: ["Mod", "H"], label: "Hide Palot", macOnly: true },

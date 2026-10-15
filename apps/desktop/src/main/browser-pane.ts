@@ -7,7 +7,7 @@ import { OpenCode } from "@opencode/client/effect";
 import { SessionID } from "@opencode/schema/session-id";
 import { BrowserWindow, session } from "electron";
 import { Deferred, Effect, ManagedRuntime, Queue, Schedule, Schema, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import type {
   PalotBrowserEvent,
   PalotBrowserLayout,

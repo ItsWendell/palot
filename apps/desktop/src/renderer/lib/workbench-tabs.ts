@@ -31,6 +31,16 @@ export type WorkbenchTab =
       };
     })
   | (TabBase & {
+      /** An empty browser tab: the New tab page. Local only; it is not restored after reload. */
+      kind: "new-tab";
+      resource: {
+        profileID: string;
+        sessionID: string;
+        location: LocationRef;
+        pageID: string;
+      };
+    })
+  | (TabBase & {
       kind: "command";
       resource: {
         profileID: string;
@@ -104,6 +114,7 @@ export type WorkbenchTab =
 export type OpenWorkbenchTabInput =
   | { kind: "btw"; location: LocationRef; questionID: string; question: string }
   | { kind: "browser"; location: LocationRef; browserTabID: string }
+  | { kind: "new-tab"; location: LocationRef }
   | { kind: "command"; location: LocationRef; shellID: string; sessionID?: string; command: string }
   | { kind: "context"; location: LocationRef }
   | {
@@ -197,6 +208,8 @@ export function workbenchTabResourceKey(tab: WorkbenchTab): string {
   }
   if (tab.kind === "browser")
     return `browser\u0000${tab.resource.profileID}\u0000${tab.resource.sessionID}\u0000${tab.resource.browserTabID ?? ""}`;
+  if (tab.kind === "new-tab")
+    return `new-tab\u0000${tab.resource.profileID}\u0000${tab.resource.sessionID}\u0000${tab.resource.pageID}`;
   if (tab.kind === "changes") return `changes\u0000${location}`;
   if (tab.kind === "workspace-files") return `workspace-files\u0000${location}`;
   if (tab.kind === "turn-diff")
@@ -210,6 +223,7 @@ export function workbenchTabResourceKey(tab: WorkbenchTab): string {
 export function workbenchTabTitle(tab: WorkbenchTab): string {
   if (tab.kind === "btw") return `BTW: ${tab.resource.question}`;
   if (tab.kind === "browser") return "Browser";
+  if (tab.kind === "new-tab") return "New tab";
   if (tab.kind === "context") return "Context";
   if (tab.kind === "changes") return "Changes";
   if (tab.kind === "workspace-files") return "Files";
@@ -279,6 +293,60 @@ export function openWorkbenchTab(
     state: withScope(state, key, next, now),
     result: { ok: true, tabID: candidate.id, pane, created: true, moved: false },
   };
+}
+
+/**
+ * Turns one tab (a New tab page) into another surface in its place. When that surface is
+ * already open, the existing tab is focused where it is and the replaced tab closes.
+ */
+export function replaceWorkbenchTab(
+  state: WorkbenchState,
+  scope: WorkbenchScope,
+  pane: WorkbenchPaneID,
+  tabID: string,
+  input: OpenWorkbenchTabInput,
+  options: Pick<OpenWorkbenchTabOptions, "moveExisting"> = {},
+  now = Date.now(),
+  createID: () => string = defaultTabID,
+): { state: WorkbenchState; result: OpenWorkbenchTabResult } {
+  const key = workbenchScopeKey(scope);
+  const context = state.scopes[key];
+  const index = context?.[pane].tabs.findIndex((tab) => tab.id === tabID) ?? -1;
+  if (!context || index < 0)
+    return openWorkbenchTab(state, scope, input, { ...options, pane }, now, createID);
+  const without = withScope(
+    state,
+    key,
+    {
+      ...context,
+      [pane]: { ...context[pane], tabs: context[pane].tabs.filter((tab) => tab.id !== tabID) },
+    },
+    now,
+  );
+  const opened = openWorkbenchTab(without, scope, input, { ...options, pane }, now, createID);
+  if (!opened.result.ok) return { state, result: opened.result };
+  const result = opened.result;
+  let next = opened.state.scopes[key]!;
+  if (result.pane === pane) {
+    const tabs = [...next[pane].tabs];
+    const [tab] = tabs.splice(
+      tabs.findIndex((candidate) => candidate.id === result.tabID),
+      1,
+    );
+    tabs.splice(Math.min(index, tabs.length), 0, tab!);
+    next = { ...next, [pane]: { tabs, activeTabID: result.tabID, requestedOpen: true } };
+  } else if (next[pane].activeTabID === tabID) {
+    const tabs = next[pane].tabs;
+    next = {
+      ...next,
+      [pane]: {
+        tabs,
+        activeTabID: tabs[index]?.id ?? tabs[index - 1]?.id ?? null,
+        requestedOpen: tabs.length > 0 && next[pane].requestedOpen,
+      },
+    };
+  }
+  return { state: withScope(opened.state, key, next, now), result };
 }
 
 /** Browser inventory is authoritative; the workbench only retains page placement and selection. */
@@ -433,7 +501,12 @@ export function mutateWorkbench(
 
 /** Browser pages are deleted on close. Restoring their saved ID cannot restore the page. */
 export function canRestoreWorkbenchTab(tab: WorkbenchTab, scope: WorkbenchScope): boolean {
-  if (tab.kind === "browser" || tab.resource.profileID !== scope.profileID) return false;
+  if (
+    tab.kind === "browser" ||
+    tab.kind === "new-tab" ||
+    tab.resource.profileID !== scope.profileID
+  )
+    return false;
   if (tab.kind === "btw" || tab.kind === "context" || tab.kind === "turn-diff")
     return tab.resource.sessionID === scope.sessionID;
   return true;
@@ -611,6 +684,19 @@ function tabFromInput(
         sessionID: scope.sessionID,
         location: input.location,
         browserTabID: input.browserTabID,
+      },
+    };
+  }
+  if (input.kind === "new-tab") {
+    return {
+      id,
+      kind: "new-tab",
+      pinned: false,
+      resource: {
+        profileID: scope.profileID,
+        sessionID: scope.sessionID,
+        location: input.location,
+        pageID: id,
       },
     };
   }

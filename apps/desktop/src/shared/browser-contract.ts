@@ -50,6 +50,21 @@ export type PalotBrowserEvent =
     }
   | { bindingID: string; type: "preview"; path: string };
 
+/**
+ * A tab shortcut pressed inside an embedded browser page. Main keeps it from the page and
+ * the window menu; the renderer replays it in the workbench pane that shows `tabID`.
+ */
+export interface PalotBrowserShortcut {
+  tabID: Browser.TabID;
+  key: string;
+  code: string;
+  control: boolean;
+  meta: boolean;
+  shift: boolean;
+  alt: boolean;
+  repeat: boolean;
+}
+
 /** One-use guest attachment lease. URLs and network credentials remain main-owned. */
 export interface PalotBrowserHost {
   tabID: Browser.TabID;

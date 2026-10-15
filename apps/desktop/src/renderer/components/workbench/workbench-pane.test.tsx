@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { afterEach, expect, it, vi } from "vitest";
 import { workbenchStateAtom, useWorkbenchScope } from "../../atoms/workbench";
@@ -26,9 +27,27 @@ vi.mock("../../hooks/use-browser-session", () => ({
   }),
 }));
 vi.mock("../../services/palot", () => ({
-  palot: { browserCommand: vi.fn(), createPty: vi.fn(), connectPty: vi.fn(), removePty: vi.fn() },
+  palot: {
+    browserCommand: vi.fn(),
+    onBrowserShortcut: vi.fn(() => () => undefined),
+    createPty: vi.fn(),
+    connectPty: vi.fn(),
+    removePty: vi.fn(),
+  },
 }));
 vi.mock("../../lib/toast-error", () => ({ showErrorToast: vi.fn() }));
+vi.mock("../../hooks/use-navigation", () => ({
+  usePalotNavigation: () => ({
+    openPullRequests: vi.fn(),
+    openScheduled: vi.fn(),
+    openUsage: vi.fn(),
+    openWorktrees: vi.fn(),
+  }),
+}));
+vi.mock("../../hooks/use-source-control", () => ({
+  useSessionPullRequests: () => ({ data: [] }),
+}));
+vi.mock("../workbench-tabs/changes-tab", () => ({ ChangesTab: () => <div>Changes view</div> }));
 vi.mock("../workbench-tabs/browser-tab", () => ({ BrowserTab: () => <div>Browser page</div> }));
 vi.mock("../workbench-tabs/context-tab", () => ({ ContextTab: () => <div>Context view</div> }));
 vi.mock("../workbench-tabs/file-tab", () => ({ FileTab: () => <div>File view</div> }));
@@ -54,6 +73,7 @@ const pages: WorkbenchTab[] = [
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  delete document.documentElement.dataset.platform;
 });
 
 function ScopePane() {
@@ -266,4 +286,123 @@ it("reopens the most recently closed tab using the workbench-focused shortcut", 
   expect(store.get(workbenchStateAtom).scopes[workbenchScopeKey(scope)]?.recentlyClosed).toEqual(
     [],
   );
+});
+
+it("opens a New tab page from + and turns it into the chosen surface in place", async () => {
+  const store = mount();
+  fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+  const tab = await screen.findByRole("tab", { name: "New tab" });
+  expect(tab.getAttribute("aria-selected")).toBe("true");
+  const tools = await screen.findByRole("group", { name: "Tools" });
+  fireEvent.click(within(tools).getByRole("button", { name: /Changes/ }));
+  await screen.findByRole("tab", { name: /^Changes/ });
+  const right = store.get(workbenchStateAtom).scopes[workbenchScopeKey(scope)]!.right;
+  expect(right.tabs.map((candidate) => candidate.kind)).toEqual(["browser", "browser", "changes"]);
+  expect(right.activeTabID).toBe(right.tabs[2]!.id);
+  expect(screen.queryByRole("tab", { name: "New tab" })).toBeNull();
+});
+
+it("navigates a New tab by opening the address as a page in its place", async () => {
+  vi.mocked(palot.browserCommand).mockResolvedValue("page-3");
+  const store = mount();
+  fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+  const address = await screen.findByRole("textbox", { name: "Browser address" });
+  await userEvent.type(address, "https://example.org{Enter}");
+  await waitFor(() =>
+    expect(palot.browserCommand).toHaveBeenCalledWith(
+      "binding",
+      { type: "tabs.open", url: "https://example.org", focus: true },
+      "right",
+    ),
+  );
+  await waitFor(() =>
+    expect(
+      store.get(workbenchStateAtom).scopes[workbenchScopeKey(scope)]?.right.tabs.at(-1),
+    ).toMatchObject({ kind: "browser", resource: { browserTabID: "page-3" } }),
+  );
+  expect(
+    store
+      .get(workbenchStateAtom)
+      .scopes[workbenchScopeKey(scope)]?.right.tabs.some((tab) => tab.kind === "new-tab"),
+  ).toBe(false);
+});
+
+it("shows the New tab page in an empty pane", async () => {
+  mount([]);
+  expect(await screen.findByRole("group", { name: "Tools" })).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "Browser address" })).toBeTruthy();
+});
+
+it("closes the active tab with Ctrl+W instead of the window", () => {
+  document.documentElement.dataset.platform = "linux";
+  vi.mocked(palot.browserCommand).mockResolvedValue(undefined);
+  mount();
+  const tab = screen.getByRole("tab", { name: "Example" });
+  tab.focus();
+  // A canceled keydown never reaches the window menu's Close item.
+  expect(fireEvent.keyDown(tab, { key: "w", code: "KeyW", ctrlKey: true })).toBe(false);
+  expect(palot.browserCommand).toHaveBeenCalledWith("binding", {
+    type: "tabs.close",
+    tabID: "page-1",
+  });
+});
+
+it("cycles workbench tabs with Ctrl+Tab instead of switching tasks", async () => {
+  document.documentElement.dataset.platform = "linux";
+  vi.mocked(palot.browserCommand).mockResolvedValue(undefined);
+  const windowListener = vi.fn();
+  window.addEventListener("keydown", windowListener);
+  try {
+    mount();
+    const tab = screen.getByRole("tab", { name: "Example" });
+    tab.focus();
+    expect(fireEvent.keyDown(tab, { key: "Tab", code: "Tab", ctrlKey: true })).toBe(false);
+    expect(windowListener).not.toHaveBeenCalled();
+    const next = screen.getByRole("tab", { name: "https://other.example" });
+    await waitFor(() => expect(next.getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(document.activeElement).toBe(next));
+    expect(palot.browserCommand).toHaveBeenCalledWith("binding", {
+      type: "tabs.focus",
+      tabID: "page-2",
+    });
+  } finally {
+    window.removeEventListener("keydown", windowListener);
+  }
+});
+
+it("replays a browser page's Ctrl+W only in the pane that shows it", () => {
+  document.documentElement.dataset.platform = "linux";
+  vi.mocked(palot.browserCommand).mockResolvedValue(undefined);
+  mount();
+  const replay = vi.mocked(palot.onBrowserShortcut).mock.calls[0]![0];
+  const close = {
+    key: "w",
+    code: "KeyW",
+    control: true,
+    meta: false,
+    shift: false,
+    alt: false,
+    repeat: false,
+  };
+  replay({ ...close, tabID: "other-page" as never });
+  expect(palot.browserCommand).not.toHaveBeenCalled();
+  replay({ ...close, tabID: "page-1" as never });
+  expect(palot.browserCommand).toHaveBeenCalledWith("binding", {
+    type: "tabs.close",
+    tabID: "page-1",
+  });
+});
+
+it("leaves Ctrl+Tab to task switching when the pane has one tab", () => {
+  document.documentElement.dataset.platform = "linux";
+  const windowListener = vi.fn();
+  window.addEventListener("keydown", windowListener);
+  try {
+    mount(pages.slice(0, 1));
+    const tab = screen.getByRole("tab", { name: "Example" });
+    expect(fireEvent.keyDown(tab, { key: "Tab", code: "Tab", ctrlKey: true })).toBe(true);
+    expect(windowListener).toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("keydown", windowListener);
+  }
 });

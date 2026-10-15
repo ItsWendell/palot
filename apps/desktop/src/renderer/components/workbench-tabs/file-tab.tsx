@@ -1,9 +1,10 @@
 import { File as CodeFile, type SelectedLineRange } from "@pierre/diffs/react";
-import { FileCode2, FolderOpen, RefreshCw, SquareArrowOutUpRight } from "lucide-react";
+import { FileCode2, FolderOpen, Minus, Plus, RefreshCw, SquareArrowOutUpRight } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
 import { resolvedAppearanceAtom } from "../../atoms/appearance";
 import { runtimeAtom } from "../../atoms/workspace";
+import { useImageZoom } from "../../hooks/use-image-zoom";
 import { useWorkspaceFile } from "../../hooks/use-workspace-file";
 import { cn } from "../../lib/cn";
 import { contentCacheKey } from "../../lib/file-diffs";
@@ -18,6 +19,8 @@ import { classifyWorkspaceFile, type WorkspaceFilePreview } from "./workspace-fi
 
 const PdfPreview = lazy(() => import("./pdf-preview"));
 const OfficePreview = lazy(() => import("./office-preview"));
+
+const IMAGE_ZOOM_STEP = 1.5;
 
 export function FileTab({
   tab,
@@ -246,15 +249,72 @@ function ImageFilePreview({
 
   if (!url) return <PreviewLoading />;
   if (failedURL === url) return <PreviewFailed path={path} />;
+  // Each image gets its own stage so a newly opened image starts fitted.
+  return <ZoomableImage key={url} src={url} alt={path} onError={() => setFailedURL(url)} />;
+}
+
+function ZoomableImage({ src, alt, onError }: { src: string; alt: string; onError(): void }) {
+  const zoom = useImageZoom();
+
   return (
-    <div className="palot-native-scrollbar flex min-h-0 flex-1 items-center justify-center overflow-auto p-5">
+    <div
+      ref={zoom.stageRef}
+      data-zoomed={zoom.zoomed || undefined}
+      className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-5"
+    >
       <img
-        src={url}
-        alt={path}
-        className="max-h-full max-w-full object-contain"
+        {...zoom.imageProps}
+        src={src}
+        alt={alt}
+        className="max-h-full max-w-full object-contain select-none"
         draggable={false}
-        onError={() => setFailedURL(url)}
+        onError={onError}
       />
+      <div
+        role="toolbar"
+        aria-label="Image zoom"
+        className="palot-promoted-blur absolute top-2 right-2 flex items-center gap-0.5 rounded-lg border bg-popover/95 p-0.5 shadow-sm backdrop-blur-sm"
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Zoom out"
+          title="Zoom out"
+          disabled={!zoom.zoomed}
+          onClick={() => zoom.zoomBy(1 / IMAGE_ZOOM_STEP)}
+        >
+          <Minus aria-hidden="true" />
+        </Button>
+        <span
+          className="min-w-10 text-center text-micro text-muted-foreground tabular-nums"
+          aria-live="polite"
+        >
+          {zoom.percent === null ? "–" : `${zoom.percent}%`}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Zoom in"
+          title="Zoom in (Ctrl+scroll or pinch)"
+          disabled={!zoom.canZoomIn}
+          onClick={() => zoom.zoomBy(IMAGE_ZOOM_STEP)}
+        >
+          <Plus aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          aria-label="Fit image to pane"
+          title="Fit image to pane"
+          disabled={!zoom.zoomed}
+          onClick={zoom.fit}
+        >
+          Fit
+        </Button>
+      </div>
     </div>
   );
 }
@@ -304,14 +364,19 @@ function usePreviewObjectURL(
   const [objectURL, setObjectURL] = useState<{ data: Uint8Array; url: string } | null>(null);
 
   useEffect(() => {
-    const url = URL.createObjectURL(
-      new Blob([new Uint8Array(preview.data)], { type: preview.mime }),
-    );
+    const url = URL.createObjectURL(new Blob([blobBytes(preview.data)], { type: preview.mime }));
     setObjectURL({ data: preview.data, url });
     return () => URL.revokeObjectURL(url);
   }, [preview.data, preview.mime]);
 
   return objectURL?.data === preview.data ? objectURL.url : null;
+}
+
+/** Blob already snapshots its parts, so only shared buffers (which Blob rejects) need a copy. */
+function blobBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  return data.buffer instanceof ArrayBuffer
+    ? (data as Uint8Array<ArrayBuffer>)
+    : new Uint8Array(data);
 }
 
 function PreviewLoading() {

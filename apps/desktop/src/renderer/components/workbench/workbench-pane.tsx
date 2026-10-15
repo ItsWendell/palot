@@ -1,9 +1,14 @@
 import {
+  CalendarClock,
+  ChartNoAxesColumn,
+  ChevronDown,
   FileDiff,
+  FolderGit2,
   Globe2,
   FileCode2,
   Files,
   Gauge,
+  GitPullRequest,
   Maximize2,
   MessageCircleQuestion,
   Minimize2,
@@ -23,21 +28,29 @@ import {
   lazy,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { useWorkbenchCommands } from "../../atoms/workbench";
+import { browserRecentSitesAtom, useWorkbenchCommands } from "../../atoms/workbench";
+import { retryBtw } from "../../atoms/btw";
 import { experimentalBrowserAtom } from "../../atoms/ui";
-import { useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useStore } from "jotai";
 import { runtimeAtom } from "../../atoms/workspace";
 import { useBrowserSession } from "../../hooks/use-browser-session";
+import { usePalotNavigation } from "../../hooks/use-navigation";
+import { useSessionPullRequests } from "../../hooks/use-source-control";
 import type { Browser } from "@opencode/plugin-browser/rpc";
+import type { PalotBrowserShortcut } from "../../../shared/browser-contract";
+import { suggestedBrowserSites } from "../../lib/browser-recent-sites";
 import {
   workbenchTabTitle,
   canRestoreWorkbenchTab,
   type ClosedWorkbenchTab,
+  type OpenWorkbenchTabInput,
   type WorkbenchContextState,
   type WorkbenchPaneID,
   type WorkbenchScope,
@@ -47,6 +60,9 @@ import { cn } from "../../lib/cn";
 import { showErrorToast } from "../../lib/toast-error";
 import { openNewWorkbenchTerminal } from "../../services/workbench-terminal";
 import { palot } from "../../services/palot";
+import { primaryPullRequestLink } from "../pull-requests/pull-request-presentation";
+import { NewTabPage, type NewTabTool } from "./new-tab-page";
+import { adjacentWorkbenchTab, workbenchKeyAction } from "./workbench-keys";
 import { Button } from "../ui/button";
 import {
   ContextMenu,
@@ -119,11 +135,11 @@ export function WorkbenchPane({
   expanded?: boolean;
   onToggleExpanded?: () => void;
 }) {
-  const runtime = useAtomValue(runtimeAtom);
   const browserEnabled = useAtomValue(experimentalBrowserAtom);
   const browser = useBrowserSession(scope);
   const state = context[pane];
   const commands = useWorkbenchCommands(scope);
+  const sectionRef = useRef<HTMLElement>(null);
   const tabListRef = useRef<HTMLDivElement>(null);
   const [scrollEdges, setScrollEdges] = useState({ left: false, right: false });
   useLayoutEffect(() => {
@@ -149,25 +165,21 @@ export function WorkbenchPane({
       list.removeEventListener("scroll", measure);
     };
   }, [state.tabs, browser?.state.tabs]);
-  const browserCommand = useCallback(
-    async (action: Parameters<typeof palot.browserCommand>[1], placement?: WorkbenchPaneID) => {
-      if (!browser?.bindingID) {
-        showErrorToast(
-          "Browser unavailable",
-          new Error(browser?.error ?? "Browser is still connecting to this task"),
-        );
-        return;
-      }
-      try {
-        return placement
-          ? await palot.browserCommand(browser.bindingID, action, placement)
-          : await palot.browserCommand(browser.bindingID, action);
-      } catch (error) {
-        showErrorToast("Could not control browser", error);
-      }
-    },
-    [browser?.bindingID, browser?.error],
-  );
+  const openers = useWorkbenchOpeners(pane, scope, location);
+  const { browserCommand } = openers;
+  const openFiles = useCallback(() => openers.openFiles(), [openers]);
+  const openContext = useCallback(() => openers.openContext(), [openers]);
+  const openChanges = useCallback(() => openers.openChanges(), [openers]);
+  const openTerminal = useCallback(() => openers.openTerminal(), [openers]);
+  const openBrowser = useCallback(() => void openers.openBrowserPage(), [openers]);
+  const openNewTab = useCallback(() => {
+    const result = commands.openTab({ kind: "new-tab", location }, { pane });
+    if (!result?.ok)
+      showErrorToast(
+        "Could not open tab",
+        new Error("Close a workbench tab before opening another"),
+      );
+  }, [commands, location, pane]);
   const closeTab = useCallback(
     (tab: WorkbenchTab) => {
       if (tab.kind === "browser") {
@@ -183,31 +195,25 @@ export function WorkbenchPane({
     },
     [browserCommand, commands, pane],
   );
+  const selectTab = useCallback(
+    (value: string) => {
+      commands.activateTab(pane, value);
+      const selected = state.tabs.find((tab) => tab.id === value);
+      if (selected?.kind === "browser" && selected.resource.browserTabID) {
+        void browserCommand({
+          type: "tabs.focus",
+          tabID: selected.resource.browserTabID as Browser.TabID,
+        });
+      }
+    },
+    [browserCommand, commands, pane, state.tabs],
+  );
   const closeTabs = useCallback(
     (tabs: WorkbenchTab[]) => {
       for (const tab of tabs) closeTab(tab);
     },
     [closeTab],
   );
-  const openTerminal = useCallback(async () => {
-    if (runtime?.profileID !== scope.profileID)
-      throw new Error("Focus this connection before opening a terminal");
-    await openNewWorkbenchTerminal(
-      scope.sessionID,
-      location,
-      commands.openTab,
-      { pane },
-      runtime?.connectionID,
-    );
-  }, [
-    commands,
-    location,
-    pane,
-    scope.sessionID,
-    scope.profileID,
-    runtime?.profileID,
-    runtime?.connectionID,
-  ]);
   const changesOpen = [...context.right.tabs, ...context.bottom.tabs].some(
     (tab) => tab.kind === "changes",
   );
@@ -220,31 +226,6 @@ export function WorkbenchPane({
       tab.resource.location.directory === location.directory &&
       tab.resource.location.workspaceID === location.workspaceID,
   );
-  const openFiles = useCallback(() => {
-    commands.openTab({ kind: "workspace-files", location }, { pane });
-  }, [commands, location, pane]);
-  const openBrowser = useCallback(async () => {
-    const pageID = await browserCommand({ type: "tabs.open", focus: true }, pane);
-    if (!pageID) return;
-    commands.openTab(
-      { kind: "browser", location, browserTabID: pageID },
-      { pane, moveExisting: true },
-    );
-  }, [browserCommand, commands, location, pane]);
-  const openContext = useCallback(() => {
-    commands.openTab({ kind: "context", location }, { pane });
-  }, [commands, location, pane]);
-  const openChanges = useCallback(() => {
-    commands.openTab(
-      {
-        kind: "changes",
-        location,
-        mode: "working",
-        sourceSessionID: scope.sessionID,
-      },
-      { pane },
-    );
-  }, [commands, location, pane, scope.sessionID]);
   const recentlyClosed = (context.recentlyClosed ?? []).filter((entry) =>
     canRestoreWorkbenchTab(entry.tab, scope),
   );
@@ -259,6 +240,53 @@ export function WorkbenchPane({
     },
     [commands],
   );
+  /** Runs a pane shortcut; `true` means the key is handled and must go no further. */
+  const handleKey = (event: KeyboardEvent): boolean => {
+    const action = workbenchKeyAction(event, {
+      tabCount: state.tabs.length,
+      canReopen: recentlyClosed.length > 0,
+    });
+    if (!action) return false;
+    if (action === "reopen") reopenTab();
+    else if (action === "close") {
+      const active = state.tabs.find((tab) => tab.id === state.activeTabID);
+      if (active) closeTab(active);
+    } else if (action === "next" || action === "previous") {
+      const target = adjacentWorkbenchTab(state.tabs, state.activeTabID, action);
+      if (!target) return true;
+      selectTab(target.id);
+      // The previous tab's content turns inert and drops focus; keep it in this pane.
+      const index = state.tabs.indexOf(target);
+      requestAnimationFrame(() => {
+        tabListRef.current
+          ?.querySelectorAll<HTMLElement>('[role="tab"]')
+          [index]?.focus({ preventScroll: true });
+      });
+    }
+    return true;
+  };
+  // Keys pressed inside an embedded browser page reach main, not this document. Replay them
+  // here so they follow the same routing, including the app-wide fallback when unhandled.
+  const replayBrowserShortcut = useEffectEvent((shortcut: PalotBrowserShortcut) => {
+    const owns = state.tabs.some(
+      (tab) => tab.kind === "browser" && tab.resource.browserTabID === shortcut.tabID,
+    );
+    if (!owns) return;
+    sectionRef.current?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: shortcut.key,
+        code: shortcut.code,
+        ctrlKey: shortcut.control,
+        metaKey: shortcut.meta,
+        shiftKey: shortcut.shift,
+        altKey: shortcut.alt,
+        repeat: shortcut.repeat,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  useEffect(() => palot.onBrowserShortcut((shortcut) => replayBrowserShortcut(shortcut)), []);
 
   return (
     <section
@@ -266,34 +294,18 @@ export function WorkbenchPane({
       aria-label={pane === "right" ? "Right workbench" : "Bottom workbench"}
       data-workbench-pane={pane}
       data-shell-surface={pane}
+      ref={sectionRef}
       onKeyDownCapture={(event) => {
-        if (
-          event.defaultPrevented ||
-          event.repeat ||
-          event.altKey ||
-          !(event.metaKey || event.ctrlKey) ||
-          !event.shiftKey ||
-          event.key.toLowerCase() !== "t" ||
-          !recentlyClosed.length
-        )
-          return;
+        if (!handleKey(event.nativeEvent)) return;
+        // Handled keys never reach the window menu's Close or the app-wide task switcher.
         event.preventDefault();
         event.stopPropagation();
-        reopenTab();
       }}
     >
       <Tabs
         value={state.activeTabID}
         onValueChange={(value) => {
-          if (typeof value !== "string") return;
-          commands.activateTab(pane, value);
-          const selected = state.tabs.find((tab) => tab.id === value);
-          if (selected?.kind === "browser" && selected.resource.browserTabID) {
-            void browserCommand({
-              type: "tabs.focus",
-              tabID: selected.resource.browserTabID as Browser.TabID,
-            });
-          }
+          if (typeof value === "string") selectTab(value);
         }}
         className="min-h-0 flex-1 gap-0"
       >
@@ -350,6 +362,17 @@ export function WorkbenchPane({
               aria-hidden="true"
             />
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="window-no-drag ml-1 size-7 shrink-0 [&_svg]:size-4"
+            aria-label="New tab"
+            title="New tab"
+            onClick={openNewTab}
+          >
+            <Plus aria-hidden="true" />
+          </Button>
           <WorkbenchSurfaceMenu
             changesOpen={changesOpen}
             contextOpen={contextOpen}
@@ -377,17 +400,7 @@ export function WorkbenchPane({
           ) : null}
         </header>
         {state.tabs.length === 0 ? (
-          <WorkbenchEmpty
-            pane={pane}
-            changesOpen={changesOpen}
-            contextOpen={contextOpen}
-            filesOpen={filesOpen}
-            openFiles={openFiles}
-            openBrowser={browserEnabled ? openBrowser : undefined}
-            openContext={openContext}
-            openChanges={openChanges}
-            openTerminal={openTerminal}
-          />
+          <WorkbenchNewTab pane={pane} scope={scope} location={location} />
         ) : (
           <div className="relative flex min-h-0 flex-1 flex-col">
             {state.tabs.map((tab) => (
@@ -452,12 +465,13 @@ function WorkbenchSurfaceMenu({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="window-no-drag ml-1 size-7 shrink-0 [&_svg]:size-4"
+            className="window-no-drag size-7 w-5 shrink-0 [&_svg]:size-3.5"
             aria-label="Open workbench surface"
+            title="Open workbench surface"
           />
         }
       >
-        <Plus aria-hidden="true" />
+        <ChevronDown aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
         {!contextOpen ? (
@@ -595,7 +609,16 @@ function WorkbenchTabItem({
           )}
         >
           <WorkbenchTabIcon tab={tab} />
-          <span className="min-w-0 truncate" title={tooltip}>
+          {/* Inactive tabs fade their title under the hover-revealed close button instead of
+              covering it with a solid square, so the hover pill reads as one surface. */}
+          <span
+            className={cn(
+              "min-w-0 truncate",
+              !active &&
+                "group-hover/tab:mask-[linear-gradient(to_left,transparent_1.5rem,black_2.75rem)] group-focus-within/tab:mask-[linear-gradient(to_left,transparent_1.5rem,black_2.75rem)]",
+            )}
+            title={tooltip}
+          >
             {title}
           </span>
           {tab.kind === "changes" || tab.kind === "file-diff" ? (
@@ -614,7 +637,7 @@ function WorkbenchTabItem({
             "absolute right-1 z-10 flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
             active
               ? "opacity-100"
-              : "bg-muted opacity-0 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100",
+              : "opacity-0 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100",
           )}
           onClick={(event) => {
             event.stopPropagation();
@@ -642,7 +665,8 @@ function WorkbenchTabItem({
             {pane === "right" ? <PanelBottom /> : <PanelRight />}
             Move to {pane === "right" ? "bottom" : "right"}
           </ContextMenuItem>
-          {tab.kind !== "browser" ? (
+          {/* Browser pages and the transient New tab have nothing durable to pin. */}
+          {tab.kind !== "browser" && tab.kind !== "new-tab" ? (
             <ContextMenuItem onClick={() => setPinned(!tab.pinned)}>
               {tab.pinned ? <PinOff /> : <Pin />}
               {tab.pinned ? "Unpin" : "Pin"}
@@ -660,7 +684,7 @@ function WorkbenchTabIcon({ tab }: { tab: WorkbenchTab }) {
       ? SquareTerminal
       : tab.kind === "btw"
         ? MessageCircleQuestion
-        : tab.kind === "browser"
+        : tab.kind === "browser" || tab.kind === "new-tab"
           ? Globe2
           : tab.kind === "context"
             ? Gauge
@@ -686,6 +710,16 @@ function WorkbenchTabContent({
   active: boolean;
 }) {
   if (tab.kind === "btw") return <BtwTab tab={tab} />;
+  if (tab.kind === "new-tab")
+    return (
+      <WorkbenchNewTab
+        pane={pane}
+        scope={scope}
+        location={tab.resource.location}
+        tabID={tab.id}
+        active={active}
+      />
+    );
   if (tab.kind === "browser")
     return tab.resource.browserTabID ? (
       <BrowserTab scope={scope} tabID={tab.resource.browserTabID} active={active} />
@@ -708,104 +742,209 @@ function WorkbenchTabContent({
   return <TerminalTab tab={tab} />;
 }
 
-function WorkbenchEmpty({
-  pane,
-  changesOpen,
-  contextOpen,
-  filesOpen,
-  openFiles,
-  openBrowser,
-  openContext,
-  openChanges,
-  openTerminal,
-}: {
-  pane: WorkbenchPaneID;
-  changesOpen: boolean;
-  contextOpen: boolean;
-  filesOpen: boolean;
-  openFiles(): void;
-  openBrowser?: () => void;
-  openContext(): void;
-  openChanges(): void;
-  openTerminal(): Promise<void>;
-}) {
-  return (
-    <Empty className="min-h-0 flex-1 rounded-none p-5">
-      <EmptyHeader>
-        <EmptyTitle>Open a surface</EmptyTitle>
-        <EmptyDescription>
-          Choose what to show in the {pane === "right" ? "right" : "bottom"} panel.
-        </EmptyDescription>
-      </EmptyHeader>
-      <div className="grid w-full max-w-xl grid-cols-1 gap-2 @min-[34rem]/workbench:grid-cols-2">
-        {!contextOpen ? (
-          <WorkbenchSurfaceCard
-            icon={<Gauge aria-hidden="true" />}
-            title="Context"
-            description="Inspect context usage and projected messages."
-            onClick={openContext}
-          />
-        ) : null}
-        {!filesOpen ? (
-          <WorkbenchSurfaceCard
-            icon={<Files aria-hidden="true" />}
-            title="Files"
-            description="Browse and search workspace files."
-            onClick={openFiles}
-          />
-        ) : null}
-        {openBrowser ? (
-          <WorkbenchSurfaceCard
-            icon={<Globe2 aria-hidden="true" />}
-            title="Browser"
-            description="View browser pages for this task."
-            onClick={openBrowser}
-          />
-        ) : null}
-        <WorkbenchSurfaceCard
-          icon={<SquareTerminal aria-hidden="true" />}
-          title="Terminal"
-          description="Start a shell in this workspace."
-          onClick={() =>
-            void openTerminal().catch((error) => showErrorToast("Could not open terminal", error))
-          }
-        />
-        {!changesOpen ? (
-          <WorkbenchSurfaceCard
-            icon={<FileDiff aria-hidden="true" />}
-            title="Changes"
-            description="Review working changes in this workspace."
-            onClick={openChanges}
-          />
-        ) : null}
-      </div>
-    </Empty>
-  );
+/**
+ * Opens surfaces in one pane. Passing `replace` turns that tab (a New tab page) into the
+ * surface in its place; a surface that is already open is focused where it is instead.
+ */
+function useWorkbenchOpeners(
+  pane: WorkbenchPaneID,
+  scope: WorkbenchScope,
+  location: { directory: string; workspaceID?: string },
+) {
+  const runtime = useAtomValue(runtimeAtom);
+  const browser = useBrowserSession(scope);
+  const commands = useWorkbenchCommands(scope);
+  const bindingID = browser?.bindingID;
+  const browserError = browser?.error;
+  const { directory, workspaceID } = location;
+  return useMemo(() => {
+    const where = { directory, ...(workspaceID ? { workspaceID } : {}) };
+    const place = (input: OpenWorkbenchTabInput, replace?: string, moveExisting = false) =>
+      replace
+        ? commands.replaceTab(pane, replace, input, { moveExisting })
+        : commands.openTab(input, { pane, moveExisting });
+    const browserCommand = async (
+      action: Parameters<typeof palot.browserCommand>[1],
+      placement?: WorkbenchPaneID,
+    ) => {
+      if (!bindingID) {
+        showErrorToast(
+          "Browser unavailable",
+          new Error(browserError ?? "Browser is still connecting to this task"),
+        );
+        return;
+      }
+      try {
+        return placement
+          ? await palot.browserCommand(bindingID, action, placement)
+          : await palot.browserCommand(bindingID, action);
+      } catch (error) {
+        showErrorToast("Could not control browser", error);
+      }
+    };
+    return {
+      place,
+      browserCommand,
+      openFiles: (replace?: string) => place({ kind: "workspace-files", location: where }, replace),
+      openContext: (replace?: string) => place({ kind: "context", location: where }, replace),
+      openChanges: (replace?: string) =>
+        place(
+          { kind: "changes", location: where, mode: "working", sourceSessionID: scope.sessionID },
+          replace,
+        ),
+      openTerminal: async (replace?: string) => {
+        if (runtime?.profileID !== scope.profileID)
+          throw new Error("Focus this connection before opening a terminal");
+        await openNewWorkbenchTerminal(
+          scope.sessionID,
+          where,
+          (input) => place(input, replace),
+          { pane },
+          runtime?.connectionID,
+        );
+      },
+      /** Opens a browser page, `about:blank` without a URL, placed in this pane. */
+      openBrowserPage: async (url?: string, replace?: string) => {
+        const pageID = await browserCommand(
+          url ? { type: "tabs.open", url, focus: true } : { type: "tabs.open", focus: true },
+          pane,
+        );
+        if (!pageID) return;
+        place({ kind: "browser", location: where, browserTabID: pageID }, replace, true);
+      },
+    };
+  }, [
+    bindingID,
+    browserError,
+    commands,
+    directory,
+    pane,
+    runtime?.connectionID,
+    runtime?.profileID,
+    scope.profileID,
+    scope.sessionID,
+    workspaceID,
+  ]);
 }
 
-function WorkbenchSurfaceCard({
-  icon,
-  title,
-  description,
-  onClick,
+/** The New tab page for an explicit New tab (`tabID`) or a pane with no tabs. */
+function WorkbenchNewTab({
+  pane,
+  scope,
+  location,
+  tabID,
+  active = false,
 }: {
-  icon: ReactNode;
-  title: string;
-  description: string;
-  onClick(): void;
+  pane: WorkbenchPaneID;
+  scope: WorkbenchScope;
+  location: { directory: string; workspaceID?: string };
+  tabID?: string;
+  active?: boolean;
 }) {
+  const openers = useWorkbenchOpeners(pane, scope, location);
+  const browserEnabled = useAtomValue(experimentalBrowserAtom);
+  const runtime = useAtomValue(runtimeAtom);
+  const store = useStore();
+  const [recentSites, setRecentSites] = useAtom(browserRecentSitesAtom);
+  const sameConnection = runtime?.profileID === scope.profileID;
+  const pullRequests = useSessionPullRequests(sameConnection ? scope.sessionID : null);
+  const pullRequest = primaryPullRequestLink(pullRequests.data ?? [])?.pullRequest;
+  const { openPullRequests, openScheduled, openUsage, openWorktrees } = usePalotNavigation();
+  const suggestions = useMemo(
+    () => (browserEnabled ? suggestedBrowserSites(recentSites[scope.profileID]) : []),
+    [browserEnabled, recentSites, scope.profileID],
+  );
+  const tools: NewTabTool[] = [
+    {
+      id: "changes",
+      label: "Changes",
+      icon: GitCompareArrows,
+      shortcut: "task.changes.toggle",
+      description: "Review working changes in this workspace",
+      onSelect: () => openers.openChanges(tabID),
+    },
+    {
+      id: "terminal",
+      label: "Terminal",
+      icon: SquareTerminal,
+      shortcut: "task.terminal.toggle",
+      description: "Start a shell in this workspace",
+      onSelect: () =>
+        void openers
+          .openTerminal(tabID)
+          .catch((error) => showErrorToast("Could not open terminal", error)),
+    },
+    {
+      id: "files",
+      label: "Files",
+      icon: Files,
+      description: "Browse and search workspace files",
+      onSelect: () => openers.openFiles(tabID),
+    },
+    {
+      id: "side-chat",
+      label: "Side chat",
+      icon: MessageCircleQuestion,
+      description: "Ask a side question (/btw) without adding it to the conversation",
+      onSelect: () => undefined,
+    },
+    {
+      id: "context",
+      label: "Context",
+      icon: Gauge,
+      description: "Inspect context usage and what the model sees",
+      onSelect: () => openers.openContext(tabID),
+    },
+    ...(pullRequest
+      ? [
+          {
+            id: "pull-request",
+            label: `Pull request #${pullRequest.number}`,
+            icon: GitPullRequest,
+            description: pullRequest.title,
+            onSelect: () => void openPullRequests(pullRequest),
+          },
+        ]
+      : []),
+  ];
+  const moreTools: NewTabTool[] = [
+    {
+      id: "scheduled",
+      label: "Scheduled",
+      icon: CalendarClock,
+      onSelect: () => void openScheduled(),
+    },
+    { id: "usage", label: "Usage", icon: ChartNoAxesColumn, onSelect: () => void openUsage() },
+    { id: "worktrees", label: "Worktrees", icon: FolderGit2, onSelect: () => void openWorktrees() },
+  ];
   return (
-    <button
-      type="button"
-      className="flex min-h-24 min-w-0 flex-col rounded-lg border border-border bg-card p-4 text-left shadow-sm transition-colors hover:bg-accent/45 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
-      onClick={onClick}
-    >
-      <span className="flex items-center gap-2 text-sm font-medium [&_svg]:size-4">
-        {icon}
-        {title}
-      </span>
-      <span className="mt-2 text-xs leading-relaxed text-muted-foreground">{description}</span>
-    </button>
+    <NewTabPage
+      autoFocus={Boolean(tabID) && active}
+      browser={{
+        enabled: browserEnabled,
+        navigate: (url) => openers.openBrowserPage(url, tabID),
+      }}
+      tools={tools}
+      moreTools={moreTools}
+      suggestions={suggestions}
+      onClearSuggestions={() =>
+        setRecentSites((current) => {
+          const { [scope.profileID]: _cleared, ...rest } = current;
+          return rest;
+        })
+      }
+      onAskSideQuestion={(question) => {
+        if (!runtime?.connected || !sameConnection)
+          throw new Error("Connect to this task’s server to ask a side question.");
+        const result = openers.place(
+          { kind: "btw", location, questionID: crypto.randomUUID(), question },
+          tabID,
+        );
+        if (!result?.ok)
+          throw new Error("Close a workbench tab before asking another side question.");
+        retryBtw(store, scope, result.tabID, runtime.connectionID);
+      }}
+    />
   );
 }
 

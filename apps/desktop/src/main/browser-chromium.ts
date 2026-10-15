@@ -11,7 +11,9 @@ import { createProfiling } from "./browser/profiling";
 import { mouseClick } from "./browser/input";
 import type { BrowserPageSurface } from "./browser/surface";
 import type { BrowserNetwork } from "./browser/network";
-import type { PalotBrowserSelection } from "../shared/browser-contract";
+import type { PalotBrowserSelection, PalotBrowserShortcut } from "../shared/browser-contract";
+import { IPC_CHANNELS } from "../shared/opencode-contract";
+import { isWorkbenchTabShortcut } from "./browser/tab-shortcuts";
 import {
   allowedDestination,
   fileURLWithin,
@@ -87,6 +89,24 @@ export function createBrowserPage(
   const detachNetwork = options.network?.attach(contents);
   contents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown") return;
+    // Embedded pages only: a managed popup window keeps its own Close window menu item.
+    if (!surface.window && isWorkbenchTabShortcut(input, process.platform)) {
+      event.preventDefault();
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        const shortcut: PalotBrowserShortcut = {
+          tabID: options.id,
+          key: input.key,
+          code: input.code,
+          control: input.control,
+          meta: input.meta,
+          shift: input.shift,
+          alt: input.alt,
+          repeat: input.isAutoRepeat,
+        };
+        win.webContents.send(IPC_CHANNELS.browserShortcut, shortcut);
+      }
+      return;
+    }
     if (input.key === "Escape" && inspecting) {
       event.preventDefault();
       void toggleInspect(false).catch(() => undefined);

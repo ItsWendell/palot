@@ -20,6 +20,8 @@ import type {
   PalotBrowserUserCommand,
 } from "../../../shared/browser-contract";
 import { composerStateAtomFamily } from "../../atoms/composer-state";
+import { browserRecentSitesAtom } from "../../atoms/workbench";
+import { recordBrowserRecentSite } from "../../lib/browser-recent-sites";
 import { composerScope } from "../../lib/composer-scope";
 import { durableBrowserComment } from "../../lib/browser-comments";
 import { Textarea } from "../ui/textarea";
@@ -42,6 +44,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+
+/** The last address recorded per page, so suggestions count navigations, not remounts. */
+const recordedPageURLs = new Map<string, string>();
 
 export function BrowserTab({
   scope,
@@ -81,6 +86,25 @@ export function BrowserTab({
   const setViewports = useSetAtom(browserViewportsAtom);
   const scopeKey = workbenchScopeKey(scope);
   const layoutPage = useRef({ bindingID, tabID: pageID });
+
+  const setRecentSites = useSetAtom(browserRecentSitesAtom);
+  const pageURL = page?.url;
+  const pageTitle = page?.title ?? "";
+  const pageSettled = Boolean(page && !page.loading && !page.loadError && !popup);
+  useEffect(() => {
+    if (!pageSettled || !pageURL) return;
+    // A remount (switching tasks, moving panes) is not another visit to the same page.
+    const visit = recordedPageURLs.get(tabID) !== pageURL;
+    recordedPageURLs.set(tabID, pageURL);
+    setRecentSites((current) =>
+      recordBrowserRecentSite(
+        current,
+        scope.profileID,
+        { url: pageURL, title: pageTitle },
+        { visit },
+      ),
+    );
+  }, [pageSettled, pageTitle, pageURL, scope.profileID, setRecentSites, tabID]);
 
   useEffect(() => {
     setInspecting(false);

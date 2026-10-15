@@ -52,3 +52,29 @@ it("subtle tabs register every tab as a fluid row and leave other variants alone
   expect(screen.getByRole("tablist").getAttribute("data-variant")).toBe("line");
   expect(screen.getAllByRole("tab").some((tab) => tab.hasAttribute("data-fluid-item"))).toBe(false);
 });
+
+it("subtle tabs watch each tab's border box so padding-only growth moves the pill", async () => {
+  // An active workbench tab grows through padding (room for its close button). The default
+  // content-box observation never fires for that, which left the pill one selection behind.
+  const observed: Array<ResizeObserverOptions | undefined> = [];
+  const Original = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    observe(_target: Element, options?: ResizeObserverOptions) {
+      observed.push(options);
+    }
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+  try {
+    renderTabs("subtle");
+    const tabs = screen.getAllByRole("tab");
+    await waitFor(() =>
+      expect(tabs.every((tab) => tab.hasAttribute("data-fluid-item"))).toBe(true),
+    );
+    expect(
+      observed.filter((options) => options?.box === "border-box").length,
+    ).toBeGreaterThanOrEqual(tabs.length);
+  } finally {
+    globalThis.ResizeObserver = Original;
+  }
+});

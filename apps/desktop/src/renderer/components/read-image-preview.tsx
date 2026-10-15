@@ -1,12 +1,16 @@
 import { Check, Copy, Download, Minus, Plus, X } from "lucide-react";
 import { motion } from "motion/react";
-import { memo, useId, useRef, useState } from "react";
+import { memo, useId, useState } from "react";
 import { useClipboardCopy } from "../hooks/use-clipboard-copy";
+import { useImageZoom } from "../hooks/use-image-zoom";
+import { cn } from "../lib/cn";
 import { showErrorToast } from "../lib/toast-error";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 
 const transition = { type: "spring", stiffness: 210, damping: 26, mass: 0.8 } as const;
+/** The toolbar and double-click toggle between fitted and this zoom. */
+const LIGHTBOX_ZOOM = 1.8;
 
 export const ReadImagePreview = memo(function ReadImagePreview({
   src,
@@ -94,15 +98,17 @@ function ImageLightboxContent({
   onClose(): void;
   layoutID?: string;
 }) {
-  const frameRef = useRef<HTMLDivElement>(null);
-  const [zoomed, setZoomed] = useState(false);
+  const zoom = useImageZoom();
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
   const { copiedKey, copy } = useClipboardCopy();
   const copied = copiedKey === "image-address";
 
-  function close() {
-    setZoomed(false);
-    onClose();
+  // Closing unmounts this content, so the next open starts fitted.
+  const close = onClose;
+
+  function toggleZoom(client?: { x: number; y: number }) {
+    if (zoom.zoomed) zoom.fit();
+    else zoom.zoomTo(LIGHTBOX_ZOOM, client);
   }
 
   return (
@@ -147,11 +153,11 @@ function ImageLightboxContent({
             type="button"
             variant="outline"
             size="icon-lg"
-            aria-label={zoomed ? "Zoom out" : "Zoom in"}
-            onClick={() => setZoomed((value) => !value)}
+            aria-label={zoom.zoomed ? "Zoom out" : "Zoom in"}
+            onClick={() => toggleZoom()}
             className="palot-promoted-blur bg-popover/95 shadow-sm backdrop-blur-sm"
           >
-            {zoomed ? <Minus aria-hidden="true" /> : <Plus aria-hidden="true" />}
+            {zoom.zoomed ? <Minus aria-hidden="true" /> : <Plus aria-hidden="true" />}
           </Button>
           <Button
             type="button"
@@ -167,7 +173,7 @@ function ImageLightboxContent({
       </div>
 
       <div
-        ref={frameRef}
+        ref={zoom.stageRef}
         className="relative min-h-0 overflow-hidden p-4 pt-0 sm:p-14 sm:pt-0"
         onClick={(event) => {
           if (event.target === event.currentTarget) close();
@@ -181,27 +187,23 @@ function ImageLightboxContent({
             if (event.target === event.currentTarget) close();
           }}
         >
-          <motion.img
+          <img
+            {...zoom.imageProps}
             src={src}
             alt={name}
             draggable={false}
-            drag={zoomed}
-            dragConstraints={frameRef}
-            dragElastic={0.08}
-            animate={{ scale: zoomed ? 1.8 : 1, x: 0, y: 0 }}
-            transition={transition}
-            onLoad={(event) =>
+            onLoad={(event) => {
+              zoom.imageProps.onLoad();
               setDimensions({
                 width: event.currentTarget.naturalWidth,
                 height: event.currentTarget.naturalHeight,
-              })
-            }
-            onDoubleClick={() => setZoomed((value) => !value)}
-            className={
-              zoomed
-                ? "max-h-full max-w-full cursor-grab object-contain active:cursor-grabbing"
-                : "max-h-full max-w-full cursor-zoom-in object-contain"
-            }
+              });
+            }}
+            onDoubleClick={(event) => toggleZoom({ x: event.clientX, y: event.clientY })}
+            className={cn(
+              "max-h-full max-w-full object-contain select-none",
+              !zoom.zoomed && "cursor-zoom-in",
+            )}
           />
         </motion.div>
       </div>

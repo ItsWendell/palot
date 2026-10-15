@@ -11,7 +11,7 @@ import { presentFileDiff, type PresentedFileDiff } from "../../lib/diff-whitespa
 import { contentCacheKey, resolveFileDiff } from "../../lib/file-diffs";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import { cn } from "../../lib/cn";
-import { pierreReviewTheme, pierreViewerStyle } from "../file-viewer-theme";
+import { pierreBuiltInHeaderCSS, pierreReviewTheme, pierreViewerStyle } from "../file-viewer-theme";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
@@ -121,6 +121,9 @@ export function TurnDiffTab({
           containerRef={setScrollContainer}
           options={{
             ...pierreReviewTheme,
+            unsafeCSS: `${pierreReviewTheme.unsafeCSS}${pierreBuiltInHeaderCSS}`,
+            // Match the Changes tab: no top margin before the first sticky file header.
+            layout: { paddingTop: 0, paddingBottom: 4, gap: 2 },
             theme: appearance.codeThemePair,
             themeType: appearance.scheme,
             diffStyle,

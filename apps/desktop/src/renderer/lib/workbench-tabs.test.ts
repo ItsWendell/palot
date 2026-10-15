@@ -6,6 +6,7 @@ import {
   openWorkbenchTab,
   reconcileBrowserPages,
   reopenWorkbenchTab,
+  replaceWorkbenchTab,
   workbenchScopeKey,
   workbenchTabTitle,
   type WorkbenchScope,
@@ -695,5 +696,141 @@ describe("workbench tabs", () => {
       activeTabID: null,
       requestedOpen: false,
     });
+  });
+
+  it("turns a New tab into a surface in place and never restores the New tab", () => {
+    let ids = ["files", "new", "context"];
+    const next = () => ids.shift()!;
+    let state = openWorkbenchTab(
+      createWorkbenchState(),
+      scope,
+      { kind: "workspace-files", location },
+      { pane: "right" },
+      1,
+      next,
+    ).state;
+    state = openWorkbenchTab(
+      state,
+      scope,
+      { kind: "new-tab", location },
+      { pane: "right" },
+      2,
+      next,
+    ).state;
+    state = openWorkbenchTab(
+      state,
+      scope,
+      { kind: "context", location },
+      { pane: "right" },
+      3,
+      next,
+    ).state;
+    const key = workbenchScopeKey(scope);
+    expect(workbenchTabTitle(state.scopes[key]!.right.tabs[1]!)).toBe("New tab");
+
+    ids = ["changes"];
+    const replaced = replaceWorkbenchTab(
+      state,
+      scope,
+      "right",
+      "new",
+      { kind: "changes", location, mode: "working" },
+      {},
+      4,
+      next,
+    );
+    expect(replaced.result).toMatchObject({
+      ok: true,
+      tabID: "changes",
+      pane: "right",
+      created: true,
+    });
+    expect(replaced.state.scopes[key]!.right).toMatchObject({
+      tabs: [{ id: "files" }, { id: "changes", kind: "changes" }, { id: "context" }],
+      activeTabID: "changes",
+      requestedOpen: true,
+    });
+    expect(replaced.state.scopes[key]!.recentlyClosed ?? []).toEqual([]);
+  });
+
+  it("focuses an already open surface and drops the New tab that asked for it", () => {
+    let state = openWorkbenchTab(
+      createWorkbenchState(),
+      scope,
+      { kind: "context", location },
+      { pane: "bottom" },
+      1,
+      () => "context",
+    ).state;
+    state = openWorkbenchTab(
+      state,
+      scope,
+      { kind: "new-tab", location },
+      { pane: "right" },
+      2,
+      () => "new",
+    ).state;
+    const replaced = replaceWorkbenchTab(
+      state,
+      scope,
+      "right",
+      "new",
+      { kind: "context", location },
+      {},
+      3,
+      () => "unused",
+    );
+    const context = replaced.state.scopes[workbenchScopeKey(scope)]!;
+    expect(replaced.result).toMatchObject({
+      ok: true,
+      tabID: "context",
+      pane: "bottom",
+      created: false,
+    });
+    expect(context.right).toMatchObject({ tabs: [], activeTabID: null, requestedOpen: false });
+    expect(context.bottom).toMatchObject({ activeTabID: "context", requestedOpen: true });
+  });
+
+  it("moves a browser page the browser placed elsewhere into the New tab's slot", () => {
+    let state = openWorkbenchTab(
+      createWorkbenchState(),
+      scope,
+      { kind: "new-tab", location },
+      { pane: "right" },
+      1,
+      () => "new",
+    ).state;
+    state = openWorkbenchTab(
+      state,
+      scope,
+      { kind: "file", location, path: "a.ts" },
+      { pane: "right" },
+      2,
+      () => "file",
+    ).state;
+    state = reconcileBrowserPages(
+      state,
+      scope,
+      location,
+      ["page-1"],
+      null,
+      new Map([["page-1", "bottom"]]),
+      3,
+      () => "page-row",
+    );
+    const replaced = replaceWorkbenchTab(
+      state,
+      scope,
+      "right",
+      "new",
+      { kind: "browser", location, browserTabID: "page-1" },
+      { moveExisting: true },
+      4,
+      () => "unused",
+    );
+    const context = replaced.state.scopes[workbenchScopeKey(scope)]!;
+    expect(context.right.tabs.map((tab) => tab.id)).toEqual(["page-row", "file"]);
+    expect(context.right.activeTabID).toBe("page-row");
+    expect(context.bottom.tabs).toEqual([]);
   });
 });
