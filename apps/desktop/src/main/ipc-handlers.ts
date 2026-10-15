@@ -35,7 +35,10 @@ import {
   type NativeSymbolInput,
 } from "../shared";
 import type { AutomationCommand } from "../shared/automation-contract";
-import type { SessionTriageCommand } from "../shared/session-triage-contract";
+import {
+  SESSION_TRIAGE_BATCH_LIMIT,
+  type SessionTriageCommand,
+} from "../shared/session-triage-contract";
 import { requestAppRestart } from "./app-restart";
 import { getResolvedChromeTier } from "./liquid-glass";
 import {
@@ -84,6 +87,8 @@ import { tailscaleService } from "./tailscale-service";
 import type { PalotBrowserLayout, PalotBrowserRegistration } from "../shared/browser-contract";
 import { createBrowserPane, parseBrowserUserCommand } from "./browser-pane";
 import { registerSourceControlIpc } from "./source-control/ipc";
+import { registerProjectScriptsIpc } from "./project-scripts/ipc";
+import { projectScriptsService, startProjectScripts } from "./project-scripts/runtime";
 import { shutdownSourceControlService, sourceControlService } from "./source-control/runtime";
 
 let performanceTraceActive = false;
@@ -372,6 +377,22 @@ const triageCommandSchema = v.variant("type", [
     through: activityWatermarkSchema,
   }),
   v.strictObject({
+    type: v.literal("settle-many"),
+    profileID: identifier,
+    at: timestamp,
+    trigger: v.picklist(["bulk", "auto"]),
+    sessions: v.pipe(
+      v.array(v.strictObject({ sessionID: identifier, through: activityWatermarkSchema })),
+      v.maxLength(SESSION_TRIAGE_BATCH_LIMIT),
+    ),
+  }),
+  v.strictObject({
+    type: v.literal("inbox-many"),
+    profileID: identifier,
+    at: timestamp,
+    sessionIDs: v.pipe(v.array(identifier), v.maxLength(SESSION_TRIAGE_BATCH_LIMIT)),
+  }),
+  v.strictObject({
     type: v.literal("inbox"),
     profileID: identifier,
     sessionID: identifier,
@@ -527,6 +548,8 @@ function focusedPtyRuntime() {
 export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void {
   ipcTrust = options;
   registerSourceControlIpc(register, sourceControlService);
+  registerProjectScriptsIpc(register, projectScriptsService);
+  startProjectScripts();
   register(IPC_CHANNELS.browserRegister, (event, value: unknown) => {
     const win = browserWindow(event);
     const input = v.parse(

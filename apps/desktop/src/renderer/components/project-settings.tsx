@@ -16,6 +16,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "./ui/field";
 import { Alert, AlertDescription } from "./ui/alert";
+import { ProjectScriptsSettings } from "./project-scripts-settings";
 
 export const projectDetailsKey = (connectionID: string, projectID: string) =>
   [...openCodeKeys.projects(connectionID), "details", projectID] as const;
@@ -24,12 +25,20 @@ export function ProjectSettings({ project }: { project: PalotProject }) {
   const runtime = useSettingsOwner();
   const connectionID = runtime?.connectionID ?? "disconnected";
   return (
-    <ProjectSettingsScope
-      key={`${connectionID}:${project.id}`}
-      projectID={project.id}
-      connectionID={connectionID}
-      available={canFetchOpenCode(runtime)}
-    />
+    <>
+      <ProjectSettingsScope
+        key={`${connectionID}:${project.id}`}
+        projectID={project.id}
+        connectionID={connectionID}
+        available={canFetchOpenCode(runtime)}
+      />
+      {runtime ? (
+        <ProjectScriptsSettings
+          key={`${runtime.profileID}:${project.id}`}
+          target={{ profileID: runtime.profileID, projectID: project.id }}
+        />
+      ) : null}
+    </>
   );
 }
 

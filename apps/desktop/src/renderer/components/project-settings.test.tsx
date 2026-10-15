@@ -10,6 +10,11 @@ import { runtimeAtom } from "../atoms/workspace";
 import { setOpenCodeClientForTest, resetOpenCodeClientForTest } from "../services/opencode-client";
 import { mapProject } from "../services/opencode-mappers";
 import { ProjectSettings, projectDetailsKey } from "./project-settings";
+import type {
+  PalotProjectScriptsApi,
+  ProjectScript,
+  ProjectScriptsAvailability,
+} from "../../shared/project-scripts-contract";
 
 const first: Project = {
   id: "first",
@@ -22,7 +27,41 @@ const second: Project = { ...first, id: "second", canonical: "/second", name: "S
 afterEach(() => {
   cleanup();
   resetOpenCodeClientForTest();
+  Reflect.deleteProperty(window, "palot");
 });
+
+/** An in-memory stand-in for main's script store. */
+function installScripts(availability: ProjectScriptsAvailability = { supported: true }) {
+  let scripts: ProjectScript[] = [];
+  let next = 0;
+  const state = (target: { profileID: string; projectID: string }) => ({
+    ...target,
+    scripts,
+    availability,
+  });
+  const api = {
+    load: vi.fn(async (target) => state(target)),
+    save: vi.fn(async ({ script, ...target }) => {
+      const saved = {
+        ...script,
+        id: script.id ?? `script-${++next}`,
+        createdAt: 1,
+        updatedAt: 1,
+      } as ProjectScript;
+      scripts = script.id
+        ? scripts.map((item) => (item.id === script.id ? saved : item))
+        : [...scripts, saved];
+      return state(target);
+    }),
+    remove: vi.fn(async ({ scriptID, ...target }) => {
+      scripts = scripts.filter((item) => item.id !== scriptID);
+      return state(target);
+    }),
+    onRunFinished: vi.fn(() => () => undefined),
+  } satisfies PalotProjectScriptsApi;
+  Object.defineProperty(window, "palot", { configurable: true, value: { projectScripts: api } });
+  return api;
+}
 
 function setup(update = vi.fn().mockResolvedValue({ ...first, name: "Edited" })) {
   setOpenCodeClientForTest({
@@ -134,5 +173,68 @@ describe("Project settings", () => {
       (screen.getByRole("button", { name: "Save project" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(update).not.toHaveBeenCalled();
+  });
+  it("adds, edits and removes a project script, showing the exact command", async () => {
+    const user = userEvent.setup();
+    const api = installScripts();
+    setup();
+    await user.click(await screen.findByRole("button", { name: "Add script" }));
+    await user.type(screen.getByLabelText("Script name"), "Clean");
+    await user.type(screen.getByLabelText("Command"), "cargo clean && rm -rf dist");
+    expect(
+      screen.getByRole("switch", { name: "When a task settles" }).getAttribute("aria-checked"),
+    ).toBe("true");
+    await user.click(screen.getByRole("button", { name: "Save script" }));
+    expect(api.save).toHaveBeenCalledWith({
+      profileID: "local-default",
+      projectID: "first",
+      script: {
+        name: "Clean",
+        command: "cargo clean && rm -rf dist",
+        runOnSettle: true,
+        timeoutSeconds: 600,
+      },
+    });
+    const command = await screen.findByRole("group", { name: "Command" });
+    expect(command.textContent).toContain("cargo clean && rm -rf dist");
+    expect(screen.getByRole("button", { name: "Copy Clean command" })).toBeTruthy();
+    expect(screen.getByText("Runs when a task settles · stops after 10 min")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Edit Clean" }));
+    const timeout = screen.getByLabelText("Timeout in seconds");
+    await user.clear(timeout);
+    await user.type(timeout, "2");
+    expect(
+      (screen.getByRole("button", { name: "Save script" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await user.type(timeout, "0");
+    await user.click(screen.getByRole("switch", { name: "When a task settles" }));
+    await user.click(screen.getByRole("button", { name: "Save script" }));
+    expect(api.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        script: expect.objectContaining({ id: "script-1", runOnSettle: false, timeoutSeconds: 20 }),
+      }),
+    );
+    expect(await screen.findByText("Off · no trigger selected")).toBeTruthy();
+
+    // Removing confirms in place.
+    await user.click(screen.getByRole("button", { name: "Remove Clean" }));
+    expect(api.remove).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm removing Clean" }));
+    await waitFor(() =>
+      expect(api.remove).toHaveBeenCalledWith({
+        profileID: "local-default",
+        projectID: "first",
+        scriptID: "script-1",
+      }),
+    );
+    expect(await screen.findByText(/No scripts yet/)).toBeTruthy();
+  });
+
+  it("explains why a remote connection cannot run scripts and offers no editor", async () => {
+    installScripts({ supported: false, reason: "Scripts run on this computer." });
+    setup();
+    expect(await screen.findByText("Scripts run on this computer.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add script" })).toBeNull();
   });
 });

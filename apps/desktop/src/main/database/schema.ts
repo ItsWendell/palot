@@ -153,3 +153,21 @@ export const automationRuns = sqliteTable(
     index("automation_runs_profile_state_idx").on(table.profileID, table.state),
   ],
 );
+
+/** Shell scripts a person configured for one project on one connection profile. */
+export const projectScripts = sqliteTable(
+  "project_scripts",
+  {
+    id: text("id").primaryKey(),
+    profileID: text("profile_id").notNull(),
+    projectID: text("project_id").notNull(),
+    name: text("name").notNull(),
+    command: text("command").notNull(),
+    runOnSettle: integer("run_on_settle", { mode: "boolean" }).notNull(),
+    timeoutSeconds: integer("timeout_seconds").notNull(),
+    position: integer("position").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [index("project_scripts_project_idx").on(table.profileID, table.projectID)],
+);

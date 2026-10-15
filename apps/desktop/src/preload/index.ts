@@ -7,6 +7,7 @@ import type {
   AutomationNotificationTarget,
 } from "../shared/automation-contract";
 import type { SourceControlChangedEvent } from "../shared/source-control-contract";
+import type { ProjectScriptRun } from "../shared/project-scripts-contract";
 import { IPC_CHANNELS } from "../shared/opencode-contract";
 import {
   hasStoredAppearancePreferencesArgument,
@@ -53,6 +54,12 @@ const api: PalotApi = {
       listener(value);
     ipcRenderer.on(IPC_CHANNELS.browserEvent, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.browserEvent, handler);
+  },
+  onBrowserShortcut: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) =>
+      listener(value);
+    ipcRenderer.on(IPC_CHANNELS.browserShortcut, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.browserShortcut, handler);
   },
   loadAppearance: () => ipcRenderer.invoke(IPC_CHANNELS.appearanceLoad),
   updateAppearance: (input) => ipcRenderer.invoke(IPC_CHANNELS.appearanceUpdate, input),
@@ -264,6 +271,16 @@ const api: PalotApi = {
         listener(event);
       ipcRenderer.on(IPC_CHANNELS.sourceControlChanged, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.sourceControlChanged, handler);
+    },
+  },
+  projectScripts: {
+    load: (target) => ipcRenderer.invoke(IPC_CHANNELS.projectScriptsLoad, target),
+    save: (input) => ipcRenderer.invoke(IPC_CHANNELS.projectScriptsSave, input),
+    remove: (input) => ipcRenderer.invoke(IPC_CHANNELS.projectScriptsRemove, input),
+    onRunFinished: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, run: ProjectScriptRun) => listener(run);
+      ipcRenderer.on(IPC_CHANNELS.projectScriptRunFinished, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.projectScriptRunFinished, handler);
     },
   },
 };

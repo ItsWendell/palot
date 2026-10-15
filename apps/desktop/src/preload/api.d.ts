@@ -11,3 +11,10 @@ export type {
   SourceControlChangedEvent,
   SourceControlResult,
 } from "../shared/source-control-contract";
+
+export type {
+  PalotProjectScriptsApi,
+  ProjectScript,
+  ProjectScriptRun,
+  ProjectScriptsState,
+} from "../shared/project-scripts-contract";

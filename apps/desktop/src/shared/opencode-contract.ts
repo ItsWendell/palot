@@ -11,6 +11,7 @@ import type {
   PalotBrowserLayout,
   PalotBrowserPageControl,
   PalotBrowserRegistration,
+  PalotBrowserShortcut,
   PalotBrowserUserCommand,
 } from "./browser-contract";
 import type { OpenCodeLoginStatus, OpenCodeLoginUpdateInput } from "./opencode-login-contract";
@@ -56,6 +57,10 @@ import type {
 import type { PalotPerformanceSnapshot } from "./performance-contract";
 import type { SshConfig, SshConnectionState, SshPromptResponse } from "./ssh-contract";
 import { SOURCE_CONTROL_IPC_CHANNELS, type PalotSourceControlApi } from "./source-control-contract";
+import {
+  PROJECT_SCRIPTS_IPC_CHANNELS,
+  type PalotProjectScriptsApi,
+} from "./project-scripts-contract";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -310,6 +315,17 @@ export interface PalotModel {
   contextLimit: number;
   outputLimit: number;
   releasedAt: number;
+  /**
+   * USD per million tokens. A tier with `contextOver` applies once the prompt exceeds that
+   * many tokens; the untiered entry is the base price. Absent when OpenCode reports none.
+   */
+  cost?: Array<{
+    contextOver: number | null;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  }>;
   capabilities: {
     tools: boolean;
     input: string[];
@@ -401,6 +417,10 @@ export interface PalotConfigSource {
     experimentalPolicyCount?: number;
   } | null;
   permissions: PermissionRule[];
+  /** Provider IDs this document defines under `providers`. */
+  providerIDs?: string[];
+  /** `provider.use` statements from `experimental.policies`, in document order. */
+  providerPolicies?: Array<{ resource: string; effect: "allow" | "deny" }>;
 }
 
 export interface PalotConfigFormatter {
@@ -1212,6 +1232,7 @@ export const IPC_CHANNELS = {
   browserClearData: "palot:browser:clear-data",
   browserClose: "palot:browser:close",
   browserEvent: "palot:browser:event",
+  browserShortcut: "palot:browser:shortcut",
   cancelRequest: "palot:opencode:cancel-request",
   pickDirectory: "palot:system:pick-directory",
   openExternalUrl: "palot:system:open-external-url",
@@ -1257,6 +1278,7 @@ export const IPC_CHANNELS = {
   automationChanged: "palot:automation:changed",
   automationNotificationOpened: "palot:automation:notification-opened",
   ...SOURCE_CONTROL_IPC_CHANNELS,
+  ...PROJECT_SCRIPTS_IPC_CHANNELS,
   events: "palot:opencode:events",
 } as const;
 
@@ -1285,6 +1307,7 @@ export interface PalotApi {
   browserClearData(input: PalotBrowserRegistration): Promise<void>;
   browserClose(bindingID: string): Promise<void>;
   onBrowserEvent(listener: (event: PalotBrowserEvent) => void): () => void;
+  onBrowserShortcut(listener: (shortcut: PalotBrowserShortcut) => void): () => void;
   loadAppearance(): Promise<{
     preferences: AppearancePreferences;
     hasStoredPreferences: boolean;
@@ -1412,4 +1435,6 @@ export interface PalotApi {
   onOpenCodeEvents(listener: (batch: PalotEventBatch) => void): () => void;
   /** GitHub pull request links, PR watches, review lists and local Git writes. */
   readonly sourceControl: PalotSourceControlApi;
+  /** Per-project shell scripts Palot runs locally, e.g. when a task settles. */
+  readonly projectScripts: PalotProjectScriptsApi;
 }

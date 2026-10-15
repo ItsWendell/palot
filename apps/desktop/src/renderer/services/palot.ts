@@ -380,7 +380,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "2.0.26",
+  contractVersion: "2.0.29",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -397,7 +397,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.0.26",
+  version: "2.0.29",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,
@@ -553,6 +553,10 @@ export const palot = {
 
   onBrowserEvent(listener: Parameters<PalotApi["onBrowserEvent"]>[0]) {
     return getApi()?.onBrowserEvent?.(listener) ?? (() => undefined);
+  },
+
+  onBrowserShortcut(listener: Parameters<PalotApi["onBrowserShortcut"]>[0]) {
+    return getApi()?.onBrowserShortcut?.(listener) ?? (() => undefined);
   },
 
   async openCodeReleaseStatus() {
