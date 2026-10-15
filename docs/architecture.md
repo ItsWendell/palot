@@ -34,6 +34,15 @@ on rate limits. Local Git writes run `git` without a shell, with literal pathspe
 confined to the repository. Remote and SSH connections report source control as
 unsupported.
 
+**Project scripts.** `main/project-scripts` stores per-project scripts in Palot's database,
+keyed by profile and OpenCode project. When the triage store records a new settlement (row
+action, settle-on-merge, or a batch), main reads the task and project from the task's own server,
+confirms the directory resolves inside the checkout or its worktrees, and runs each settle
+script through the user's shell with a timeout and bounded output. Batches (Inbox bulk settle
+and the renderer's inactivity sweep, both one `settle-many` triage command) run scripts only
+in worktrees, once per directory, and skip rejected directories without a notice. Results go to the renderer
+as notices only. Remote and SSH connections can't save or run scripts.
+
 ## Data flow
 
 Main-process event batching preserves official payload semantics while bounding

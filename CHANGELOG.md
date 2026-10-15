@@ -7,6 +7,103 @@ operations.
 
 ## Unreleased
 
+### Added
+
+- Workbench: "+" opens a New tab page with a centred address field, quick tools (Changes,
+  Terminal, Files, Side chat, Context, linked PR), and suggested sites.
+- Pull requests: a Guide tab (beta) writes a review guide, a short tour of the change in
+  reading order with the calls only you can make. Comment on excerpt lines into your pending
+  review, ask about a stop in a new task, or rewrite after a push. Guides stay on this device.
+- Project scripts: add a command in Project settings to run in a task's directory each time
+  it settles (local connections). A toast reports passed, failed, or timed out, with View
+  output.
+- Inbox: idle tasks settle automatically after 3 days without activity (Settings → General
+  → Auto-settle idle tasks: Off, 1, 3, 7, or 14 days). Running, blocked, failed, and pinned
+  tasks stay, and so does a task you move back to Inbox until it has new activity. A toast
+  reports each sweep with Undo.
+- Pull requests: filter every list by repositories, organizations, review state, checks, or
+  hide drafts. Filters apply through GitHub search, so they cover unloaded results, stay
+  across restarts, and show as removable chips. Drag the list's border (or use arrow keys)
+  to resize it; double-click restores the default width.
+- Inbox: the section header's Settle idle tasks menu settles every listed task idle for 1
+  day, 3 days, 1 week, or all of them, respecting the current filters, with one Undo.
+  Bulk and automatic settles run project settle scripts only in worktrees, once per
+  directory.
+
+### Changed
+
+- Mod+W in the workbench pane, including the browser address field and loaded pages, closes
+  the active workbench tab instead of the whole window. With focus in a pane that has
+  several tabs, Ctrl+Tab and Ctrl+Shift+Tab (or your task-switch keys) cycle its tabs.
+- A new task whose last-used model is temporarily missing from the catalog shows it as
+  unavailable and won't send, instead of silently creating the task on another model and
+  forgetting your choice. It comes back when the model returns.
+- The composer shows context tokens and session cost next to the context ring
+  (`101k · $4.55`); free models hide the cost.
+- Attachments on your messages appear above the text, as in the composer, and no longer
+  reload when the sent message is confirmed. Question cards show the ⌘↩ / Ctrl+Enter
+  shortcut on Next and Send. The Context tab names variant-only switches ("Switched
+  variant to high").
+- Diffs use stronger translucent add/delete fills (no longer blended away into the code
+  background), color changed line numbers, and give changed words their own text color.
+- Image previews in the workbench zoom with a pinch or Ctrl+scroll around the pointer, pan
+  with two-finger scroll or drag, and have Zoom in/out and Fit controls. The chat image
+  viewer gains pinch and scroll panning. Audio and video previews accept files up to
+  256 MiB (was 32 MiB).
+- Clicking in the hairline gap between sidebar task rows opens the highlighted task.
+- Turns no longer end with a "View turn changes" button. The latest settled turn shows its
+  changed files with Review changes only when it changed something; the Changes tab covers
+  earlier turns.
+- Grouped reasoning reads as one block: all steps share a single scroll region that
+  follows new text while it streams. Reasoning, synthetic updates, compaction details,
+  and the plan card scroll with the transcript's overlay scrollbar instead of the native one.
+- Dragging the border of the task column or the right panel resizes it even where a
+  scrollbar runs alongside, instead of grabbing the scrollbar.
+- Pull requests, Usage, Worktrees, and Scheduled use the full window: the Inbox/Projects
+  column stays hidden there, and showing navigation opens it as an overlay.
+- Workbench tabs: the active pill stays aligned when the active tab changes width, and
+  inactive tabs fade their title under the close button instead of covering it. Turn
+  changes no longer leave a gap above the first file, and its file headers are padded.
+- Queued messages appear as a compact stack with Steer now, Edit, Delete with Undo, and
+  Retry; stopping a task shows the paused queue with Resume and Clear instead of leaving it
+  parked silently.
+- Project task rows show Settle, Snooze, Unsettle, and Wake on hover or keyboard focus, and
+  Unsettle and Wake can be undone. Worktrees opens on the current task's project.
+- Context meter: hover the composer ring for window usage, cost, Compact now, and Context
+  details. Large tasks idle for an hour offer Compact and send, so the next message doesn't
+  re-read an expired prompt cache. The Context tab is rebuilt around the window, what the
+  model sees, instructions, and compaction history; developer diagnostics are hidden unless
+  enabled.
+- Compaction rows say whether context was compacted automatically or by you, show a hint
+  when compacting runs long, fold before → after context size into their details, and let
+  you retry the latest failed compaction. The running status shows the agent's latest
+  thought, subagent tasks show a breadcrumb back to their parent, and agents that keep a
+  plan get a compact progress card above the composer.
+- Providers settings show each connected provider's source (account, API key,
+  environment, config), how many of its models are shown, and a Disconnect that confirms
+  in place. Providers turned off by config policy say so, and environment-only providers
+  list the variable names to copy. The connect dialog uses choice cards, copy fields, and
+  check lists.
+- Models settings start with Defaults (OpenCode's configured default and its file, then
+  Palot's project override) and group models by provider, with filters, prices per
+  million tokens, release dates, and a show-all switch per provider. Providers link to
+  their models and back.
+- Model and reasoning effort are separate composer controls. The model picker adds
+  Favorites, Recent, provider sections, New/Beta/Deprecated badges, a details pane
+  (context, output, inputs, tools, price), and Manage models…. Shift+Mod+D cycles
+  reasoning effort and can be rebound. Agent, approvals, model, workspace, branch, and
+  destination pickers share one keyboard-navigable picker.
+- Settings and dialogs use shared notice banners, choice groups, check lists, and copy
+  fields; dialogs and collapsible sections animate on springs and respect Reduce Motion.
+- Pinned OpenCode dependencies and the release-smoke runtime to 2.0.29, with Effect
+  4.0.1. Project lists hide projects OpenCode archived after their directories
+  disappeared. Responses that hit the output-token limit continue without showing
+  OpenCode's continue instruction. The supported stable connection minimum remains 2.0.7.
+- The tray tooltip says how many tasks need input and how many are running, and the app
+  badge (Dock on macOS, supported Linux launchers) counts tasks waiting on a permission,
+  question, or form. The Omarchy status file counts every task instead of the first
+  three.
+
 ## 0.17.0
 
 This remains an experimental pre-release, not a supported stable release.
