@@ -5,7 +5,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { composerDraftAtomFamily } from "../../atoms/ui";
 import { composerScope } from "../../lib/composer-scope";
 import { project, renderPullRequestsPage, task } from "./page-test-support";
-import { pullRequestMergeMethodsAtom } from "./pull-request-preferences";
+import {
+  EMPTY_PULL_REQUEST_FILTERS,
+  pullRequestFiltersAtom,
+  pullRequestListWidthAtom,
+  pullRequestMergeMethodsAtom,
+} from "./pull-request-preferences";
 import { parsePullRequestParam } from "./pull-request-ref";
 import {
   installSourceControl,
@@ -71,6 +76,45 @@ describe("PullRequestsPage list", () => {
     expect(
       api.searchPullRequests.mock.calls.filter(([input]) => input.query !== undefined),
     ).toHaveLength(5);
+  });
+
+  it("narrows every list with saved filters, shown as removable chips", async () => {
+    const { api } = installSourceControl();
+    const store = createStore();
+    store.set(pullRequestFiltersAtom, {
+      ...EMPTY_PULL_REQUEST_FILTERS,
+      repositories: ["acme/web"],
+      hideDrafts: true,
+    });
+    renderPullRequestsPage({ store });
+    await waitFor(() =>
+      expect(api.searchPullRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ list: "authored", query: "repo:acme/web draft:false" }),
+      ),
+    );
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    await userEvent.click(within(chips).getByRole("button", { name: "Remove filter acme/web" }));
+    await waitFor(() =>
+      expect(api.searchPullRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ list: "authored", query: "draft:false" }),
+      ),
+    );
+    await userEvent.click(within(chips).getByRole("button", { name: "Remove filter No drafts" }));
+    expect(store.get(pullRequestFiltersAtom)).toEqual(EMPTY_PULL_REQUEST_FILTERS);
+    expect(screen.queryByRole("list", { name: "Active filters" })).toBeNull();
+  });
+
+  it("resizes the list from its border and keeps the width", async () => {
+    installSourceControl();
+    const store = createStore();
+    renderPullRequestsPage({ store });
+    const handle = await screen.findByRole("separator", { name: "Resize pull request list" });
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(store.get(pullRequestListWidthAtom)).toBe(376);
+    fireEvent.keyDown(handle, { key: "End" });
+    expect(store.get(pullRequestListWidthAtom)).toBe(640);
+    fireEvent.doubleClick(handle);
+    expect(store.get(pullRequestListWidthAtom)).toBe(360);
   });
 
   it("selects through the pr search param and moves through rows with the keyboard", async () => {

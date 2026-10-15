@@ -1,7 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { CircleAlert, GitPullRequest, LoaderCircle, RefreshCw } from "lucide-react";
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useAtom } from "jotai";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import {
   pullRequestKey,
   type PullRequestLink,
@@ -18,7 +28,9 @@ import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestDetailPane } from "./pull-request-detail";
+import { PullRequestFilterMenu } from "./pull-request-filters";
 import { PullRequestList, useShiftHeld } from "./pull-request-list";
+import { PULL_REQUEST_LIST_WIDTH, pullRequestListWidthAtom } from "./pull-request-preferences";
 import { formatRetryTime, sourceControlErrorMessage } from "./pull-request-presentation";
 import {
   formatPullRequestParam,
@@ -27,7 +39,8 @@ import {
 } from "./pull-request-ref";
 
 const UNSUPPORTED_FALLBACK = "Linking pull requests to tasks only works on this computer.";
-const NARROW = "@max-[44rem]/pull-requests";
+// Narrow-container variants stay literal so Tailwind generates them: under 44rem the
+// panes stack (list alone, or the selected detail alone).
 
 /**
  * GitHub review screen: lists on the left, the selected pull request on the right. The
@@ -44,6 +57,10 @@ export function PullRequestsPage() {
   const links = usePullRequestLinks();
   const sessions = useSessionCatalog();
   const shiftHeld = useShiftHeld();
+  const [savedListWidth, setSavedListWidth] = useAtom(pullRequestListWidthAtom);
+  // Follows the pointer while dragging; saved once the drag ends.
+  const [draggedListWidth, setDraggedListWidth] = useState<number | null>(null);
+  const listWidth = draggedListWidth ?? savedListWidth;
   const selected = useMemo(() => parsePullRequestParam(search.pr), [search.pr]);
   const github = status.data?.github;
   const authenticated = github?.authenticated === true;
@@ -124,28 +141,33 @@ export function PullRequestsPage() {
       ) : (
         <>
           <aside
+            id="pull-request-lists"
             aria-label="Pull request lists"
+            style={{ "--pull-request-list-width": `${listWidth}px` } as CSSProperties}
             className={cn(
-              "flex w-[22.5rem] shrink-0 flex-col border-r border-border/60",
-              `${NARROW}:w-full ${NARROW}:border-r-0`,
-              selected && `${NARROW}:hidden`,
+              "flex w-(--pull-request-list-width) shrink-0 flex-col",
+              "@max-[44rem]/pull-requests:w-full",
+              selected && "@max-[44rem]/pull-requests:hidden",
             )}
           >
-            <div className="window-drag flex h-(--shell-header-height) shrink-0 items-center gap-2 border-b border-border/60 px-4">
+            <div className="window-drag flex h-(--shell-header-height) shrink-0 items-center gap-2 border-b border-border/60 pr-3 pl-(--thread-header-leading-inset,18px)">
               <h1 className="text-compact font-semibold">Pull requests</h1>
               {github?.login ? (
                 <span className="truncate text-meta text-muted-foreground">{github.login}</span>
               ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Refresh pull requests"
-                className="window-no-drag ml-auto"
-                onClick={refresh}
-              >
-                <RefreshCw aria-hidden="true" />
-              </Button>
+              <div className="ml-auto flex items-center gap-0.5">
+                <PullRequestFilterMenu />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Refresh pull requests"
+                  className="window-no-drag"
+                  onClick={refresh}
+                >
+                  <RefreshCw aria-hidden="true" />
+                </Button>
+              </div>
             </div>
             {pausedUntil ? (
               <p
@@ -175,8 +197,19 @@ export function PullRequestsPage() {
               </p>
             )}
           </aside>
+          <ListResizeHandle
+            width={listWidth}
+            onDrag={setDraggedListWidth}
+            onCommit={(width) => {
+              setDraggedListWidth(null);
+              setSavedListWidth(width);
+            }}
+          />
           <div
-            className={cn("flex min-h-0 min-w-0 flex-1 flex-col", !selected && `${NARROW}:hidden`)}
+            className={cn(
+              "flex min-h-0 min-w-0 flex-1 flex-col",
+              !selected && "@max-[44rem]/pull-requests:hidden",
+            )}
           >
             {selected ? (
               <PullRequestDetailPane
@@ -210,6 +243,91 @@ export function PullRequestsPage() {
         </>
       )}
     </main>
+  );
+}
+
+const KEYBOARD_STEP = 16;
+
+function clampListWidth(width: number): number {
+  return Math.round(
+    Math.min(PULL_REQUEST_LIST_WIDTH.max, Math.max(PULL_REQUEST_LIST_WIDTH.min, width)),
+  );
+}
+
+/**
+ * The 1px border between the list and the detail, draggable to resize the list. Arrow
+ * keys step it, Home/End jump to the limits, and a double-click restores the default.
+ * Hidden when the panes stack under a narrow container.
+ */
+function ListResizeHandle({
+  width,
+  onDrag,
+  onCommit,
+}: {
+  width: number;
+  onDrag(width: number): void;
+  onCommit(width: number): void;
+}) {
+  const drag = useRef<{ pointerID: number; startX: number; startWidth: number } | null>(null);
+  const [active, setActive] = useState(false);
+  const end = (event: PointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (!current || current.pointerID !== event.pointerId) return;
+    drag.current = null;
+    setActive(false);
+    onCommit(clampListWidth(current.startWidth + event.clientX - current.startX));
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const next =
+      event.key === "ArrowLeft"
+        ? width - KEYBOARD_STEP
+        : event.key === "ArrowRight"
+          ? width + KEYBOARD_STEP
+          : event.key === "Home"
+            ? PULL_REQUEST_LIST_WIDTH.min
+            : event.key === "End"
+              ? PULL_REQUEST_LIST_WIDTH.max
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    onCommit(clampListWidth(next));
+  };
+  return (
+    <div
+      role="separator"
+      tabIndex={0}
+      aria-label="Resize pull request list"
+      aria-controls="pull-request-lists"
+      aria-orientation="vertical"
+      aria-valuemin={PULL_REQUEST_LIST_WIDTH.min}
+      aria-valuemax={PULL_REQUEST_LIST_WIDTH.max}
+      aria-valuenow={width}
+      data-active={active || undefined}
+      className={cn(
+        "group/list-resize relative z-10 w-px shrink-0 cursor-col-resize touch-none bg-border/60 outline-none transition-colors duration-150",
+        "hover:bg-foreground/35 focus-visible:bg-foreground/35 data-active:bg-ring/55",
+        // Widen the pointer target without reserving layout space.
+        "before:absolute before:inset-y-0 before:-left-1 before:-right-1 before:content-['']",
+        "@max-[44rem]/pull-requests:hidden",
+      )}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { pointerID: event.pointerId, startX: event.clientX, startWidth: width };
+        setActive(true);
+      }}
+      onPointerMove={(event) => {
+        const current = drag.current;
+        if (!current || current.pointerID !== event.pointerId) return;
+        onDrag(clampListWidth(current.startWidth + event.clientX - current.startX));
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onLostPointerCapture={end}
+      onDoubleClick={() => onCommit(PULL_REQUEST_LIST_WIDTH.default)}
+      onKeyDown={onKeyDown}
+    />
   );
 }
 

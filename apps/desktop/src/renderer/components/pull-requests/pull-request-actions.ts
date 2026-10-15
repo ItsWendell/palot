@@ -142,6 +142,8 @@ export function useStartPullRequestTask() {
   return async (
     source: PullRequestSearchList | "detail",
     pullRequest: Pick<PullRequestSnapshot, "repository" | "url">,
+    /** Replaces the default prompt, such as a question about one stop of a review guide. */
+    customPrompt?: string,
   ) => {
     const profileID = store.get(runtimeAtom)?.profileID;
     const project = pickProject(
@@ -155,8 +157,9 @@ export function useStartPullRequestTask() {
         composerScope(profileID, `new:${project.id}:${project.canonical}:`),
       );
       const draft = store.get(draftAtom);
-      const prompt = START_PROMPT[source](pullRequest.url);
-      if (!draft.text.includes(pullRequest.url))
+      const prompt = customPrompt ?? START_PROMPT[source](pullRequest.url);
+      // A custom prompt is a new question; only an identical one is already there.
+      if (!draft.text.includes(customPrompt ?? pullRequest.url))
         store.set(draftAtom, {
           ...draft,
           text: draft.text.trim() ? `${draft.text.trimEnd()}\n\n${prompt}` : prompt,

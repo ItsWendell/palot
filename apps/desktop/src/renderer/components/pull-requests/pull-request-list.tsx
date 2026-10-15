@@ -1,4 +1,4 @@
-import { useAtom } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { Check, ChevronRight, Link2, LoaderCircle, Search, X } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { PalotSession } from "../../../shared";
@@ -18,7 +18,12 @@ import { Input } from "../ui/input";
 import { toast } from "../ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { quickActionsFor, useQuickAction, type QuickAction } from "./pull-request-actions";
-import { pullRequestCollapsedSectionsAtom } from "./pull-request-preferences";
+import { PullRequestFilterChips } from "./pull-request-filters";
+import {
+  pullRequestCollapsedSectionsAtom,
+  pullRequestFilterQuery,
+  pullRequestFiltersAtom,
+} from "./pull-request-preferences";
 import {
   CHECKS_DOT,
   CHECKS_LABEL,
@@ -52,7 +57,8 @@ const SEARCH_DEBOUNCE_MS = 300;
 const ROW_SELECTOR = "button[data-pull-request-row]";
 
 /**
- * The review screen's left pane: a debounced GitHub search over five collapsible lists.
+ * The review screen's left pane: a debounced GitHub search over five collapsible lists,
+ * narrowed by the persisted filters (as GitHub qualifiers, so they apply beyond loaded rows).
  * ↑/↓ move between rows across sections, Enter opens one; holding Shift reveals quick
  * actions on every row.
  */
@@ -75,6 +81,8 @@ export function PullRequestList({
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
+  const filterQuery = pullRequestFilterQuery(useAtomValue(pullRequestFiltersAtom));
+  const combinedQuery = [filterQuery, query].filter(Boolean).join(" ");
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(draft.trim()), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
@@ -139,6 +147,7 @@ export function PullRequestList({
           </button>
         ) : null}
       </div>
+      <PullRequestFilterChips />
       <div
         ref={listRef}
         role="navigation"
@@ -151,8 +160,8 @@ export function PullRequestList({
             key={section.list}
             list={section.list}
             title={section.title}
-            empty={query ? "No matches." : section.empty}
-            query={query}
+            empty={combinedQuery ? "No matches." : section.empty}
+            query={combinedQuery}
             enabled={enabled}
             selected={selected}
             onSelect={onSelect}

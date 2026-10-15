@@ -16,6 +16,7 @@ import {
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import type { PalotSession } from "../../../shared";
@@ -38,6 +39,7 @@ import {
   useWatchPullRequest,
 } from "../../hooks/use-source-control";
 import { palot } from "../../services/palot";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   DropdownMenu,
@@ -59,6 +61,7 @@ import {
 import { PullRequestSummaryTab } from "./pull-request-summary-tab";
 import { PullRequestTimelineTab } from "./pull-request-timeline-tab";
 import { useArmedConfirm } from "./use-armed-confirm";
+import { useReviewGuide, type ReviewGuideController } from "./guide/use-review-guide";
 
 // Loaded on first use so the diff renderer stays out of the list's first paint.
 const PullRequestCodeTab = lazy(() =>
@@ -67,7 +70,14 @@ const PullRequestCodeTab = lazy(() =>
   })),
 );
 
-type DetailTab = "summary" | "timeline" | "code";
+// The guide renders excerpts with the same diff renderer, so it loads on first use too.
+const PullRequestGuideTab = lazy(() =>
+  import("./guide/pull-request-guide-tab").then((module) => ({
+    default: module.PullRequestGuideTab,
+  })),
+);
+
+type DetailTab = "summary" | "timeline" | "code" | "guide";
 
 export function PullRequestDetailPane({
   pullRequest,
@@ -122,21 +132,84 @@ export function PullRequestDetailPane({
       </section>
     );
   }
-  const data = detail.data;
+  return (
+    <LoadedDetail
+      pullRequest={pullRequest}
+      data={detail.data}
+      refreshing={detail.isFetching}
+      onRefresh={refresh}
+      links={links}
+      sessions={sessions}
+      linkingSupported={linkingSupported}
+      knownLogins={knownLogins}
+      viewed={viewed}
+      total={total}
+      onBack={onBack}
+    />
+  );
+}
+
+function LoadedDetail({
+  pullRequest,
+  data,
+  refreshing,
+  onRefresh,
+  links,
+  sessions,
+  linkingSupported,
+  knownLogins,
+  viewed,
+  total,
+  onBack,
+}: {
+  pullRequest: PullRequestRef;
+  data: PullRequestDetail;
+  refreshing: boolean;
+  onRefresh(): void;
+  links: readonly PullRequestLink[];
+  sessions: readonly PalotSession[];
+  linkingSupported: boolean;
+  knownLogins: readonly string[];
+  viewed: number;
+  total: number | undefined;
+  onBack(): void;
+}) {
+  const key = pullRequestKey(data);
+  // The open tab belongs to one pull request; another starts on Summary.
+  const [tabState, setTabState] = useState<{ key: string; tab: DetailTab }>({
+    key,
+    tab: "summary",
+  });
+  const tab = tabState.key === key ? tabState.tab : "summary";
+  const setTab = (next: DetailTab) => setTabState({ key, tab: next });
+  const guide = useReviewGuide(data, { catalogEnabled: tab === "guide" });
+  const writeGuide = () => {
+    setTab("guide");
+    guide.write();
+  };
   return (
     <section
       aria-label={`#${data.number} ${data.title}`}
       className="flex min-h-0 flex-1 flex-col"
-      data-pull-request-detail={pullRequestKey(data)}
+      data-pull-request-detail={key}
     >
       <DetailTopBar
         pullRequest={pullRequest}
         onBack={onBack}
-        actions={<DetailMenu detail={data} refreshing={detail.isFetching} onRefresh={refresh} />}
+        actions={
+          <DetailMenu
+            detail={data}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            guide={guide}
+            onWriteGuide={writeGuide}
+          />
+        }
       />
       <Tabs
-        key={pullRequestKey(data)}
-        defaultValue={"summary" satisfies DetailTab}
+        key={key}
+        value={tab}
+        onValueChange={(next) => setTab(next as DetailTab)}
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
         <DetailHeader
@@ -157,6 +230,15 @@ export function PullRequestDetailPane({
                 </span>
               ) : null}
             </TabsTrigger>
+            <TabsTrigger value="guide">
+              Guide
+              <Badge variant="info" size="sm">
+                Beta
+              </Badge>
+              {guide.running ? (
+                <LoaderCircle className="size-3 animate-spin" aria-label="Writing guide" />
+              ) : null}
+            </TabsTrigger>
           </TabsList>
         </div>
         <TabsContent
@@ -174,6 +256,11 @@ export function PullRequestDetailPane({
         <TabsContent value="code" className="flex min-h-0 flex-1 flex-col">
           <Suspense fallback={<TabLoading />}>
             <PullRequestCodeTab pullRequest={data} />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="guide" className="flex min-h-0 flex-1 flex-col">
+          <Suspense fallback={<TabLoading />}>
+            <PullRequestGuideTab pullRequest={data} controller={guide} />
           </Suspense>
         </TabsContent>
       </Tabs>
@@ -200,7 +287,8 @@ function DetailTopBar({
   actions?: ReactNode;
 }) {
   return (
-    <div className="window-drag flex h-(--shell-header-height) shrink-0 items-center gap-1.5 border-b border-border/60 px-3 pr-(--window-controls-width)">
+    // Stacked under a narrow container, the bar starts at the window's leading controls.
+    <div className="window-drag flex h-(--shell-header-height) shrink-0 items-center gap-1.5 border-b border-border/60 px-3 pr-(--window-controls-width) @max-[44rem]/pull-requests:pl-(--thread-header-leading-inset,18px)">
       <Button
         type="button"
         variant="ghost"
@@ -419,10 +507,14 @@ function DetailMenu({
   detail,
   refreshing,
   onRefresh,
+  guide,
+  onWriteGuide,
 }: {
   detail: PullRequestDetail;
   refreshing: boolean;
   onRefresh(): void;
+  guide: ReviewGuideController;
+  onWriteGuide(): void;
 }) {
   const setDraft = useSetPullRequestDraft();
   const setState = useSetPullRequestState();
@@ -532,6 +624,17 @@ function DetailMenu({
             <DropdownMenuItem onClick={onRefresh}>
               <RefreshCw aria-hidden="true" />
               Refresh
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              disabled={guide.running || guide.disabledReason !== null}
+              title={guide.disabledReason ?? undefined}
+              onClick={onWriteGuide}
+            >
+              <Sparkles aria-hidden="true" />
+              {guide.running ? "Writing guide…" : guide.guide ? "Rewrite guide" : "Write guide"}
             </DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>
