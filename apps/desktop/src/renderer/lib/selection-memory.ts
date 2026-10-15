@@ -118,6 +118,22 @@ export function recalledModel(
   );
 }
 
+/**
+ * The agent's explicitly remembered model when the catalog no longer lists it. A catalog refresh
+ * can drop a model temporarily; callers must not replace this choice with a fallback.
+ */
+export function unavailableRememberedModel(
+  memory: SelectionMemory | undefined,
+  agent: string | null,
+  models: PalotModel[],
+): ModelRef | null {
+  const entry = memory?.agents[agentKey(agent)];
+  const model = entry?.model;
+  if (!model || availableModel(models, model)) return null;
+  const variant = entry.variants[modelKey(model)];
+  return { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) };
+}
+
 export function resolveAgentModel({
   memory,
   agent,

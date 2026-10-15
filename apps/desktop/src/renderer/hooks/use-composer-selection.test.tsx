@@ -72,14 +72,13 @@ function setup(
   options: { projectDefault?: ModelRef | null } = {},
 ) {
   if (!store.get(runtimeAtom)) store.set(runtimeAtom, runtime);
-  const props = { session, draft, catalogsReady: true };
+  const props = { session, draft, catalogsReady: true, models };
   const hook = renderHook(
     (input: typeof props) =>
       useComposerSelection({
         ...input,
         draftScope: input.draft ? "new:project" : input.session.id,
         agents,
-        models,
         projectDefault: options.projectDefault ?? null,
         catalogDefault: models[0]!,
       }),
@@ -185,6 +184,43 @@ describe("composer selection ownership", () => {
       model: { id: "reasoner", providerID: "one" },
     });
     expect(store.get(selectionMemoriesAtom)).toEqual(memory);
+  });
+
+  it("blocks a draft instead of silently falling back when the remembered model leaves the catalog", async () => {
+    const store = createStore();
+    const scope = selectionScope("profile-1", "project");
+    const remembered = { id: "reasoner", providerID: "two", variant: "high" };
+    const memory = { [scope]: rememberSelection(undefined, "a", remembered) };
+    store.set(selectionMemoriesAtom, memory);
+    const hook = setup(true, store);
+    const refreshed = { ...hook.props, models: [models[0]!] };
+    hook.rerender(refreshed);
+    expect(hook.result.current.session).toMatchObject({ agent: "a", model: remembered });
+    expect(hook.result.current.unavailableModel).toEqual(remembered);
+    expect(hook.result.current.creationModel).toBeNull();
+    expect(hook.result.current.blocked).toBe(true);
+    expect(hook.result.current.error).toMatch(/unavailable/);
+    act(() => hook.result.current.rememberCreated());
+    // Switching away and back must not pin the fallback either.
+    await act(async () => hook.result.current.selectAgent(agents[1]!));
+    await act(async () => hook.result.current.selectAgent(agents[0]!));
+    expect(hook.result.current.blocked).toBe(true);
+    act(() => hook.result.current.rememberCreated());
+    expect(store.get(selectionMemoriesAtom)).toEqual(memory);
+
+    // The remembered choice comes back with the catalog.
+    hook.rerender(hook.props);
+    expect(hook.result.current.creationModel).toEqual(remembered);
+    expect(hook.result.current.blocked).toBe(false);
+
+    // An explicit pick of another model still works while it is missing.
+    hook.rerender(refreshed);
+    await act(async () => hook.result.current.selectModel({ id: "reasoner", providerID: "one" }));
+    expect(hook.result.current.creationModel).toEqual({
+      id: "reasoner",
+      providerID: "one",
+    });
+    expect(hook.result.current.blocked).toBe(false);
   });
 
   it("restores A's reasoning after A → B → A without carrying A's model into B", async () => {

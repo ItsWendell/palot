@@ -5,6 +5,8 @@ import { Questionnaire as QuestionnairePrimitive } from "@shadcn/react/questionn
 
 import { cn } from "@/lib/cn";
 import { buttonVariants, type Button } from "@/components/ui/button";
+import { ShortcutKbd } from "@/components/ui/kbd";
+import type { ShortcutKeys } from "@/lib/keyboard-shortcuts";
 import { CheckIcon } from "lucide-react";
 
 function Questionnaire({
@@ -243,6 +245,24 @@ function QuestionnaireSkip({
   );
 }
 
+/**
+ * The primitive advances or submits on Mod+Enter from anywhere in the questionnaire (plain Enter
+ * only from an answered choice or input). It is built in, not a rebindable Palot shortcut.
+ */
+const ADVANCE_KEYS: ShortcutKeys = ["Mod", "Enter"];
+
+function AdvanceShortcut() {
+  return (
+    <span aria-hidden="true" data-slot="questionnaire-shortcut" className="-me-0.5 opacity-75">
+      <ShortcutKbd
+        keys={ADVANCE_KEYS}
+        className="gap-0.5"
+        keyClassName="h-4 min-w-4 bg-current/15 px-0.5 text-inherit"
+      />
+    </span>
+  );
+}
+
 function QuestionnaireNext({
   children,
   className,
@@ -264,6 +284,7 @@ function QuestionnaireNext({
       {...props}
     >
       {children ?? "Next"}
+      <AdvanceShortcut />
     </QuestionnairePrimitive.Next>
   );
 }
@@ -289,6 +310,7 @@ function QuestionnaireSubmit({
       {...props}
     >
       {children ?? "Submit"}
+      <AdvanceShortcut />
     </QuestionnairePrimitive.Submit>
   );
 }

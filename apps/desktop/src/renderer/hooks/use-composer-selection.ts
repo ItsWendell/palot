@@ -11,6 +11,7 @@ import {
   resolveAgentModel,
   selectionMemoriesAtom,
   selectionScope,
+  unavailableRememberedModel,
   type SelectionMemory,
 } from "../lib/selection-memory";
 import { palot } from "../services/palot";
@@ -59,21 +60,30 @@ export function useComposerSelection({
   const agent = draft
     ? (availableAgents.find((entry) => entry.id === memory?.agent)?.id ?? null)
     : session.agent;
+  // A remembered choice that dropped out of the catalog blocks the draft instead of falling back.
+  const unavailableModel = useMemo(
+    () => (draft && catalogsReady ? unavailableRememberedModel(memory, agent, models) : null),
+    [draft, catalogsReady, memory, agent, models],
+  );
   const creationModel = useMemo(
     () =>
-      draft
-        ? resolveAgentModel({
-            memory,
-            agent,
-            agents: availableAgents,
-            models,
-            projectDefault,
-            // The catalog default is global, not the default agent's configured model.
-            // Only pin it when an explicit selection needs a fallback.
-            catalogDefault: agent || projectDefault || forceCatalogDefault ? catalogDefault : null,
-          })
-        : session.model,
+      unavailableModel
+        ? null
+        : draft
+          ? resolveAgentModel({
+              memory,
+              agent,
+              agents: availableAgents,
+              models,
+              projectDefault,
+              // The catalog default is global, not the default agent's configured model.
+              // Only pin it when an explicit selection needs a fallback.
+              catalogDefault:
+                agent || projectDefault || forceCatalogDefault ? catalogDefault : null,
+            })
+          : session.model,
     [
+      unavailableModel,
       draft,
       memory,
       agent,
@@ -86,8 +96,11 @@ export function useComposerSelection({
     ],
   );
   const model = useMemo(
-    () => (draft ? (creationModel ?? availableModel(models, catalogDefault)) : session.model),
-    [draft, creationModel, models, catalogDefault, session.model],
+    () =>
+      draft
+        ? (unavailableModel ?? creationModel ?? availableModel(models, catalogDefault))
+        : session.model,
+    [draft, unavailableModel, creationModel, models, catalogDefault, session.model],
   );
   const displayedSession = useMemo(
     () => (draft ? { ...session, agent, model } : session),
@@ -179,8 +192,15 @@ export function useComposerSelection({
         projectDefault,
         catalogDefault,
       });
-      if (!catalogsReady || !nextModel)
-        throw new Error("Wait for available models and agents to load.");
+      if (!catalogsReady) throw new Error("Wait for available models and agents to load.");
+      // Never let a fallback overwrite a remembered model that is only temporarily missing.
+      const keepRemembered = Boolean(unavailableRememberedModel(memory, next.id, models));
+      if (draft && keepRemembered) {
+        // The draft shows the missing model and blocks sending until it returns or is replaced.
+        setPending({ identity, memory: rememberSelection(memory, next.id) });
+        return;
+      }
+      if (!nextModel) throw new Error("Wait for available models and agents to load.");
       if (draft) {
         setPending({ identity, memory: rememberSelection(memory, next.id, nextModel) });
         return;
@@ -197,7 +217,7 @@ export function useComposerSelection({
         assertConnection();
         await palot.switchModel({ sessionID: session.id, model: nextModel });
         cacheSession({ ...switched, model: nextModel });
-        remember(next.id, nextModel);
+        remember(next.id, keepRemembered ? undefined : nextModel);
         setActionState({ identity, busy: false, failed: false });
       } catch (error) {
         setActionState({ identity, busy: false, failed: true });
@@ -229,16 +249,22 @@ export function useComposerSelection({
     selectModel,
     selectVariant: applyModel,
     rememberCreated: () => {
+      // Keep a temporarily missing remembered model rather than persisting a fallback.
+      if (unavailableModel) return;
       if (agent || creationModel) remember(agent, creationModel ?? undefined);
     },
     assertConnection,
+    /** A remembered model the catalog no longer lists; the draft cannot send until it returns. */
+    unavailableModel,
     blocked:
-      (draft && (!catalogsReady || !model)) ||
+      (draft && (!catalogsReady || !model || Boolean(unavailableModel))) ||
       (actionState?.identity === identity && (actionState.busy || actionState.failed)),
     busy: actionState?.identity === identity && actionState.busy,
     error:
       actionState?.identity === identity && actionState.failed
         ? "Selection was not completed. Select a model before sending."
-        : null,
+        : unavailableModel
+          ? `${unavailableModel.id} is unavailable right now. Choose another model to send.`
+          : null,
   };
 }

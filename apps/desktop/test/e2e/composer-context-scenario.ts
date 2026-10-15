@@ -18,7 +18,7 @@ export const composerContextScenario: Scenario = {
     const project = main.getByRole("combobox", { name: "Task destination", exact: true });
     const workspace = main.getByRole("button", { name: /^Work in:/ });
     await workspace.click();
-    await page.getByRole("button", { name: /Current checkout Use the project/ }).click();
+    await page.getByRole("option", { name: /Current checkout Use the project/ }).click();
     await expect(workspace).toHaveText("Checkout");
     for (const width of [1440, 920]) {
       await page.setViewportSize({ width, height: width === 920 ? 640 : 900 });
@@ -39,7 +39,7 @@ export const composerContextScenario: Scenario = {
     await page.keyboard.press("Escape");
     await expect(project).toBeFocused();
     await workspace.click();
-    await page.getByRole("button", { name: /New worktree Start detached/ }).click();
+    await page.getByRole("option", { name: /New worktree Start detached/ }).click();
     await expect(workspace).toHaveText("New worktree");
     expect(await controlMetrics(project)).toEqual(await controlMetrics(workspace));
     const branch = main.getByRole("button", { name: /^Source branch:/ });
@@ -47,7 +47,7 @@ export const composerContextScenario: Scenario = {
     expect(await controlMetrics(branch)).toEqual(await controlMetrics(workspace));
     await main.screenshot({ path: join(runRoot, "composer-context-worktree.png") });
     await workspace.click();
-    await page.getByRole("button", { name: /Current checkout Use the project/ }).click();
+    await page.getByRole("option", { name: /Current checkout Use the project/ }).click();
     await expect(workspace).toHaveText("Checkout");
   },
 };

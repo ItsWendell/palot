@@ -229,7 +229,7 @@ async function selectModel(page: Page, id: string, name: string) {
   await page.getByRole("button", { name: /^Model:/ }).click();
   await page.getByRole("combobox", { name: "Choose model", exact: true }).fill(id);
   await page
-    .getByRole("listbox", { name: "Suggestions", exact: true })
+    .getByRole("listbox", { name: "Models", exact: true })
     .getByRole("option")
     .filter({ hasText: name })
     .click();
@@ -238,7 +238,8 @@ async function selectModel(page: Page, id: string, name: string) {
 
 async function selectReasoning(page: Page, name: string) {
   await page.getByRole("button", { name: /^Reasoning:/ }).click();
-  await page.getByRole("button", { name, exact: true }).click();
+  // Auto carries a description, so match the option by its leading label.
+  await page.getByRole("option", { name: new RegExp(`^${name}\\b`) }).click();
   await expect(page.getByRole("button", { name: `Reasoning: ${name}`, exact: true })).toBeEnabled();
 }
 
@@ -285,7 +286,7 @@ async function fixtureProjectID(client: OpenCodeClient, directory: string): Prom
 
 async function useCurrentCheckout(page: Page) {
   await page.getByRole("button", { name: /^Work in:/ }).click();
-  await page.getByRole("button", { name: /^Current checkout/ }).click();
+  await page.getByRole("option", { name: /^Current checkout/ }).click();
 }
 
 async function captureSelectors(page: Page, runRoot: string) {

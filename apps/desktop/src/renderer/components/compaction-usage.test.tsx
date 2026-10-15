@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { CompactionUsage } from "./compaction-usage";
 
 describe("CompactionUsage", () => {
-  it("labels request usage separately from the resulting context", () => {
+  it("summarizes the compaction request and keeps the breakdown in its tooltip", () => {
     render(
       <CompactionUsage
         part={{
@@ -13,15 +13,19 @@ describe("CompactionUsage", () => {
         }}
       />,
     );
-    const usage = screen.getByText(/Compaction request tokens:/);
-    expect(usage.textContent).toContain("$0.012345");
-    expect(usage.textContent).toContain("1,200 input · 100 output · 20 reasoning");
-    expect(usage.textContent).toContain("800 cache read · 40 cache write");
+    const usage = screen.getByText("Summarizing used 2.2k tokens · $0.01");
+    expect(usage.getAttribute("title")).toBe(
+      "1,240 uncached input · 800 cached input · 120 output",
+    );
   });
 
-  it("shows zero cost without inventing missing token usage", () => {
-    render(<CompactionUsage part={{ type: "compaction", status: "failed", cost: 0 }} />);
-    expect(screen.getByText("Compaction request: $0.00")).toBeTruthy();
+  it("shows sub-cent and zero cost without inventing missing token usage", () => {
+    const { rerender } = render(
+      <CompactionUsage part={{ type: "compaction", status: "failed", cost: 0 }} />,
+    );
+    expect(screen.getByText("Summarizing used $0.00")).toBeTruthy();
+    rerender(<CompactionUsage part={{ type: "compaction", cost: 0.0042 }} />);
+    expect(screen.getByText("Summarizing used $0.0042")).toBeTruthy();
   });
 
   it("does not invent usage for older messages", () => {

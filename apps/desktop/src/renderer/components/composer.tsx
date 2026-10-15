@@ -5,15 +5,12 @@ import type { ModelRef } from "@opencode/client";
 import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import {
   ArrowUp,
-  Bot,
   ChevronDown,
   Clock3,
-  Ellipsis,
   Pencil,
   Plus,
   Square,
   SquareTerminal,
-  Trash2,
   X,
   Zap,
 } from "lucide-react";
@@ -37,7 +34,6 @@ import type {
   PalotMessage,
   PalotModel,
   PalotModelCatalog,
-  PalotProvider,
   PalotReference,
   PalotSession,
 } from "../../shared";
@@ -45,7 +41,9 @@ import type { PalotBrowserComment } from "../../shared/browser-contract";
 import {
   type ComposerDelivery,
   autoBackgroundOnSteerAtom,
+  compactBeforeSendSuggestionAtom,
   composerDraftAtomFamily,
+  contextMeterVisibleAtom,
   flushComposerDrafts,
   defaultDeliveryAtom,
   defaultModelsAtom,
@@ -61,7 +59,6 @@ import {
   runtimeAtom,
   type SessionExecutionState,
 } from "../atoms/workspace";
-import { attentionTargetAtom } from "../atoms/attention";
 import {
   composerActionRequestAtom,
   requestGlobalCommandAtom,
@@ -73,7 +70,14 @@ import { useComposerSelection } from "../hooks/use-composer-selection";
 import { useComposerPermissions } from "../hooks/use-composer-permissions";
 import { useSettingsSnapshot } from "../hooks/use-settings-snapshot";
 import { useCacheSession, useProjectCatalog } from "../hooks/use-session-catalog";
-import { getContextUsage } from "../lib/context-usage";
+import {
+  compactionRunning,
+  findContextModel,
+  getContextUsage,
+  isFreeModel,
+  lastAssistantActivityAt,
+  lastCompletedCompactionAt,
+} from "../lib/context-usage";
 import { cn } from "../lib/cn";
 import { admitComposerSubmission } from "../lib/composer-admission";
 import {
@@ -110,13 +114,16 @@ import { SessionLocationMissingView } from "./session-location-missing";
 import { formatCommandShortcut } from "../lib/global-commands";
 import { BUILTIN_COMMANDS } from "../lib/builtin-commands";
 import { convergeMessageReceipt } from "../lib/message-reconcile";
-import { modelMatchesRef, resolveModelSelection } from "../lib/model-selection";
+import { resolveModelSelection } from "../lib/model-selection";
 import {
   applyModelPreference,
+  modelPickerUsageAtom,
   modelPreferenceKey,
   modelProjectPreferenceKey,
   reconcileModelPreference,
+  rememberRecentModel,
 } from "../lib/model-preferences";
+import { findModelForQuery, nextReasoningVariant } from "../lib/model-picker";
 import { showErrorToast } from "../lib/toast-error";
 import type { ApprovalPreset } from "../lib/session-permissions";
 import { updateSessionActivity } from "../lib/session-activity-query";
@@ -124,25 +131,18 @@ import { projectForSession, type PendingRequestView } from "../lib/view-models";
 import { palot } from "../services/palot";
 import { BackgroundWorkPrompt, type BackgroundWorkItem } from "./subagent-activity";
 import { ComposerDiscovery, type ComposerDiscoveryItem } from "./composer-discovery";
+import { ComposerQueue } from "./composer-queue";
 import { ApprovalSelector } from "./approval-selector";
+import { AgentPicker, ModelPicker, ReasoningPicker } from "./composer-pickers";
+import { CompactAndSendControl, ContextMeter, useCompactSuggestion } from "./context-meter";
 import { FileAttachment } from "./file-attachment";
 import { OpenCodeConnectionAlert } from "./opencode-connection-alert";
 import { AttachmentGroup } from "./ui/attachment";
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "./ui/command";
-import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
@@ -152,17 +152,9 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "./ui/input-group";
-import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "./ui/popover";
 import { Spinner } from "./ui/spinner";
+import { toast } from "./ui/toast";
 import { SurfaceBackdrop } from "./ui/surface-backdrop";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const EMPTY_MODEL_CATALOG: PalotModelCatalog = {
@@ -196,21 +188,12 @@ interface BackgroundSteerPromptState {
   error: string | null;
 }
 
-const TOKEN_FORMATTER = new Intl.NumberFormat(undefined);
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }
 
-function sentenceCase(value: string): string {
-  return value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
-}
-
 function tokenTotal(tokens: PalotSession["tokens"]): number {
   return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write;
-}
-
-function formatTokens(value: number): string {
-  return TOKEN_FORMATTER.format(value);
 }
 
 function composerDraftWithRetainedFiles(message: PalotMessage): ComposerDraft {
@@ -375,6 +358,7 @@ function ComposerView({
   const autoBackgroundOnSteer = useAtomValue(autoBackgroundOnSteerAtom);
   const defaultModels = useAtomValue(defaultModelsAtom);
   const modelPickerPreferences = useAtomValue(modelPickerPreferencesAtom);
+  const setModelPickerUsage = useSetAtom(modelPickerUsageAtom);
   const localAttachments = runtime?.capabilities?.localFileAttachments !== false;
   const workbench = useWorkbenchCommands(
     runtime ? { profileID: runtime.profileID, sessionID: session.id } : null,
@@ -432,7 +416,9 @@ function ComposerView({
   const [backgroundSteerPrompt, setBackgroundSteerPrompt] =
     useState<BackgroundSteerPromptState | null>(null);
   const [backgroundingSteer, setBackgroundingSteer] = useState(false);
-  const [activeMenu, setActiveMenu] = useState<"agent" | "model" | "approvals" | null>(null);
+  const [activeMenu, setActiveMenu] = useState<
+    "agent" | "model" | "reasoning" | "approvals" | null
+  >(null);
   const [agentCycleRequest, setAgentCycleRequest] = useState<{
     scope: string;
     direction: 1 | -1;
@@ -702,11 +688,26 @@ function ComposerView({
     () => getContextUsage(messages, catalog.models),
     [catalog.models, messages],
   );
-  const queuedPendingInputs = useMemo(
-    () => pendingInputs.filter((request) => request.delivery === "queue"),
-    [pendingInputs],
+  const freeModel = useMemo(
+    () => isFreeModel(findContextModel(catalog.models, session.model ?? context?.model)),
+    [catalog.models, session.model, context?.model],
   );
-  const queuedPendingCount = queuedPendingInputs.length;
+  const contextMeterVisible = useAtomValue(contextMeterVisibleAtom);
+  const compactSuggestionEnabled = useAtomValue(compactBeforeSendSuggestionAtom);
+  const compacting = useMemo(() => compactionRunning(messages), [messages]);
+  const lastCompactedAt = useMemo(() => lastCompletedCompactionAt(messages), [messages]);
+  const lastActivityAt = useMemo(() => lastAssistantActivityAt(messages), [messages]);
+  const compactSuggestion = useCompactSuggestion({
+    usage: context,
+    lastActivityAt,
+    enabled:
+      compactSuggestionEnabled &&
+      !onCreateSession &&
+      !isWorking &&
+      !compacting &&
+      mode === "normal" &&
+      !activePendingInputEdit,
+  });
   const pendingFilesByID = useMemo(
     () =>
       new Map(
@@ -771,29 +772,80 @@ function ComposerView({
       (candidate) => candidate.id === request.id && candidate.type === "user",
     );
     if (!message) throw new Error("The pending message is no longer available.");
-    const restoredDraft = composerDraftWithRetainedFiles(message);
     setComposerState((current) => ({ ...current, cancelingID: request.id }));
     try {
       await palot.updatePending({ sessionID: session.id, inputID: request.id, action: "cancel" });
-      setComposerState((current) => ({
-        ...current,
-        edit: {
-          id: request.id,
-          delivery: request.delivery ?? "queue",
-          draft: restoredDraft,
-          files: retainedComposerFiles(message),
-          comments: reviewCommentsFromMessage(message) ?? [],
-          browserComments: browserCommentsFromMessage(message),
-        },
-      }));
-      if (activeDraftScopeRef.current === draftScope) {
-        setAttachmentErrors([]);
-        setSelection({ start: restoredDraft.text.length, end: restoredDraft.text.length });
-        focusComposer();
-      }
+      openPendingInputEdit(message, request.delivery ?? "queue");
     } finally {
       setComposerState((current) => ({ ...current, cancelingID: null }));
     }
+  }
+
+  /** Puts an already-canceled input back in the composer; resubmitting adds it to the end. */
+  function openPendingInputEdit(message: PalotMessage, editDelivery: ComposerDelivery) {
+    const restoredDraft = composerDraftWithRetainedFiles(message);
+    setComposerState((current) => ({
+      ...current,
+      edit: {
+        id: message.id,
+        delivery: editDelivery,
+        draft: restoredDraft,
+        files: retainedComposerFiles(message),
+        comments: reviewCommentsFromMessage(message) ?? [],
+        browserComments: browserCommentsFromMessage(message),
+      },
+    }));
+    if (activeDraftScopeRef.current === draftScope) {
+      setAttachmentErrors([]);
+      setSelection({ start: restoredDraft.text.length, end: restoredDraft.text.length });
+      focusComposer();
+    }
+  }
+
+  async function deletePendingInput(request: PendingRequestView) {
+    const message = messagesRef.current.find(
+      (candidate) => candidate.id === request.id && candidate.type === "user",
+    );
+    await palot.updatePending({ sessionID: session.id, inputID: request.id, action: "cancel" });
+    if (!message) return;
+    const deletedDelivery = request.delivery ?? "queue";
+    // Re-admitting could wake a paused queue, so Undo returns the message to the composer.
+    toast.add({
+      type: "success",
+      title: "Pending message deleted",
+      actionProps: {
+        children: "Undo",
+        onClick: () => {
+          const current = store.get(stateAtom);
+          if (current.edit || current.cancelingID || current.sending) {
+            toast.add({
+              type: "error",
+              title: "Could not restore the message",
+              description: "Finish editing the other pending message first.",
+            });
+            return;
+          }
+          openPendingInputEdit(message, deletedDelivery);
+        },
+      },
+    });
+  }
+
+  /** A queued input steered from the stack can be blocked by foreground work like a typed steer. */
+  function trackSteeredPendingInput(request: PendingRequestView) {
+    if (!isWorking || onCreateSession || session.parentID) return;
+    const submittedAt = Date.now();
+    const blockers = backgroundWorkRef.current.filter(
+      (item) => !item.background && item.startedAt < submittedAt,
+    );
+    if (blockers.length === 0) return;
+    backgroundActionRef.current = false;
+    setBackgroundSteerPrompt(null);
+    setPendingBackgroundSteer({
+      id: request.id,
+      submittedAt,
+      blockerIDs: new Set(blockers.map((item) => item.id)),
+    });
   }
 
   function restorePreviousDraft() {
@@ -1026,6 +1078,25 @@ function ComposerView({
     }
   }
 
+  async function cycleReasoning() {
+    const selected = resolveModelSelection(
+      catalog.models,
+      displayedSession.model,
+      catalog.defaultModel,
+    ).model;
+    if (!selected || selected.variants.length === 0) return;
+    const variant = nextReasoningVariant(selected.variants, displayedSession.model?.variant);
+    try {
+      await composerSelection.selectVariant({
+        id: selected.id,
+        providerID: selected.providerID,
+        ...(variant ? { variant } : {}),
+      });
+    } catch (error) {
+      showErrorToast("Could not change reasoning effort", error);
+    }
+  }
+
   const applyPendingAgentCycle = useEffectEvent((direction: 1 | -1) => {
     void cycleAgent(direction);
   });
@@ -1078,6 +1149,9 @@ function ComposerView({
     switch (shortcut) {
       case "model":
         if (!selectionDisabled) setActiveMenu("model");
+        return;
+      case "reasoning-cycle":
+        if (!selectionDisabled) void cycleReasoning();
         return;
       case "agent-next":
       case "agent-previous": {
@@ -1140,22 +1214,24 @@ function ComposerView({
     }
     if (commandName === "model") {
       if (fromDraft) clearSubmittedContents();
-      const arg = args?.trim().toLowerCase();
+      const arg = args?.trim();
       if (arg) {
-        const matched = catalog.models.find(
-          (m) =>
-            m.id.toLowerCase() === arg ||
-            m.name.toLowerCase() === arg ||
-            `${m.providerID}/${m.id}`.toLowerCase() === arg ||
-            m.name.toLowerCase().includes(arg) ||
-            m.id.toLowerCase().includes(arg),
+        // Same matching as the picker's search; visible models win over hidden ones.
+        const providerNames = new Map(
+          catalog.providers.map((provider) => [provider.id, provider.name]),
         );
+        const matched =
+          findModelForQuery(pickerModels, arg, providerNames) ??
+          findModelForQuery(catalog.models, arg, providerNames);
         if (matched) {
           try {
             await composerSelection.selectModel({
               providerID: matched.providerID,
               id: matched.id,
             });
+            setModelPickerUsage((current) =>
+              rememberRecentModel(current, preferenceScope, modelPreferenceKey(matched)),
+            );
           } catch (error) {
             showErrorToast("Could not switch models", error);
           }
@@ -1321,7 +1397,10 @@ function ComposerView({
     handleComposerAction(request);
   }, [composerActionRequest, onCreateSession, runtime?.profileID, session.id, store]);
 
-  async function submit(deliveryOverride?: ComposerDelivery) {
+  async function submit(
+    deliveryOverride?: ComposerDelivery,
+    compaction: "suggested" | "skip" = "suggested",
+  ) {
     if (mode === "shell") {
       await submitShell();
       return;
@@ -1388,6 +1467,18 @@ function ComposerView({
       (await runBuiltinCommand(submission.command.toLowerCase(), submission.arguments, "draft"))
     )
       return;
+
+    // OpenCode runs a steered compaction before prompts sent after it, so the prompt stays verbatim.
+    if (compaction === "suggested" && compactSuggestion !== null) {
+      setSending(true);
+      try {
+        await palot.compactSession(session.id);
+      } catch (error) {
+        setSending(false);
+        showErrorToast("Could not compact before sending", error);
+        return;
+      }
+    }
 
     const effectiveDelivery =
       isWorking && !onCreateSession ? (deliveryOverride ?? composerDelivery) : "steer";
@@ -1683,21 +1774,45 @@ function ComposerView({
         runtime?.connected !== false;
   const discoveryOpen = Boolean(activeQuery);
   const unifiedFocus = Boolean(contextBar && contextBarMode === "new-task");
+  // Closing one picker never closes another that has taken over.
   const handleModelOpenChange = useCallback(
-    (open: boolean) => setActiveMenu(open ? "model" : null),
+    (open: boolean) =>
+      setActiveMenu((current) => (open ? "model" : current === "model" ? null : current)),
+    [],
+  );
+  const handleReasoningOpenChange = useCallback(
+    (open: boolean) =>
+      setActiveMenu((current) => (open ? "reasoning" : current === "reasoning" ? null : current)),
     [],
   );
   const handleAgentOpenChange = useCallback(
-    (open: boolean) => setActiveMenu(open ? "agent" : null),
+    (open: boolean) =>
+      setActiveMenu((current) => (open ? "agent" : current === "agent" ? null : current)),
     [],
   );
   const handleApprovalsOpenChange = useCallback(
-    (open: boolean) => setActiveMenu(open ? "approvals" : null),
+    (open: boolean) =>
+      setActiveMenu((current) => (open ? "approvals" : current === "approvals" ? null : current)),
     [],
+  );
+  const manageModels = useCallback(
+    () => requestGlobalCommand("settings.open:models"),
+    [requestGlobalCommand],
   );
   const openContext = useCallback(() => {
     workbench.openTab({ kind: "context", location: session.location }, { pane: "right" });
   }, [session.location, workbench]);
+  const compactDisabledReason = !runtime?.connected
+    ? "Connect to OpenCode to compact."
+    : compacting
+      ? "Compaction is already running."
+      : isWorking
+        ? "Wait for the current turn to finish."
+        : sending
+          ? "Wait for the message to send."
+          : !context
+            ? "Nothing to compact yet."
+            : null;
   const handleBackground = useCallback(() => {
     if (pendingBackgroundSteer) void backgroundPendingSteer(pendingBackgroundSteer);
   }, [backgroundPendingSteer, pendingBackgroundSteer]);
@@ -1732,33 +1847,16 @@ function ComposerView({
       )}
       <OpenCodeConnectionAlert />
       <SessionLocationMissingView options={recoveryOptions} recovery={locationRecovery} />
-      {pendingInputs.length > 0 ? (
-        <section
-          aria-label="Pending messages"
-          className="relative mx-2 -mb-4 min-w-0 rounded-t-2xl border border-b-0 border-foreground/10 bg-muted px-1 pt-1 pb-4"
-        >
-          <div className="palot-native-scrollbar flex max-h-[min(9rem,20cqh)] min-w-0 flex-col overflow-x-hidden overflow-y-auto overscroll-contain">
-            {pendingInputs.map((request, index) => (
-              <PendingInputTaskbarItem
-                key={request.id}
-                sessionID={session.id}
-                request={request}
-                files={pendingFilesByID.get(request.id)}
-                editDisabled={Boolean(activePendingInputEdit || pendingInputEditID || sending)}
-                onEdit={editPendingInput}
-                queuedPosition={
-                  request.delivery === "queue"
-                    ? pendingInputs
-                        .slice(0, index + 1)
-                        .filter((candidate) => candidate.delivery === "queue").length
-                    : undefined
-                }
-                queuedCount={queuedPendingCount}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
+      <ComposerQueue
+        sessionID={session.id}
+        requests={pendingInputs}
+        filesByID={pendingFilesByID}
+        working={isWorking || sending}
+        editDisabled={Boolean(activePendingInputEdit || pendingInputEditID || sending)}
+        onEdit={editPendingInput}
+        onDelete={deletePendingInput}
+        onSteered={trackSteeredPendingInput}
+      />
       <div
         className={cn(
           "relative z-10",
@@ -2165,7 +2263,7 @@ function ComposerView({
                   </TooltipContent>
                 </Tooltip>
               ) : null}
-              <AgentSelector
+              <AgentPicker
                 session={displayedSession}
                 agents={agents}
                 defaultAgent={defaultAgent}
@@ -2190,24 +2288,42 @@ function ComposerView({
                 className="ml-auto flex min-w-0 max-w-full items-center gap-1.5"
                 data-palot-composer-run-controls
               >
-                <ModelSelector
+                <ModelPicker
                   session={displayedSession}
+                  draft={Boolean(onCreateSession)}
                   models={pickerModels}
                   catalogModels={catalog.models}
                   defaultModel={catalog.defaultModel}
                   providers={catalog.providers}
+                  preferenceScope={preferenceScope}
                   open={activeMenu === "model"}
                   onOpenChange={handleModelOpenChange}
                   onSelectionComplete={focusComposer}
                   onSelectModel={composerSelection.selectModel}
+                  onManageModels={manageModels}
+                  disabled={sending || composerSelection.busy}
+                />
+                <ReasoningPicker
+                  session={displayedSession}
+                  catalogModels={catalog.models}
+                  defaultModel={catalog.defaultModel}
+                  open={activeMenu === "reasoning"}
+                  onOpenChange={handleReasoningOpenChange}
+                  onSelectionComplete={focusComposer}
                   onSelectVariant={composerSelection.selectVariant}
                   disabled={sending || composerSelection.busy}
                 />
-                {onCreateSession ? null : (
-                  <ContextIndicator
+                {onCreateSession || !contextMeterVisible ? null : (
+                  <ContextMeter
                     usage={context}
-                    totalProcessed={tokenTotal(session.tokens)}
-                    onClick={openContext}
+                    sessionTokens={session.tokens}
+                    cost={session.cost}
+                    freeModel={freeModel}
+                    lastCompactedAt={lastCompactedAt}
+                    compacting={compacting}
+                    compactDisabledReason={compactDisabledReason}
+                    onCompact={() => void runBuiltinCommand("compact", undefined, "palette")}
+                    onOpenDetails={openContext}
                   />
                 )}
                 {isWorking && !canSubmit ? (
@@ -2290,6 +2406,14 @@ function ComposerView({
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
+                ) : compactSuggestion !== null ? (
+                  <CompactAndSendControl
+                    tokens={compactSuggestion}
+                    disabled={!canSubmit}
+                    sending={sending}
+                    onCompactAndSend={() => void submit()}
+                    onSendWithoutCompacting={() => void submit(undefined, "skip")}
+                  />
                 ) : (
                   <InputGroupButton
                     type="button"
@@ -2357,7 +2481,8 @@ function sameComposerSession(left: PalotSession, right: PalotSession): boolean {
     left.location.directory === right.location.directory &&
     left.location.workspaceID === right.location.workspaceID &&
     left.revert?.messageID === right.revert?.messageID &&
-    tokenTotal(left.tokens) === tokenTotal(right.tokens)
+    tokenTotal(left.tokens) === tokenTotal(right.tokens) &&
+    left.cost === right.cost
   );
 }
 
@@ -2386,8 +2511,16 @@ function sameComposerMessages(left: PalotMessage[], right: PalotMessage[]): bool
     tokenTotal(leftContext?.tokens ?? EMPTY_TOKENS) ===
       tokenTotal(rightContext?.tokens ?? EMPTY_TOKENS) &&
     leftContext?.model?.id === rightContext?.model?.id &&
-    leftContext?.model?.providerID === rightContext?.model?.providerID
+    leftContext?.model?.providerID === rightContext?.model?.providerID &&
+    // The context meter and compact-before-send read compaction state and idle time.
+    compactionSignature(left) === compactionSignature(right) &&
+    lastAssistantActivityAt(left) === lastAssistantActivityAt(right)
   );
+}
+
+function compactionSignature(messages: PalotMessage[]): string {
+  const compaction = messages.findLast((message) => message.type === "compaction");
+  return compaction ? `${compaction.id}:${compaction.completedAt ?? "running"}` : "";
 }
 
 const EMPTY_TOKENS: PalotSession["tokens"] = {
@@ -2402,591 +2535,3 @@ function lastContextMessage(messages: PalotMessage[]): PalotMessage | undefined 
     (message) => message.type === "assistant" && tokenTotal(message.tokens ?? EMPTY_TOKENS) > 0,
   );
 }
-
-export const PendingInputTaskbarItem = memo(function PendingInputTaskbarItem({
-  sessionID,
-  request,
-  files,
-  editDisabled = false,
-  onEdit,
-  queuedPosition,
-  queuedCount,
-}: {
-  sessionID: string;
-  request: PendingRequestView;
-  files?: PalotFileAttachment[];
-  editDisabled?: boolean;
-  onEdit?(request: PendingRequestView): Promise<void> | void;
-  queuedPosition?: number;
-  queuedCount: number;
-}) {
-  const [attentionTarget, setAttentionTarget] = useAtom(attentionTargetAtom);
-  const [defaultDelivery, setDefaultDelivery] = useAtom(defaultDeliveryAtom);
-  const [responding, setResponding] = useState(false);
-  const delivery = request.delivery ?? "steer";
-  const attachmentLabel = files?.length
-    ? `${files[0]!.name}${files.length > 1 ? ` (+${files.length - 1} more)` : ""}`
-    : "Pending message";
-  const detail = request.detail?.trim() ? request.detail : attachmentLabel;
-  const status =
-    delivery === "queue" && queuedCount > 1 && queuedPosition
-      ? `Queued · ${queuedPosition}`
-      : delivery === "queue"
-        ? "Queued"
-        : "Steering";
-
-  useEffect(() => {
-    if (
-      attentionTarget?.sessionID !== sessionID ||
-      attentionTarget.type !== "input" ||
-      attentionTarget.requestID !== request.id
-    ) {
-      return;
-    }
-    const element = document.querySelector<HTMLElement>(
-      `[data-palot-request-id="${CSS.escape(request.id)}"]`,
-    );
-    if (!element) return;
-    element.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    element.querySelector<HTMLElement>("button")?.focus();
-    setAttentionTarget(null);
-  }, [attentionTarget, request.id, sessionID, setAttentionTarget]);
-
-  async function update(action: "steer" | "queue" | "cancel" | "edit") {
-    setResponding(true);
-    try {
-      if (action === "edit") {
-        await onEdit?.(request);
-        return;
-      }
-      await palot.updatePending({ sessionID, inputID: request.id, action });
-    } catch (error) {
-      showErrorToast("Could not update pending message", error);
-    } finally {
-      setResponding(false);
-    }
-  }
-
-  return (
-    <div
-      className="flex min-h-8 min-w-0 items-center gap-2 rounded-lg px-2 text-meta leading-none text-muted-foreground hover:bg-foreground/4"
-      role="region"
-      data-palot-request-id={request.id}
-      aria-label={`Pending message actions: ${detail}`}
-      aria-busy={responding}
-    >
-      <span className="flex shrink-0 items-center gap-1 font-medium text-foreground/70">
-        {responding ? (
-          <Spinner className="size-3" aria-hidden="true" />
-        ) : delivery === "queue" ? (
-          <Clock3 className="size-3" aria-hidden="true" />
-        ) : (
-          <Zap className="size-3" aria-hidden="true" />
-        )}
-        {status}
-      </span>
-      <span className="min-w-0 flex-1 truncate" title={detail}>
-        {detail}
-      </span>
-      <button
-        type="button"
-        className="shrink-0 rounded-md px-1.5 py-1 font-medium text-foreground/65 hover:bg-foreground/6 hover:text-foreground"
-        aria-label={delivery === "queue" ? "Steer next" : "Run after current turn"}
-        disabled={responding}
-        onClick={() => void update(delivery === "queue" ? "steer" : "queue")}
-      >
-        {delivery === "queue" ? "Steer" : "Queue"}
-      </button>
-      <button
-        type="button"
-        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/6 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
-        aria-label="Cancel pending message"
-        title="Cancel pending message"
-        disabled={responding}
-        onClick={() => void update("cancel")}
-      >
-        <Trash2 className="size-3.5" aria-hidden="true" />
-      </button>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
-              aria-label="More pending message actions"
-              disabled={responding}
-            />
-          }
-        >
-          <Ellipsis className="size-3.5" aria-hidden="true" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="top" align="end" sideOffset={4} className="w-44">
-          <DropdownMenuItem disabled={editDisabled || !onEdit} onClick={() => void update("edit")}>
-            <Pencil aria-hidden="true" />
-            Cancel and edit
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="destructive" onClick={() => void update("cancel")}>
-            <Trash2 aria-hidden="true" />
-            Cancel pending message
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => setDefaultDelivery(defaultDelivery === "queue" ? "steer" : "queue")}
-            title="Changes future messages only"
-          >
-            {defaultDelivery === "queue" ? (
-              <Zap aria-hidden="true" />
-            ) : (
-              <Clock3 aria-hidden="true" />
-            )}
-            {defaultDelivery === "queue" ? "Turn off queueing" : "Turn on queueing"}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-});
-
-const ContextIndicator = memo(function ContextIndicator({
-  usage,
-  totalProcessed,
-  onClick,
-}: {
-  usage: ReturnType<typeof getContextUsage>;
-  totalProcessed: number;
-  onClick(): void;
-}) {
-  const percentage = usage?.percentage ?? null;
-  const visualPercentage = Math.min(100, Math.max(0, percentage ?? 0));
-  const status =
-    percentage === null
-      ? "unavailable"
-      : percentage >= 90
-        ? "critical"
-        : percentage >= 70
-          ? "warning"
-          : "normal";
-  const label = percentage === null ? "Open Context tab" : `Open Context tab, ${percentage}% used`;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <InputGroupButton
-            type="button"
-            size="icon-sm"
-            className="palot-context-trigger rounded-full"
-            aria-label={label}
-            onClick={onClick}
-          />
-        }
-      >
-        <svg
-          viewBox="0 0 20 20"
-          data-status={status}
-          className="-rotate-90 data-[status=critical]:text-destructive data-[status=normal]:text-foreground data-[status=warning]:text-amber-500 dark:data-[status=warning]:text-amber-400"
-          aria-hidden="true"
-        >
-          <circle
-            cx="10"
-            cy="10"
-            r="7"
-            pathLength="100"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            className="text-muted"
-          />
-          <circle
-            cx="10"
-            cy="10"
-            r="7"
-            pathLength="100"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeDasharray="100"
-            strokeDashoffset={100 - visualPercentage}
-            className="transition-[stroke-dashoffset]"
-          />
-        </svg>
-      </TooltipTrigger>
-      <TooltipContent>
-        {usage
-          ? `${percentage ?? "?"}% used · ${formatTokens(usage.total)} latest · ${formatTokens(totalProcessed)} total`
-          : `Context details · ${formatTokens(totalProcessed)} tokens processed`}
-      </TooltipContent>
-    </Tooltip>
-  );
-});
-
-const ModelSelector = memo(function ModelSelector({
-  session,
-  models,
-  catalogModels,
-  defaultModel,
-  providers,
-  open,
-  onOpenChange,
-  onSelectionComplete,
-  onSelectModel,
-  onSelectVariant,
-  disabled,
-}: {
-  session: PalotSession;
-  models: PalotModel[];
-  catalogModels: PalotModel[];
-  defaultModel: PalotModel | null;
-  providers: PalotProvider[];
-  open: boolean;
-  onOpenChange(open: boolean): void;
-  onSelectionComplete(): void;
-  onSelectModel(model: ModelRef): Promise<void>;
-  onSelectVariant(model: ModelRef): Promise<void>;
-  disabled: boolean;
-}) {
-  const [switching, setSwitching] = useState(false);
-  const selection = resolveModelSelection(catalogModels, session.model, defaultModel);
-  const selectedRef = selection.ref;
-  const selected = selection.model;
-  const usesDefault = selection.usesDefault;
-  const unavailable = session.model !== null && selected === null;
-  const label = selected?.name ?? selectedRef?.id ?? "Choose model";
-  const variant = session.model?.variant;
-  const effort =
-    selected && selected.variants.length > 0
-      ? variant && variant !== "default"
-        ? sentenceCase(variant)
-        : "Auto"
-      : null;
-  const providerNames = useMemo(
-    () => new Map(providers.map((provider) => [provider.id, provider.name])),
-    [providers],
-  );
-
-  async function selectModel(model: PalotModel) {
-    if (switching || disabled) return;
-    const next = {
-      id: model.id,
-      providerID: model.providerID,
-    };
-    setSwitching(true);
-    try {
-      await onSelectModel(next);
-      onOpenChange(false);
-      onSelectionComplete();
-    } catch (error) {
-      showErrorToast("Could not switch models", error);
-    } finally {
-      setSwitching(false);
-    }
-  }
-
-  return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <InputGroupButton
-                  type="button"
-                  size="composer"
-                  className="palot-model-trigger min-w-0 max-w-64 shrink gap-1.5 px-2"
-                  aria-label={`Model: ${label}${unavailable ? ", unavailable" : ""}`}
-                  aria-description={effort ? `Reasoning: ${effort}` : undefined}
-                  disabled={switching || disabled}
-                />
-              }
-            />
-          }
-        >
-          <span className="truncate" data-palot-model-name>
-            {label}
-          </span>
-          {unavailable || usesDefault ? (
-            <span className="shrink-0 text-muted-foreground" data-palot-model-detail-label>
-              {unavailable ? "Unavailable" : "Default"}
-            </span>
-          ) : null}
-          {effort && (
-            <span className="shrink-0 text-muted-foreground" data-palot-model-effort>
-              {effort}
-            </span>
-          )}
-          <ChevronDown className="shrink-0" aria-hidden="true" />
-        </TooltipTrigger>
-        <TooltipContent>
-          {`Choose model · ${formatShortcut(COMPOSER_SHORTCUT_KEYS.model)}`}
-        </TooltipContent>
-      </Tooltip>
-      <PopoverContent
-        side="top"
-        align="end"
-        className="palot-model-picker w-[min(420px,calc(100vw-24px))] gap-3 p-2.5"
-      >
-        <PopoverHeader className="px-1">
-          <PopoverTitle>Model and reasoning</PopoverTitle>
-          <PopoverDescription>
-            {unavailable
-              ? "This task's selected model is no longer available. Choose another model to continue."
-              : usesDefault
-                ? "Using the default model configured for this project."
-                : "Choose the model used by this task."}
-          </PopoverDescription>
-        </PopoverHeader>
-        <ReasoningOptions
-          session={session}
-          models={catalogModels}
-          defaultModel={defaultModel}
-          onOpenChange={onOpenChange}
-          onSelectionComplete={onSelectionComplete}
-          onSelectModel={onSelectVariant}
-          disabled={disabled || switching}
-        />
-        <Command loop label="Choose model" className="max-h-[340px] bg-transparent p-0">
-          <CommandInput placeholder="Search models..." aria-label="Search models" />
-          <CommandList data-palot-model-list>
-            <CommandEmpty>No models found.</CommandEmpty>
-            {unavailable && selectedRef ? (
-              <CommandGroup heading="Current task" className="py-1">
-                <CommandItem
-                  disabled
-                  value={`${selectedRef.providerID} ${selectedRef.id} unavailable`}
-                >
-                  <span className="min-w-0 flex-1 truncate">{selectedRef.id}</span>
-                  <span className="text-micro text-muted-foreground">Unavailable</span>
-                </CommandItem>
-              </CommandGroup>
-            ) : null}
-            <CommandGroup heading="Available" className="py-1">
-              {models.map((model) => (
-                <CommandItem
-                  key={`${model.providerID}:${model.id}`}
-                  value={`${model.name} ${model.id} ${model.providerID} ${providerNames.get(model.providerID) ?? ""}`}
-                  disabled={switching || disabled}
-                  data-palot-model-option
-                  data-checked={
-                    selected?.id === model.id && selected.providerID === model.providerID
-                  }
-                  onSelect={() => {
-                    void selectModel(model);
-                  }}
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {model.name}
-                    <span className="ml-1.5 text-micro text-muted-foreground">
-                      {providerNames.get(model.providerID) ?? model.providerID}
-                    </span>
-                  </span>
-                  {modelMatchesRef(model, session.model) ? (
-                    <span className="text-micro text-muted-foreground">Current</span>
-                  ) : modelMatchesRef(model, defaultModel) ? (
-                    <span className="text-micro text-muted-foreground">Default</span>
-                  ) : null}
-                  <span className="text-micro text-muted-foreground tabular-nums">
-                    {Math.round(model.contextLimit / 1_000)}K
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-});
-
-const AgentSelector = memo(function AgentSelector({
-  session,
-  agents,
-  defaultAgent,
-  loading,
-  open,
-  onOpenChange,
-  onSelectionComplete,
-  onSelectAgent,
-  disabled,
-}: {
-  session: PalotSession;
-  agents: PalotAgent[];
-  defaultAgent: PalotAgent | null;
-  loading: boolean;
-  open: boolean;
-  onOpenChange(open: boolean): void;
-  onSelectionComplete(): void;
-  onSelectAgent(agent: PalotAgent): Promise<void>;
-  disabled: boolean;
-}) {
-  const [switching, setSwitching] = useState(false);
-  const available = primaryAgents(agents);
-  const selected = available.find((agent) => agent.id === session.agent) ?? null;
-  // Without an explicit agent, OpenCode runs its default agent; show that agent by name.
-  const label = selected?.name ?? session.agent ?? defaultAgent?.name ?? "Default";
-  const implicitDefault = !session.agent && defaultAgent !== null;
-  const shortcuts = `${formatShortcut(COMPOSER_SHORTCUT_KEYS["agent-next"])} / ${formatShortcut(COMPOSER_SHORTCUT_KEYS["agent-previous"])}`;
-
-  async function selectAgent(agent: PalotAgent) {
-    if (switching || disabled) return;
-    setSwitching(true);
-    try {
-      await onSelectAgent(agent);
-      onOpenChange(false);
-      onSelectionComplete();
-    } catch (error) {
-      showErrorToast("Could not switch agents", error);
-    } finally {
-      setSwitching(false);
-    }
-  }
-
-  return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <InputGroupButton
-                  type="button"
-                  size="composer"
-                  className="max-w-40 gap-1 px-2"
-                  aria-label={`Agent: ${label}${implicitDefault ? " (default)" : ""}`}
-                  disabled={switching || disabled}
-                />
-              }
-            />
-          }
-        >
-          <Bot className="shrink-0" aria-hidden="true" />
-          <span className="truncate">{label}</span>
-          <ChevronDown className="shrink-0" aria-hidden="true" />
-        </TooltipTrigger>
-        <TooltipContent>{`Switch agent · ${shortcuts}`}</TooltipContent>
-      </Tooltip>
-      <PopoverContent
-        side="top"
-        align="start"
-        className="w-[min(360px,calc(100vw-24px))] gap-3 p-2.5"
-      >
-        <PopoverHeader className="px-1">
-          <PopoverTitle>Agent</PopoverTitle>
-          <PopoverDescription>Choose the primary agent used by this task.</PopoverDescription>
-        </PopoverHeader>
-        <Command loop label="Choose agent" className="max-h-[300px] bg-transparent p-0">
-          <CommandInput placeholder="Search agents..." aria-label="Search agents" />
-          <CommandList>
-            <CommandEmpty>
-              {loading ? "Loading agents..." : "No primary agents found."}
-            </CommandEmpty>
-            <CommandGroup heading="Available" className="py-1">
-              {available.map((agent) => (
-                <CommandItem
-                  key={agent.id}
-                  value={`${agent.name} ${agent.id} ${agent.description ?? ""}`}
-                  disabled={switching || disabled}
-                  data-checked={agent.id === session.agent}
-                  onSelect={() => void selectAgent(agent)}
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {agent.name}
-                    {agent.description ? (
-                      <span className="ml-1.5 text-micro text-muted-foreground">
-                        {agent.description}
-                      </span>
-                    ) : null}
-                  </span>
-                  {agent.id === session.agent ? (
-                    <span className="text-micro text-muted-foreground">Current</span>
-                  ) : null}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-});
-
-const ReasoningOptions = memo(function ReasoningOptions({
-  session,
-  models,
-  defaultModel,
-  onOpenChange,
-  onSelectionComplete,
-  onSelectModel,
-  disabled,
-}: {
-  session: PalotSession;
-  models: PalotModel[];
-  defaultModel: PalotModel | null;
-  onOpenChange(open: boolean): void;
-  onSelectionComplete(): void;
-  onSelectModel(model: ModelRef): Promise<void>;
-  disabled: boolean;
-}) {
-  const [switching, setSwitching] = useState(false);
-  const selected = resolveModelSelection(models, session.model, defaultModel).model;
-  if (!selected || selected.variants.length === 0) return null;
-  const selectedModel = selected;
-
-  const selectedVariant = session.model?.variant === "default" ? undefined : session.model?.variant;
-
-  async function selectVariant(variant: string | undefined) {
-    if (switching || disabled) return;
-    const next = {
-      id: selectedModel.id,
-      providerID: selectedModel.providerID,
-      ...(variant ? { variant } : {}),
-    };
-    setSwitching(true);
-    try {
-      await onSelectModel(next);
-      onOpenChange(false);
-      onSelectionComplete();
-    } catch (error) {
-      showErrorToast("Could not change reasoning effort", error);
-    } finally {
-      setSwitching(false);
-    }
-  }
-
-  return (
-    <div className="grid gap-2 border-b pb-3 px-1">
-      <p className="text-compact font-medium">Reasoning effort</p>
-      <ToggleGroup
-        value={[selectedVariant ?? "model-default"]}
-        spacing={1}
-        className="flex-wrap justify-start"
-        aria-label="Reasoning effort"
-        onValueChange={(value) => {
-          const variant = value[0];
-          if (variant) void selectVariant(variant === "model-default" ? undefined : variant);
-        }}
-      >
-        <ToggleGroupItem
-          value="model-default"
-          size="sm"
-          variant="outline"
-          disabled={switching || disabled}
-        >
-          Auto
-        </ToggleGroupItem>
-        {selectedModel.variants.map((variant) => (
-          <ToggleGroupItem
-            key={variant}
-            value={variant}
-            size="sm"
-            variant="outline"
-            disabled={switching || disabled}
-            data-palot-model-variant
-          >
-            {sentenceCase(variant)}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-    </div>
-  );
-});

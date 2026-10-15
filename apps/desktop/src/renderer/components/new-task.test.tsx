@@ -1,5 +1,6 @@
 import { Provider, createStore } from "jotai";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NewSessionComposerOptions } from "./composer";
 import { defaultWorktreeBaseAtom, defaultWorkspaceModeAtom } from "../atoms/ui";
@@ -249,6 +250,27 @@ describe("NewTask", () => {
     expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Draft" }).value).toBe(
       "edited draft",
     );
+  });
+
+  it("chooses the source branch and workspace from their pickers", async () => {
+    const user = userEvent.setup();
+    const store = createDraftStore();
+    render(
+      <Provider store={store}>
+        <NewTask projectID="project-1" />
+      </Provider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Source branch: main" }));
+    // Branch search runs on the server, so the picker keeps showing its results.
+    await user.type(await screen.findByRole("combobox", { name: "Search branches" }), "rel");
+    await user.click(screen.getByRole("option", { name: "release" }));
+    expect(await screen.findByRole("button", { name: "Source branch: release" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Work in: New worktree" }));
+    await user.click(await screen.findByRole("option", { name: /^Current checkout/ }));
+    expect(await screen.findByRole("button", { name: "Work in: Current checkout" })).toBeTruthy();
+    expect(store.get(defaultWorkspaceModeAtom)).toBe("current");
   });
 
   it("can default new worktrees to the current branch", () => {

@@ -7,6 +7,7 @@ import {
 
 export type ComposerShortcut =
   | "model"
+  | "reasoning-cycle"
   | "agent-next"
   | "agent-previous"
   | "attach"
@@ -15,6 +16,7 @@ export type ComposerShortcut =
 
 const COMPOSER_SHORTCUT_IDS: Record<ComposerShortcut, KeyboardShortcutID> = {
   model: "composer.model",
+  "reasoning-cycle": "composer.reasoning.cycle",
   "agent-next": "composer.agent.next",
   "agent-previous": "composer.agent.previous",
   attach: "composer.attach",

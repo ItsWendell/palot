@@ -1,7 +1,7 @@
 /** Project-aware draft screen that creates an OpenCode session on first submit. */
 
 import { useAtom, useAtomValue, useStore } from "jotai";
-import { Check, ChevronDown, FolderGit2, GitBranch } from "lucide-react";
+import { FolderGit2, GitBranch } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PalotProject, PalotSession } from "../../shared";
 import { defaultWorktreeBaseAtom, defaultWorkspaceModeAtom } from "../atoms/ui";
@@ -21,16 +21,7 @@ import { palot } from "../services/palot";
 import { Composer, type NewSessionComposerOptions } from "./composer";
 import { ConnectionDestination } from "./connection-destination";
 import { PalotBeacon } from "./palot-beacon";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "./ui/popover";
+import { ComposerPicker, type ComposerPickerSection } from "./ui/composer-picker";
 
 const EMPTY_TOKENS = {
   input: 0,
@@ -47,6 +38,26 @@ function selectableProjects(projects: PalotProject[]): PalotProject[] {
   return local.length > 0 ? local : projects;
 }
 
+const WORKSPACE_SECTIONS: ComposerPickerSection<WorkspaceSelection["type"]>[] = [
+  {
+    key: "workspaces",
+    options: [
+      {
+        key: "create",
+        value: "create",
+        label: "New worktree",
+        description: "Start detached from the current HEAD",
+      },
+      {
+        key: "current",
+        value: "current",
+        label: "Current checkout",
+        description: "Use the project folder directly",
+      },
+    ],
+  },
+];
+
 function WorkspacePicker({
   project,
   selection,
@@ -56,83 +67,30 @@ function WorkspacePicker({
   selection: WorkspaceSelection;
   onSelect(selection: WorkspaceSelection): void;
 }) {
-  const [open, setOpen] = useState(false);
   const label = selection.type === "create" ? "New worktree" : "Current checkout";
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="context"
-            className="max-w-48"
-            aria-label={`Work in: ${label}`}
-            title={label}
-          />
-        }
-      >
-        <FolderGit2 className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span className="truncate">
-          {selection.type === "create" ? "New worktree" : "Checkout"}
-        </span>
-        <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 gap-1 p-1.5">
-        <PopoverHeader className="px-2 py-1">
-          <PopoverTitle>Work in</PopoverTitle>
-          <PopoverDescription>Choose where OpenCode creates this task.</PopoverDescription>
-        </PopoverHeader>
-        <WorkspaceOption
-          title="New worktree"
-          description="Start detached from the current HEAD"
-          active={selection.type === "create"}
-          onClick={() => {
-            onSelect({ type: "create" });
-            setOpen(false);
-          }}
-        />
-        <WorkspaceOption
-          title="Current checkout"
-          description="Use the project folder directly"
-          active={selection.type === "current"}
-          onClick={() => {
-            onSelect({ type: "current", directory: project.canonical });
-            setOpen(false);
-          }}
-        />
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function WorkspaceOption({
-  title,
-  description,
-  active,
-  onClick,
-}: {
-  title: string;
-  description: string;
-  active: boolean;
-  onClick(): void;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      className="h-auto w-full justify-start gap-2 px-2.5 py-2 text-left"
-      onClick={onClick}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{title}</span>
-        <span className="block truncate text-xs font-normal text-muted-foreground">
-          {description}
-        </span>
-      </span>
-      {active ? <Check className="size-4 shrink-0" aria-hidden="true" /> : null}
-    </Button>
+    <ComposerPicker<WorkspaceSelection["type"]>
+      size="context"
+      label={selection.type === "create" ? "New worktree" : "Checkout"}
+      ariaLabel={`Work in: ${label}`}
+      icon={<FolderGit2 className="shrink-0 text-muted-foreground" aria-hidden="true" />}
+      triggerClassName="max-w-48"
+      triggerProps={{ title: label }}
+      side="bottom"
+      title="Work in"
+      description="Choose where OpenCode creates this task."
+      listLabel="Workspaces"
+      sections={WORKSPACE_SECTIONS}
+      selectedKey={selection.type}
+      errorTitle="Could not change the workspace"
+      onSelect={(option) =>
+        onSelect(
+          option.value === "create"
+            ? { type: "create" }
+            : { type: "current", directory: project.canonical },
+        )
+      }
+    />
   );
 }
 
@@ -149,61 +107,40 @@ function BranchPicker({
   onSearchChange(value: string): void;
   onSelect(branch: string): void;
 }) {
-  const [open, setOpen] = useState(false);
+  const sections = useMemo<ComposerPickerSection<string>[]>(
+    () => [
+      {
+        key: "branches",
+        options: branches.map((branch) => ({ key: branch, value: branch, label: branch })),
+      },
+    ],
+    [branches],
+  );
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="context"
-            className="max-w-52"
-            aria-label={`Source branch: ${value}`}
-          />
-        }
-      >
-        <GitBranch className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span className="truncate">{value}</span>
-        <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 gap-1 p-1.5">
-        <PopoverHeader className="px-2 py-1">
-          <PopoverTitle>Source branch</PopoverTitle>
-          <PopoverDescription>Choose the ref for the new detached worktree.</PopoverDescription>
-        </PopoverHeader>
-        <Input
-          type="search"
-          value={search}
-          placeholder="Search branches"
-          aria-label="Search branches"
-          className="mb-1 h-8"
-          onChange={(event) => onSearchChange(event.target.value)}
-        />
-        <div className="max-h-64 overflow-y-auto">
-          {branches.map((branch) => (
-            <Button
-              key={branch}
-              type="button"
-              variant="ghost"
-              className="h-8 w-full justify-start px-2 text-xs"
-              onClick={() => {
-                onSelect(branch);
-                setOpen(false);
-              }}
-            >
-              <span className="truncate">{branch}</span>
-              {branch === value ? <Check className="ml-auto size-3.5" aria-hidden="true" /> : null}
-            </Button>
-          ))}
-          {branches.length === 0 ? (
-            <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-              No matching branches
-            </p>
-          ) : null}
-        </div>
-      </PopoverContent>
-    </Popover>
+    <ComposerPicker<string>
+      size="context"
+      label={value}
+      ariaLabel={`Source branch: ${value}`}
+      icon={<GitBranch className="shrink-0 text-muted-foreground" aria-hidden="true" />}
+      triggerClassName="max-w-52"
+      side="bottom"
+      title="Source branch"
+      description="Choose the ref for the new detached worktree."
+      listLabel="Branches"
+      // The server searches branches; the picker shows its results as they arrive.
+      search={{
+        label: "Search branches",
+        placeholder: "Search branches…",
+        query: search,
+        onQueryChange: onSearchChange,
+        filter: false,
+      }}
+      sections={sections}
+      selectedKey={value}
+      emptyLabel="No matching branches"
+      errorTitle="Could not change the source branch"
+      onSelect={(option) => onSelect(option.value)}
+    />
   );
 }
 
