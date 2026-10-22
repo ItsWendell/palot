@@ -570,6 +570,21 @@ describe("OpenCodeReconciler", () => {
     subscription.unsubscribe();
   });
 
+  it("projects archive and unarchive events onto cached session info", () => {
+    const reconciler = new OpenCodeReconciler();
+    reconciler.upsertSessionInfos("connection", [session("Original")]);
+
+    reconciler.applyBatch(batch(1, [event("session.archived", 5, { sessionID: "session" })]));
+    expect(reconciler.session("connection", "session")?.time).toEqual({
+      created: 1,
+      updated: 5,
+      archived: 5,
+    });
+
+    reconciler.applyBatch(batch(2, [event("session.unarchived", 7, { sessionID: "session" })]));
+    expect(reconciler.session("connection", "session")?.time).toEqual({ created: 1, updated: 7 });
+  });
+
   it("rejects duplicate durable events while advancing transport ordering", () => {
     const reconciler = new OpenCodeReconciler();
     reconciler.upsertSessionInfos("connection", [session("Original")]);

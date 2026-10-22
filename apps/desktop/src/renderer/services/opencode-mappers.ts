@@ -28,6 +28,7 @@ import type {
   PalotSession,
   PalotSkill,
 } from "../../shared";
+import { compactionRecent } from "../lib/context-usage";
 
 const projectCache = new WeakMap<Project, PalotProject>();
 const sessionCache = new WeakMap<SessionInfo, PalotSession>();
@@ -134,9 +135,9 @@ function mapTextContent(
   return {
     type: value.type,
     text: value.text,
-    ...mapPresentation(value.state?.presentation),
+    ...mapPresentation(value.native?.presentation),
     ...(value.type === "reasoning" && value.time ? { time: { ...value.time } } : {}),
-    ...(value.state ? { state: json(value.state) } : {}),
+    ...(value.native ? { native: json(value.native) } : {}),
     data: json(value),
   };
 }
@@ -148,8 +149,7 @@ function mapToolContent(value: SessionMessageAssistantTool): PalotMessageContent
     name: value.name,
     time: { ...value.time },
     ...(value.executed !== undefined ? { executed: value.executed } : {}),
-    ...(value.providerState ? { providerState: json(value.providerState) } : {}),
-    ...(value.providerResultState ? { providerResultState: json(value.providerResultState) } : {}),
+    ...(value.native ? { native: json(value.native) } : {}),
     state: json(value.state),
     data: json(value),
   };
@@ -175,7 +175,7 @@ function mapCompactionContent(value: SessionMessageCompaction): PalotMessageCont
     status: value.status,
     reason: value.reason,
     text: "summary" in value ? value.summary : "",
-    ...(value.status === "failed" ? {} : { recent: value.recent }),
+    ...(compactionRecent(value) ? { recent: compactionRecent(value) } : {}),
     ...(value.status === "failed" ? { error: value.error.message } : {}),
     ...(value.status !== "running" && value.cost !== undefined ? { cost: value.cost } : {}),
     ...(value.status !== "running" && value.tokens ? { tokens: mapTokens(value.tokens) } : {}),
@@ -265,7 +265,7 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
   let tokens: TokenUsageInfo | null = null;
   let finish: PalotMessage["finish"] = null;
   let rawFinish: string | undefined;
-  let providerState: JsonValue | undefined;
+  let native: JsonValue | undefined;
   let content: PalotMessageContent[] = [];
   let files: Pick<PalotMessage, "files" | "fileReferences"> = {};
   let skillReferences: PalotMessage["skillReferences"];
@@ -332,13 +332,13 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
       tokens = message.tokens ? mapTokens(message.tokens) : null;
       finish = message.finish ?? null;
       rawFinish = message.rawFinish;
-      providerState = message.providerState ? json(message.providerState) : undefined;
+      native = message.native ? json(message.native) : undefined;
       content = message.content.map(mapAssistantContent);
       break;
     case "compaction":
       if (message.status === "completed") {
         model = message.model ? { ...message.model } : null;
-        providerState = message.providerState ? json(message.providerState) : undefined;
+        native = message.native ? json(message.native) : undefined;
       }
       content = [mapCompactionContent(message)];
       break;
@@ -371,7 +371,7 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
     tokens,
     finish,
     ...(rawFinish !== undefined ? { rawFinish } : {}),
-    ...(providerState !== undefined ? { providerState } : {}),
+    ...(native !== undefined ? { native } : {}),
     ...files,
     ...(skillReferences ? { skillReferences } : {}),
     content,
@@ -402,6 +402,9 @@ export function mapModel(model: ModelInfo): PalotModel {
     })),
     capabilities: {
       tools: model.capabilities.tools,
+      ...(model.capabilities.temperature === undefined
+        ? {}
+        : { temperature: model.capabilities.temperature }),
       input: [...model.capabilities.input],
       output: [...model.capabilities.output],
     },

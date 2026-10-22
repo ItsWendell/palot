@@ -8,6 +8,7 @@ import type {
 } from "../shared/automation-contract";
 import type { SourceControlChangedEvent } from "../shared/source-control-contract";
 import type { ProjectScriptRun } from "../shared/project-scripts-contract";
+import { VOICE_IPC_CHANNELS, type VoiceHostCommand } from "../shared/voice-contract";
 import { IPC_CHANNELS } from "../shared/opencode-contract";
 import {
   hasStoredAppearancePreferencesArgument,
@@ -281,6 +282,20 @@ const api: PalotApi = {
       const handler = (_event: Electron.IpcRendererEvent, run: ProjectScriptRun) => listener(run);
       ipcRenderer.on(IPC_CHANNELS.projectScriptRunFinished, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.projectScriptRunFinished, handler);
+    },
+  },
+  voice: {
+    claim: () => ipcRenderer.invoke(VOICE_IPC_CHANNELS.hostClaim),
+    publishState: (snapshot) => ipcRenderer.invoke(VOICE_IPC_CHANNELS.hostState, snapshot),
+    publishLevels: (levels) => ipcRenderer.invoke(VOICE_IPC_CHANNELS.hostLevels, levels),
+    configure: (preferences) => ipcRenderer.invoke(VOICE_IPC_CHANNELS.hostPreferences, preferences),
+    requestMicrophoneAccess: () => ipcRenderer.invoke(VOICE_IPC_CHANNELS.microphoneAccess),
+    coordinatorPluginDirectory: () => ipcRenderer.invoke(VOICE_IPC_CHANNELS.coordinatorPlugin),
+    onCommand: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, command: VoiceHostCommand) =>
+        listener(command);
+      ipcRenderer.on(VOICE_IPC_CHANNELS.hostCommand, handler);
+      return () => ipcRenderer.removeListener(VOICE_IPC_CHANNELS.hostCommand, handler);
     },
   },
 };

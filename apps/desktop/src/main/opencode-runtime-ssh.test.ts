@@ -73,7 +73,7 @@ describe("SSH lifecycle", () => {
     await runtime.stop();
   });
 
-  it.each([null, { path: "/installed/opencode", version: "2.1.0" }])(
+  it.each([null, { path: "/installed/opencode", version: "2.1.1" }])(
     "refuses absent or nonexact authentication runtimes before opening SSH",
     async (binary) => {
       const { runtime, adapter, connector } = fixture();

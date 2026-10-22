@@ -128,18 +128,58 @@ it("registers the exact session connection, scopes events, and detaches on disab
     kind: "browser",
     resource: { sessionID: scope.sessionID, profileID: scope.profileID, browserTabID: "tab-one" },
   });
-  await act(async () => notify({ bindingID: "binding-one", type: "preview", path: "index.html" }));
+  await act(async () => notify({ bindingID: "binding-one", type: "preview", path: "README.md" }));
   expect(
     store.get(workbenchStateAtom).scopes[workbenchScopeKey(scope)]?.right.tabs[1],
   ).toMatchObject({
     kind: "file",
-    resource: { profileID: scope.profileID, path: "index.html", location },
+    resource: { profileID: scope.profileID, path: "README.md", location },
   });
   await act(async () => store.set(experimentalBrowserAtom, false));
   await waitFor(() => expect(close).toHaveBeenCalledWith("binding-one"));
   expect(store.get(workbenchStateAtom).scopes[workbenchScopeKey(scope)]?.right.tabs).toMatchObject([
     { kind: "file" },
   ]);
+});
+
+it("previews workspace HTML in the browser and never opens unreadable paths as file tabs", async () => {
+  const store = createStore();
+  store.set(experimentalBrowserAtom, true);
+  vi.spyOn(palot, "browserRegister").mockResolvedValue("binding-one");
+  vi.spyOn(palot, "browserClose").mockResolvedValue(undefined);
+  const command = vi.spyOn(palot, "browserCommand").mockResolvedValue(undefined);
+  const notify = mockBrowserEvents();
+  render(
+    <Provider store={store}>
+      <Harness owner={scope} />
+    </Provider>,
+  );
+  await waitFor(() => expect(palot.browserRegister).toHaveBeenCalled());
+  const tabs = () => store.get(workbenchStateAtom).scopes[workbenchScopeKey(scope)]?.right.tabs;
+
+  await act(async () =>
+    notify({ bindingID: "binding-one", type: "preview", path: "/repo/out/report 1.html" }),
+  );
+  expect(command).toHaveBeenCalledWith("binding-one", {
+    type: "tabs.open",
+    url: "file:///repo/out/report%201.html",
+    focus: true,
+  });
+  expect(tabs() ?? []).toHaveLength(0);
+
+  // OpenCode cannot read outside the workspace, so these must not become 404 file tabs.
+  for (const path of ["~/Projects/other/.private/report.html", "/elsewhere/report.html"]) {
+    await act(async () => notify({ bindingID: "binding-one", type: "preview", path }));
+  }
+  expect(command).toHaveBeenCalledOnce();
+  expect(tabs() ?? []).toHaveLength(0);
+
+  // A browser that cannot load the page falls back to the file tab.
+  command.mockRejectedValueOnce(new Error("refused"));
+  await act(async () => notify({ bindingID: "binding-one", type: "preview", path: "index.html" }));
+  await waitFor(() =>
+    expect(tabs()).toMatchObject([{ kind: "file", resource: { path: "index.html", location } }]),
+  );
 });
 
 it("restores the focused page when an attachment registered behind settings becomes active", async () => {

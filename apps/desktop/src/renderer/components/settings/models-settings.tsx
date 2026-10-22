@@ -779,6 +779,7 @@ function ModelRow({
           <span className="font-mono text-code-compact wrap-anywhere">{model.id}</span>
           <span>{formatTokens(model.contextLimit)} context</span>
           <span>{formatTokens(model.outputLimit)} output</span>
+          {model.capabilities.temperature === false ? <span>Fixed temperature</span> : null}
           {cost ? (
             <span>
               {cost.label}

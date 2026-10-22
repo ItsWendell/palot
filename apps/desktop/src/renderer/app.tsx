@@ -18,10 +18,12 @@ import { MotionPreferences } from "./components/motion-preferences";
 import { useWindowChrome } from "./hooks/use-window-chrome";
 import { useDesktopPresentation } from "./hooks/use-desktop-presentation";
 import { rendererStore, router } from "./router";
+import { codeHighlighterOptions } from "./lib/code-highlighter";
 import { rendererQueryClient } from "./lib/query-client";
 import { useOpenCodeQueryEvents } from "./hooks/use-opencode-query-events";
 import { useSessionActivity } from "./hooks/use-session-activity";
 import { useNotificationSounds } from "./hooks/use-notification-sounds";
+import { VoiceCallBridge } from "./components/voice/voice-call-bridge";
 
 const diffWorkerPoolOptions = {
   poolSize: 2,
@@ -36,6 +38,7 @@ const diffHighlighterOptions = {
     dark: effectiveCodeTheme(DEFAULT_APPEARANCE_PREFERENCES, "dark").name,
   },
   lineDiffType: "word",
+  ...codeHighlighterOptions,
 } satisfies WorkerInitializationRenderOptions;
 
 // Linux windows are frameless. Tiling compositors own closing, so only floating
@@ -59,6 +62,7 @@ export function App() {
             <TooltipProvider delay={150}>
               <SurfaceBackdropFilters />
               <OpenCodeQueryEvents />
+              <VoiceCallBridge />
               <AppearanceSync />
               <PierreAppearanceSync />
               <RouterProvider router={router} />

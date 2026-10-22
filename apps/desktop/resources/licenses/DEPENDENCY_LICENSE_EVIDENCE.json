@@ -1,13 +1,13 @@
 [
   {
     "name": "objc-js",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "license": "MIT",
     "file": "LICENSE",
     "sha256": "b8c14ef77efe4be74cd404b2c4363dbc102243f9e60afabcfa7c5c270296f796",
     "firstLine": 1,
     "lastLine": 21,
-    "source": "https://registry.npmjs.org/objc-js/-/objc-js-1.5.0.tgz#package/LICENSE"
+    "source": "https://registry.npmjs.org/objc-js/-/objc-js-1.6.0.tgz#package/LICENSE"
   },
   {
     "name": "@palot/desktop",

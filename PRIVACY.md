@@ -1,6 +1,6 @@
 # Privacy
 
-This policy describes the Palot 0.18.0 source. It may change as pre-release
+This policy describes the Palot 0.19.0 source. It may change as pre-release
 features evolve.
 
 ## Data sent by Palot
@@ -70,6 +70,28 @@ browser in other Palot windows before clearing. This does not remove other tasks
 data or files already exported to the OpenCode server. Interrupted cleanup or an
 app crash can leave temporary files behind; review local app and temporary data
 before disposing of a machine or sharing it.
+
+## Voice chat
+
+Voice chat (Beta) starts only when you start a call. Palot then asks the connected
+OpenCode server to create a GPT-Live session with the OpenAI API key stored on that
+server, and streams your microphone audio from this computer to OpenAI over WebRTC
+for the rest of the call. OpenAI receives the audio and produces its transcript and
+spoken replies. Requests you make by voice are sent to the task like typed prompts,
+so they also reach OpenCode and the model providers or integrations the task uses.
+
+The call transcript is kept in memory for the current call and is not saved. Voice
+settings, such as the voice, microphone and greeting, are saved locally. The
+optional system-wide shortcut starts or ends a call from any app. No audio is
+captured while no call is active.
+
+## Slack links
+
+When you open a Slack archive link without a workspace ID, Palot reads the Slack
+desktop app's local workspace list (`Slack/storage/root-state.json` in the system
+application-data folder) to find the workspace for that link. It reads only that
+public workspace directory, never Slack's sign-in or session data, keeps no copy,
+and sends nothing to a server. The link then opens in Slack or your browser.
 
 ## GitHub pull requests
 

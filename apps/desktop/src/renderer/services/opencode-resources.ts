@@ -450,6 +450,22 @@ export async function sessionLocation(sessionID: string, requestSignal?: AbortSi
   return session.location;
 }
 
+/** The session's location and its path below the project root, for resolving file links. */
+export async function sessionFileLocation(
+  sessionID: string,
+  requestSignal?: AbortSignal,
+  connectionID?: string,
+) {
+  const session = await openCodeClient(connectionID).session.get(
+    { sessionID },
+    { signal: openCodeRequestSignal(requestSignal) },
+  );
+  return {
+    location: session.location,
+    ...(session.subpath === undefined ? {} : { subpath: session.subpath }),
+  };
+}
+
 export function promptFiles(
   directory: string,
   references: Parameters<typeof workspaceFileAttachments>[1],

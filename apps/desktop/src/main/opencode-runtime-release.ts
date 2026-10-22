@@ -54,32 +54,32 @@ export interface BundledOpenCodeRuntimeManifest {
 export const BUNDLED_OPENCODE_RUNTIMES = {
   arm64: {
     architecture: "arm64",
-    binarySha256: "7f46ba1dad86b730903d9adf54015bb4e706fc1ab6a247affc5a635cd8a663f3",
+    binarySha256: "1638ccfd0936dc10b15df34268b541a219822f4735d564359420d426c03383f1",
     packageName: "@opencode/cli-darwin-arm64",
-    sourceSha256: "7f46ba1dad86b730903d9adf54015bb4e706fc1ab6a247affc5a635cd8a663f3",
-    version: "2.0.29",
+    sourceSha256: "1638ccfd0936dc10b15df34268b541a219822f4735d564359420d426c03383f1",
+    version: "2.1.3",
   },
   x64: {
     architecture: "x64",
-    binarySha256: "657ed9a67b764210d596d498aff1e9b94cf98ebde3e13c37633ce4606dbb841e",
+    binarySha256: "5886d0e72c1a46b316e8fd2a585ea2a16d54dfcbfeed45619c8448da8273bbb3",
     packageName: "@opencode/cli-darwin-x64-baseline",
-    sourceSha256: "657ed9a67b764210d596d498aff1e9b94cf98ebde3e13c37633ce4606dbb841e",
-    version: "2.0.29",
+    sourceSha256: "5886d0e72c1a46b316e8fd2a585ea2a16d54dfcbfeed45619c8448da8273bbb3",
+    version: "2.1.3",
   },
 } as const satisfies Record<BundledOpenCodeArchitecture, BundledOpenCodeRuntimeManifest>;
 
 export const LINUX_OPENCODE_RUNTIMES = {
   x64: {
     architecture: "x64",
-    binarySha256: "ff17011078cfe1d2db04f429c65a5bf9dd86e232cc493c7a03730ecc12a000ff",
-    sourceSha256: "ff17011078cfe1d2db04f429c65a5bf9dd86e232cc493c7a03730ecc12a000ff",
+    binarySha256: "5f65df6366b4791dc1491cfb0e9e9935cbfc961234786c6f18eac2e779e272e2",
+    sourceSha256: "5f65df6366b4791dc1491cfb0e9e9935cbfc961234786c6f18eac2e779e272e2",
     packageName: "@opencode/cli-linux-x64-baseline",
     version: SUPPORTED_OPENCODE_VERSION,
   },
   arm64: {
     architecture: "arm64",
-    binarySha256: "ff63ff56191f8460cae10f789a3375348e0fe108647e6f429949060c162b2ff1",
-    sourceSha256: "ff63ff56191f8460cae10f789a3375348e0fe108647e6f429949060c162b2ff1",
+    binarySha256: "78c279e68f25e69045a7ec5f518fccbad57e8f25d7853e66ba9677ddfaf28b19",
+    sourceSha256: "78c279e68f25e69045a7ec5f518fccbad57e8f25d7853e66ba9677ddfaf28b19",
     packageName: "@opencode/cli-linux-arm64",
     version: SUPPORTED_OPENCODE_VERSION,
   },

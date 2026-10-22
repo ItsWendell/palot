@@ -357,6 +357,12 @@ async function sse(
   response.end("data: [DONE]\n\n");
 }
 
+/** OpenCode's title-agent system prompts: before 2.1.3, and from 2.1.3 on. */
+const TITLE_PROMPTS = [
+  "You are a title generator.",
+  "You name conversations so the user can find them later",
+];
+
 export function isTitleRequest(body: Record<string, unknown>): boolean {
   const messages = Array.isArray(body.messages)
     ? body.messages
@@ -372,7 +378,7 @@ export function isTitleRequest(body: Record<string, unknown>): boolean {
   return instructions.some((content) => {
     const parts = Array.isArray(content) ? content.map((part) => part?.text) : [content];
     return parts.some(
-      (text) => typeof text === "string" && text.startsWith("You are a title generator."),
+      (text) => typeof text === "string" && TITLE_PROMPTS.some((prefix) => text.startsWith(prefix)),
     );
   });
 }

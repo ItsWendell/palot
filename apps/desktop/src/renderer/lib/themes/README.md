@@ -8,15 +8,18 @@ Theme names and IDs, including **Codex**, remain stable for saved preferences.
 - `src/shared/appearance-contract.ts` defines app palettes, light/dark availability,
   terminal colors, and native treatments. `paletteVariant` expands compact colors
   into Palot's semantic surfaces.
-- `builtin-code-themes.ts` contains synchronous descriptors and asynchronous
+- Code is highlighted by `@pierre/highlights`, which reads Zed themes. Every code
+  view, worker pool, patch preview and Markdown code block uses it
+  (`../code-highlighter.ts`); `@pierre/diffs` allows only one highlighter type.
+- `builtin-code-themes.ts` contains synchronous descriptors and asynchronous Zed
   loaders shared by the Pierre theme catalog and diff registration API.
-- `syntax-data.ts` contains 20 local Shiki registrations in one lazy payload.
-  Selecting one of these themes loads the group. Default Pierre themes, OpenCode,
-  TanStack, and macOS do not need that payload. No theme is loaded from another
-  installed application.
-- OpenCode and TanStack have dedicated code-theme modules. The macOS module uses
-  GitHub Default syntax with Palot's macOS editor/workbench color overrides.
-  Other syntax themes come from the pinned Pierre/Shiki packages.
+- `syntax-data.ts` contains 20 local TextMate themes in one lazy payload.
+  `../code-theme-convert.ts` converts them, and the OpenCode, TanStack and Omarchy
+  TextMate themes, to Zed when loaded. Selecting one of these themes loads the
+  group. No theme is loaded from another installed application.
+- The macOS themes use the bundled Highlights GitHub Default themes with Palot's
+  macOS editor colors. Curated syntax themes load by name from the bundled
+  Highlights catalog.
 
 ## Tests
 

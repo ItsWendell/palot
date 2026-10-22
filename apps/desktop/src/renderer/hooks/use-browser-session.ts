@@ -3,6 +3,10 @@ import type { PalotBrowserEvent, PalotBrowserHost } from "../../shared/browser-c
 import { atom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { createElement, useEffect, useLayoutEffect, useRef } from "react";
 import { experimentalBrowserAtom } from "../atoms/ui";
+import { runtimeAtom } from "../atoms/workspace";
+import { toast } from "../components/ui/toast";
+import { isHtmlFilePath, openFileInBrowser, workspaceFileTarget } from "../lib/browser-files";
+import { showErrorToast } from "../lib/toast-error";
 import { BrowserWebviewHosts, browserViewportsAtom } from "../components/browser-webview-hosts";
 import { useWorkbenchCommands, workbenchStateAtom } from "../atoms/workbench";
 import type { WorkbenchContextState, WorkbenchPaneID, WorkbenchScope } from "../lib/workbench-tabs";
@@ -135,6 +139,44 @@ export function BrowserSessionAttachment({
         syncPages(state);
       }
     };
+    const location = { directory, ...(workspaceID ? { workspaceID } : {}) };
+    const openFileTab = (path: string) =>
+      commands.openTab(
+        { kind: "file", location, path },
+        { pane: "right", activate: activeRef.current },
+      );
+    // browser.preview: HTML in the workspace opens in the browser, like OpenCode desktop;
+    // other workspace files open as a file tab. OpenCode cannot read files outside it.
+    const previewFile = (path: string) => {
+      const target = workspaceFileTarget(directory, path);
+      if (target.kind === "outside") {
+        const runtime = store.get(runtimeAtom);
+        const local =
+          runtime?.connectionID === connectionID && runtime.capabilities?.localPathActions === true;
+        toast.add({
+          type: "error",
+          title: "File is outside this task",
+          description: target.path,
+          ...(local
+            ? {
+                actionProps: {
+                  children: "Open externally",
+                  onClick: () =>
+                    void palot
+                      .externalOpen(
+                        { resource: { kind: "file", path: target.path, sessionID } },
+                        connectionID,
+                      )
+                      .catch((error: unknown) => showErrorToast("Could not open file", error)),
+                },
+              }
+            : {}),
+        });
+        return;
+      }
+      if (!bindingID || !isHtmlFilePath(target.path)) return openFileTab(target.path);
+      void openFileInBrowser(bindingID, target.absolute).catch(() => openFileTab(target.path));
+    };
     setSessions((current) => ({
       ...current,
       [key]: { bindingID: null, state: emptyState, error: null, popupTabIDs: [] },
@@ -161,16 +203,7 @@ export function BrowserSessionAttachment({
         const current = store.get(sessionsAtom)[key]?.state;
         if (current) syncPages(current, event.tabID);
       }
-      if (event.type === "preview") {
-        commands.openTab(
-          {
-            kind: "file",
-            location: { directory, ...(workspaceID ? { workspaceID } : {}) },
-            path: event.path,
-          },
-          { pane: "right", activate: activeRef.current },
-        );
-      }
+      if (event.type === "preview") previewFile(event.path);
       setSessions((current) => {
         const previous = current[key];
         if (!previous) return current;

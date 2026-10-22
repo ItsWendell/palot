@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotProject, PalotSession } from "../../shared";
 import { palot } from "../services/palot";
+import * as opencodeVcs from "../services/opencode-vcs";
 import { createRendererQueryClient } from "../lib/query-client";
 import { messagesAtom, runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { setTranscriptSnapshot } from "../hooks/use-session-transcript";
@@ -85,6 +86,8 @@ beforeEach(() => {
   mocks.openSession.mockResolvedValue(undefined);
   mocks.openScheduled.mockReset();
   mocks.forkOwner.mockReset();
+  // A clean source checkout moves without asking.
+  vi.spyOn(opencodeVcs, "getOpenCodeVcsStatus").mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -229,8 +232,112 @@ describe("SessionContextMenu", () => {
       }
       await act(async () => copy.resolve({ directory: "/worktrees/new-task" }));
       expect(move).toHaveBeenCalledWith(session.id, "/worktrees/new-task", "connection");
+      expect(opencodeVcs.getOpenCodeVcsStatus).toHaveBeenCalledWith(
+        session.location,
+        undefined,
+        "connection",
+      );
     },
   );
+
+  it.each([
+    ["has uncommitted changes", "dirty"],
+    ["cannot be checked", "unknown"],
+  ] as const)(
+    "confirms where edits stay before moving a task whose checkout %s",
+    async (_label, state) => {
+      vi.spyOn(palot, "listProjectDirectories").mockResolvedValue([
+        { directory: project.canonical, strategy: null },
+        { directory: "/worktrees/feature", strategy: "worktree" },
+      ]);
+      const status = vi.spyOn(opencodeVcs, "getOpenCodeVcsStatus");
+      if (state === "dirty")
+        status.mockResolvedValue([
+          { file: "src/app.ts", status: "modified", additions: 1, deletions: 0 },
+        ] as never);
+      else status.mockRejectedValue(new Error("offline"));
+      const move = vi.spyOn(palot, "moveSession").mockResolvedValue(null);
+      const store = createStore();
+      store.set(runtimeAtom, owner);
+      render(
+        <QueryClientProvider client={createRendererQueryClient()}>
+          <Provider store={store}>
+            <SessionContextMenu
+              trigger={<button type="button">Task</button>}
+              session={session}
+              project={project}
+            />
+          </Provider>
+        </QueryClientProvider>,
+      );
+
+      fireEvent.contextMenu(screen.getByRole("button", { name: "Task" }));
+      const submenu = await screen.findByRole("menuitem", { name: "Move to worktree" });
+      fireEvent.mouseEnter(submenu);
+      fireEvent.click(submenu);
+      expect(
+        await screen.findByText(
+          "Moves the task only. Uncommitted edits stay in the main checkout.",
+        ),
+      ).toBeTruthy();
+      fireEvent.click(await screen.findByRole("menuitem", { name: "feature" }));
+
+      const dialog = await screen.findByRole("alertdialog", { name: "Move task to feature?" });
+      expect(dialog.textContent).toContain(
+        state === "dirty"
+          ? "1 uncommitted change stays in the main checkout. Only the task moves to feature"
+          : "Palot couldn't check the main checkout for uncommitted changes.",
+      );
+      if (state === "dirty") expect(dialog.textContent).toContain("src/app.ts");
+      expect(move).not.toHaveBeenCalled();
+
+      // Focus moving to another server must not redirect the confirmed move.
+      act(() => store.set(runtimeAtom, { ...owner, connectionID: "other" }));
+      fireEvent.click(screen.getByRole("button", { name: "Move task" }));
+      await waitFor(() =>
+        expect(move).toHaveBeenCalledWith(session.id, "/worktrees/feature", owner.connectionID),
+      );
+    },
+  );
+
+  it("keeps the task in place when the move confirmation is cancelled", async () => {
+    vi.spyOn(palot, "listProjectDirectories").mockResolvedValue([
+      { directory: project.canonical, strategy: null },
+    ]);
+    vi.spyOn(opencodeVcs, "getOpenCodeVcsStatus").mockResolvedValue([
+      { file: "notes.md", status: "added", additions: 3, deletions: 0 },
+    ] as never);
+    const create = vi.spyOn(palot, "createProjectCopy");
+    const move = vi.spyOn(palot, "moveSession");
+    const store = createStore();
+    store.set(runtimeAtom, owner);
+    render(
+      <QueryClientProvider client={createRendererQueryClient()}>
+        <Provider store={store}>
+          <SessionContextMenu
+            trigger={<button type="button">Task</button>}
+            session={session}
+            project={project}
+          />
+        </Provider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Task" }));
+    const submenu = await screen.findByRole("menuitem", { name: "Move to worktree" });
+    fireEvent.mouseEnter(submenu);
+    fireEvent.click(submenu);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "New worktree" }));
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Move task to a new worktree?",
+    });
+    expect(dialog.textContent).toContain("A new worktree starts from the last commit.");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(create).not.toHaveBeenCalled();
+    expect(move).not.toHaveBeenCalled();
+  });
 
   it("keeps the main checkout above the worktree list", async () => {
     vi.spyOn(palot, "refreshProjectCopies").mockResolvedValue(undefined);

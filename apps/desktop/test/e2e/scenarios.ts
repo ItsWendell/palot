@@ -1058,6 +1058,31 @@ export const scenarios = {
         .not.toContain(forked.id);
     },
   },
+  "workspace-preferences": {
+    description: "remember a project's checkout/worktree choice across renderer reloads",
+    prompt: "",
+    expectedModelCalls: 0,
+    arrange() {},
+    async run(page, { session }) {
+      await page.evaluate((projectID) => {
+        location.hash = `#/new?projectID=${encodeURIComponent(projectID)}`;
+      }, session.projectID);
+      await page.getByRole("main", { name: "New task" }).waitFor();
+      await page.getByRole("button", { name: "Work in: New worktree" }).click();
+      await page.getByRole("option", { name: /^Current checkout/ }).click();
+      await expect(page.getByRole("button", { name: "Work in: Current checkout" })).toBeVisible();
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(page.getByRole("button", { name: "Work in: Current checkout" })).toBeVisible();
+
+      await page.getByRole("button", { name: "Work in: Current checkout" }).click();
+      await page.getByRole("option", { name: /^New worktree/ }).click();
+      await expect(page.getByRole("button", { name: "Work in: New worktree" })).toBeVisible();
+      await page.reload({ waitUntil: "domcontentloaded" });
+    },
+    async assert(page) {
+      await expect(page.getByRole("button", { name: "Work in: New worktree" })).toBeVisible();
+    },
+  },
   "worktree-lifecycle": {
     description:
       "move a task into a new managed worktree and remove that worktree after moving back",
@@ -1099,7 +1124,12 @@ export const scenarios = {
         const toggle = page.getByRole("button", { name: /^(Show|Hide) navigation$/ });
         await expect(toggle).toBeVisible();
         if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
-        await navigation.getByRole("button", { name: "Show projects", exact: true }).click();
+        // The navigation rail sits outside the task column; choosing the active view hides it.
+        const projects = page
+          .locator('[data-shell-surface="rail"]')
+          .getByRole("button", { name: "Show projects", exact: true });
+        if ((await projects.getAttribute("aria-pressed")) !== "true") await projects.click();
+        await navigation.waitFor();
       };
       await showProjects();
       // Compact native windows render a navigation sheet alongside an inert inline sidebar.

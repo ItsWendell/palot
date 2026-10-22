@@ -450,10 +450,9 @@ function compactionMessage(
     completedAt?: number;
     reason?: "auto" | "manual";
     text?: string;
-    recent?: string;
     error?: string;
     model?: ModelRef | null;
-    providerState?: JsonValue;
+    native?: JsonValue;
     cost?: number;
     tokens?: TokenUsageInfo;
   },
@@ -468,7 +467,7 @@ function compactionMessage(
     model: input.model ?? null,
     tokens: null,
     finish: input.status === "failed" ? "error" : null,
-    ...(input.providerState !== undefined ? { providerState: input.providerState } : {}),
+    ...(input.native !== undefined ? { native: input.native } : {}),
     content: [
       {
         type: "compaction",
@@ -477,7 +476,6 @@ function compactionMessage(
         status: input.status,
         ...(input.reason ? { reason: input.reason } : {}),
         text: input.text ?? "",
-        ...(input.recent !== undefined ? { recent: input.recent } : {}),
         ...(input.error ? { error: input.error } : {}),
         ...(input.cost !== undefined ? { cost: input.cost } : {}),
         ...(input.tokens ? { tokens: input.tokens } : {}),
@@ -712,7 +710,6 @@ export function applyOpenCodeEvents(
       const value = compactionMessage(id, event.createdAt, {
         status: "running",
         ...(data.reason === "auto" || data.reason === "manual" ? { reason: data.reason } : {}),
-        recent: string(data.recent) ?? "",
       });
       next = updateMessage(next, id, (current) => current, value);
       continue;
@@ -766,9 +763,8 @@ export function applyOpenCodeEvents(
         ...(event.type === "session.compaction.ended"
           ? {
               text: string(data.text) ?? "",
-              recent: string(data.recent) ?? "",
               model: model(data.model),
-              ...(data.providerState !== undefined ? { providerState: data.providerState } : {}),
+              ...(data.native !== undefined ? { native: data.native } : {}),
             }
           : { error: string(error.message) ?? "Compaction failed" }),
       });
@@ -948,8 +944,8 @@ export function applyOpenCodeEvents(
                 : {
                     ...part,
                     streaming: event.type !== "session.reasoning.ended",
-                    ...(reasoningPresentation(data.state)
-                      ? { presentation: reasoningPresentation(data.state) }
+                    ...(reasoningPresentation(data.native)
+                      ? { presentation: reasoningPresentation(data.native) }
                       : {}),
                     ...(event.type === "session.reasoning.started"
                       ? { time: { created: event.createdAt } }
@@ -1078,7 +1074,7 @@ export function applyOpenCodeEvents(
               ...part,
               name: string(data.name) ?? part.name,
               ...(typeof data.executed === "boolean" ? { executed: data.executed } : {}),
-              ...(data.state !== undefined ? { providerState: data.state } : {}),
+              ...(data.native !== undefined ? { native: data.native } : {}),
               time: {
                 created: part.time?.created ?? event.createdAt,
                 ran: event.createdAt,
@@ -1124,7 +1120,10 @@ export function applyOpenCodeEvents(
           toolPart(message, toolID, (part) => ({
             ...part,
             ...(typeof data.executed === "boolean" ? { executed: data.executed } : {}),
-            ...(data.resultState !== undefined ? { providerResultState: data.resultState } : {}),
+            // Result replay data merges into the call's; result keys win on duplicates.
+            ...(data.native !== undefined
+              ? { native: { ...record(part.native), ...record(data.native) } }
+              : {}),
             time: {
               created: part.time?.created ?? event.createdAt,
               ran: part.time?.ran ?? part.time?.created ?? event.createdAt,
@@ -1163,7 +1162,7 @@ export function applyOpenCodeEvents(
           tokens: usage ?? message.tokens,
           finish: finish ?? message.finish,
           ...(typeof data.rawFinish === "string" ? { rawFinish: data.rawFinish } : {}),
-          ...(data.providerState !== undefined ? { providerState: data.providerState } : {}),
+          ...(data.native !== undefined ? { native: data.native } : {}),
           data:
             event.type === "session.step.failed"
               ? { ...record(message.data), error: data.error ?? null, retry: null }

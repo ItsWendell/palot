@@ -7,6 +7,20 @@ export type WorkbenchReviewMode = "working" | "branch";
 
 type TabBase = { id: string; pinned: boolean };
 
+/** Text selected in an assistant response that a side question is about. */
+export type BtwQuote = {
+  text: string;
+  /** The selection exceeded the quote limit and was shortened. */
+  truncated?: boolean;
+  /** Assistant message the text came from; transcript jumps target it. */
+  messageID: string;
+  /** Prompt the response answered; the jump falls back to it when the response is not loaded. */
+  turnMessageID?: string;
+};
+
+/** A later question in the same side chat. Answers stay tool-free like the first one. */
+export type BtwFollowUp = { id: string; question: string; answer?: string; error?: string };
+
 export type WorkbenchTab =
   | (TabBase & {
       kind: "btw";
@@ -15,9 +29,12 @@ export type WorkbenchTab =
         sessionID: string;
         location: LocationRef;
         questionID: string;
+        /** Empty only while a selection's first question is still being written. */
         question: string;
         answer?: string;
         error?: string;
+        quote?: BtwQuote;
+        followUps?: BtwFollowUp[];
       };
     })
   | (TabBase & {
@@ -93,6 +110,8 @@ export type WorkbenchTab =
         location: LocationRef;
         path: string;
         line?: number;
+        /** Last line of a referenced range; only set together with `line`. */
+        endLine?: number;
       };
     })
   | (TabBase & {
@@ -112,7 +131,7 @@ export type WorkbenchTab =
     });
 
 export type OpenWorkbenchTabInput =
-  | { kind: "btw"; location: LocationRef; questionID: string; question: string }
+  | { kind: "btw"; location: LocationRef; questionID: string; question: string; quote?: BtwQuote }
   | { kind: "browser"; location: LocationRef; browserTabID: string }
   | { kind: "new-tab"; location: LocationRef }
   | { kind: "command"; location: LocationRef; shellID: string; sessionID?: string; command: string }
@@ -130,7 +149,7 @@ export type OpenWorkbenchTabInput =
       mode: WorkbenchReviewMode;
       sourceSessionID?: string;
     }
-  | { kind: "file"; location: LocationRef; path: string; line?: number }
+  | { kind: "file"; location: LocationRef; path: string; line?: number; endLine?: number }
   | { kind: "workspace-files"; location: LocationRef }
   | { kind: "turn-diff"; location: LocationRef; userMessageID: string }
   | {
@@ -221,7 +240,7 @@ export function workbenchTabResourceKey(tab: WorkbenchTab): string {
 }
 
 export function workbenchTabTitle(tab: WorkbenchTab): string {
-  if (tab.kind === "btw") return `BTW: ${tab.resource.question}`;
+  if (tab.kind === "btw") return `BTW: ${tab.resource.question || "Ask about selection"}`;
   if (tab.kind === "browser") return "Browser";
   if (tab.kind === "new-tab") return "New tab";
   if (tab.kind === "context") return "Context";
@@ -671,6 +690,7 @@ function tabFromInput(
         location: input.location,
         questionID: input.questionID,
         question: input.question,
+        ...(input.quote ? { quote: input.quote } : {}),
       },
     };
   }
@@ -785,6 +805,9 @@ function tabFromInput(
         location: input.location,
         path: input.path,
         ...(input.line ? { line: input.line } : {}),
+        ...(input.line && input.endLine && input.endLine > input.line
+          ? { endLine: input.endLine }
+          : {}),
       },
     };
   }
@@ -826,7 +849,11 @@ function updateTabTarget(
     };
   }
   if (existing.kind !== "file" || candidate.kind !== "file") return context;
-  if (existing.resource.line === candidate.resource.line) return context;
+  if (
+    existing.resource.line === candidate.resource.line &&
+    existing.resource.endLine === candidate.resource.endLine
+  )
+    return context;
   return {
     ...context,
     [pane]: {
@@ -840,6 +867,7 @@ function updateTabTarget(
                 location: existing.resource.location,
                 path: existing.resource.path,
                 ...(candidate.resource.line ? { line: candidate.resource.line } : {}),
+                ...(candidate.resource.endLine ? { endLine: candidate.resource.endLine } : {}),
               },
             }
           : tab,

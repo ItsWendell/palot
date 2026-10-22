@@ -575,6 +575,22 @@ describe("workbench tabs", () => {
         resource: { profileID: scope.profileID, location, path: "src/app.ts", line: 18 },
       },
     ]);
+
+    const ranged = openWorkbenchTab(
+      second.state,
+      scope,
+      { kind: "file", location, path: "src/app.ts", line: 18, endLine: 24 },
+      {},
+      3,
+      () => "duplicate",
+    );
+    expect(ranged.state.scopes[workbenchScopeKey(scope)]?.right.tabs[0]?.resource).toEqual({
+      profileID: scope.profileID,
+      location,
+      path: "src/app.ts",
+      line: 18,
+      endLine: 24,
+    });
   });
 
   it("keeps one pinned files browser per location while preserving move and file tabs", () => {

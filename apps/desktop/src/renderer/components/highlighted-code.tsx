@@ -1,14 +1,15 @@
-import {
-  escapeHtml,
-  normalizeLanguage,
-  tokenize,
-  type HighlightTokenClass,
-} from "@tanstack/highlight";
+import type { DiffsHighlighter } from "@pierre/diffs";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import type { AppearanceTerminalPalette } from "../../shared";
 import { resolvedAppearanceAtom } from "../atoms/appearance";
 import { cn } from "../lib/cn";
+import {
+  highlightLanguage,
+  loadCodeHighlighter,
+  loadedCodeHighlighter,
+  loadedZedTheme,
+} from "../lib/code-highlighter";
+import { StreamingCodeTokens } from "../lib/streaming-code-tokens";
 
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 128;
 const MAX_SYNCHRONOUS_HIGHLIGHT_LENGTH = 16_384;
@@ -26,6 +27,8 @@ export interface CodeAnimationRange {
 interface HighlightRequest {
   code: string;
   language: string;
+  /** The code theme tokens are colored with; null renders plain text. */
+  theme: string | null;
   animationRanges: readonly CodeAnimationRange[];
   lineNumbers: boolean;
   highlightLines: readonly number[];
@@ -34,6 +37,7 @@ interface HighlightRequest {
 interface RenderedHighlight {
   code: string;
   language: string;
+  theme: string | null;
   normalizedLanguage: string;
   html: string;
   animationRanges: readonly CodeAnimationRange[];
@@ -41,19 +45,88 @@ interface RenderedHighlight {
   highlightLines: readonly number[];
 }
 
-type HighlightThemeStyle = CSSProperties & Record<`--th-${string}`, string>;
+interface CodeToken {
+  value: string;
+  /** Inline CSS for the token's theme color and font style. */
+  style?: string;
+}
 
-function renderHighlight(request: HighlightRequest, now: number): RenderedHighlight {
-  const result = tokenize(request.code, { lang: request.language });
+// Font style bits on Highlights tokens (the TextMate/VS Code convention).
+const ITALIC = 1;
+const BOLD = 2;
+
+function tokenStyle(token: { color?: string; fontStyle?: number }): string | undefined {
+  const parts = [
+    ...(token.color ? [`color:${token.color}`] : []),
+    ...(token.fontStyle && token.fontStyle & ITALIC ? ["font-style:italic"] : []),
+    ...(token.fontStyle && token.fontStyle & BOLD ? ["font-weight:700"] : []),
+  ];
+  return parts.length ? parts.join(";") : undefined;
+}
+
+/** Tokens across the whole code, with newlines between lines, or one plain token. */
+function codeTokens(request: HighlightRequest): CodeToken[] {
+  const lang = request.language === "plaintext" ? null : request.language;
+  const highlighter = request.theme ? loadedCodeHighlighter(request.theme) : undefined;
+  if (!lang || !request.theme || !highlighter) return [{ value: request.code }];
+  const { tokens } = highlighter.codeToTokens(request.code, { lang, theme: request.theme });
+  const result: CodeToken[] = [];
+  tokens.forEach((line, index) => {
+    if (index > 0) result.push({ value: "\n" });
+    for (const token of line) result.push({ value: token.content, style: tokenStyle(token) });
+  });
+  // Highlights can normalize line endings. Never lose raw characters to it.
+  return result.map((token) => token.value).join("") === request.code
+    ? result
+    : [{ value: request.code }];
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+/**
+ * Tokens from the block's live tokenizer, which re-reads only the lines an append can
+ * change. Null falls back to highlighting the whole block.
+ */
+function streamingTokens(
+  request: HighlightRequest,
+  stream: { current: StreamingCodeTokens | null },
+): CodeToken[] | null {
+  const lang = highlightLanguage(request.language);
+  const zed = lang && request.theme ? loadedZedTheme(request.theme) : undefined;
+  if (!lang || !request.theme || !zed) return null;
+  if (stream.current?.language !== lang || stream.current.theme !== request.theme) {
+    stream.current?.dispose();
+    stream.current = new StreamingCodeTokens(lang, request.theme, zed);
+  }
+  return (
+    stream.current.update(request.code)?.map((token) => ({
+      value: token.value,
+      style: tokenStyle(token),
+    })) ?? null
+  );
+}
+
+function renderHighlight(
+  request: HighlightRequest,
+  now: number,
+  precomputed?: CodeToken[] | null,
+): RenderedHighlight {
+  const tokens = precomputed ?? codeTokens(request);
   let offset = 0;
   let rangeIndex = 0;
   const html: string[] = [];
   if (!request.lineNumbers && request.highlightLines.length === 0) {
-    for (const token of result.tokens) {
+    for (const token of tokens) {
       rangeIndex = renderToken(
         token.value,
         offset,
-        token.className,
+        token.style,
         request.animationRanges,
         rangeIndex,
         now,
@@ -64,7 +137,8 @@ function renderHighlight(request: HighlightRequest, now: number): RenderedHighli
     return {
       code: request.code,
       language: request.language,
-      normalizedLanguage: result.lang,
+      theme: request.theme,
+      normalizedLanguage: request.language,
       html: html.join(""),
       animationRanges: request.animationRanges,
       lineNumbers: request.lineNumbers,
@@ -83,7 +157,7 @@ function renderHighlight(request: HighlightRequest, now: number): RenderedHighli
     line += 1;
   };
 
-  for (const token of result.tokens) {
+  for (const token of tokens) {
     let partOffset = 0;
     for (const part of token.value.split(/(\n)/)) {
       if (part === "\n") {
@@ -93,7 +167,7 @@ function renderHighlight(request: HighlightRequest, now: number): RenderedHighli
         rangeIndex = renderToken(
           part,
           offset + partOffset,
-          token.className,
+          token.style,
           request.animationRanges,
           rangeIndex,
           now,
@@ -109,7 +183,8 @@ function renderHighlight(request: HighlightRequest, now: number): RenderedHighli
   return {
     code: request.code,
     language: request.language,
-    normalizedLanguage: result.lang,
+    theme: request.theme,
+    normalizedLanguage: request.language,
     html: html.join(""),
     animationRanges: request.animationRanges,
     lineNumbers: request.lineNumbers,
@@ -120,7 +195,7 @@ function renderHighlight(request: HighlightRequest, now: number): RenderedHighli
 function renderToken(
   value: string,
   offset: number,
-  tokenClass: HighlightTokenClass | undefined,
+  tokenStyle: string | undefined,
   animationRanges: readonly CodeAnimationRange[],
   initialRangeIndex: number,
   now: number,
@@ -133,7 +208,7 @@ function renderToken(
   while (cursor < end) {
     const range = animationRanges[rangeIndex];
     if (!range || range.start >= end) {
-      html.push(renderSegment(value.slice(cursor - offset), tokenClass, null, now));
+      html.push(renderSegment(value.slice(cursor - offset), tokenStyle, null, now));
       cursor = end;
       break;
     }
@@ -144,7 +219,7 @@ function renderToken(
     if (range.start > cursor) {
       const segmentEnd = Math.min(end, range.start);
       html.push(
-        renderSegment(value.slice(cursor - offset, segmentEnd - offset), tokenClass, null, now),
+        renderSegment(value.slice(cursor - offset, segmentEnd - offset), tokenStyle, null, now),
       );
       cursor = segmentEnd;
       continue;
@@ -152,7 +227,7 @@ function renderToken(
 
     const segmentEnd = Math.min(end, range.end);
     html.push(
-      renderSegment(value.slice(cursor - offset, segmentEnd - offset), tokenClass, range, now),
+      renderSegment(value.slice(cursor - offset, segmentEnd - offset), tokenStyle, range, now),
     );
     cursor = segmentEnd;
     if (range.end <= cursor) rangeIndex += 1;
@@ -163,7 +238,7 @@ function renderToken(
 
 function renderSegment(
   value: string,
-  tokenClass: HighlightTokenClass | undefined,
+  tokenStyle: string | undefined,
   animationRange: CodeAnimationRange | null,
   now: number,
 ): string {
@@ -172,7 +247,7 @@ function renderSegment(
   if (timing) {
     html = `<span class="palot-markdown-stream-unit" data-markdown-stream-code="" data-markdown-stream-start-at="${animationRange!.startAt}" style="--palot-markdown-stream-delay:${timing.delay}ms;--palot-markdown-stream-duration:${timing.duration}ms">${html}</span>`;
   }
-  if (tokenClass) html = `<span class="th-token th-${tokenClass}">${html}</span>`;
+  if (tokenStyle) html = `<span class="th-token" style="${tokenStyle}">${html}</span>`;
   return html;
 }
 
@@ -186,14 +261,24 @@ function animationTiming(
   return { delay, duration: range.duration };
 }
 
+function highlightKey(
+  code: string,
+  language: string,
+  theme: string | null,
+  lineNumbers: boolean,
+  highlightLines: readonly number[],
+): string {
+  return `${theme ?? ""}\0${language}\0${lineNumbers ? "1" : "0"}\0${highlightLines.join(",")}\0${code}`;
+}
+
 function settledHighlight(
   code: string,
   language: string,
+  theme: string | null,
   lineNumbers: boolean,
   highlightLines: readonly number[],
 ): RenderedHighlight {
-  const normalizedLanguage = normalizeLanguage(language);
-  const key = `${normalizedLanguage}\0${lineNumbers ? "1" : "0"}\0${highlightLines.join(",")}\0${code}`;
+  const key = highlightKey(code, language, theme, lineNumbers, highlightLines);
   const cached = highlighted.get(key);
   if (cached) return cached;
 
@@ -203,7 +288,7 @@ function settledHighlight(
   }
 
   const result = renderHighlight(
-    { code, language: normalizedLanguage, animationRanges: [], lineNumbers, highlightLines },
+    { code, language, theme, animationRanges: [], lineNumbers, highlightLines },
     performance.now(),
   );
   highlighted.set(key, result);
@@ -213,16 +298,18 @@ function settledHighlight(
 function useDeferredSettledHighlight(
   code: string,
   language: string,
+  theme: string | null,
   lineNumbers: boolean,
   highlightLines: readonly number[],
   enabled: boolean,
 ): RenderedHighlight | null {
-  const key = `${language}\0${lineNumbers ? "1" : "0"}\0${highlightLines.join(",")}\0${code}`;
+  const key = highlightKey(code, language, theme, lineNumbers, highlightLines);
   const cached = enabled ? highlighted.get(key) : null;
   const [result, setResult] = useState<RenderedHighlight | null>(null);
   const current =
     result?.code === code &&
     result.language === language &&
+    result.theme === theme &&
     result.lineNumbers === lineNumbers &&
     sameNumbers(result.highlightLines, highlightLines)
       ? result
@@ -231,11 +318,11 @@ function useDeferredSettledHighlight(
   useEffect(() => {
     if (!enabled || cached || current) return;
     const timer = setTimeout(
-      () => setResult(settledHighlight(code, language, lineNumbers, highlightLines)),
+      () => setResult(settledHighlight(code, language, theme, lineNumbers, highlightLines)),
       0,
     );
     return () => clearTimeout(timer);
-  }, [cached, code, current, enabled, highlightLines, language, lineNumbers]);
+  }, [cached, code, current, enabled, highlightLines, language, lineNumbers, theme]);
 
   return cached ?? current;
 }
@@ -248,17 +335,22 @@ function useStreamingHighlight(
   const [result, setResult] = useState<RenderedHighlight | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastHighlightAt = useRef(Number.NEGATIVE_INFINITY);
+  const stream = useRef<StreamingCodeTokens | null>(null);
 
   useEffect(() => {
     latest.current = request;
     if (!enabled) {
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = null;
+      // A settled block is highlighted whole; release the live tokenizer.
+      stream.current?.dispose();
+      stream.current = null;
       return;
     }
     if (
       (result?.code === request.code &&
         result.language === request.language &&
+        result.theme === request.theme &&
         result.lineNumbers === request.lineNumbers &&
         sameNumbers(result.highlightLines, request.highlightLines) &&
         sameAnimationRanges(result.animationRanges, request.animationRanges)) ||
@@ -269,6 +361,7 @@ function useStreamingHighlight(
 
     const appendOnly =
       result?.language === request.language &&
+      result.theme === request.theme &&
       result.lineNumbers === request.lineNumbers &&
       sameNumbers(result.highlightLines, request.highlightLines) &&
       request.code.startsWith(result.code);
@@ -278,7 +371,7 @@ function useStreamingHighlight(
       timer.current = null;
       const target = latest.current;
       const now = performance.now();
-      const next = renderHighlight(target, now);
+      const next = renderHighlight(target, now, streamingTokens(target, stream));
       lastHighlightAt.current = now;
       setResult(next);
     }, delay);
@@ -289,12 +382,15 @@ function useStreamingHighlight(
     request.highlightLines,
     request.language,
     request.lineNumbers,
+    request.theme,
     result,
   ]);
 
   useEffect(
     () => () => {
       if (timer.current !== null) clearTimeout(timer.current);
+      stream.current?.dispose();
+      stream.current = null;
     },
     [],
   );
@@ -322,33 +418,6 @@ function sameAnimationRanges(
 
 function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function highlightThemeStyle(palette: AppearanceTerminalPalette): HighlightThemeStyle {
-  return {
-    "--th-background": "var(--code-background)",
-    "--th-token": palette.foreground,
-    "--th-attr": palette.brightBlue,
-    "--th-code-inline": palette.brightYellow,
-    "--th-command": palette.brightCyan,
-    "--th-comment": palette.brightBlack,
-    "--th-deleted": palette.red,
-    "--th-function": palette.brightBlue,
-    "--th-heading": palette.brightMagenta,
-    "--th-inserted": palette.green,
-    "--th-keyword": palette.magenta,
-    "--th-link": palette.blue,
-    "--th-literal": palette.cyan,
-    "--th-meta": palette.brightBlack,
-    "--th-number": palette.yellow,
-    "--th-operator": palette.brightMagenta,
-    "--th-property": palette.brightCyan,
-    "--th-selector": palette.green,
-    "--th-string": palette.brightGreen,
-    "--th-tag": palette.red,
-    "--th-type": palette.brightYellow,
-    "--th-variable": palette.brightRed,
-  };
 }
 
 function AnimatedTail({
@@ -414,6 +483,42 @@ function firstAnimationRangeAfter(ranges: readonly CodeAnimationRange[], offset:
   return low;
 }
 
+/**
+ * The code theme once the shared highlighter can color with it, or null while it loads.
+ * Code renders as plain text until then and highlights in place when it is ready.
+ */
+function useReadyCodeTheme(theme: string): { theme: string | null; foreground?: string } {
+  const [ready, setReady] = useState<DiffsHighlighter | null>(
+    () => loadedCodeHighlighter(theme) ?? null,
+  );
+  const [readyTheme, setReadyTheme] = useState<string | null>(() =>
+    loadedCodeHighlighter(theme) ? theme : null,
+  );
+  useEffect(() => {
+    const loaded = loadedCodeHighlighter(theme);
+    if (loaded) {
+      setReady(loaded);
+      setReadyTheme(theme);
+      return;
+    }
+    let cancelled = false;
+    void loadCodeHighlighter(theme).then(
+      (highlighter) => {
+        if (cancelled) return;
+        setReady(highlighter);
+        setReadyTheme(theme);
+      },
+      // An unavailable theme or highlighter leaves code readable as plain text.
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [theme]);
+  if (readyTheme !== theme || !ready) return { theme: null };
+  return { theme, foreground: ready.getTheme(theme).fg };
+}
+
 export function HighlightedCode({
   code,
   language,
@@ -434,20 +539,23 @@ export function HighlightedCode({
   highlightLines?: readonly number[];
 }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
-  const normalizedLanguage = normalizeLanguage(language);
+  const { theme, foreground } = useReadyCodeTheme(appearance.codeThemePair[appearance.scheme]);
+  const normalizedLanguage = highlightLanguage(language) ?? "plaintext";
   const request = useMemo<HighlightRequest>(
     () => ({
       code,
       language: normalizedLanguage,
+      theme,
       animationRanges,
       lineNumbers,
       highlightLines,
     }),
-    [animationRanges, code, highlightLines, lineNumbers, normalizedLanguage],
+    [animationRanges, code, highlightLines, lineNumbers, normalizedLanguage, theme],
   );
   const streamingResult = useStreamingHighlight(request, streaming);
   const reusableStreamingResult =
     streamingResult?.language === normalizedLanguage &&
+    streamingResult.theme === theme &&
     streamingResult.lineNumbers === lineNumbers &&
     sameNumbers(streamingResult.highlightLines, highlightLines) &&
     code.startsWith(streamingResult.code)
@@ -460,13 +568,22 @@ export function HighlightedCode({
   const synchronousSettledResult = useMemo(
     () =>
       !streaming && !completeStreamingResult && code.length <= MAX_SYNCHRONOUS_HIGHLIGHT_LENGTH
-        ? settledHighlight(code, normalizedLanguage, lineNumbers, highlightLines)
+        ? settledHighlight(code, normalizedLanguage, theme, lineNumbers, highlightLines)
         : null,
-    [code, completeStreamingResult, highlightLines, lineNumbers, normalizedLanguage, streaming],
+    [
+      code,
+      completeStreamingResult,
+      highlightLines,
+      lineNumbers,
+      normalizedLanguage,
+      streaming,
+      theme,
+    ],
   );
   const deferredSettledResult = useDeferredSettledHighlight(
     code,
     normalizedLanguage,
+    theme,
     lineNumbers,
     highlightLines,
     !streaming &&
@@ -479,10 +596,13 @@ export function HighlightedCode({
     completeStreamingResult ??
     reusableStreamingResult;
   const prefixLength = prefix?.code.length ?? 0;
-  const themeStyle = useMemo(() => highlightThemeStyle(appearance.terminal), [appearance.terminal]);
+  const themeStyle = useMemo(
+    () => (foreground ? ({ "--code-highlight-fg": foreground } as CSSProperties) : undefined),
+    [foreground],
+  );
 
   return (
-    <div className={cn("tanstack-highlight", className)} style={themeStyle}>
+    <div className={cn("code-highlight", className)} style={themeStyle}>
       <pre
         aria-label={ariaLabel}
         className={`th-code th-code--${prefix?.normalizedLanguage ?? normalizedLanguage}`}

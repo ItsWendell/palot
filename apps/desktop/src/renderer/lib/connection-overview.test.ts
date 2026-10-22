@@ -650,6 +650,29 @@ describe("connection overview", () => {
     expect(controller.getSnapshot()[1]!.inbox.pinned).toHaveLength(0);
   });
 
+  it("settles through activity loaded after the row was projected", async () => {
+    client("a");
+    client("b");
+    await start(["a"]);
+    // An opened task or route preload caches a subagent without an OpenCode event.
+    seedSessionDetails(queryClient, "a-1", [
+      { ...session("child"), parentID: "same", time: { created: 2, updated: 9 } },
+    ]);
+    await controller.dispatch("a", {
+      type: "settle",
+      sessionID: "same",
+      at: 10,
+      through: { updatedAt: 1, sessionID: "same" },
+    });
+    expect(mocks.dispatch).toHaveBeenLastCalledWith({
+      profileID: "a",
+      type: "settle",
+      sessionID: "same",
+      at: 10,
+      through: { updatedAt: 9, sessionID: "child" },
+    });
+  });
+
   it("hydrates retained active and pinned metadata beyond the root page without messages", async () => {
     const a = client("a");
     client("b");

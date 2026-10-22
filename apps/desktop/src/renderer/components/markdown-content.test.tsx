@@ -533,6 +533,56 @@ describe("MarkdownContent", () => {
     expect(html).toContain("team@example.com");
   });
 
+  it("trims GFM trailing punctuation and quotes from bare URLs", () => {
+    const view = render(
+      <MarkdownContent
+        value={`Use "https://example.com/a", 'https://example.com/b'; or https:// alone.`}
+      />,
+    );
+
+    expect(
+      Array.from(view.container.querySelectorAll("a")).map((link) => link.getAttribute("href")),
+    ).toEqual(["https://example.com/a", "https://example.com/b"]);
+    expect(view.container.textContent).toContain("or https:// alone.");
+  });
+
+  it("links inline code that is exactly a web URL and routes it like other web links", () => {
+    const openWebLink = vi.fn();
+    const view = render(
+      <MarkdownWorkspaceProvider onOpenFile={vi.fn()} onOpenWebLink={openWebLink}>
+        <MarkdownContent
+          value={
+            "Open `https://example.com/docs?q=1).` now, not `open https://example.com now`, `https://example.com/a(b)`, `ftp://example.com`, or [`https://example.com/x`](https://example.org/y).\n\n```\nhttps://example.com/fenced\n```"
+          }
+        />
+      </MarkdownWorkspaceProvider>,
+    );
+
+    const links = Array.from(view.container.querySelectorAll("a"));
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "https://example.com/docs?q=1",
+      "https://example.org/y",
+    ]);
+    expect(links[0]!.querySelector("code")?.textContent).toBe("https://example.com/docs?q=1).");
+    expect(links[0]!.querySelector(".markdown-link-icon")).toBeTruthy();
+    fireEvent.click(links[0]!);
+    expect(openWebLink).toHaveBeenCalledWith("https://example.com/docs?q=1");
+  });
+
+  it("shows a site icon only on labelled web links", () => {
+    const view = render(
+      <MarkdownContent
+        value={
+          "Mail team@example.com or [![Logo](https://example.com/logo.png)](https://example.com)"
+        }
+        passiveMedia
+      />,
+    );
+
+    expect(view.container.querySelectorAll("a")).toHaveLength(2);
+    expect(view.container.querySelector(".markdown-link-icon")).toBeNull();
+  });
+
   it("removes executable link protocols", () => {
     const html = renderToStaticMarkup(<MarkdownContent value="[Unsafe](javascript:alert(1))" />);
 
@@ -673,10 +723,13 @@ describe("MarkdownContent", () => {
     });
     fireEvent.click(fileLink);
 
-    expect(openFile).toHaveBeenCalledWith({
-      path: "apps/desktop/src/renderer/components/thread.tsx",
-      line: 58,
-    });
+    expect(openFile).toHaveBeenCalledWith(
+      {
+        path: "apps/desktop/src/renderer/components/thread.tsx",
+        line: 58,
+      },
+      expect.anything(),
+    );
     expect(fileLink.closest("code")).toBeNull();
     expect(view.container.querySelector("code")).toBeNull();
     expect(screen.queryByText("apps/desktop/src/renderer/components/thread.tsx:58")).toBeNull();
@@ -694,9 +747,9 @@ describe("MarkdownContent", () => {
     fireEvent.click(screen.getByRole("link", { name: "Open guide.pdf" }));
     fireEvent.click(screen.getByRole("link", { name: "Open tone.wav" }));
 
-    expect(openFile).toHaveBeenNthCalledWith(1, { path: "diagram.png" });
-    expect(openFile).toHaveBeenNthCalledWith(2, { path: "guide.pdf" });
-    expect(openFile).toHaveBeenNthCalledWith(3, { path: "tone.wav" });
+    expect(openFile).toHaveBeenNthCalledWith(1, { path: "diagram.png" }, expect.anything());
+    expect(openFile).toHaveBeenNthCalledWith(2, { path: "guide.pdf" }, expect.anything());
+    expect(openFile).toHaveBeenNthCalledWith(3, { path: "tone.wav" }, expect.anything());
   });
 
   it("opens relative Markdown file links without intercepting web links", () => {
@@ -709,7 +762,7 @@ describe("MarkdownContent", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Open README.md (line 3)" }));
 
-    expect(openFile).toHaveBeenCalledWith({ path: "README.md", line: 3 });
+    expect(openFile).toHaveBeenCalledWith({ path: "README.md", line: 3 }, expect.anything());
     expect(screen.getByRole("link", { name: "Docs" }).getAttribute("href")).toBe(
       "https://example.com",
     );
@@ -727,6 +780,27 @@ describe("MarkdownContent", () => {
     expect(view.container.querySelector("button")).toBeNull();
   });
 
+  it("keeps commands and identifiers as code and links home paths only locally", () => {
+    const openFile = vi.fn();
+    const view = render(
+      <MarkdownWorkspaceProvider onOpenFile={openFile} workspaceDirectory="/repo">
+        <MarkdownContent value="Run `npm test src/x.ts`, read `this.state`, open `~/notes/a.md`." />
+      </MarkdownWorkspaceProvider>,
+    );
+    expect(view.container.querySelectorAll("code")).toHaveLength(3);
+    expect(screen.queryByRole("link")).toBeNull();
+
+    view.rerender(
+      <MarkdownWorkspaceProvider onOpenFile={openFile} workspaceDirectory="/repo" allowHomePaths>
+        <MarkdownContent value="Open `~/notes/a.md`." />
+      </MarkdownWorkspaceProvider>,
+    );
+    const home = screen.getByRole("link", { name: "Open ~/notes/a.md" });
+    expect(home.getAttribute("href")).toBeNull();
+    fireEvent.keyDown(home, { key: "Enter" });
+    expect(openFile).toHaveBeenCalledWith({ path: "~/notes/a.md" }, expect.anything());
+  });
+
   it("handles absolute file paths and file:// URLs with native file hrefs", () => {
     const openFile = vi.fn();
     render(
@@ -738,17 +812,20 @@ describe("MarkdownContent", () => {
     const logLink = screen.getByRole("link", { name: "Open /tmp/build.log (line 25)" });
     expect(logLink.getAttribute("href")).toBe("file:///tmp/build.log#L25");
     fireEvent.click(logLink);
-    expect(openFile).toHaveBeenCalledWith({ path: "/tmp/build.log", line: 25 });
+    expect(openFile).toHaveBeenCalledWith({ path: "/tmp/build.log", line: 25 }, expect.anything());
 
     const codeLink = screen.getByRole("link", {
       name: "Open /Users/example/project/src/index.ts (line 42)",
     });
     expect(codeLink.getAttribute("href")).toBe("file:///Users/example/project/src/index.ts#L42");
     fireEvent.click(codeLink);
-    expect(openFile).toHaveBeenCalledWith({
-      path: "/Users/example/project/src/index.ts",
-      line: 42,
-    });
+    expect(openFile).toHaveBeenCalledWith(
+      {
+        path: "/Users/example/project/src/index.ts",
+        line: 42,
+      },
+      expect.anything(),
+    );
 
     // Cmd+click passes the modifier event
     fireEvent.click(codeLink, { metaKey: true });
@@ -803,7 +880,7 @@ describe("MarkdownContent", () => {
     fireEvent.click(screen.getByRole("link", { name: "Outside" }));
     expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://outside.example.com");
     fireEvent.click(screen.getByRole("link", { name: "Open README.md" }));
-    expect(openFile).toHaveBeenCalledExactlyOnceWith({ path: "README.md" });
+    expect(openFile).toHaveBeenCalledExactlyOnceWith({ path: "README.md" }, expect.anything());
     expect(openWebLink).toHaveBeenCalledTimes(1);
   });
 

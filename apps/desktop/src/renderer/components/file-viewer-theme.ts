@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { codeHighlighterOptions } from "../lib/code-highlighter";
 import { DIFF_FIND_ACTIVE_HIGHLIGHT, DIFF_FIND_HIGHLIGHT } from "../lib/diff-find-dom";
 
 const pierreBaseCSS = `
@@ -99,12 +100,14 @@ export const pierreViewerStyle = {
 } as CSSProperties;
 
 export const pierreViewerTheme = {
+  ...codeHighlighterOptions,
   disableFileHeader: true,
   overflow: "scroll",
   unsafeCSS: pierreViewerCSS,
 } as const;
 
 export const pierreReviewTheme = {
+  ...codeHighlighterOptions,
   disableFileHeader: false,
   overflow: "scroll",
   unsafeCSS: pierreReviewCSS,

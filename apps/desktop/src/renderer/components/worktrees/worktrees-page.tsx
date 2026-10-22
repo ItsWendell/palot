@@ -8,13 +8,15 @@ import {
   Trash2,
 } from "lucide-react";
 import { useAtom, useAtomValue } from "jotai";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PalotProject, PalotSession } from "../../../shared";
 import { persistedAtom } from "../../atoms/persisted";
 import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { useProjectWorktrees, useRemoveProjectCopy } from "../../hooks/use-project-worktrees";
 import { useProjectCatalogState, useSessionCatalog } from "../../hooks/use-session-catalog";
-import { useSessionActivityForSession } from "../../hooks/use-session-activity";
+import { useSessionActivity, useSessionActivityForSession } from "../../hooks/use-session-activity";
+import { usePullRequestLinksBySession } from "../../hooks/use-source-control";
 import { validateProjectSearch } from "../../lib/route-search";
 import { showErrorToast } from "../../lib/toast-error";
 import { orderProjects, visibleProjects } from "../../lib/view-models";
@@ -38,6 +40,21 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { toast } from "../ui/toast";
+import {
+  attachedTasks as tasksAttachedTo,
+  canRetire,
+  mergedWorktreeCandidates,
+  readRetirementState,
+  retirementChecklist,
+  sessionIsActive,
+  type RetirementCandidate,
+  type RetirementCheck,
+} from "./merged-worktree-retirement";
+import {
+  MergedWorktreesSection,
+  RetireWorktreeDialog,
+  type RetirementReview,
+} from "./retire-worktree-dialog";
 
 const MAX_REMEMBERED_PROFILES = 20;
 
@@ -129,10 +146,14 @@ export function WorktreesPage() {
   const [target, setTarget] = useState<RemovalTarget | null>(null);
   const [checkingDirectory, setCheckingDirectory] = useState<string | null>(null);
   const removalGeneration = useRef(0);
+  const [retirement, setRetirement] = useState<RetirementReview | null>(null);
+  const [retireChecking, setRetireChecking] = useState<string | null>(null);
   useEffect(() => {
     removalGeneration.current += 1;
     setTarget(null);
     setCheckingDirectory(null);
+    setRetirement(null);
+    setRetireChecking(null);
     return () => {
       removalGeneration.current += 1;
     };
@@ -144,6 +165,136 @@ export function WorktreesPage() {
       ),
     [project?.canonical, worktreesQuery.data],
   );
+
+  const queryClient = useQueryClient();
+  const linksBySession = usePullRequestLinksBySession(profileID).data;
+  const activity = useSessionActivity().data;
+  // Retirement re-reads tasks and activity after its slower Git and GitHub reads.
+  const live = useRef({ sessions, activity });
+  useLayoutEffect(() => {
+    live.current = { sessions, activity };
+  }, [activity, sessions]);
+  const candidates = useMemo(
+    () =>
+      project
+        ? mergedWorktreeCandidates({
+            worktrees: managed,
+            sessions,
+            projectID: project.id,
+            linksBySession,
+          })
+        : [],
+    [linksBySession, managed, project, sessions],
+  );
+
+  const readRetirementCheck = useCallback(
+    async (
+      directory: string,
+      pullRequest: RetirementCandidate["pullRequest"],
+      connectionID: string,
+      projectID: string,
+    ): Promise<RetirementCheck> => {
+      const state = await readRetirementState({
+        directory,
+        connectionID,
+        profileID,
+        pullRequest,
+        queryClient,
+      });
+      const { sessions: latestSessions, activity: latestActivity } = live.current;
+      const tasks = tasksAttachedTo(latestSessions, projectID, directory);
+      // OpenCode's running list is authoritative; without it the worktree is kept. The
+      // renderer's live activity can only add tasks, never clear one OpenCode reports.
+      const activeTasks = state.activeTasks
+        ? [
+            ...state.activeTasks,
+            ...tasks
+              .filter(
+                (task) =>
+                  sessionIsActive(latestActivity, task.id) &&
+                  !state.activeTasks!.some((active) => active.id === task.id),
+              )
+              .map((task) => ({ id: task.id, title: task.title })),
+          ]
+        : null;
+      return { ...state, attachedTasks: tasks, activeTasks };
+    },
+    [profileID, queryClient],
+  );
+
+  const reviewRetirement = useCallback(
+    async (directory: string, pullRequest: RetirementCandidate["pullRequest"]) => {
+      if (!runtime?.connected || !project) return;
+      const generation = ++removalGeneration.current;
+      const connectionID = runtime.connectionID;
+      setRetireChecking(directory);
+      try {
+        const check = await readRetirementCheck(directory, pullRequest, connectionID, project.id);
+        if (generation !== removalGeneration.current) return;
+        setRetirement({
+          connectionID,
+          projectID: project.id,
+          directory,
+          pullRequest,
+          check,
+          kept: null,
+        });
+      } catch (error) {
+        if (generation === removalGeneration.current)
+          showErrorToast("Could not check worktree", error);
+      } finally {
+        if (generation === removalGeneration.current) setRetireChecking(null);
+      }
+    },
+    [project, readRetirementCheck, runtime],
+  );
+
+  const retire = useCallback(async () => {
+    const review = retirement;
+    if (!review || !project) return;
+    const generation = removalGeneration.current;
+    setRetireChecking(review.directory);
+    try {
+      if (review.connectionID !== runtime?.connectionID || review.projectID !== project.id)
+        throw new Error("The server or project changed. Review this worktree again.");
+      // Fresh state immediately before the mutation; anything new keeps the worktree.
+      const check = await readRetirementCheck(
+        review.directory,
+        review.pullRequest,
+        review.connectionID,
+        review.projectID,
+      );
+      if (generation !== removalGeneration.current) return;
+      if (!canRetire(retirementChecklist(check, review.pullRequest))) {
+        setRetirement({
+          ...review,
+          check,
+          kept: "Something changed since the last check, so the worktree was kept.",
+        });
+        return;
+      }
+      await removeProjectCopy.mutateAsync({ directory: review.directory, force: false });
+      if (generation !== removalGeneration.current) return;
+      setRetirement(null);
+      toast.add({
+        type: "success",
+        title: "Worktree retired",
+        description: directoryLabel(review.directory),
+      });
+    } catch (error) {
+      if (generation !== removalGeneration.current) return;
+      if (worktreeRemovalRequiresForce(error)) {
+        setRetirement({
+          ...review,
+          kept: "OpenCode found changes that removing would discard, so the worktree was kept.",
+        });
+        return;
+      }
+      showErrorToast("Could not retire worktree", error);
+    } finally {
+      if (generation === removalGeneration.current) setRetireChecking(null);
+    }
+  }, [project, readRetirementCheck, removeProjectCopy, retirement, runtime?.connectionID]);
 
   const updateProject = (projectID: string | null) => {
     if (!projectID) return;
@@ -265,6 +416,16 @@ export function WorktreesPage() {
             </div>
           ) : null}
           {project && worktreesQuery.data ? (
+            <MergedWorktreesSection
+              candidates={candidates}
+              checkingDirectory={retirement ? null : retireChecking}
+              disabled={runtime?.connected !== true || removeProjectCopy.isPending}
+              onReview={(candidate) =>
+                void reviewRetirement(candidate.directory, candidate.pullRequest)
+              }
+            />
+          ) : null}
+          {project && worktreesQuery.data ? (
             <section
               className="overflow-hidden rounded-xl border bg-card/45"
               aria-label="Project worktrees"
@@ -275,11 +436,7 @@ export function WorktreesPage() {
                 detail="Primary project directory"
               />
               {managed.map((item) => {
-                const attached = sessions.filter(
-                  (session) =>
-                    session.projectID === project.id &&
-                    session.location.directory === item.directory,
-                );
+                const attached = tasksAttachedTo(sessions, project.id, item.directory);
                 return (
                   <WorktreeRow
                     key={item.directory}
@@ -310,6 +467,16 @@ export function WorktreesPage() {
         pending={removeProjectCopy.isPending}
         onClose={() => setTarget(null)}
         onRemove={remove}
+      />
+      <RetireWorktreeDialog
+        review={retirement}
+        checking={retireChecking !== null}
+        pending={removeProjectCopy.isPending}
+        onClose={() => setRetirement(null)}
+        onCheckAgain={() =>
+          retirement && void reviewRetirement(retirement.directory, retirement.pullRequest)
+        }
+        onRetire={() => void retire()}
       />
     </main>
   );

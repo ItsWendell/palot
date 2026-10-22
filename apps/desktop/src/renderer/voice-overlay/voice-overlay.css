@@ -1,0 +1,11 @@
+/* Unlayered, so it wins over the base layer's opaque body: only the pill is painted. */
+html,
+body,
+#root {
+  background: transparent;
+}
+
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}

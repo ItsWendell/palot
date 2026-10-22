@@ -45,7 +45,7 @@ const gptNew = model({
   name: "GPT New",
   releasedAt: Date.now() - 5 * DAY,
   variants: ["low", "high"],
-  capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+  capabilities: { tools: true, temperature: true, input: ["text", "image"], output: ["text"] },
   cost: [
     { contextOver: null, input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
     { contextOver: 200_000, input: 6, output: 22.5, cacheRead: 0.6, cacheWrite: 7.5 },
@@ -56,7 +56,7 @@ const gptMini = model({
   providerID: "openai",
   name: "GPT Mini",
   status: "beta",
-  capabilities: { tools: false, input: ["text"], output: ["text"] },
+  capabilities: { tools: false, temperature: false, input: ["text"], output: ["text"] },
   cost: [{ contextOver: null, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }],
 });
 const claudeOld = model({
@@ -128,8 +128,8 @@ function renderModels(focusProvider?: string) {
     profileID: "local-default",
     phase: "connected",
     connected: true,
-    contractVersion: "2.0.29",
-    version: "2.0.29",
+    contractVersion: "2.0.31",
+    version: "2.0.31",
     binaryPath: null,
     pid: null,
     managed: false,
@@ -179,6 +179,20 @@ describe("Models settings", () => {
     expect(within(openAI).getByText("Beta")).toBeTruthy();
     expect(within(openAI).getByText("2 effort levels")).toBeTruthy();
     expect(within(group("Anthropic")!).getByText("Deprecated")).toBeTruthy();
+  });
+
+  it("shows fixed temperature only when the model explicitly does not support it", () => {
+    renderModels();
+    const row = (name: string) =>
+      within(
+        screen
+          .getByRole("switch", { name: `Show ${name}` })
+          .closest<HTMLElement>('[data-slot="model-row"]')!,
+      );
+
+    expect(row("GPT Mini").getByText("Fixed temperature")).toBeTruthy();
+    expect(row("GPT New").queryByText("Fixed temperature")).toBeNull();
+    expect(row("Claude Old").queryByText("Fixed temperature")).toBeNull();
   });
 
   it("filters with chips and keeps provider groups while searching", async () => {

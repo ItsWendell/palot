@@ -1,8 +1,13 @@
-import { FileText, RotateCw, SearchIcon } from "lucide-react";
+import { FileText, MessageSquareText, RotateCw, SearchIcon, TextSearch } from "lucide-react";
 import { Autocomplete } from "@base-ui/react/autocomplete";
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   createContext,
   useContext,
@@ -21,12 +26,13 @@ import {
 import type { PalotSession } from "../../shared";
 import { commandPaletteTabAtom, globalCommandRequestAtom } from "../atoms/command-requests";
 import { commandPaletteOpenAtom, commandPaletteReturnFocusAtom } from "../atoms/ui";
-import { useWorkbenchCommands } from "../atoms/workbench";
+import { transcriptJumpTargetAtom, useWorkbenchCommands } from "../atoms/workbench";
 import { runtimeAtom } from "../atoms/workspace";
 import { workspaceFileSearchQueryOptions } from "../hooks/use-composer-discovery";
 import { useConnectionOverview, type ConnectionOverview } from "../hooks/use-connection-overview";
 import { useFluidHover, useRegisterFluidHoverItem } from "../hooks/use-fluid-hover";
 import { useGlobalCommands } from "../hooks/use-global-commands";
+import { requestTranscriptJump, useMessageSearch } from "../hooks/use-message-search";
 import { catalogSessionIsUnread } from "../hooks/use-session-info";
 import {
   adjacentPaletteTab,
@@ -49,6 +55,12 @@ import {
   type ShortcutKeys,
 } from "../lib/keyboard-shortcuts";
 import {
+  ALL_TAB_MESSAGE_LIMIT,
+  MESSAGE_SEARCH_LIMIT,
+  messageSearchConnectionKey,
+  type MessageSearchHit,
+} from "../lib/message-search";
+import {
   adjacentPaletteTask,
   mergePaletteTasks,
   paletteTaskCommandID,
@@ -57,7 +69,7 @@ import {
 } from "../lib/palette-tasks";
 import { showErrorToast } from "../lib/toast-error";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
-import { projectForSession, projectName } from "../lib/view-models";
+import { formatRelativeTime, projectForSession, projectName } from "../lib/view-models";
 import { listRootSessionInfo } from "../services/opencode-catalog";
 import { mapSession } from "../services/opencode-mappers";
 import { palot } from "../services/palot";
@@ -92,6 +104,9 @@ const RETRY_SEARCH_ID = "retry remote task search";
 const LOAD_MORE_ID = "load more remote task results";
 const FILE_ITEM_PREFIX = "palette-file:";
 const FILE_SEARCH_DEBOUNCE_MS = 150;
+const MESSAGE_ITEM_PREFIX = "palette-message:";
+const SEARCH_RECENT_MESSAGES_ID = "search recent task messages";
+const RETRY_MESSAGE_SEARCH_ID = "retry message search";
 
 function fileItemPath(itemID: string): string | null {
   return itemID.startsWith(FILE_ITEM_PREFIX) ? itemID.slice(FILE_ITEM_PREFIX.length) : null;
@@ -105,6 +120,7 @@ const SECONDARY_TEXT_CLASS =
 /** Global shortcuts that run a palette command; the catalog owns their keys. */
 const DIRECT_SHORTCUTS: readonly (readonly [KeyboardShortcutID, string])[] = [
   ["task.terminal.toggle", "task.terminal.toggle"],
+  ["task.voice.toggle", "task.voice.toggle"],
   ["settings.open", "settings.open:general"],
   ["task.new", "task.new"],
   ["task.choose-project", "task.choose-project"],
@@ -363,6 +379,23 @@ export function GlobalCommandPalette() {
     : [];
   const searchingFiles = Boolean(fileSearch) && files.isFetching && fileRows.length === 0;
 
+  // Message text across tasks: hydrated transcripts, then on request the latest messages of
+  // recent tasks. Native session search matches titles only.
+  const queryClient = useQueryClient();
+  const setTranscriptJumpTarget = useSetAtom(transcriptJumpTargetAtom);
+  const searchesMessages = page === "root" && (tab === "all" || tab === "tasks");
+  const messageSearch = useMessageSearch({
+    open,
+    active: searchesMessages,
+    query: deferredQuery,
+    tasks: recentTasks,
+    canFetch: multiConnection || palot.isPreview() || canFetchOpenCode(runtime),
+    limit: tab === "all" ? ALL_TAB_MESSAGE_LIMIT : MESSAGE_SEARCH_LIMIT,
+  });
+  const messageHits = new Map<string, MessageSearchHit>(
+    messageSearch.hits.map((hit) => [`${MESSAGE_ITEM_PREFIX}${hit.id}`, hit]),
+  );
+
   const reset = () => {
     setQuery("");
     setPage("root");
@@ -406,6 +439,20 @@ export function GlobalCommandPalette() {
       }
     }
     run();
+  };
+
+  // Opens the task on its own connection, then scrolls to the match's turn once it hydrates.
+  const openMessage = (hit: MessageSearchHit) => {
+    const command = commands.find((candidate) => candidate.id === paletteTaskCommandID(hit.task));
+    if (!command) return;
+    if (hit.anchorMessageID) {
+      requestTranscriptJump(queryClient, setTranscriptJumpTarget, {
+        connectionID: messageSearchConnectionKey(hit.task),
+        sessionID: hit.task.session.id,
+        messageID: hit.anchorMessageID,
+      });
+    }
+    execute(command);
   };
 
   // Slash commands such as /fork and /open run palette commands by ID.
@@ -533,6 +580,35 @@ export function GlobalCommandPalette() {
     if (similar === -1) paletteGroups.push(filesGroup);
     else paletteGroups.splice(similar, 0, filesGroup);
   }
+  const messageItems = [...messageHits.keys()];
+  if (messageSearch.canSearchRecent) messageItems.push(SEARCH_RECENT_MESSAGES_ID);
+  if (messageSearch.failures.length > 0) messageItems.push(RETRY_MESSAGE_SEARCH_ID);
+  // All lists messages only once something matched or was asked for; Tasks always offers them.
+  const showMessages =
+    searchesMessages &&
+    messageSearch.query !== "" &&
+    (tab === "tasks" ||
+      messageHits.size > 0 ||
+      messageSearch.pending ||
+      messageSearch.failures.length > 0);
+  if (showMessages && messageItems.length > 0) {
+    const similar = paletteGroups.findIndex((group) => group.id === "similar-tasks");
+    const messagesGroup: PaletteGroup = {
+      id: "messages",
+      label: "Messages",
+      hint: messageSearch.coverage || undefined,
+      items: messageItems,
+    };
+    if (similar === -1) paletteGroups.push(messagesGroup);
+    else paletteGroups.splice(similar, 0, messagesGroup);
+  }
+  // Without rows the heading is hidden, so its coverage moves to a status line.
+  const messageStatus =
+    !showMessages || messageItems.length > 0 || !messageSearch.coverage
+      ? null
+      : messageSearch.pending
+        ? `Messages · ${messageSearch.coverage}`
+        : `No matching messages · ${messageSearch.coverage}`;
   if (searchesTasks && search.isError) {
     paletteGroups.push({ id: "task-search", label: "Task search", items: [RETRY_SEARCH_ID] });
   }
@@ -543,9 +619,12 @@ export function GlobalCommandPalette() {
   const fluidIndex = new Map(itemOrder.map((itemID, index) => [itemID, index]));
   const resultOrder = itemOrder.join("\0");
   const searchingRemote = searchesTasks && search.isFetching && !search.isFetchingNextPage;
-  const layoutKey = `${paletteGroups.map((group) => `${group.id}:${group.items.length}`).join(",")}|${resultOrder}|${searchingRemote}|${searchingFiles}`;
+  const layoutKey = `${paletteGroups.map((group) => `${group.id}:${group.items.length}:${group.hint ?? ""}`).join(",")}|${resultOrder}|${searchingRemote}|${searchingFiles}|${messageStatus}`;
   const enterLabel = (itemID: string) => {
     if (fileItemPath(itemID) !== null) return PALETTE_FILE_ENTER_LABEL;
+    if (messageHits.has(itemID)) return "Open message";
+    if (itemID === SEARCH_RECENT_MESSAGES_ID) return "Search messages";
+    if (itemID === RETRY_MESSAGE_SEARCH_ID) return "Retry search";
     if (itemID === RETRY_SEARCH_ID) return "Retry search";
     if (itemID === LOAD_MORE_ID) return "Load more";
     const command = commandByID.get(itemID);
@@ -606,6 +685,7 @@ export function GlobalCommandPalette() {
         itemToStringValue={(itemID) =>
           commandByID.get(itemID)?.title ??
           fileItemPath(itemID) ??
+          messageHitText(messageHits.get(itemID)) ??
           (itemID === RETRY_SEARCH_ID
             ? "Retry older task search"
             : itemID === LOAD_MORE_ID
@@ -689,7 +769,7 @@ export function GlobalCommandPalette() {
             store={highlight}
             order={itemOrder}
             layoutKey={layoutKey}
-            busy={search.isFetching || searchingFiles}
+            busy={search.isFetching || searchingFiles || messageSearch.pending}
             resultsRef={resultsRef}
           >
             {/* Empty stays mounted as a live region; it must not reserve space when results exist. */}
@@ -747,6 +827,93 @@ export function GlobalCommandPalette() {
                               aria-hidden="true"
                             />
                             Load more tasks
+                          </PaletteItem>
+                        );
+                      }
+
+                      if (itemID === SEARCH_RECENT_MESSAGES_ID) {
+                        return (
+                          <PaletteItem
+                            key={itemID}
+                            index={index}
+                            value={itemID}
+                            onClick={messageSearch.searchRecent}
+                          >
+                            <TextSearch aria-hidden="true" />
+                            <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                              <span className="min-w-0 truncate">
+                                Search messages in {messageSearch.recentTaskCount} recent{" "}
+                                {messageSearch.recentTaskCount === 1 ? "task" : "tasks"}
+                              </span>
+                              <span
+                                className={cn(
+                                  "min-w-0 shrink-[4] truncate text-meta",
+                                  SECONDARY_TEXT_CLASS,
+                                )}
+                              >
+                                Latest messages of each; older history is not searched
+                              </span>
+                            </span>
+                          </PaletteItem>
+                        );
+                      }
+                      if (itemID === RETRY_MESSAGE_SEARCH_ID) {
+                        return (
+                          <PaletteItem
+                            key={itemID}
+                            index={index}
+                            value={itemID}
+                            onClick={messageSearch.retry}
+                          >
+                            <RotateCw aria-hidden="true" />
+                            <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                              <span className="min-w-0 truncate">Retry message search</span>
+                              <span
+                                className={cn(
+                                  "min-w-0 shrink-[4] truncate text-meta",
+                                  SECONDARY_TEXT_CLASS,
+                                )}
+                              >
+                                {messageSearch.failures
+                                  .map(
+                                    (failure) =>
+                                      `Couldn't search ${failure.serverName ?? "this server"}: ${failure.message}`,
+                                  )
+                                  .join(" · ")}
+                              </span>
+                            </span>
+                          </PaletteItem>
+                        );
+                      }
+                      const hit = messageHits.get(itemID);
+                      if (hit) {
+                        return (
+                          <PaletteItem
+                            key={itemID}
+                            index={index}
+                            value={itemID}
+                            onClick={() => openMessage(hit)}
+                          >
+                            <MessageSquareText aria-hidden="true" />
+                            <span className="flex min-w-0 flex-1 flex-col">
+                              <span className="min-w-0 truncate">
+                                {hit.excerpt.before}
+                                <mark className="rounded-xs bg-warning/30 text-inherit forced-colors:bg-[Mark] forced-colors:text-[MarkText]">
+                                  {hit.excerpt.match}
+                                </mark>
+                                {hit.excerpt.after}
+                              </span>
+                              <span
+                                className={cn("min-w-0 truncate text-meta", SECONDARY_TEXT_CLASS)}
+                              >
+                                {messageHitContext(hit, commands)}
+                              </span>
+                            </span>
+                            <span
+                              className={cn("ml-auto shrink-0 text-micro", SECONDARY_TEXT_CLASS)}
+                            >
+                              {formatRelativeTime(hit.createdAt)}
+                            </span>
                           </PaletteItem>
                         );
                       }
@@ -847,6 +1014,17 @@ export function GlobalCommandPalette() {
                 </div>
               </div>
             ) : null}
+            {messageStatus ? (
+              <div
+                className="flex h-10 items-center gap-2 px-4 text-xs text-muted-foreground"
+                role="status"
+              >
+                {messageSearch.pending ? (
+                  <RotateCw className="size-3.5 animate-spin" aria-hidden="true" />
+                ) : null}
+                <span className="min-w-0 truncate">{messageStatus}</span>
+              </div>
+            ) : null}
             {searchingFiles ? (
               <div
                 className="flex h-10 items-center gap-2 px-4 text-xs text-muted-foreground"
@@ -866,7 +1044,7 @@ export function GlobalCommandPalette() {
           <Autocomplete.Status className="sr-only">
             {search.isFetching
               ? "Searching older tasks"
-              : `${visibleCommands.length + fileRows.length} results`}
+              : `${visibleCommands.length + fileRows.length + messageHits.size} results`}
           </Autocomplete.Status>
         </div>
       </Autocomplete.Root>
@@ -1059,6 +1237,24 @@ function TaskTrailing({ command }: { command: GlobalCommand }) {
       ) : null}
     </span>
   );
+}
+
+const MESSAGE_AUTHOR_LABELS = { user: "You", assistant: "Assistant" } as const;
+
+function messageHitText(hit: MessageSearchHit | undefined): string | undefined {
+  return hit ? `${hit.excerpt.before}${hit.excerpt.match}${hit.excerpt.after}` : undefined;
+}
+
+/** Author, task, and the task row's own project and server label. */
+function messageHitContext(hit: MessageSearchHit, commands: readonly GlobalCommand[]): string {
+  const task = commands.find((command) => command.id === paletteTaskCommandID(hit.task));
+  return [
+    MESSAGE_AUTHOR_LABELS[hit.author],
+    hit.task.session.title ?? "Untitled task",
+    task?.description,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {

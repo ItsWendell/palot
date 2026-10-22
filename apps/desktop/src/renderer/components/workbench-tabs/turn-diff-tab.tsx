@@ -17,6 +17,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Spinner } from "../ui/spinner";
 import { DiffFindBar, useDiffFind } from "./diff-find";
 import { DiffViewOptionsMenu, useDiffViewPreferences } from "./diff-view-options";
+import { ChangedFileNavigationControls, useChangedFileNavigation } from "./changed-file-navigation";
 
 export function TurnDiffTab({
   tab,
@@ -51,6 +52,8 @@ export function TurnDiffTab({
     [presented],
   );
   const codeViewRef = useRef<CodeViewHandle<undefined, undefined>>(null);
+  const ids = useMemo(() => items.map((item) => item.id), [items]);
+  const navigation = useChangedFileNavigation({ ids, codeView: codeViewRef });
   const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
   const diffWidth = useElementWidth(scrollContainer);
   const findSources = useMemo(
@@ -119,6 +122,7 @@ export function TurnDiffTab({
           ref={codeViewRef}
           items={items}
           containerRef={setScrollContainer}
+          onScroll={navigation.onScroll}
           options={{
             ...pierreReviewTheme,
             unsafeCSS: `${pierreReviewTheme.unsafeCSS}${pierreBuiltInHeaderCSS}`,
@@ -143,7 +147,14 @@ export function TurnDiffTab({
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
-      onKeyDown={diffs?.length ? find.onKeyDown : undefined}
+      onKeyDown={
+        diffs?.length
+          ? (event) => {
+              find.onKeyDown(event);
+              navigation.onKeyDown(event);
+            }
+          : undefined
+      }
     >
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-background px-2">
         <FileDiff className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -157,6 +168,7 @@ export function TurnDiffTab({
             <span className="text-destructive">-{totals.deletions}</span>
           </span>
         ) : null}
+        {diffs?.length ? <ChangedFileNavigationControls navigation={navigation} /> : null}
         {diffs?.length ? <DiffViewOptionsMenu layout={diffStyle} onFind={find.openFind} /> : null}
         <Button
           type="button"

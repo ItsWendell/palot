@@ -159,4 +159,56 @@ describe("OpenCodeConnectionAlert", () => {
     act(() => vi.advanceTimersByTime(1));
     expect(screen.getByRole("status")).toBeTruthy();
   });
+
+  it("explains a connected project's failed catalogs only for the connection that reported them", async () => {
+    const store = createStore();
+    const runtime = {
+      connectionID: "connection-1",
+      profileID: "local-default",
+      contractVersion: "test",
+      phase: "connected" as const,
+      connected: true,
+      binaryPath: null,
+      version: null,
+      pid: null,
+      managed: false,
+      lastConnectedAt: 1,
+      error: null,
+      versionMismatch: null,
+    };
+    store.set(runtimeAtom, runtime);
+    const retry = vi.fn().mockResolvedValue(undefined);
+    const recovery = {
+      connectionID: "connection-1",
+      location: { directory: "/repo" },
+      retrying: false,
+      retry,
+      failures: [
+        {
+          capability: "agents",
+          label: "Agents",
+          message: "Location not found (/repo)",
+          reference: "err_1",
+          detail: null,
+        },
+      ],
+    };
+    const view = render(
+      <Provider store={store}>
+        <OpenCodeConnectionAlert recovery={recovery} />
+      </Provider>,
+    );
+    expect(screen.getByText("Can't load agents for this project")).toBeTruthy();
+    expect(screen.getByText("Location not found (/repo)")).toBeTruthy();
+    expect(screen.getByText("Reference err_1")).toBeTruthy();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Retry" })));
+    expect(retry).toHaveBeenCalledOnce();
+
+    view.rerender(
+      <Provider store={store}>
+        <OpenCodeConnectionAlert recovery={{ ...recovery, connectionID: "other" }} />
+      </Provider>,
+    );
+    expect(screen.queryByText("Can't load agents for this project")).toBeNull();
+  });
 });

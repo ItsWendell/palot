@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   installedLinuxProcesses,
   launchLinuxInstallation,
+  linuxLaunchCommand,
   stopLinuxInstallation,
+  systemdUserScopesAvailable,
 } from "./linux-install-lifecycle";
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
@@ -114,13 +116,42 @@ describe.skipIf(process.platform !== "linux")("Linux install lifecycle", () => {
     expect(await installedLinuxProcesses([target.executable])).toEqual([target.child.pid]);
   });
 
-  it("reports a launch that exits immediately", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "palot-launch-test-"));
-    directories.push(directory);
-    const executable = path.join(directory, "palot-nightly");
-    await copyFile("/bin/false", executable);
-    await expect(
-      launchLinuxInstallation(executable, path.join(directory, "launch.log")),
-    ).rejects.toThrow("did not stay running");
+  it.each([false, true])(
+    "reports a launch that exits immediately (systemd scope: %s)",
+    async (scope) => {
+      if (scope && !(await systemdUserScopesAvailable())) return;
+      const directory = await mkdtemp(path.join(os.tmpdir(), "palot-launch-test-"));
+      directories.push(directory);
+      const executable = path.join(directory, "palot-nightly");
+      await copyFile("/bin/false", executable);
+      await expect(
+        launchLinuxInstallation(executable, path.join(directory, "launch.log"), {
+          systemdScope: scope,
+        }),
+      ).rejects.toThrow("did not stay running");
+    },
+  );
+});
+
+describe("Linux launch command", () => {
+  it("starts the app in its own app.slice scope so the installer's unit cannot take it down", () => {
+    expect(linuxLaunchCommand("/opt/palot nightly/palot-nightly", true)).toEqual({
+      command: "systemd-run",
+      args: [
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        "--slice=app.slice",
+        "--description=palot-nightly",
+        "--",
+        "/opt/palot nightly/palot-nightly",
+        "--show",
+      ],
+    });
+    expect(linuxLaunchCommand("/opt/palot/palot-nightly", false)).toEqual({
+      command: "/opt/palot/palot-nightly",
+      args: ["--show"],
+    });
   });
 });

@@ -15,6 +15,7 @@ import {
   listRootSessionInfo,
 } from "../services/opencode-catalog";
 import {
+  archivedSession,
   openCodeReconciler,
   projectInfoFromPalot,
   sessionInfoFromPalot,
@@ -554,6 +555,12 @@ export function applyOpenCodeCatalogEvent(
       title: event.data.title,
       time: { ...session.time, updated: Math.max(session.time.updated, event.createdAt) },
     }));
+    return;
+  }
+  if (event.type === "session.archived" || event.type === "session.unarchived") {
+    patchSession(queryClient, connectionID, event.data.sessionID, (session) =>
+      archivedSession(session, event),
+    );
     return;
   }
   if (event.type === "session.moved") {

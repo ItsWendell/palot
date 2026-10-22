@@ -46,6 +46,7 @@ export type KeyboardShortcutID =
   | "task.previous"
   | "task.changes.toggle"
   | "task.terminal.toggle"
+  | "task.voice.toggle"
   | "workbench.tab.close"
   | "composer.focus"
   | "composer.send"
@@ -156,6 +157,12 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     group: "panels",
     label: "Show or hide terminal",
     keys: ["Control", "`"],
+  },
+  {
+    id: "task.voice.toggle",
+    group: "tasks",
+    label: "Start or end voice chat",
+    keys: ["Mod", "Alt", "V"],
   },
   {
     id: "workbench.tab.close",

@@ -67,6 +67,10 @@ import {
 } from "./changes-source-control";
 import { DiffViewOptionsMenu, useDiffViewPreferences } from "./diff-view-options";
 import { ReviewCommentEditor, useReviewComments } from "../review-comment-editor";
+import { ChangedFileNavigationControls, useChangedFileNavigation } from "./changed-file-navigation";
+
+/** Tree selection and previous/next file share one item scroll offset. */
+const FILE_SCROLL_OFFSET = 34;
 
 const treeStyle = {
   height: "100%",
@@ -138,6 +142,12 @@ export function ChangesTab({
     ...(tab.resource.sourceSessionID ? { sessionID: tab.resource.sourceSessionID } : {}),
   });
   const pathSetRef = useRef<Set<string>>(new Set());
+  const navigation = useChangedFileNavigation({
+    ids: paths,
+    codeView: codeViewRef,
+    scrollOffset: FILE_SCROLL_OFFSET,
+  });
+  const goToFile = navigation.goTo;
 
   useLayoutEffect(() => {
     pathSetRef.current = new Set(paths);
@@ -171,13 +181,7 @@ export function ChangesTab({
     onSelectionChange(selectedPaths) {
       const path = selectedPaths.at(-1);
       if (!path || !pathSetRef.current.has(path)) return;
-      codeViewRef.current?.scrollTo({
-        type: "item",
-        id: path,
-        align: "start",
-        offset: 34,
-        behavior: "smooth-auto",
-      });
+      goToFile(path);
     },
   });
   const totals = useMemo(
@@ -315,7 +319,13 @@ export function ChangesTab({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-card" onKeyDown={find.onKeyDown}>
+    <div
+      className="flex min-h-0 flex-1 flex-col bg-card"
+      onKeyDown={(event) => {
+        find.onKeyDown(event);
+        navigation.onKeyDown(event);
+      }}
+    >
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border bg-background px-2">
         <ReviewModeToggle tab={tab} pane={pane} commands={commands} />
         <Button
@@ -329,6 +339,7 @@ export function ChangesTab({
           <FolderTree data-icon="inline-start" />
           <span className="hidden @min-[28rem]/workbench:inline">Files</span>
         </Button>
+        <ChangedFileNavigationControls navigation={navigation} />
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <div className="hidden shrink-0 items-center gap-2 font-mono text-diff tabular-nums @min-[46rem]/workbench:flex">
             <span className="text-muted-foreground">
@@ -408,6 +419,7 @@ export function ChangesTab({
             showTree ? "flex flex-col" : "hidden",
           )}
           aria-label="Changed files"
+          data-file-navigation-ignore=""
         >
           <div className="flex h-8 shrink-0 items-center border-b border-border px-2">
             <Files className="mr-1.5 size-3 text-muted-foreground" aria-hidden="true" />
@@ -451,6 +463,7 @@ export function ChangesTab({
             ref={codeViewRef}
             containerRef={setCodeViewContainer}
             items={items}
+            onScroll={navigation.onScroll}
             selectedLines={review.enabled ? selection : undefined}
             onSelectedLinesChange={
               review.enabled

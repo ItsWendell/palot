@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type {
+  ActivityWatermark,
   OpenCodeProfile,
   OpenCodeRuntimeStatus,
   PalotProject,
@@ -24,6 +25,8 @@ import { sessionActivityQueryOptions } from "./session-activity-query";
 import {
   projectSessionInbox,
   sameInboxSessionView,
+  sessionFamilyWatermark,
+  watermarkCovers,
   type SessionInboxSnapshot,
 } from "./session-inbox";
 import {
@@ -598,7 +601,7 @@ export class ConnectionOverviewController {
       await previous?.catch(() => undefined);
       if (!this.valid(profileID, generation, epoch)) return;
       const snapshot = await palot.dispatchSessionTriage({
-        ...command,
+        ...this.withLoadedActivity(profileID, command),
         profileID,
       } as SessionTriageCommand);
       if (!this.valid(profileID, generation, epoch)) return;
@@ -613,6 +616,37 @@ export class ConnectionOverviewController {
       if (this.mutations.get(profileID) === work) this.mutations.delete(profileID);
     }
   };
+
+  /**
+   * Rows re-project on OpenCode events, but route preloads and opened tasks also fill
+   * the cache (subagent sessions included). A row's watermark can therefore trail the
+   * activity the next projection sees, which would put a just-settled task straight
+   * back in the Inbox. Raise watermarks to the activity loaded when the command runs.
+   */
+  private withLoadedActivity(
+    profileID: string,
+    command: OverviewTriageCommand,
+  ): OverviewTriageCommand {
+    if (command.type !== "settle" && command.type !== "snooze" && command.type !== "settle-many")
+      return command;
+    const connectionID = this.entry(profileID)?.runtime?.connectionID;
+    if (!connectionID) return command;
+    const sessions = openCodeReconciler(this.queryClient).sessions(connectionID).map(mapSession);
+    const latest = (sessionID: string, through: ActivityWatermark): ActivityWatermark => {
+      const loaded = sessionFamilyWatermark(sessions, sessionID);
+      return loaded && !watermarkCovers(through, loaded) ? loaded : through;
+    };
+    if (command.type === "settle-many") {
+      return {
+        ...command,
+        sessions: command.sessions.map((entry) => ({
+          ...entry,
+          through: latest(entry.sessionID, entry.through),
+        })),
+      };
+    }
+    return { ...command, through: latest(command.sessionID, command.through) };
+  }
 
   rename = async (profileID: string, sessionID: string, title: string) => {
     const runtime = this.connected(profileID);
@@ -715,7 +749,7 @@ export class ConnectionOverviewController {
       this.schedule(entry.profile.id, true);
     } else if (
       batch.events.some((event) =>
-        /^(session\.(created|deleted|renamed|updated|viewed|idle|execution\.|status|inbox\.)|permission\.|form\.)/.test(
+        /^(session\.(created|deleted|renamed|archived|unarchived|updated|viewed|idle|execution\.|status|inbox\.)|permission\.|form\.)/.test(
           event.type,
         ),
       )

@@ -32,6 +32,7 @@ import { Route as SettingsProjectRouteImport } from "./routes/settings.project";
 import { Route as SettingsProvidersRouteImport } from "./routes/settings.providers";
 import { Route as SettingsShortcutsRouteImport } from "./routes/settings.shortcuts";
 import { Route as SettingsToolsRouteImport } from "./routes/settings.tools";
+import { Route as SettingsVoiceRouteImport } from "./routes/settings.voice";
 import { Route as WorkspaceSessionsSessionIDRouteImport } from "./routes/_workspace.sessions.$sessionID";
 import { Route as SettingsConnectionsIndexRouteImport } from "./routes/settings.connections.index";
 import { Route as SettingsConnectionsLocalServiceRouteImport } from "./routes/settings.connections.local-service";
@@ -163,6 +164,11 @@ const SettingsToolsRoute = SettingsToolsRouteImport.update({
   path: "/tools",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsVoiceRoute = SettingsVoiceRouteImport.update({
+  id: "/voice",
+  path: "/voice",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const WorkspaceSessionsSessionIDRoute =
   WorkspaceSessionsSessionIDRouteImport.update({
     id: "/sessions/$sessionID",
@@ -224,6 +230,7 @@ export interface FileRoutesByFullPath {
   "/settings/providers": typeof SettingsProvidersRoute;
   "/settings/shortcuts": typeof SettingsShortcutsRoute;
   "/settings/tools": typeof SettingsToolsRoute;
+  "/settings/voice": typeof SettingsVoiceRoute;
   "/settings/": typeof SettingsIndexRoute;
   "/sessions/$sessionID": typeof WorkspaceSessionsSessionIDRouteWithChildren;
   "/settings/connections/local-service": typeof SettingsConnectionsLocalServiceRoute;
@@ -253,6 +260,7 @@ export interface FileRoutesByTo {
   "/settings/providers": typeof SettingsProvidersRoute;
   "/settings/shortcuts": typeof SettingsShortcutsRoute;
   "/settings/tools": typeof SettingsToolsRoute;
+  "/settings/voice": typeof SettingsVoiceRoute;
   "/": typeof WorkspaceIndexRoute;
   "/settings": typeof SettingsIndexRoute;
   "/sessions/$sessionID": typeof WorkspaceSessionsSessionIDRouteWithChildren;
@@ -287,6 +295,7 @@ export interface FileRoutesById {
   "/settings/providers": typeof SettingsProvidersRoute;
   "/settings/shortcuts": typeof SettingsShortcutsRoute;
   "/settings/tools": typeof SettingsToolsRoute;
+  "/settings/voice": typeof SettingsVoiceRoute;
   "/_workspace/": typeof WorkspaceIndexRoute;
   "/settings/": typeof SettingsIndexRoute;
   "/_workspace/sessions/$sessionID": typeof WorkspaceSessionsSessionIDRouteWithChildren;
@@ -322,6 +331,7 @@ export interface FileRouteTypes {
     | "/settings/providers"
     | "/settings/shortcuts"
     | "/settings/tools"
+    | "/settings/voice"
     | "/settings/"
     | "/sessions/$sessionID"
     | "/settings/connections/local-service"
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | "/settings/providers"
     | "/settings/shortcuts"
     | "/settings/tools"
+    | "/settings/voice"
     | "/"
     | "/settings"
     | "/sessions/$sessionID"
@@ -384,6 +395,7 @@ export interface FileRouteTypes {
     | "/settings/providers"
     | "/settings/shortcuts"
     | "/settings/tools"
+    | "/settings/voice"
     | "/_workspace/"
     | "/settings/"
     | "/_workspace/sessions/$sessionID"
@@ -577,6 +589,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsToolsRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/settings/voice": {
+      id: "/settings/voice";
+      path: "/voice";
+      fullPath: "/settings/voice";
+      preLoaderRoute: typeof SettingsVoiceRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/_workspace/sessions/$sessionID": {
       id: "/_workspace/sessions/$sessionID";
       path: "/sessions/$sessionID";
@@ -694,6 +713,7 @@ interface SettingsRouteChildren {
   SettingsProvidersRoute: typeof SettingsProvidersRoute;
   SettingsShortcutsRoute: typeof SettingsShortcutsRoute;
   SettingsToolsRoute: typeof SettingsToolsRoute;
+  SettingsVoiceRoute: typeof SettingsVoiceRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
 }
 
@@ -713,6 +733,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsShortcutsRoute: SettingsShortcutsRoute,
   SettingsToolsRoute: SettingsToolsRoute,
+  SettingsVoiceRoute: SettingsVoiceRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 };
 

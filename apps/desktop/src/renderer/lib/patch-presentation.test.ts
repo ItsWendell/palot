@@ -1,4 +1,5 @@
 import { getSharedHighlighter } from "@pierre/diffs";
+import { CODE_HIGHLIGHTER } from "./code-highlighter";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getPatchPresentation,
@@ -338,6 +339,7 @@ describe("patch highlighting", () => {
     const highlighter = await getSharedHighlighter({
       themes: [theme],
       langs: ["typescript", "python"],
+      preferredHighlighter: CODE_HIGHLIGHTER,
     });
     const ts = highlighter.codeToTokens("const answer: number = 42;", {
       theme,
@@ -376,7 +378,11 @@ describe("patch highlighting", () => {
         "+const final = false;\n",
       ].join("\n"),
     ).pages[0]!;
-    const highlighter = await getSharedHighlighter({ themes: [theme], langs: ["typescript"] });
+    const highlighter = await getSharedHighlighter({
+      themes: [theme],
+      langs: ["typescript"],
+      preferredHighlighter: CODE_HIGHLIGHTER,
+    });
     const expected = highlighter.codeToTokens("const answer = 42;\nconst next = true;", {
       theme,
       lang: "typescript",
@@ -403,7 +409,11 @@ describe("patch highlighting", () => {
     const long = `const text = "${"x".repeat(50_000)}";`;
     const raw = ["*** Add File: example.ts", `+${long}`, "+const next = true;\r", "+\r"];
     const page = present(`${raw.join("\n")}\n`).pages[0]!;
-    const highlighter = await getSharedHighlighter({ themes: [theme], langs: ["typescript"] });
+    const highlighter = await getSharedHighlighter({
+      themes: [theme],
+      langs: ["typescript"],
+      preferredHighlighter: CODE_HIGHLIGHTER,
+    });
     const tokenize = vi.spyOn(highlighter, "codeToTokens");
     const highlighted = await highlightPatchPage(page, theme);
     expect(
@@ -417,7 +427,11 @@ describe("patch highlighting", () => {
 
   it("falls back to plain text for unknown file types", async () => {
     const page = present("*** Add File: data.unknown-language\n+<unrecognized> & text\n").pages[0]!;
-    const highlighter = await getSharedHighlighter({ themes: [theme], langs: [] });
+    const highlighter = await getSharedHighlighter({
+      themes: [theme],
+      langs: [],
+      preferredHighlighter: CODE_HIGHLIGHTER,
+    });
     const tokenize = vi.spyOn(highlighter, "codeToTokens");
     const highlighted = await highlightPatchPage(page, theme);
     expect(highlighted.lines[1]).toEqual([{ content: "<unrecognized> & text" }]);

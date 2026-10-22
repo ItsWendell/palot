@@ -4,6 +4,8 @@ import {
   MAX_WORKBENCH_TABS,
   createWorkbenchState,
   hasBtwTabs,
+  type BtwFollowUp,
+  type BtwQuote,
   type WorkbenchContextState,
   type WorkbenchPaneState,
   type WorkbenchState,
@@ -103,11 +105,16 @@ function parseTab(value: unknown): WorkbenchTab | null {
   const sourceSessionID = optionalIdentifier(value.resource.sourceSessionID);
   if (!location || sourceSessionID === false) return null;
   if (value.kind === "btw") {
+    const quote = parseBtwQuote(value.resource.quote);
+    const followUps = parseBtwFollowUps(value.resource.followUps);
     if (
       !identifier(value.resource.sessionID) ||
       !identifier(value.resource.questionID) ||
       typeof value.resource.question !== "string" ||
-      !value.resource.question.trim() ||
+      quote === false ||
+      followUps === false ||
+      // A selection's tab may wait for its first question; any other tab needs one.
+      (!value.resource.question.trim() && (!quote || followUps)) ||
       (value.resource.answer !== undefined && typeof value.resource.answer !== "string") ||
       (value.resource.error !== undefined && typeof value.resource.error !== "string")
     )
@@ -124,6 +131,8 @@ function parseTab(value: unknown): WorkbenchTab | null {
         question: value.resource.question,
         ...(value.resource.answer !== undefined ? { answer: value.resource.answer } : {}),
         ...(value.resource.error !== undefined ? { error: value.resource.error } : {}),
+        ...(quote ? { quote } : {}),
+        ...(followUps ? { followUps } : {}),
       },
     };
   }
@@ -214,6 +223,8 @@ function parseTab(value: unknown): WorkbenchTab | null {
   if (value.kind === "file" && path(value.resource.path)) {
     const line = optionalLine(value.resource.line);
     if (line === false) return null;
+    // Older tabs have no range; an unusable end line only drops the range.
+    const endLine = optionalLine(value.resource.endLine);
     return {
       id: value.id,
       kind: value.kind,
@@ -223,6 +234,7 @@ function parseTab(value: unknown): WorkbenchTab | null {
         location,
         path: value.resource.path,
         ...(line ? { line } : {}),
+        ...(line && endLine && endLine > line ? { endLine } : {}),
       },
     };
   }
@@ -273,6 +285,50 @@ function parseLocation(value: unknown): LocationRef | null {
   const workspaceID = optionalIdentifier(value.workspaceID);
   if (workspaceID === false) return null;
   return { directory: value.directory, ...(workspaceID ? { workspaceID } : {}) };
+}
+
+function parseBtwQuote(value: unknown): BtwQuote | undefined | false {
+  if (value === undefined) return undefined;
+  if (
+    !record(value) ||
+    typeof value.text !== "string" ||
+    !value.text.trim() ||
+    !identifier(value.messageID) ||
+    (value.truncated !== undefined && typeof value.truncated !== "boolean")
+  )
+    return false;
+  const turnMessageID = optionalIdentifier(value.turnMessageID);
+  if (turnMessageID === false) return false;
+  return {
+    text: value.text,
+    ...(value.truncated ? { truncated: true } : {}),
+    messageID: value.messageID,
+    ...(turnMessageID ? { turnMessageID } : {}),
+  };
+}
+
+function parseBtwFollowUps(value: unknown): BtwFollowUp[] | undefined | false {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const followUps: BtwFollowUp[] = [];
+  for (const entry of value) {
+    if (
+      !record(entry) ||
+      !identifier(entry.id) ||
+      typeof entry.question !== "string" ||
+      !entry.question.trim() ||
+      (entry.answer !== undefined && typeof entry.answer !== "string") ||
+      (entry.error !== undefined && typeof entry.error !== "string")
+    )
+      return false;
+    followUps.push({
+      id: entry.id,
+      question: entry.question,
+      ...(entry.answer !== undefined ? { answer: entry.answer } : {}),
+      ...(entry.error !== undefined ? { error: entry.error } : {}),
+    });
+  }
+  return followUps;
 }
 
 function record(value: unknown): value is Record<string, unknown> {

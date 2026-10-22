@@ -1,7 +1,24 @@
-import { Provider } from "jotai";
+import { Provider, createStore } from "jotai";
 import { act, cleanup, render } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { resolvedAppearanceAtom } from "../atoms/appearance";
+import { loadCodeHighlighter } from "../lib/code-highlighter";
+import { StreamingCodeTokens } from "../lib/streaming-code-tokens";
+import "../lib/theme-catalog";
 import { HighlightedCode } from "./highlighted-code";
+
+beforeAll(async () => {
+  // Code renders as plain text until the shared highlighter has the active theme.
+  const appearance = createStore().get(resolvedAppearanceAtom);
+  await loadCodeHighlighter(appearance.codeThemePair[appearance.scheme]);
+});
+
+/** Token spans the active code theme colored, keyed by their text. */
+function colored(container: HTMLElement, text: string): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>(".th-token")].filter(
+    (element) => element.textContent?.trim() === text && element.style.color !== "",
+  );
+}
 
 afterEach(() => {
   cleanup();
@@ -10,7 +27,7 @@ afterEach(() => {
 });
 
 describe("HighlightedCode", () => {
-  it("renders settled code with TanStack semantic token classes", () => {
+  it("renders settled code with colors from the active code theme", () => {
     const view = render(
       <Provider>
         <HighlightedCode code="const value = 1" language="ts" />
@@ -18,12 +35,15 @@ describe("HighlightedCode", () => {
     );
 
     expect(view.container.querySelector("pre.th-code")?.textContent).toBe("const value = 1");
-    expect(view.container.querySelector(".th-keyword")?.textContent).toBe("const");
-    expect(view.container.querySelector(".th-number")?.textContent).toBe("1");
+    const keyword = colored(view.container, "const")[0];
+    const number = colored(view.container, "1")[0];
+    expect(keyword).toBeTruthy();
+    expect(number).toBeTruthy();
+    expect(keyword!.style.color).not.toBe(number!.style.color);
     expect(
       view.container
-        .querySelector<HTMLElement>(".tanstack-highlight")
-        ?.style.getPropertyValue("--th-keyword"),
+        .querySelector<HTMLElement>(".code-highlight")
+        ?.style.getPropertyValue("--code-highlight-fg"),
     ).not.toBe("");
   });
 
@@ -38,6 +58,7 @@ describe("HighlightedCode", () => {
     expect(view.container.querySelector("pre")?.textContent).toBe(code);
     expect(view.container.querySelector("script")).toBeNull();
     expect(view.container.querySelector("pre")?.dataset.language).toBe("plaintext");
+    expect(view.container.querySelector(".th-token")).toBeNull();
   });
 
   it("defers highlighting a large settled block without hiding its code", () => {
@@ -50,10 +71,10 @@ describe("HighlightedCode", () => {
     );
 
     expect(view.container.querySelector("pre")?.textContent).toBe(code);
-    expect(view.container.querySelector(".th-keyword")).toBeNull();
+    expect(view.container.querySelector(".th-token")).toBeNull();
 
     act(() => vi.advanceTimersByTime(0));
-    expect(view.container.querySelector(".th-keyword")?.textContent).toBe("const");
+    expect(colored(view.container, "const").length).toBeGreaterThan(0);
   });
 
   it("renders streaming syntax tokens with the matching absolute animation range", () => {
@@ -75,7 +96,8 @@ describe("HighlightedCode", () => {
     const animated = view.container.querySelector<HTMLElement>("[data-markdown-stream-code]");
     expect(animated?.textContent).toBe("const");
     expect(animated?.style.getPropertyValue("--palot-markdown-stream-delay")).toBe("40ms");
-    expect(animated?.parentElement?.classList.contains("th-keyword")).toBe(true);
+    expect(animated?.parentElement?.classList.contains("th-token")).toBe(true);
+    expect(animated?.parentElement?.style.color).not.toBe("");
   });
 
   it("coalesces append-only streaming updates to the latest code", () => {
@@ -98,16 +120,15 @@ describe("HighlightedCode", () => {
     view.rerender(renderCode("queueStart = 0 + 1 + 2"));
 
     expect(view.container.querySelector("pre")?.textContent).toBe("queueStart = 0 + 1 + 2");
-    expect(view.container.querySelectorAll(".th-number")).toHaveLength(0);
+    const numbers = () => ["0", "1", "2"].flatMap((digit) => colored(view.container, digit));
+    expect(numbers()).toHaveLength(0);
 
     act(() => vi.advanceTimersByTime(109));
-    expect(view.container.querySelectorAll(".th-number")).toHaveLength(0);
+    expect(numbers()).toHaveLength(0);
 
     now = 120;
     act(() => vi.advanceTimersByTime(1));
-    expect(
-      [...view.container.querySelectorAll(".th-number")].map((element) => element.textContent),
-    ).toEqual(["0", "1", "2"]);
+    expect(numbers().map((element) => element.textContent?.trim())).toEqual(["0", "1", "2"]);
   });
 
   it("refreshes animation timing when streamed code is unchanged", () => {
@@ -144,6 +165,32 @@ describe("HighlightedCode", () => {
     ).toBe("-40ms");
   });
 
+  it("streams through one live tokenizer and releases it when the block settles", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const update = vi.spyOn(StreamingCodeTokens.prototype, "update");
+    const dispose = vi.spyOn(StreamingCodeTokens.prototype, "dispose");
+    const renderCode = (code: string, streaming = true) => (
+      <Provider>
+        <HighlightedCode code={code} language="ts" streaming={streaming} />
+      </Provider>
+    );
+    const view = render(renderCode("const a"));
+    act(() => vi.advanceTimersByTime(0));
+    now = 200;
+    view.rerender(renderCode("const a = 1;\nconst b"));
+    act(() => vi.advanceTimersByTime(0));
+
+    expect(update.mock.instances).toHaveLength(2);
+    expect(update.mock.instances[0]).toBe(update.mock.instances[1]);
+    expect(colored(view.container, "1")).toHaveLength(1);
+    expect(dispose).not.toHaveBeenCalled();
+
+    view.rerender(renderCode("const a = 1;\nconst b = 2;", false));
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it("removes streaming animation wrappers after the block settles", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.spyOn(performance, "now").mockReturnValue(0);
@@ -165,6 +212,6 @@ describe("HighlightedCode", () => {
 
     act(() => vi.advanceTimersByTime(0));
     expect(view.container.querySelector("[data-markdown-stream-code]")).toBeNull();
-    expect(view.container.querySelector(".th-keyword")?.textContent).toBe("const");
+    expect(colored(view.container, "const")).toHaveLength(1);
   });
 });

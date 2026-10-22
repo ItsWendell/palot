@@ -270,10 +270,22 @@ describe("describeContextEntry", () => {
       status: "completed",
       reason: "auto",
       summary: "## Summary\nWe fixed the build.",
-      recent: "",
+      metadata: { keepID: "msg_kept" },
     } as SessionMessageInfo);
     expect(entry).toMatchObject({ role: "Compaction", summary: true, preview: "Summary" });
     expect(entry.tokens).toBeGreaterThan(0);
+
+    // Context history folds the kept messages into `metadata.recent`.
+    const withRecent = describeContextEntry({
+      type: "compaction",
+      id: "c1",
+      time: { created: 1 },
+      status: "completed",
+      reason: "auto",
+      summary: "## Summary\nWe fixed the build.",
+      metadata: { keepID: "msg_kept", recent: "x".repeat(400) },
+    } as SessionMessageInfo);
+    expect(withRecent.tokens).toBe(entry.tokens + 100);
   });
 
   it("names the variant and calls out variant-only switches", () => {

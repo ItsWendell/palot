@@ -13,6 +13,8 @@ import {
   Layers2,
   Inbox,
   MessageSquare,
+  Mic,
+  PhoneOff,
   PanelLeftClose,
   PanelLeftOpen,
   PanelBottomClose,
@@ -74,6 +76,9 @@ import { usePalotNavigation } from "./use-navigation";
 import { openTranscriptFindAtom } from "../components/transcript-find";
 import { useSessionActivity } from "./use-session-activity";
 import { useSessionFork } from "./use-session-fork";
+import { useVoiceCall } from "./use-voice-call";
+import { voiceCall } from "../services/voice-call";
+import { supportsOpenCodeVoice } from "../lib/voice/voice-support";
 import { useProjectCatalog, useSessionCatalog } from "./use-session-catalog";
 
 interface UseGlobalCommandsOptions {
@@ -118,6 +123,7 @@ export function useGlobalCommands({
   const requestComposerAction = useSetAtom(composerActionRequestAtom);
   const setPaletteReturnFocus = useSetAtom(commandPaletteReturnFocusAtom);
   const forkSession = useSessionFork();
+  const voicePhase = useVoiceCall().snapshot.phase;
   const sessionID = useRouterState({
     select: (state) => {
       const value = state.matches
@@ -443,6 +449,56 @@ export function useGlobalCommands({
           workbenchCommands.activateTab(changesPane, changesTab.id);
         },
       },
+      ...(supportsOpenCodeVoice(runtime?.version) || voicePhase !== "idle"
+        ? [
+            {
+              id: "task.voice.toggle",
+              title: voicePhase === "idle" ? "Start voice chat" : "End voice chat",
+              description:
+                voicePhase === "idle"
+                  ? "Talk with this task's agent through a voice assistant"
+                  : "Hang up the current voice chat",
+              group: "actions" as const,
+              icon: voicePhase === "idle" ? Mic : PhoneOff,
+              keywords: ["voice", "talk", "speak", "microphone", "call", "gpt-live"],
+              shortcut: boundShortcutKeys("task.voice.toggle"),
+              suggested: voicePhase !== "idle",
+              kind: "action" as const,
+              run: () => voiceCall.handleHostCommand({ type: "toggle-call" }),
+            },
+          ]
+        : []),
+      ...(supportsOpenCodeVoice(runtime?.version) &&
+      voicePhase === "idle" &&
+      runtime?.connected &&
+      selectedSession
+        ? [
+            {
+              id: "task.voice.coordinator",
+              title: "Start coordinator voice chat",
+              description: "Talk with a coordinator that can start and steer several tasks",
+              group: "actions" as const,
+              icon: Mic,
+              keywords: ["voice", "coordinator", "orchestrate", "delegate", "tasks", "call"],
+              kind: "action" as const,
+              run: () => {
+                const directory = selectedSession.location.directory;
+                const project = allProjects.find(
+                  (candidate) => candidate.id === selectedSession.projectID,
+                );
+                void voiceCall.startCoordinatorChat({
+                  connectionID: runtime.connectionID,
+                  directory,
+                  projectName: project?.name ?? directory.split("/").filter(Boolean).at(-1) ?? null,
+                  projects: allProjects.map((candidate) => ({
+                    name: candidate.name,
+                    directory: candidate.canonical,
+                  })),
+                });
+              },
+            },
+          ]
+        : []),
       {
         id: "task.terminal.toggle",
         title: terminalOpen ? "Hide terminal" : "Show terminal",

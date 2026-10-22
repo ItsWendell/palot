@@ -57,12 +57,62 @@ export async function stopLinuxInstallation(
   }
 }
 
-export async function launchLinuxInstallation(executable: string, logPath: string): Promise<void> {
+/**
+ * The command that starts the installed app. With a systemd user manager the app gets its own
+ * scope in `app.slice`, like a desktop launch. Chromium moves only its main process into a scope
+ * of its own; the zygote, GPU and renderer children stay where they started. Launched from the
+ * installer's cgroup, restarting that unit (for example an OpenCode service running an agent's
+ * shell) kills those children and takes the app down.
+ */
+export function linuxLaunchCommand(
+  executable: string,
+  systemdScope: boolean,
+): { command: string; args: string[] } {
+  if (!systemdScope) return { command: executable, args: ["--show"] };
+  return {
+    command: "systemd-run",
+    args: [
+      "--user",
+      "--scope",
+      "--quiet",
+      "--collect",
+      "--slice=app.slice",
+      `--description=${path.basename(executable)}`,
+      "--",
+      executable,
+      "--show",
+    ],
+  };
+}
+
+/** Whether `systemd-run --user` can create scopes: the user manager answers and the tool exists. */
+export async function systemdUserScopesAvailable(): Promise<boolean> {
+  const answers = (command: string, args: string[]) =>
+    new Promise<boolean>((resolve) => {
+      const child = spawn(command, args, { stdio: "ignore" });
+      child.once("error", () => resolve(false));
+      child.once("exit", (code) => resolve(code === 0));
+    });
+  return (
+    (await answers("systemctl", ["--user", "show-environment"])) &&
+    (await answers("systemd-run", ["--version"]))
+  );
+}
+
+export async function launchLinuxInstallation(
+  executable: string,
+  logPath: string,
+  options: { systemdScope?: boolean } = {},
+): Promise<void> {
   const environment = { ...process.env };
   delete environment.ELECTRON_RUN_AS_NODE;
+  const { command, args } = linuxLaunchCommand(
+    executable,
+    options.systemdScope ?? (await systemdUserScopesAvailable()),
+  );
   const log = await open(logPath, "a", 0o600);
   try {
-    const child = spawn(executable, ["--show"], {
+    const child = spawn(command, args, {
       cwd: path.dirname(executable),
       env: environment,
       detached: true,

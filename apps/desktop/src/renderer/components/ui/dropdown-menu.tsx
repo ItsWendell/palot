@@ -30,12 +30,16 @@ function DropdownMenuContent({
   alignOffset = 0,
   side = "bottom",
   sideOffset = 4,
+  anchor,
   className,
   children,
   ref,
   ...props
 }: MenuPrimitive.Popup.Props &
-  Pick<MenuPrimitive.Positioner.Props, "align" | "alignOffset" | "side" | "sideOffset"> & {
+  Pick<
+    MenuPrimitive.Positioner.Props,
+    "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
+  > & {
     ref?: React.Ref<HTMLDivElement>;
   }) {
   const fluid = useFluidPopupList<HTMLDivElement>(MENU_ITEM_SELECTOR);
@@ -47,6 +51,7 @@ function DropdownMenuContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
+        anchor={anchor}
       >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
@@ -153,10 +158,7 @@ function DropdownMenuSubContent({
   return (
     <DropdownMenuContent
       data-slot="dropdown-menu-sub-content"
-      className={cn(
-        "w-auto min-w-32",
-        className,
-      )}
+      className={cn("w-auto min-w-32", className)}
       align={align}
       alignOffset={alignOffset}
       side={side}

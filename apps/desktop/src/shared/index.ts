@@ -10,4 +10,5 @@ export * from "./opencode-release-contract";
 export * from "./opencode-installation-contract";
 export * from "./opencode-login-contract";
 export * from "./session-triage-contract";
+export * from "./voice-contract";
 export * from "./window-chrome";

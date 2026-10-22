@@ -5,7 +5,66 @@ file records user-visible changes. Internal refactors belong in Git history
 unless they change behavior, compatibility, security, privacy, or release
 operations.
 
-## Unreleased
+## 0.19.0
+
+This remains an experimental pre-release, not a supported stable release.
+
+### Added
+
+- Voice chat (Beta): press the microphone in the composer or Mod+Alt+V to talk with a task.
+  A GPT-Live voice assistant hands your requests to the task's agent, steers work already
+  running, and tells you when it finishes or needs approval, which you still give in Palot.
+  The call survives switching tasks, floats in a small always-on-top window while Palot is in
+  the background, and can use an optional system-wide shortcut. Settings → Voice chooses the
+  voice, microphone, greeting, and floating controls. Needs OpenCode 2.0.32 or later and an
+  OpenAI API key on the server; ChatGPT sign-in can't start voice sessions.
+- Select text in an assistant reply and choose Ask about selection to open a side question
+  with the exact quote and a link back to the reply. Side questions accept follow-ups, stay
+  tool-free, and can be stopped or retried.
+- The command palette shows matching messages from tasks already loaded in Palot, and on
+  request searches the latest messages of up to 30 recent tasks per server. The heading says
+  what it covered, and Enter opens the task at that message.
+- Changes and Turn changes have Previous/Next file buttons with an "N of M" position, and J/K
+  inside the review pane.
+- Worktrees lists merged worktrees ready to retire. Review checks the pull request, running
+  tasks, uncommitted changes, and commits again just before removal, and keeps the worktree
+  when anything is unknown.
+- The composer shows resolved mentions as removable chips, lists open workbench files first
+  when you type `@`, and has a Recent outputs picker for files changed by loaded tasks in the
+  project. Up/Down recall includes recent prompts from the same project and server, restoring
+  comments and embedded attachments but never stale file grants.
+
+### Changed
+
+- Moving a task to another worktree says that uncommitted edits stay in the original checkout,
+  and asks for confirmation when that checkout has changes.
+- MCP servers show Sign in, Retry, or Connecting… for their status and recheck it after
+  connecting. When OpenCode can't load models or agents for a project, the composer explains
+  why and offers Retry.
+- Pinned OpenCode dependencies and the isolated release-smoke runtime to 2.1.3, including the
+  2.1 renamed provider data and compaction fields. Models settings identify models with fixed
+  temperature when OpenCode reports it. The supported stable connection minimum remains 2.0.7.
+- Updated to Electron 45 (Chromium 156, Node 24.22) and current releases of Palot's other
+  libraries. Whole-app performance traces are now saved in Perfetto format.
+- Code is highlighted with Pierre's WebAssembly highlighter instead of Shiki in diffs, file
+  views, patch previews, and code blocks in replies. Code blocks in replies now use the selected
+  code theme instead of terminal colors. Highlighting is faster and uses less memory; `.ini`,
+  `.env`, CSV, and Prisma files show as plain text.
+
+### Fixed
+
+- HTML files in the task's folder open rendered in Palot Browser from reply links, the agent's
+  file previews, and a new Open in browser button on HTML file tabs. Previews of files outside
+  the task now offer Open externally instead of a file tab that can't load, and blocked
+  addresses say why.
+- File references in replies, tool rows, and previewed Markdown open reliably. Palot checks
+  the file exists, trying the folder the message was written in, the task folder, the project
+  root, and then a filename search; several matches show a picker, and a missing file says so
+  instead of opening an empty tab. `file://` links work again, line ranges such as `:12-20`
+  select the whole range, and commands or code such as `console.log` no longer become links.
+- Ask about selection is readable on dark themes.
+- Settling or snoozing a task from the multi-server sidebar works on the first click. A task
+  whose subagents had loaded after its row was drawn returned to the Inbox straight away.
 
 ## 0.18.0
 

@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { createRendererQueryClient } from "../../lib/query-client";
 import { palot } from "../../services/palot";
+import { sourceControl } from "../../hooks/use-source-control";
 import * as opencodeVcs from "../../services/opencode-vcs";
+import * as opencodeCatalog from "../../services/opencode-catalog";
 import { renderWithRouter, seedCatalog } from "../../test-utils/render-with-router";
 import { WorktreesPage, worktreesProjectAtom } from "./worktrees-page";
 
@@ -192,6 +194,198 @@ describe("WorktreesPage", () => {
         "connection",
       ),
     );
+  });
+});
+
+describe("WorktreesPage merged worktree retirement", () => {
+  const mergedPullRequest = {
+    host: "github.com",
+    repository: "o/r",
+    number: 42,
+    title: "Ship the feature",
+    url: "https://github.com/o/r/pull/42",
+    state: "merged" as const,
+    checks: "passing" as const,
+    reviewDecision: null,
+    mergeable: "unknown" as const,
+    headBranch: "feature",
+    baseBranch: "main",
+    author: null,
+    updatedAt: 1,
+    mergedAt: 2,
+    closedAt: 2,
+  };
+
+  function setup() {
+    vi.spyOn(palot, "refreshProjectCopies").mockResolvedValue(undefined);
+    vi.spyOn(palot, "listProjectDirectories").mockResolvedValue([
+      { directory: project.canonical, strategy: null },
+      { directory: "/worktrees/attached", strategy: "git" },
+      { directory: "/worktrees/clean", strategy: "git" },
+    ]);
+    vi.spyOn(sourceControl, "listPullRequestLinks").mockResolvedValue([
+      {
+        profileID: "profile",
+        sessionID: attachedSession.id,
+        key: "github.com/o/r#42",
+        pullRequest: mergedPullRequest,
+        source: "branch",
+        linkedAt: 1,
+        syncedAt: 1,
+        syncError: null,
+        watch: null,
+        watchEnded: null,
+        settledAt: 2,
+      },
+    ]);
+    const gitStatus = vi.spyOn(sourceControl, "gitStatus").mockResolvedValue({
+      root: "/worktrees/attached",
+      branch: { name: "feature", oid: "head-oid", upstream: "origin/feature", ahead: 0, behind: 0 },
+      files: [],
+      truncated: false,
+    });
+    const detail = vi
+      .spyOn(sourceControl, "pullRequestDetail")
+      .mockResolvedValue({ ...mergedPullRequest, headOid: "head-oid" } as never);
+    const status = vi.spyOn(opencodeVcs, "getOpenCodeVcsStatus").mockResolvedValue([]);
+    const activeIDs = vi
+      .spyOn(opencodeCatalog, "listActiveSessionIDs")
+      .mockResolvedValue(["elsewhere"]);
+    const sessionInfo = vi
+      .spyOn(opencodeCatalog, "getSessionInfo")
+      .mockImplementation(async (id) =>
+        id === "elsewhere"
+          ? ({
+              id,
+              title: "Other worktree",
+              location: { directory: "/worktrees/attached2" },
+            } as never)
+          : ({
+              id,
+              title: "Sub-package build",
+              location: { directory: "/worktrees/attached/packages/app" },
+            } as never),
+      );
+    const remove = vi.spyOn(palot, "removeProjectCopy").mockResolvedValue(undefined);
+    const store = createConnectedStore();
+    const queryClient = createRendererQueryClient();
+    seedCatalog(
+      queryClient,
+      {
+        projects: [project],
+        // Working in a subdirectory still ties the task to the worktree.
+        sessions: [{ ...attachedSession, location: { directory: "/worktrees/attached/src" } }],
+      },
+      "connection",
+    );
+    renderWithRouter(<WorktreesPage />, store, "/worktrees?projectID=project-1", queryClient);
+    return { gitStatus, detail, status, remove, activeIDs, sessionInfo };
+  }
+
+  it("reviews a merged worktree and removes it only after a fresh, clean re-check", async () => {
+    const { gitStatus, detail, status, remove, activeIDs } = setup();
+    const section = await screen.findByRole("region", { name: "Merged, ready to retire" });
+    expect(section.textContent).toContain("#42 Ship the feature");
+    expect(section.textContent).toContain("1 task");
+    // The candidate doesn't unblock the plain remove button for attached tasks.
+    expect(
+      (screen.getByRole("button", { name: "Remove attached" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    await userEvent.click(within(section).getByRole("button", { name: /^Review attached/ }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Retire attached?" });
+    const checks = within(dialog).getByRole("list", { name: "Retirement checks" });
+    expect(checks.textContent).toContain("#42 Ship the feature merged");
+    expect(checks.textContent).toContain("1 attached task, none running");
+    expect(checks.textContent).toContain("Attached task");
+    expect(checks.textContent).toContain("feature matches the merged pull request");
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(gitStatus).toHaveBeenCalledWith({
+      profileID: "profile",
+      directory: "/worktrees/attached",
+    });
+    expect(detail).toHaveBeenCalledWith({ host: "github.com", repository: "o/r", number: 42 });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retire worktree" }));
+    await waitFor(() =>
+      expect(remove).toHaveBeenCalledWith(
+        project.id,
+        project.canonical,
+        "/worktrees/attached",
+        false,
+        "connection",
+      ),
+    );
+    // The confirmation re-read uncommitted changes and OpenCode's running tasks.
+    expect(status).toHaveBeenCalledTimes(2);
+    expect(gitStatus).toHaveBeenCalledTimes(2);
+    expect(activeIDs).toHaveBeenCalledTimes(2);
+    expect(activeIDs).toHaveBeenLastCalledWith(undefined, "connection");
+  });
+
+  it("keeps the worktree when OpenCode reports a running task in one of its subdirectories", async () => {
+    const { activeIDs, remove } = setup();
+    await userEvent.click(await screen.findByRole("button", { name: /^Review attached/ }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Retire attached?" });
+    // A task the renderer has never seen starts in a nested package before confirmation.
+    activeIDs.mockResolvedValue(["elsewhere", "nested-runner"]);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retire worktree" }));
+
+    expect(await within(dialog).findByText("Worktree kept")).toBeTruthy();
+    expect(dialog.textContent).toContain("1 task in this worktree is still running");
+    expect(dialog.textContent).toContain("Sub-package build · Running");
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps the worktree when OpenCode's running tasks can't be read", async () => {
+    const { activeIDs, sessionInfo, remove } = setup();
+    await userEvent.click(await screen.findByRole("button", { name: /^Review attached/ }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Retire attached?" });
+    activeIDs.mockRejectedValueOnce(new Error("offline"));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retire worktree" }));
+    expect(await within(dialog).findByText("Worktree kept")).toBeTruthy();
+    expect(dialog.textContent).toContain("Couldn't confirm with OpenCode which tasks are running");
+    expect(remove).not.toHaveBeenCalled();
+
+    // A running task whose location can't be resolved is unknown too.
+    activeIDs.mockResolvedValue(["vanished"]);
+    sessionInfo.mockResolvedValue(null);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Check again" }));
+    await waitFor(() =>
+      expect(dialog.textContent).toContain(
+        "Couldn't confirm with OpenCode which tasks are running",
+      ),
+    );
+    expect(within(dialog).getByText("Keeping this worktree")).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Retire worktree" })).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps the worktree when the re-check finds new edits, and never forces removal", async () => {
+    const { status, remove } = setup();
+    await userEvent.click(await screen.findByRole("button", { name: /^Review attached/ }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Retire attached?" });
+    status.mockResolvedValue([
+      { file: "late-edit.ts", status: "modified", additions: 1, deletions: 0 },
+    ] as never);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retire worktree" }));
+
+    expect(await within(dialog).findByText("Worktree kept")).toBeTruthy();
+    expect(dialog.textContent).toContain("1 uncommitted change would be lost");
+    expect(dialog.textContent).toContain("late-edit.ts");
+    expect(within(dialog).queryByRole("button", { name: "Retire worktree" })).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("explains and keeps the worktree when its commits can't be confirmed", async () => {
+    const { gitStatus, remove } = setup();
+    gitStatus.mockRejectedValue(new Error("Remote connection"));
+    await userEvent.click(await screen.findByRole("button", { name: /^Review attached/ }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Retire attached?" });
+    expect(dialog.textContent).toContain("Couldn't read the branch");
+    expect(within(dialog).getByText("Keeping this worktree")).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Retire worktree" })).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
   });
 });
 

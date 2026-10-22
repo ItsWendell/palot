@@ -76,11 +76,35 @@ export function normalizeURL(input: string, policy?: Policy) {
     value === "about:blank" || /^[a-z][a-z\d+.-]*:\/\//i.test(value)
       ? value
       : `${local ? "http" : "https"}://${value}`;
-  if (url !== "about:blank" && !allowedDestination(url, policy))
+  const reason = refusal(url, policy);
+  if (reason === "browser.address.credentials")
+    throw new Error(
+      "URLs with a user name or password are not supported. Remove them from the URL.",
+    );
+  if (reason === "browser.address.workspace" && localFileURL(url))
+    throw new Error(
+      "Palot Browser opens files from this task's workspace only. Open other files externally.",
+    );
+  if (reason === "browser.address.web" && localFileURL(url))
+    throw new Error("Palot Browser opens files only when OpenCode runs on this computer.");
+  if (reason)
     throw new Error(
       policy?.fileRoots?.length
         ? "Only HTTP, HTTPS, about:blank, and file URLs inside the workspace are supported."
         : "Only HTTP, HTTPS, and about:blank URLs are supported.",
     );
   return url;
+}
+
+/**
+ * Why the browser does not open an address, matching OpenCode desktop's codes; undefined when it opens.
+ * - `browser.address.credentials`: a web page address with a user name or password.
+ * - `browser.address.workspace`: anything but a web page or a file in the workspace.
+ * - `browser.address.web`: anything but a web page, where no files open.
+ */
+export function refusal(url: string, policy?: Policy) {
+  if (url === "about:blank" || allowedDestination(url, policy)) return;
+  if (URL.canParse(url) && /^https?:$/.test(new URL(url).protocol))
+    return "browser.address.credentials";
+  return policy?.fileRoots?.length ? "browser.address.workspace" : "browser.address.web";
 }

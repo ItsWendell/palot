@@ -597,7 +597,7 @@ describe("applyOpenCodeEvents", () => {
           assistantMessageID: "active",
           finish: "stop",
           rawFinish: "end_turn",
-          providerState: { signature: "provider-state" },
+          native: { signature: "provider-state" },
           tokens: {
             input: 10,
             output: 2,
@@ -615,7 +615,7 @@ describe("applyOpenCodeEvents", () => {
       completedAt: 5,
       finish: "stop",
       rawFinish: "end_turn",
-      providerState: { signature: "provider-state" },
+      native: { signature: "provider-state" },
     });
     expect(next[0]?.content[0]?.text).toBe("Done");
   });
@@ -681,7 +681,7 @@ describe("applyOpenCodeEvents", () => {
           sessionID: "session",
           assistantMessageID: "active",
           ordinal: 0,
-          state: { presentation: "preamble" },
+          native: { presentation: "preamble" },
         },
         12,
       ),
@@ -692,7 +692,7 @@ describe("applyOpenCodeEvents", () => {
           assistantMessageID: "active",
           ordinal: 0,
           text: "I am checking the repository.",
-          state: { presentation: "preamble" },
+          native: { presentation: "preamble" },
         },
         16,
       ),
@@ -710,7 +710,6 @@ describe("applyOpenCodeEvents", () => {
         sessionID: "session",
         inputID: "input-1",
         reason: "auto",
-        recent: "Recent context",
       }),
       event("session.compaction.delta", { sessionID: "session", text: "Partial" }, 3),
       event(
@@ -719,9 +718,8 @@ describe("applyOpenCodeEvents", () => {
           sessionID: "session",
           reason: "auto",
           model: { id: "claude-sonnet-4", providerID: "anthropic" },
-          providerState: { checkpoint: "state-1" },
+          native: { checkpoint: "state-1" },
           text: "Full compacted summary",
-          recent: "Recent context",
         },
         4,
       ),
@@ -733,14 +731,13 @@ describe("applyOpenCodeEvents", () => {
         type: "compaction",
         completedAt: 4,
         model: { id: "claude-sonnet-4", providerID: "anthropic" },
-        providerState: { checkpoint: "state-1" },
+        native: { checkpoint: "state-1" },
         content: [
           expect.objectContaining({
             type: "compaction",
             status: "completed",
             reason: "auto",
             text: "Full compacted summary",
-            recent: "Recent context",
           }),
         ],
       }),
@@ -753,7 +750,6 @@ describe("applyOpenCodeEvents", () => {
         sessionID: "session",
         inputID: "msg_compaction",
         reason: "manual",
-        recent: "",
       }),
     ]);
     const completed = mapMessage({
@@ -763,12 +759,12 @@ describe("applyOpenCodeEvents", () => {
       status: "completed",
       reason: "manual",
       summary: "Canonical summary",
-      recent: "",
+      metadata: { keepID: "msg_kept" },
     });
     const hydrated = mergeMessages([completed], started, false);
     const ended = event(
       "session.compaction.ended",
-      { sessionID: "session", reason: "manual", text: "Canonical summary", recent: "" },
+      { sessionID: "session", reason: "manual", text: "Canonical summary" },
       4,
     );
 
@@ -786,7 +782,6 @@ describe("applyOpenCodeEvents", () => {
           sessionID: "session",
           reason: "manual",
           text: "Summary",
-          recent: "",
           error: { type: "error", message: "Failed" },
           cost: 0.012345,
           tokens: usage,
@@ -813,7 +808,6 @@ describe("applyOpenCodeEvents", () => {
         reason: "manual",
         time: { created: 4 },
         summary: "Summary",
-        recent: "",
         error: { type: "error", message: "Failed" },
         cost: 0.012345,
         tokens: usage,
@@ -835,11 +829,10 @@ describe("applyOpenCodeEvents", () => {
         status: "completed",
         reason: "manual",
         summary: "Previous summary",
-        recent: "",
       });
       const completion = event(
         type,
-        { sessionID: "session", reason: "auto", text: "New summary", recent: "" },
+        { sessionID: "session", reason: "auto", text: "New summary" },
         4,
       );
 
@@ -918,7 +911,7 @@ describe("applyOpenCodeEvents", () => {
           name: "grep",
           input: { pattern: "ToolRow" },
           executed: true,
-          state: { provider: "call" },
+          native: { provider: "call", itemID: "item-call" },
         },
         1_000,
       ),
@@ -931,7 +924,7 @@ describe("applyOpenCodeEvents", () => {
           content: [{ type: "text", text: "Found 0 matches" }],
           metadata: { matches: 0 },
           executed: true,
-          resultState: { provider: "result" },
+          native: { provider: "result", status: "done" },
         },
         2_250,
       ),
@@ -939,8 +932,8 @@ describe("applyOpenCodeEvents", () => {
 
     expect(next[0]?.content.find((part) => part.type === "tool")).toMatchObject({
       executed: true,
-      providerState: { provider: "call" },
-      providerResultState: { provider: "result" },
+      // Result replay data merges into the call's; result keys win.
+      native: { provider: "result", itemID: "item-call", status: "done" },
       time: { created: 1_000, ran: 1_000, completed: 2_250 },
     });
   });

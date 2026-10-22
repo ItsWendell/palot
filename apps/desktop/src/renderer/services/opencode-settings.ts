@@ -4,7 +4,9 @@ import type {
   IntegrationAttemptStatus,
   IntegrationCommandMethod,
   IntegrationCommandAttemptStatus,
+  IntegrationInfo,
   IntegrationMethod,
+  McpServer,
   OpenCodeClient,
   PluginInfo,
 } from "@opencode/client";
@@ -21,10 +23,12 @@ import type {
   McpServerInput,
   PalotConfigSource,
   PalotFormField,
+  PalotIntegration,
   PalotIntegrationAttemptStatus,
   PalotIntegrationCommandAttempt,
   PalotIntegrationMethod,
   PalotIntegrationOAuthAttempt,
+  PalotMcpServer,
   PalotPlugin,
   PalotSettingsSnapshot,
   RemoveCredentialInput,
@@ -33,6 +37,11 @@ import type {
   SettingsCapability,
   UpdateCredentialInput,
 } from "../../shared";
+import {
+  describeOpenCodeError,
+  readOpenCodeErrorDetail,
+  type OpenCodeCapabilityError,
+} from "../lib/opencode-error-detail";
 import { openCodeClient } from "./opencode-client";
 import { mapCommand, mapSkill, toJson } from "./opencode-mappers";
 import { openCodeRequestSignal } from "./opencode-request";
@@ -68,8 +77,29 @@ function errorMessage(error: unknown): string {
   return "Unknown OpenCode error";
 }
 
-function capabilityError(capability: string, label: string, error: unknown) {
-  return { capability, label, message: errorMessage(error) };
+function capabilityError(
+  capability: string,
+  label: string,
+  error: unknown,
+): OpenCodeCapabilityError {
+  const detail = readOpenCodeErrorDetail(error);
+  if (!detail) return { capability, label, message: errorMessage(error) };
+  return {
+    capability,
+    label,
+    message: describeOpenCodeError(detail),
+    ...(detail.reference ? { reference: detail.reference } : {}),
+    detail,
+  };
+}
+
+function mapMcpServer(server: McpServer): PalotMcpServer {
+  return {
+    name: server.name,
+    status: server.status.status,
+    error: "error" in server.status ? server.status.error : null,
+    integrationID: server.integrationID ?? null,
+  };
 }
 
 function mapPlugin(plugin: PluginInfo): PalotPlugin {
@@ -398,6 +428,27 @@ function mapIntegrationMethod(method: IntegrationMethod): PalotIntegrationMethod
   }
 }
 
+function mapIntegration(integration: IntegrationInfo): PalotIntegration {
+  return {
+    id: integration.id,
+    name: integration.name,
+    methods: integration.methods.map(mapIntegrationMethod),
+    // OpenCode orders the selected credential first, followed by other stored
+    // credentials and environment fallbacks. Its public connection type does
+    // not expose this state separately.
+    connections: integration.connections.map((connection, index) => ({
+      type: connection.type,
+      id: connection.type === "credential" ? connection.id : null,
+      label: connection.type === "credential" ? connection.label : connection.name,
+      active: index === 0,
+      ...(connection.type === "credential" && connection.method
+        ? { method: connection.method }
+        : {}),
+    })),
+    ...(integration.metadata ? { metadata: toJson(integration.metadata) } : {}),
+  };
+}
+
 async function resolveSettingsLocation(
   client: OpenCodeClient,
   input: SettingsLocationInput,
@@ -522,26 +573,7 @@ export async function loadSettings(
           }))
         : [],
     integrations:
-      integrations?.status === "fulfilled"
-        ? integrations.value.data.map((integration) => ({
-            id: integration.id,
-            name: integration.name,
-            methods: integration.methods.map(mapIntegrationMethod),
-            // OpenCode orders the selected credential first, followed by other stored
-            // credentials and environment fallbacks. Its public connection type does
-            // not expose this state separately.
-            connections: integration.connections.map((connection, index) => ({
-              type: connection.type,
-              id: connection.type === "credential" ? connection.id : null,
-              label: connection.type === "credential" ? connection.label : connection.name,
-              active: index === 0,
-              ...(connection.type === "credential" && connection.method
-                ? { method: connection.method }
-                : {}),
-            })),
-            ...(integration.metadata ? { metadata: toJson(integration.metadata) } : {}),
-          }))
-        : [],
+      integrations?.status === "fulfilled" ? integrations.value.data.map(mapIntegration) : [],
     mcpResources:
       mcpResources?.status === "fulfilled"
         ? mcpResources.value.data.resources.map((resource) => ({
@@ -562,15 +594,7 @@ export async function loadSettings(
             mimeType: resource.mimeType ?? null,
           }))
         : [],
-    mcpServers:
-      mcp?.status === "fulfilled"
-        ? mcp.value.data.map((server) => ({
-            name: server.name,
-            status: server.status.status,
-            error: server.status.status === "failed" ? server.status.error : null,
-            integrationID: server.integrationID ?? null,
-          }))
-        : [],
+    mcpServers: mcp?.status === "fulfilled" ? mcp.value.data.map(mapMcpServer) : [],
     savedPermissions:
       permissions?.status === "fulfilled"
         ? permissions.value.map((permission) => ({ ...permission }))
@@ -730,13 +754,40 @@ export async function removeMcpServer(input: McpServerInput): Promise<void> {
   );
 }
 
-export async function connectMcpServer(input: McpServerInput): Promise<void> {
+export async function connectMcpServer(input: McpServerInput, signal?: AbortSignal): Promise<void> {
   const client = openCodeClient(input.connectionID);
-  await resolveSettingsLocation(client, input);
+  await resolveSettingsLocation(client, input, requestSignal(signal));
+  // OpenCode answers once the handshake settles, so a following list reads its outcome.
   await client.mcp.connect(
     { server: input.server, location: settingsLocation(input) },
-    { signal: requestSignal() },
+    { signal: requestSignal(signal) },
   );
+}
+
+/** One MCP server's current status in its location; `null` when OpenCode no longer lists it. */
+export async function getMcpServerStatus(
+  input: McpServerInput,
+  signal?: AbortSignal,
+): Promise<PalotMcpServer | null> {
+  const client = openCodeClient(input.connectionID);
+  const response = await client.mcp.list(locationRequest(input), {
+    signal: requestSignal(signal),
+  });
+  const server = response.data.find((item) => item.name === input.server);
+  return server ? mapMcpServer(server) : null;
+}
+
+/** One integration as a location sees it, such as the OAuth integration behind an MCP server. */
+export async function getIntegration(
+  input: SettingsLocationInput & { integrationID: string },
+  signal?: AbortSignal,
+): Promise<PalotIntegration> {
+  const client = openCodeClient(input.connectionID);
+  const response = await client.integration.get(
+    { integrationID: input.integrationID, ...locationRequest(input) },
+    { signal: requestSignal(signal) },
+  );
+  return mapIntegration(response.data);
 }
 
 export async function disconnectMcpServer(input: McpServerInput): Promise<void> {

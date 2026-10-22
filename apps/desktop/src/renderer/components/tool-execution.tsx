@@ -35,6 +35,7 @@ import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionCatalog } from "../hooks/use-session-catalog";
 import { cn } from "../lib/cn";
 import { writeClipboardText } from "../lib/clipboard";
+import { fileReferenceHref } from "../lib/file-reference";
 import {
   projectToolExecution,
   formatToolDetailValue,
@@ -63,6 +64,7 @@ import { FileReadView } from "./file-read-view";
 import { HighlightedCode } from "./highlighted-code";
 import {
   MarkdownContent,
+  useWorkspaceDirectory,
   useWorkspaceFileOpener,
   type WorkspaceFileOpenHandler,
 } from "./markdown-content";
@@ -234,12 +236,9 @@ function WorkspaceFileTarget({
 }) {
   const label = children ?? baseName(path);
   const title = line === undefined ? path : `${path} (line ${line})`;
-  const open = (event?: React.MouseEvent | React.KeyboardEvent) => {
-    if (event && (event.metaKey || event.ctrlKey)) {
-      opener?.({ path, ...(line === undefined ? {} : { line }) }, event);
-    } else {
-      opener?.({ path, ...(line === undefined ? {} : { line }) });
-    }
+  const directory = useWorkspaceDirectory();
+  const open = (event: React.MouseEvent | React.KeyboardEvent) => {
+    opener?.({ path, ...(line === undefined ? {} : { line }) }, event);
   };
 
   if (!opener || path === "Unknown path") {
@@ -250,14 +249,13 @@ function WorkspaceFileTarget({
     );
   }
 
-  const fileHref = path.startsWith("file://")
-    ? path
-    : `file://${encodeURI(path.startsWith("/") ? path : `/${path}`)}${line ? `#L${line}` : ""}`;
+  const fileHref = path.startsWith("file://") ? path : fileReferenceHref({ path, line }, directory);
 
   return (
     <a
       role="link"
       href={fileHref}
+      tabIndex={0}
       title={`Open ${title}`}
       onClick={(event) => {
         event.preventDefault();
@@ -271,7 +269,7 @@ function WorkspaceFileTarget({
         open(event);
       }}
       className={cn(
-        "cursor-pointer text-info underline-offset-2 hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring",
+        "cursor-pointer text-info underline-offset-2 hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70",
         className,
       )}
     >

@@ -180,7 +180,7 @@ export function FakeCodeView(props: AnyCodeViewProps) {
           {item.type === "diff" && !item.collapsed
             ? (item.annotations ?? []).map((annotation) => (
                 <div key={`${annotation.side}:${annotation.lineNumber}`}>
-                  {props.renderAnnotation?.(annotation, item)}
+                  {props.renderAnnotation?.(annotation, item.fileDiff, item)}
                 </div>
               ))
             : null}

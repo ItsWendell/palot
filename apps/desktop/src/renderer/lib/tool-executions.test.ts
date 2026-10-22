@@ -141,7 +141,7 @@ describe("projectToolExecution", () => {
 
   it("projects provider-native structured web search results", () => {
     const part = tool("web_search", { action: { query: "current news" } }, "");
-    part.providerResultState = {
+    part.native = {
       type: "web_search_tool_result",
       content: [
         {

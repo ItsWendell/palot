@@ -1,4 +1,4 @@
-import type { OpenCodeClient } from "@opencode/client";
+import { OpenCode, type OpenCodeClient } from "@opencode/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "./opencode-client";
 import * as clients from "./opencode-client";
@@ -12,6 +12,8 @@ import {
   connectIntegrationExternal,
   connectIntegrationOAuth,
   disconnectMcpServer,
+  getIntegration,
+  getMcpServerStatus,
   loadSettings,
   removeMcpServer,
   updatePlugin,
@@ -1055,5 +1057,133 @@ describe("renderer OpenCode settings service", () => {
       expected,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("keeps the typed error OpenCode declared for a failed capability", async () => {
+    // Exercise the real promise client so the thrown shape is the published contract's.
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            _tag: "LocationNotFoundError",
+            location: { directory: "/gone" },
+            message: "Location not found",
+          }),
+          { status: 404, headers: { "content-type": "application/json" } },
+        ),
+    );
+    setOpenCodeClientForTest(
+      OpenCode.make({ baseUrl: "http://opencode.test", fetch }) as unknown as OpenCodeClient,
+    );
+
+    const result = await loadSettings({
+      projectID: "project-1",
+      directory: "/gone",
+      capabilities: ["agents"],
+    });
+
+    expect(result.errors).toEqual([
+      {
+        capability: "agents",
+        label: "Agents",
+        message: "Location not found (/gone)",
+        detail: {
+          tag: "LocationNotFoundError",
+          message: "Location not found",
+          path: "/gone",
+          issues: [],
+          service: null,
+          field: null,
+          reference: null,
+        },
+      },
+    ]);
+  });
+
+  it("keeps OpenCode's log reference for an unexpected failure", async () => {
+    const unknown = Object.assign(new Error("Failed to load skills"), {
+      _tag: "UnknownError",
+      ref: "err_123",
+    });
+    setOpenCodeClientForTest(client({ skill: { list: vi.fn().mockRejectedValue(unknown) } }));
+
+    const result = await loadSettings({
+      projectID: "project-1",
+      directory: "/repo",
+      capabilities: ["skills"],
+    });
+
+    expect(result.errors).toEqual([
+      expect.objectContaining({
+        capability: "skills",
+        message: "Failed to load skills",
+        reference: "err_123",
+        detail: expect.objectContaining({ tag: "UnknownError" }),
+      }),
+    ]);
+  });
+
+  it("reads one MCP server's authoritative status and its sign-in integration", async () => {
+    const list = vi.fn().mockResolvedValue({
+      location,
+      data: [
+        { name: "other", status: { status: "connected" } },
+        {
+          name: "docs",
+          status: { status: "needs_auth", error: "Unauthorized" },
+          integrationID: "mcp_docs",
+        },
+      ],
+    });
+    const get = vi.fn().mockResolvedValue({
+      location,
+      data: {
+        id: "mcp_docs",
+        name: "docs",
+        metadata: { source: "mcp" },
+        methods: [{ id: "mcp_docs", type: "oauth", label: "docs" }],
+        connections: [],
+      },
+    });
+    setOpenCodeClientForTest(client({ mcp: { list }, integration: { get } }));
+    const input = { projectID: "project-1", directory: "/repo", workspaceID: "ws", server: "docs" };
+
+    await expect(getMcpServerStatus(input)).resolves.toEqual({
+      name: "docs",
+      status: "needs_auth",
+      error: "Unauthorized",
+      integrationID: "mcp_docs",
+    });
+    await expect(getMcpServerStatus({ ...input, server: "gone" })).resolves.toBeNull();
+    await expect(getIntegration({ ...input, integrationID: "mcp_docs" })).resolves.toMatchObject({
+      id: "mcp_docs",
+      methods: [{ id: "mcp_docs", type: "oauth", form: [] }],
+    });
+    expect(list).toHaveBeenCalledWith(
+      { location: { directory: "/repo", workspace: "ws" } },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(get).toHaveBeenCalledWith(
+      { integrationID: "mcp_docs", location: { directory: "/repo", workspace: "ws" } },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("cancels an MCP connect through the caller signal", async () => {
+    const connect = vi.fn(
+      (_input: unknown, options: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) =>
+          options.signal.addEventListener("abort", () => reject(options.signal.reason)),
+        ),
+    );
+    setOpenCodeClientForTest(client({ mcp: { connect } }));
+    const controller = new AbortController();
+    const pending = connectMcpServer(
+      { projectID: "project-1", directory: "/repo", server: "docs" },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(connect).toHaveBeenCalled());
+    controller.abort(new Error("location changed"));
+    await expect(pending).rejects.toThrow("location changed");
   });
 });

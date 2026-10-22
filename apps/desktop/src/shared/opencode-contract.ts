@@ -61,6 +61,7 @@ import {
   PROJECT_SCRIPTS_IPC_CHANNELS,
   type PalotProjectScriptsApi,
 } from "./project-scripts-contract";
+import type { PalotVoiceApi } from "./voice-contract";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -328,6 +329,8 @@ export interface PalotModel {
   }>;
   capabilities: {
     tools: boolean;
+    /** Whether sampling temperature is supported. Unknown when unset. */
+    temperature?: boolean;
     input: string[];
     output: string[];
   };
@@ -851,6 +854,7 @@ export interface PalotMessageContent {
   presentation?: "thought" | "preamble" | "recap";
   status?: "running" | "completed" | "failed" | "interrupted";
   reason?: "auto" | "manual";
+  /** Compaction text kept verbatim beside the summary, when OpenCode provides it. */
   recent?: string;
   error?: string;
   /** Compaction request usage, not the size of the resulting context. */
@@ -864,8 +868,8 @@ export interface PalotMessageContent {
     completed?: number;
   };
   executed?: boolean;
-  providerState?: JsonValue;
-  providerResultState?: JsonValue;
+  /** Provider-owned replay data. For tools, call and result data are shallow-merged. */
+  native?: JsonValue;
   state?: JsonValue;
   data?: JsonValue;
 }
@@ -889,7 +893,7 @@ export interface PalotMessage {
   tokens: TokenUsageInfo | null;
   finish: "stop" | "length" | "tool-calls" | "content-filter" | "error" | "unknown" | null;
   rawFinish?: string;
-  providerState?: JsonValue;
+  native?: JsonValue;
   files?: PalotFileAttachment[];
   fileReferences?: Array<{
     uri: string;
@@ -1437,4 +1441,6 @@ export interface PalotApi {
   readonly sourceControl: PalotSourceControlApi;
   /** Per-project shell scripts Palot runs locally, e.g. when a task settles. */
   readonly projectScripts: PalotProjectScriptsApi;
+  /** Voice call host bridge: claim, state mirroring and OS-level commands. */
+  readonly voice: PalotVoiceApi;
 }

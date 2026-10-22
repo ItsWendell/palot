@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { textMateToZedTheme } from "../code-theme-convert";
 import { builtinCodeThemes } from "./builtin-code-themes";
 import { builtinSyntaxThemes } from "./syntax-data";
 
@@ -17,7 +18,8 @@ describe("built-in syntax data", () => {
     for (const [name, expected] of Object.entries(builtinSyntaxThemes)) {
       const descriptor = builtinCodeThemes.find((theme) => theme.name === name);
       expect(descriptor, name).toBeDefined();
-      expect(await descriptor!.load()).toEqual(expected);
+      // Loaders hand Highlights the Zed conversion of the shipped TextMate payload.
+      expect(await descriptor!.load()).toEqual(textMateToZedTheme(expected, name));
     }
     expect(new Set(builtinCodeThemes.map((theme) => theme.name)).size).toBe(
       builtinCodeThemes.length,

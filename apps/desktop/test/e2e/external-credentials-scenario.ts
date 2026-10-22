@@ -2,6 +2,7 @@ import type { IntegrationExternalMethod } from "@opencode/plugin/promise/integra
 import { expect, type Locator } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { SUPPORTED_OPENCODE_VERSION } from "../../src/main/opencode-version.ts";
 import type { Scenario } from "./scenarios.ts";
 
 const INTEGRATION_ID = "openai";
@@ -56,7 +57,7 @@ async function chooseFixtureMethod(dialog: Locator): Promise<void> {
 
 export const externalCredentialsScenario: Scenario = {
   description:
-    "connect a dummy external credential through native settings, verify form metadata and label on OpenCode 2.0.29, and reload hydration without provider login",
+    "connect a dummy external credential through native settings, verify form metadata and label on pinned OpenCode, and reload hydration without provider login",
   prompt: "",
   expectedModelCalls: 0,
   arrange() {},
@@ -102,7 +103,7 @@ export const externalCredentialsScenario: Scenario = {
     );
   },
   async seed(client, { projectDirectory }) {
-    expect((await client.server.info()).version).toBe("2.0.29");
+    expect((await client.server.info()).version).toBe(SUPPORTED_OPENCODE_VERSION);
     const input = { integrationID: INTEGRATION_ID, location: { directory: projectDirectory } };
     await expect
       .poll(async () => (await client.integration.get(input)).data, {

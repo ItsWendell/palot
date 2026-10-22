@@ -1,4 +1,5 @@
-import type { ThemeRegistration } from "shiki";
+import type { Theme } from "@pierre/highlights";
+import { textMateToZedTheme, withEditorColors } from "../code-theme-convert";
 import type { AppearanceColorScheme } from "../../../shared/appearance-contract";
 import type { builtinSyntaxThemes } from "./syntax-data";
 
@@ -6,7 +7,8 @@ interface BuiltinCodeTheme {
   name: string;
   displayName: string;
   colorScheme: AppearanceColorScheme;
-  load: () => Promise<ThemeRegistration>;
+  /** The Zed theme `@pierre/highlights` renders with. */
+  load: () => Promise<Theme>;
 }
 
 // Keep registration metadata synchronous; syntax is loaded only when requested by
@@ -41,42 +43,59 @@ export const builtinCodeThemes: readonly BuiltinCodeTheme[] = [
     name: "opencode-light",
     displayName: "OpenCode Light",
     colorScheme: "light",
-    load: async () => (await import("../opencode-code-themes")).opencodeCodeThemes.light,
+    load: async () =>
+      textMateToZedTheme((await import("../opencode-code-themes")).opencodeCodeThemes.light),
   },
   {
     name: "opencode-dark",
     displayName: "OpenCode Dark",
     colorScheme: "dark",
-    load: async () => (await import("../opencode-code-themes")).opencodeCodeThemes.dark,
+    load: async () =>
+      textMateToZedTheme((await import("../opencode-code-themes")).opencodeCodeThemes.dark),
   },
   {
     name: "tanstack-light",
     displayName: "TanStack Light",
     colorScheme: "light",
-    load: async () => (await import("../tanstack-code-themes")).tanstackCodeThemes.light,
+    load: async () =>
+      textMateToZedTheme((await import("../tanstack-code-themes")).tanstackCodeThemes.light),
   },
   {
     name: "tanstack-dark",
     displayName: "TanStack Dark",
     colorScheme: "dark",
-    load: async () => (await import("../tanstack-code-themes")).tanstackCodeThemes.dark,
+    load: async () =>
+      textMateToZedTheme((await import("../tanstack-code-themes")).tanstackCodeThemes.dark),
   },
   {
     name: "macos-code-light",
     displayName: "macOS Light",
     colorScheme: "light",
-    load: async () => (await import("./macos-code-themes")).macOSCodeThemes.light,
+    load: async () =>
+      withEditorColors(
+        (await import("@pierre/highlights/themes/github-light-default")).default,
+        "macos-code-light",
+        "#ffffff",
+        "#1d1d1f",
+      ),
   },
   {
     name: "macos-code-dark",
     displayName: "macOS Dark",
     colorScheme: "dark",
-    load: async () => (await import("./macos-code-themes")).macOSCodeThemes.dark,
+    load: async () =>
+      withEditorColors(
+        (await import("@pierre/highlights/themes/github-dark-default")).default,
+        "macos-code-dark",
+        "#1e1e1e",
+        "#f5f5f7",
+      ),
   },
   ...syntaxThemeNames.map((name): BuiltinCodeTheme => ({
     name,
     displayName: name,
     colorScheme: name.endsWith("-light") ? "light" : "dark",
-    load: async () => (await import("./syntax-data")).builtinSyntaxThemes[name],
+    load: async () =>
+      textMateToZedTheme((await import("./syntax-data")).builtinSyntaxThemes[name], name),
   })),
 ];

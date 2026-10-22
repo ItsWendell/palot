@@ -1,7 +1,7 @@
-import type { ThemeRegistration } from "shiki";
+import type { TextMateTheme } from "./code-theme-convert";
 import { omarchyThemeVariant, type OmarchyTheme } from "../../shared/omarchy-theme";
 
-export function createOmarchyCodeTheme(theme: OmarchyTheme): ThemeRegistration {
+export function createOmarchyCodeTheme(theme: OmarchyTheme): TextMateTheme {
   const { palette: p, terminal: t, codeTheme } = omarchyThemeVariant(theme);
   return {
     name: codeTheme,

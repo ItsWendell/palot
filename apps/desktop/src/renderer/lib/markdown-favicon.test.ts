@@ -18,6 +18,8 @@ describe("Markdown favicons", () => {
     "https://router.home.arpa/docs",
     "https://printer.local/docs",
     "https://hidden-service.onion/docs",
+    "https://devbox.tailnet-1234.ts.net/docs",
+    "https://build.42/docs",
     "mailto:person@example.com",
   ])("does not request icons for non-public destinations: %s", (value) => {
     expect(duckDuckGoFaviconUrl(value)).toBeNull();

@@ -256,7 +256,7 @@ describe("ToolExecution", () => {
     };
 
     render(
-      <MarkdownWorkspaceProvider onOpenFile={openFile}>
+      <MarkdownWorkspaceProvider onOpenFile={openFile} workspaceDirectory="/repo">
         <ToolExecution part={read} index={0} />
         <ToolExecution part={write} index={1} />
         <ToolExecution part={patch} index={2} />
@@ -264,17 +264,22 @@ describe("ToolExecution", () => {
     );
 
     const readTarget = screen.getByRole("link", { name: "read-target.ts" });
+    expect(readTarget.getAttribute("href")).toBe("file:///repo/src/read-target.ts#L10");
     fireEvent.click(readTarget);
-    expect(openFile).toHaveBeenNthCalledWith(1, { path: "src/read-target.ts", line: 10 });
+    expect(openFile).toHaveBeenNthCalledWith(
+      1,
+      { path: "src/read-target.ts", line: 10 },
+      expect.anything(),
+    );
     expect(
       screen.getByRole("button", { name: /Read read-target\.ts/ }).getAttribute("aria-expanded"),
     ).toBe("false");
 
     fireEvent.keyDown(screen.getByRole("link", { name: "write-target.ts" }), { key: "Enter" });
-    expect(openFile).toHaveBeenNthCalledWith(2, { path: "src/write-target.ts" });
+    expect(openFile).toHaveBeenNthCalledWith(2, { path: "src/write-target.ts" }, expect.anything());
 
     fireEvent.click(screen.getByRole("link", { name: "patch-target.ts" }));
-    expect(openFile).toHaveBeenNthCalledWith(3, { path: "src/patch-target.ts" });
+    expect(openFile).toHaveBeenNthCalledWith(3, { path: "src/patch-target.ts" }, expect.anything());
   });
 
   it("shows the failure reason for a patch alongside its intended files", () => {

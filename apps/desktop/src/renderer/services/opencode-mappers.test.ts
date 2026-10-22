@@ -219,14 +219,14 @@ describe("OpenCode message mapping", () => {
       finish: "tool-calls",
       rawFinish: "tool_calls",
       tokens: { input: 1, output: 2, reasoning: 3, cache: { read: 4, write: 5 } },
-      providerState: { responseID: "response" },
+      native: { responseID: "response" },
       content: [
-        { type: "text", text: "Starting", state: { presentation: "preamble" } },
+        { type: "text", text: "Starting", native: { presentation: "preamble" } },
         {
           type: "reasoning",
           text: "Thinking",
           time: { created: 21, completed: 22 },
-          state: { presentation: "thought" },
+          native: { presentation: "thought" },
         },
         {
           type: "tool",
@@ -244,7 +244,7 @@ describe("OpenCode message mapping", () => {
       completedAt: 30,
       finish: "tool-calls",
       rawFinish: "tool_calls",
-      providerState: { responseID: "response" },
+      native: { responseID: "response" },
       content: [
         { type: "text", text: "Starting", presentation: "preamble" },
         {
@@ -271,9 +271,9 @@ describe("OpenCode message mapping", () => {
       status: "completed",
       reason: "auto",
       model: { id: "claude-sonnet-4", providerID: "anthropic" },
-      providerState: { checkpoint: "state-1" },
+      native: { checkpoint: "state-1" },
       summary: "Summary",
-      recent: "Recent",
+      metadata: { keepID: "message-kept", recent: "Recent" },
       time: { created: 40 },
     };
     const failed: SessionMessageInfo = {
@@ -288,7 +288,7 @@ describe("OpenCode message mapping", () => {
     expect(mapMessage(completed)).toMatchObject({
       completedAt: 40,
       model: { id: "claude-sonnet-4", providerID: "anthropic" },
-      providerState: { checkpoint: "state-1" },
+      native: { checkpoint: "state-1" },
       content: [
         {
           type: "compaction",
@@ -299,6 +299,9 @@ describe("OpenCode message mapping", () => {
         },
       ],
     });
+    // 2.1 compactions reference kept messages; only context history carries their text.
+    const referenced = mapMessage({ ...completed, metadata: { keepID: "message-kept" } });
+    expect(referenced.content[0]).not.toHaveProperty("recent");
     expect(mapMessage(failed)).toMatchObject({
       completedAt: 50,
       content: [
@@ -371,7 +374,6 @@ describe("OpenCode message mapping", () => {
         reason: "manual",
         time: { created: 50 },
         summary: "Summary",
-        recent: "",
         error: { type: "error", message: "Failed" },
         cost: 0,
         tokens: usage,
@@ -385,6 +387,29 @@ describe("OpenCode message mapping", () => {
 });
 
 describe("OpenCode model mapping", () => {
+  it.each([true, false, undefined])("preserves temperature capability %s", (temperature) => {
+    const model: ModelInfo = {
+      id: "provider/model",
+      modelID: "model",
+      providerID: "provider",
+      name: "Model",
+      variants: [],
+      limit: { context: 100, output: 10 },
+      time: { released: 1 },
+      capabilities: {
+        tools: true,
+        input: ["text"],
+        output: ["text"],
+        ...(temperature === undefined ? {} : { temperature }),
+      },
+      cost: [],
+      enabled: true,
+      status: "active",
+    };
+
+    expect(mapModel(model).capabilities.temperature).toBe(temperature);
+  });
+
   it("preserves provider request-shaping compatibility flags", () => {
     const model = {
       id: "provider/model",

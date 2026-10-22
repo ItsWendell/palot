@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Sparkles,
   Wrench,
+  Mic,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -22,6 +23,7 @@ export type SettingsCategory =
   | "connections"
   | "appearance"
   | "notifications"
+  | "voice"
   | "shortcuts"
   | "models"
   | "providers"
@@ -82,6 +84,15 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
     description: "Native task alerts",
     icon: Bell,
     keywords: "notifications alerts macos completion permission question tray",
+    group: "Palot",
+  },
+  {
+    id: "voice",
+    label: "Voice",
+    description: "Voice chat with your tasks",
+    icon: Mic,
+    keywords:
+      "voice chat talk speak microphone gpt-live realtime openai call shortcut overlay coordinator",
     group: "Palot",
   },
   {

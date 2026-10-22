@@ -1,6 +1,6 @@
 {
-  "contractFingerprint": "a7b0f308a7675496b5df16619c5c244104d1890e62b904c1fd14f0a7165b4e7a",
-  "contractVersion": "2.0.29",
+  "contractFingerprint": "55d1ac2917d40d1c02686fab96639b1a2e9933af5197b99f7f08ac79bfb783c6",
+  "contractVersion": "2.1.3",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
@@ -36,7 +36,7 @@
     },
     "form.replied": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "0846e9f6ada68327a381ac179066472eb9de0f3cacd8be95349ac834c40dc0d5"
+      "payloadFingerprint": "89801a5cd0c2e7f4a1268ab2266b828386c537798af19fb108cd55c2241961dd"
     },
     "installation.update-available": {
       "expectedProductionMention": false,
@@ -138,21 +138,25 @@
       "expectedProductionMention": true,
       "payloadFingerprint": "ad5d10659b838887db3035505d3a0254fd25534d56d202bcd0e15f30049282ce"
     },
+    "session.archived": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "cdff6b32d34b73fc5898abcfdc92c10fc7e883651ce261e1265625ff7dab6c2f"
+    },
     "session.compaction.delta": {
       "expectedProductionMention": true,
       "payloadFingerprint": "1c098d44451a05beb11cf3c999b0ed0c876252a103bf51c82cec92e84f762911"
     },
     "session.compaction.ended": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "2bdf933db3f7f3ee0dccd77582143ad834b874c9f3e07a465fe12bbaed425669"
+      "payloadFingerprint": "86b91844827647818406251504e56aca324c0e77dd1a8f1951f8619ed5b41ade"
     },
     "session.compaction.failed": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "f28b341d905e4f4b510746fa7dee42244228d9f1c82e35fd1b15f58a9d3067a8"
+      "payloadFingerprint": "e3923cd08bbfdcdb7761ede17617c65b6c445d94488090fdbc4115b7a14e38d1"
     },
     "session.compaction.started": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "5e69e02badc27d7250c4b64625a9bbbb8b00cb50d9a9b2d2fdd28c3428f0cb01"
+      "payloadFingerprint": "a1e2f2fa961a94252fdd57503b55c5a51e4577c5e51501e07fff04244a5c0f6c"
     },
     "session.created": {
       "expectedProductionMention": true,
@@ -164,7 +168,7 @@
     },
     "session.execution.failed": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "7bff6cbab0cfdd541a1f2e8b655cd682d4da5cc3974a2765d6c47c50a66b2a72"
+      "payloadFingerprint": "bda2f31b03262d991ec43fa02620765f2a274ef666224f23362d90076f1bb4f5"
     },
     "session.execution.interrupted": {
       "expectedProductionMention": true,
@@ -228,11 +232,11 @@
     },
     "session.reasoning.ended": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "4bfca6493676d7a1a705cb06860b58afdaefbbc32fa8db259204c8d731959138"
+      "payloadFingerprint": "b7e4c5292a79dc3b3d91e4489486023c1c211890cddd6cfd935e3c225d76eaf4"
     },
     "session.reasoning.started": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "4dc63436f4f41b6144959683720b9f36442a4a8daf71bf66f3256555b847de5e"
+      "payloadFingerprint": "1453cde5a5b25395e132d555e08a177aa63010667a334df4de5a3852480ed816"
     },
     "session.renamed": {
       "expectedProductionMention": true,
@@ -240,7 +244,7 @@
     },
     "session.retry.scheduled": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "a89aa27da9e7b8de229ced2d204389322e42e752d611bcc4945f623b02216951"
+      "payloadFingerprint": "efcefacd74915215952141332de268b7db3198ce4b982f08bce3efe9ad7e289a"
     },
     "session.revert.cleared": {
       "expectedProductionMention": true,
@@ -272,11 +276,11 @@
     },
     "session.step.ended": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "1a37ec783bd92ad2c23d3d7211cb8d05bd4391b13f5164022b83b003e3d4003b"
+      "payloadFingerprint": "c34cdfda41f0679d958754458795ce6a806ca1db8479424da50d3ad709d8e15e"
     },
     "session.step.failed": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "422a3e5ce00044be4d2a558491a823a9504a9d1de610b8864b4034d18a27f3d9"
+      "payloadFingerprint": "45105f6e47f5eac3304b5ca33cf3ef9ceaf4ea0df891d82533697bc4f859ebf9"
     },
     "session.step.started": {
       "expectedProductionMention": true,
@@ -296,7 +300,7 @@
     },
     "session.text.ended": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "5dda0db09562c5cb50f8a8198aa5ed41a2c52332516eb7c0306eb9951380e613"
+      "payloadFingerprint": "6410c68f1f4d0a751e8a0b83c38301755ece361db01a72e3db8bb6b50e86f2ca"
     },
     "session.text.started": {
       "expectedProductionMention": true,
@@ -304,11 +308,11 @@
     },
     "session.tool.called": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "75f793638fce3f929dacb2c83b2a0080cc0cc051778d6db0c284d4498b225598"
+      "payloadFingerprint": "350593757d19e329798c12805c4b934968b98e8eebd78118fb9c0b4b29f861ed"
     },
     "session.tool.failed": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "e47849bb6165c591fff983088b37aab5bc65489e3fabbf209dc286b407cc671a"
+      "payloadFingerprint": "7d4a5ac16459a97b1347bdfdc9a88e324afeb1a4ed71450935c5468c39b514d8"
     },
     "session.tool.input.delta": {
       "expectedProductionMention": true,
@@ -328,7 +332,11 @@
     },
     "session.tool.success": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "dafe3267994235c3ce6b979539c794d7b6fc7aeb2cec2095060001a17ef2a621"
+      "payloadFingerprint": "6fb0e1e566182c2de0418f46aebb881023dfb9bd9c5bbf7d65b3c439275b2652"
+    },
+    "session.unarchived": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "9994dc51e68308b5130e9d044299f2d49154458bcb5b811b160393d626a0f202"
     },
     "session.usage.updated": {
       "expectedProductionMention": true,
@@ -357,7 +365,7 @@
     "tui.command.execute": {
       "expectedProductionMention": false,
       "note": "TUI-only event has no Palot desktop product owner.",
-      "payloadFingerprint": "9376def47239a47763d2eb290a851d895dc2a04bbf95fb0412b376e634ee41f3"
+      "payloadFingerprint": "3754f90d76836967591980d049050084b88cc9db7f7f67996ce2f860381a1b70"
     },
     "tui.prompt.append": {
       "expectedProductionMention": false,
@@ -395,7 +403,7 @@
   "operations": {
     "agent.get": {
       "disposition": "intentional-omit",
-      "expectedProductionReference": false,
+      "expectedProductionReference": true,
       "note": "Agent list already supplies the product catalog; no single-agent workflow needs another request."
     },
     "agent.list": {
@@ -521,6 +529,18 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
+    "experimental.voice.instructions": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.voice.models": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.voice.session": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
     "form.list": {
       "disposition": "integrated",
       "expectedProductionReference": true
@@ -559,7 +579,7 @@
     },
     "integration.get": {
       "disposition": "intentional-omit",
-      "expectedProductionReference": false,
+      "expectedProductionReference": true,
       "note": "Integration list already supplies the settings snapshot."
     },
     "integration.list": {
@@ -618,6 +638,10 @@
     "permission.saved.remove": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "permission.saved.update": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
     },
     "persistentPty.connect": {
       "disposition": "integrated",

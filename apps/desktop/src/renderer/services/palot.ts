@@ -380,7 +380,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "2.0.29",
+  contractVersion: "2.1.3",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -397,7 +397,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.0.29",
+  version: "2.1.3",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,

@@ -24,6 +24,15 @@ extraResources:
       - "**/icon.png"
       - "**/dock.png"
       - tray/**
+  - from: ../../packages/opencode-voice-coordinator
+    to: opencode-voice-coordinator
+    filter:
+      - server.ts
+      - package.json
+      - README.md
+      - "src/**/*.ts"
+      - "!src/**/*.test.ts"
+      - "!src/test-fixtures.ts"
   - from: drizzle
     to: drizzle
   - from: resources/licenses
@@ -59,6 +68,12 @@ mac:
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
+  # The hardened runtime needs the audio-input entitlement before macOS will prompt for
+  # the microphone; helpers inherit it because Chromium captures audio out of process.
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: Palot uses the microphone for voice chat with your OpenCode tasks.
 
 win:
   icon: resources/icons/stable/icon.ico

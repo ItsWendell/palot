@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { useWorkbenchCommands } from "../../atoms/workbench";
 import { runtimeAtom } from "../../atoms/workspace";
 import { cn } from "../../lib/cn";
+import { workspaceRelativePath } from "../../lib/file-reference";
 import { openCodeKeys } from "../../lib/opencode-query";
 import { canFetchOpenCode } from "../../lib/opencode-runtime-query";
 import type { WorkbenchPaneID, WorkbenchScope, WorkbenchTab } from "../../lib/workbench-tabs";
@@ -19,24 +20,7 @@ const SEARCH_LIMIT = 50;
 
 // File API paths may be relative to the location or absolute on the server.
 // Never send a path outside the owning location to file.list or a file tab.
-export function workspaceRelativePath(root: string, path: string): string | null {
-  const base = root.replaceAll("\\", "/").replace(/\/+$/, "") || "/";
-  const entry = path.replaceAll("\\", "/");
-  if (!entry || entry.includes("\0") || entry.split("/").includes("..")) return null;
-  const absolute = entry.startsWith("/") || /^[a-zA-Z]:\//.test(entry);
-  const relative = absolute
-    ? entry === base
-      ? ""
-      : entry.startsWith(`${base === "/" ? "" : base}/`)
-        ? entry.slice(base === "/" ? 1 : base.length + 1)
-        : null
-    : entry;
-  if (relative === null || relative.startsWith("/") || relative.includes(":")) return null;
-  return relative
-    .split("/")
-    .filter((part) => part && part !== ".")
-    .join("/");
-}
+export { workspaceRelativePath };
 
 function safeEntries(
   root: string,

@@ -3,9 +3,11 @@ import type { ComposerQuery } from "./composer-query";
 import {
   applyComposerTextChange,
   applyComposerTextEdit,
+  insertComposerFileMention,
   insertComposerSelection,
   normalizeComposerDraft,
   projectComposerSubmission,
+  removeComposerMention,
   type ComposerDraft,
   type ComposerMention,
 } from "./composer-draft";
@@ -272,5 +274,44 @@ describe("projectComposerSubmission", () => {
     };
 
     expect(projectComposerSubmission(draft).files).toHaveLength(1);
+  });
+});
+
+describe("mention chips", () => {
+  it("removes one mention and its separating space, keeping the others resolved", () => {
+    const draft: ComposerDraft = {
+      text: "Compare @a.ts with @b.ts",
+      mentions: [mention("a", "file", "a.ts", 8), mention("b", "file", "b.ts", 19)],
+      command: null,
+    };
+    const removed = removeComposerMention(draft, "a")!;
+    expect(removed.draft.text).toBe("Compare with @b.ts");
+    expect(removed.draft.mentions).toEqual([
+      expect.objectContaining({ localID: "b", start: 13, end: 18 }),
+    ]);
+    expect(removed.selectionStart).toBe(8);
+    const last = removeComposerMention(removed.draft, "b")!;
+    expect(last.draft).toEqual({ text: "Compare with", mentions: [], command: null });
+    expect(removeComposerMention(draft, "missing")).toBeNull();
+  });
+
+  it("inserts a file mention at the caret with surrounding spaces, never inside a mention", () => {
+    const empty: ComposerDraft = { text: "", mentions: [], command: null };
+    const first = insertComposerFileMention(empty, 0, "out/report.md", "r");
+    expect(first.draft.text).toBe("@out/report.md ");
+    expect(first.selectionStart).toBe(first.draft.text.length);
+
+    const draft: ComposerDraft = {
+      text: "See @a.ts",
+      mentions: [mention("a", "file", "a.ts", 4)],
+      command: null,
+    };
+    const after = insertComposerFileMention(draft, 6, "b.ts", "b");
+    expect(after.draft.text).toBe("See @a.ts @b.ts ");
+    expect(after.draft.mentions.map((item) => item.value)).toEqual(["a.ts", "b.ts"]);
+    expect(projectComposerSubmission(after.draft).files.map((file) => file.path)).toEqual([
+      "a.ts",
+      "b.ts",
+    ]);
   });
 });

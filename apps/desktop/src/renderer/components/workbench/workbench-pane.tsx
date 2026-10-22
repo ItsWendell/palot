@@ -733,7 +733,7 @@ function WorkbenchTabContent({
   if (tab.kind === "context") return <ContextTab tab={tab} active={active} />;
   if (tab.kind === "changes")
     return <ChangesTab tab={tab} pane={pane} scope={scope} active={active} />;
-  if (tab.kind === "file") return <FileTab tab={tab} active={active} />;
+  if (tab.kind === "file") return <FileTab tab={tab} pane={pane} scope={scope} active={active} />;
   if (tab.kind === "workspace-files")
     return <WorkspaceFilesTab tab={tab} pane={pane} scope={scope} active={active} />;
   if (tab.kind === "file-diff") return <FileDiffTab tab={tab} active={active} />;

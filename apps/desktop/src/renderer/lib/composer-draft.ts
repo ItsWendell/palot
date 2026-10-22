@@ -245,6 +245,70 @@ export function insertComposerSelection(
   return { draft: next, selectionStart: caret, selectionEnd: caret };
 }
 
+/**
+ * Inserts a workspace file mention at the caret (outside any `@` query), separated from
+ * neighbouring text by spaces. Inside an existing mention, it goes after that mention.
+ */
+export function insertComposerFileMention(
+  draft: ComposerDraft,
+  caret: number,
+  path: string,
+  localID: string,
+): ComposerInsertion {
+  const normalized = normalizeComposerDraft(draft);
+  let at = Math.max(
+    0,
+    Math.min(Number.isInteger(caret) ? caret : normalized.text.length, normalized.text.length),
+  );
+  const inside = normalized.mentions.find((mention) => mention.start < at && at < mention.end);
+  if (inside) at = inside.end;
+  const displayText = `@${path}`;
+  const before = at > 0 && !/\s/.test(normalized.text[at - 1] ?? "") ? " " : "";
+  const after = replacementWithSeparator(normalized.text, at, "");
+  const next = applyComposerTextEdit(normalized, {
+    start: at,
+    end: at,
+    text: `${before}${displayText}${after}`,
+  });
+  const start = at + before.length;
+  const inserted = normalizeComposerDraft({
+    ...next,
+    mentions: [
+      ...next.mentions,
+      {
+        localID,
+        kind: "file",
+        value: path,
+        text: displayText,
+        start,
+        end: start + displayText.length,
+      },
+    ],
+  });
+  const end = start + displayText.length + after.length;
+  return { draft: inserted, selectionStart: end, selectionEnd: end };
+}
+
+/** Removes one resolved mention and the single space that separated it from what followed. */
+export function removeComposerMention(
+  draft: ComposerDraft,
+  localID: string,
+): ComposerInsertion | null {
+  const normalized = normalizeComposerDraft(draft);
+  const mention = normalized.mentions.find((item) => item.localID === localID);
+  if (!mention) return null;
+  const trailing = normalized.text[mention.end] === " " ? 1 : 0;
+  const leading =
+    !trailing && mention.start > 0 && normalized.text[mention.start - 1] === " " ? 1 : 0;
+  const start = mention.start - leading;
+  const next = applyComposerTextEdit(normalized, {
+    start,
+    end: mention.end + trailing,
+    text: "",
+  });
+  return { draft: next, selectionStart: start, selectionEnd: start };
+}
+
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }

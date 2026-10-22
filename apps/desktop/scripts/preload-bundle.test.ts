@@ -17,7 +17,7 @@ describe("packaged preload bundles", () => {
         build: { outDir, emptyOutDir: true },
       });
 
-      for (const file of ["index.cjs"]) {
+      for (const file of ["index.cjs", "voice-overlay.cjs"]) {
         const source = await readFile(path.join(outDir, file), "utf8");
         expect(source, `${file} must not require sibling chunks`).not.toMatch(
           /require\(["']\.\.?\//,

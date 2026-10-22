@@ -90,6 +90,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: path.join(RENDERER_ROOT, "index.html"),
+        "voice-overlay": path.join(RENDERER_ROOT, "voice-overlay.html"),
       },
     },
   },

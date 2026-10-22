@@ -1,17 +1,46 @@
 import { File as CodeFile, type SelectedLineRange } from "@pierre/diffs/react";
-import { FileCode2, FolderOpen, Minus, Plus, RefreshCw, SquareArrowOutUpRight } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FileCode2,
+  FolderOpen,
+  Globe,
+  Minus,
+  Plus,
+  RefreshCw,
+  SquareArrowOutUpRight,
+} from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
 import { resolvedAppearanceAtom } from "../../atoms/appearance";
+import { experimentalBrowserAtom } from "../../atoms/ui";
+import { useWorkbenchCommands } from "../../atoms/workbench";
 import { runtimeAtom } from "../../atoms/workspace";
+import { useBrowserSession } from "../../hooks/use-browser-session";
 import { useImageZoom } from "../../hooks/use-image-zoom";
 import { useWorkspaceFile } from "../../hooks/use-workspace-file";
+import { isHtmlFilePath, openFileInBrowser } from "../../lib/browser-files";
 import { cn } from "../../lib/cn";
 import { contentCacheKey } from "../../lib/file-diffs";
-import type { WorkbenchTab } from "../../lib/workbench-tabs";
+import {
+  fileUrl,
+  isAbsoluteFilePath,
+  joinFilePath,
+  normalizeFilePath,
+} from "../../lib/file-reference";
+import { showErrorToast } from "../../lib/toast-error";
+import type {
+  OpenWorkbenchTabInput,
+  WorkbenchPaneID,
+  WorkbenchScope,
+  WorkbenchTab,
+} from "../../lib/workbench-tabs";
 import { palot } from "../../services/palot";
 import { pierreViewerStyle, pierreViewerTheme } from "../file-viewer-theme";
-import { MarkdownContent } from "../markdown-content";
+import { useFileReferenceOpener } from "../file-reference-opener";
+import {
+  MarkdownContent,
+  MarkdownWorkspaceProvider,
+  type MarkdownFileReference,
+} from "../markdown-content";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
@@ -21,16 +50,80 @@ const PdfPreview = lazy(() => import("./pdf-preview"));
 const OfficePreview = lazy(() => import("./office-preview"));
 
 const IMAGE_ZOOM_STEP = 1.5;
+const NO_MESSAGES = () => [];
+
+/** Renders a previewed Markdown file whose relative links resolve against its own folder. */
+function MarkdownDocumentPreview({
+  tab,
+  scope,
+  pane,
+  text,
+}: {
+  tab: Extract<WorkbenchTab, { kind: "file" }>;
+  scope: WorkbenchScope;
+  pane?: WorkbenchPaneID;
+  text: string;
+}) {
+  const runtime = useAtomValue(runtimeAtom);
+  const workbench = useWorkbenchCommands(scope);
+  const location = tab.resource.location;
+  const folder = joinFilePath(location.directory, normalizeFilePath(`${tab.resource.path}/..`));
+  const localPathActions =
+    runtime?.profileID === tab.resource.profileID &&
+    runtime?.capabilities?.localPathActions === true;
+  const openTab = useCallback(
+    (input: OpenWorkbenchTabInput) => workbench.openTab(input, pane ? { pane } : undefined),
+    [pane, workbench],
+  );
+  const opener = useFileReferenceOpener({
+    sessionID: scope.sessionID,
+    location,
+    connectionID: runtime?.profileID === tab.resource.profileID ? runtime.connectionID : undefined,
+    localPathActions,
+    getMessages: NO_MESSAGES,
+    openTab,
+  });
+  const { open } = opener;
+  // Document links are relative to the document, not the task; resolve them to an absolute
+  // path so the opener checks exactly that file within the task's locations.
+  const openFromDocument = useCallback(
+    (reference: MarkdownFileReference, event?: Parameters<typeof open>[1]) =>
+      open(
+        isAbsoluteFilePath(reference.path) || reference.path.startsWith("~")
+          ? reference
+          : { ...reference, path: joinFilePath(folder, reference.path) },
+        event,
+      ),
+    [folder, open],
+  );
+  return (
+    <MarkdownWorkspaceProvider
+      onOpenFile={openFromDocument}
+      workspaceDirectory={folder}
+      allowHomePaths={localPathActions}
+    >
+      {opener.picker}
+      <MarkdownContent value={text} className="mx-auto max-w-4xl" />
+    </MarkdownWorkspaceProvider>
+  );
+}
 
 export function FileTab({
   tab,
   active = true,
+  scope,
+  pane,
 }: {
   tab: Extract<WorkbenchTab, { kind: "file" }>;
   active?: boolean;
+  /** Lets links inside a previewed document open in the workbench. */
+  scope?: WorkbenchScope;
+  pane?: WorkbenchPaneID;
 }) {
   const runtime = useAtomValue(runtimeAtom);
   const appearance = useAtomValue(resolvedAppearanceAtom);
+  const browserEnabled = useAtomValue(experimentalBrowserAtom);
+  const browser = useBrowserSession(scope ?? { profileID: "", sessionID: "" });
   const query = useWorkspaceFile(tab.resource.location, tab.resource.path, active);
   const preview = useMemo(
     () => (query.data ? classifyWorkspaceFile(tab.resource.path, query.data) : null),
@@ -38,8 +131,11 @@ export function FileTab({
   );
   const [markdownSource, setMarkdownSource] = useState(false);
   const selectedLines = useMemo<SelectedLineRange | null>(
-    () => (tab.resource.line ? { start: tab.resource.line, end: tab.resource.line } : null),
-    [tab.resource.line],
+    () =>
+      tab.resource.line
+        ? { start: tab.resource.line, end: tab.resource.endLine ?? tab.resource.line }
+        : null,
+    [tab.resource.line, tab.resource.endLine],
   );
   const scrolledTarget = useRef<string | null>(null);
   const text = preview && "text" in preview ? preview.text : "";
@@ -71,11 +167,14 @@ export function FileTab({
     [appearance.codeThemePair, appearance.scheme, tab.resource.line, tab.resource.path],
   );
 
-  const fullPath =
-    tab.resource.path.startsWith("/") || tab.resource.path.startsWith("~")
-      ? tab.resource.path
-      : `${tab.resource.location.directory.replace(/\/+$/, "")}/${tab.resource.path}`;
-  const fileHref = `file://${encodeURI(fullPath)}${tab.resource.line ? `#L${tab.resource.line}` : ""}`;
+  const fullPath = joinFilePath(tab.resource.location.directory, tab.resource.path);
+  const fileHref = fileUrl(fullPath, tab.resource.line);
+  const localFiles =
+    runtime?.profileID === tab.resource.profileID &&
+    runtime?.capabilities?.localPathActions === true;
+  const browserBindingID = browser?.bindingID;
+  const canOpenInBrowser =
+    browserEnabled && localFiles && Boolean(browserBindingID) && isHtmlFilePath(tab.resource.path);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-card">
@@ -112,6 +211,22 @@ export function FileTab({
             </Button>
           </div>
         ) : null}
+        {canOpenInBrowser && browserBindingID ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Open in browser"
+            title="Open in browser"
+            onClick={() => {
+              openFileInBrowser(browserBindingID, fullPath).catch((error: unknown) =>
+                showErrorToast("Could not open in Palot Browser", error),
+              );
+            }}
+          >
+            <Globe className="size-3.5" aria-hidden="true" />
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"
@@ -123,16 +238,18 @@ export function FileTab({
             runtime?.capabilities?.localPathActions !== true
           }
           onClick={() => {
-            void palot.externalOpen(
-              {
-                resource: {
-                  kind: "file",
-                  path: fullPath,
-                  line: tab.resource.line,
+            palot
+              .externalOpen(
+                {
+                  resource: {
+                    kind: "file",
+                    path: fullPath,
+                    line: tab.resource.line,
+                  },
                 },
-              },
-              runtime?.connectionID,
-            );
+                runtime?.connectionID,
+              )
+              .catch((error: unknown) => showErrorToast("Could not open file", error));
           }}
         >
           <SquareArrowOutUpRight className="size-3.5" aria-hidden="true" />
@@ -220,7 +337,11 @@ export function FileTab({
         <MediaFilePreview preview={preview} path={tab.resource.path} />
       ) : preview?.kind === "markdown" && !markdownSource ? (
         <div className="palot-native-scrollbar min-h-0 flex-1 overflow-auto p-5">
-          <MarkdownContent value={preview.text} className="mx-auto max-w-4xl" />
+          {scope ? (
+            <MarkdownDocumentPreview tab={tab} scope={scope} pane={pane} text={preview.text} />
+          ) : (
+            <MarkdownContent value={preview.text} className="mx-auto max-w-4xl" />
+          )}
         </div>
       ) : (
         <div className="palot-native-scrollbar min-h-0 flex-1 overflow-auto bg-[var(--code-background)]">

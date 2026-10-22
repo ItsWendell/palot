@@ -17,7 +17,7 @@ import {
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import * as v from "valibot";
-import { allowedExternalUrl } from "./external-url-policy";
+import { openExternalUrl } from "./external-url";
 import { openDesktopDialog } from "./desktop-dialogs";
 import { normalizeSshConfig } from "./ssh/config";
 import { sshInteractions } from "./ssh/interaction";
@@ -90,6 +90,7 @@ import { registerSourceControlIpc } from "./source-control/ipc";
 import { registerProjectScriptsIpc } from "./project-scripts/ipc";
 import { projectScriptsService, startProjectScripts } from "./project-scripts/runtime";
 import { shutdownSourceControlService, sourceControlService } from "./source-control/runtime";
+import { registerVoiceHostIpc } from "./voice/voice-host";
 
 let performanceTraceActive = false;
 const requestProxy = new OpenCodeRequestProxy({
@@ -549,6 +550,7 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   ipcTrust = options;
   registerSourceControlIpc(register, sourceControlService);
   registerProjectScriptsIpc(register, projectScriptsService);
+  registerVoiceHostIpc(register);
   startProjectScripts();
   register(IPC_CHANNELS.browserRegister, (event, value: unknown) => {
     const win = browserWindow(event);
@@ -1046,10 +1048,7 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   register(IPC_CHANNELS.openExternalUrl, (event, input: unknown) => {
     assertTrustedMainFrame(event);
     if (typeof input !== "string") return false;
-    const url = allowedExternalUrl(input, !app.isPackaged);
-    if (!url) return false;
-    void shell.openExternal(url);
-    return true;
+    return openExternalUrl(input);
   });
   registerFocusedNative(IPC_CHANNELS.revealFileInFinder, (event, input: unknown) => {
     requireRuntimeCapability("localPathActions");
@@ -1296,7 +1295,8 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     if (!performanceTraceActive) throw new Error("Whole-app performance tracing is not active");
     const logDirectory = process.env.PALOT_LOG_DIR;
     if (!logDirectory) throw new Error("Whole-app performance tracing requires PALOT_LOG_DIR");
-    const output = path.resolve(logDirectory, "..", "performance-app-trace.json");
+    // Electron 45 records Perfetto protobuf, not JSON; open it in ui.perfetto.dev.
+    const output = path.resolve(logDirectory, "..", "performance-app-trace.perfetto-trace");
     try {
       return await contentTracing.stopRecording(output);
     } finally {

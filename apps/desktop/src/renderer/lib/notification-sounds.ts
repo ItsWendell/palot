@@ -134,7 +134,7 @@ export function createNotificationSoundController(options: NotificationSoundCont
 
 // Synthesis -----------------------------------------------------------------------------------
 
-interface Tone {
+export interface Tone {
   frequency: number;
   /** Glide target for pitch-drop sounds. */
   endFrequency?: number;
@@ -176,6 +176,11 @@ function audioContext(): AudioContext | null {
 }
 
 export function playNotificationSound(sound: NotificationSoundID): void {
+  playTones(SOUNDS[sound]);
+}
+
+/** Plays synthesized tones through the shared context at the notification volume. */
+export function playTones(tones: readonly Tone[]): void {
   const audio = audioContext();
   if (!audio) return;
   try {
@@ -184,7 +189,7 @@ export function playNotificationSound(sound: NotificationSoundID): void {
     master.gain.value = MASTER_VOLUME;
     master.connect(audio.destination);
     let end = origin;
-    for (const tone of SOUNDS[sound]) {
+    for (const tone of tones) {
       const start = origin + tone.start;
       const stop = start + tone.duration;
       const oscillator = audio.createOscillator();

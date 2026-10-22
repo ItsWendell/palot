@@ -295,6 +295,15 @@ export function lastCompletedCompactionAt(messages: readonly PalotMessage[]): nu
   return null;
 }
 
+/**
+ * Text of the messages a summary compaction kept verbatim. OpenCode 2.1 stores only a
+ * `metadata.keepID` reference; context history and legacy compactions carry the text here.
+ */
+export function compactionRecent(message: { metadata?: Record<string, unknown> }): string {
+  const recent = message.metadata?.recent;
+  return typeof recent === "string" ? recent : "";
+}
+
 /** Rough token count for text the model reads: about four characters per token. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -367,7 +376,9 @@ export function describeContextEntry(
       };
     }
     case "compaction": {
-      const text = message.status === "failed" ? "" : [message.summary, message.recent].join("\n");
+      // Context history folds the messages kept verbatim (`metadata.keepID`) into `metadata.recent`.
+      const text =
+        message.status === "failed" ? "" : [message.summary, compactionRecent(message)].join("\n");
       return {
         ...base,
         role: "Compaction",

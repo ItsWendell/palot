@@ -10,6 +10,7 @@ import {
   fileURLWithin,
   localFileURL,
   normalizeURL,
+  refusal,
 } from "./policy";
 
 const directory = mkdtempSync(path.join(tmpdir(), "palot-browser-policy-"));
@@ -61,6 +62,22 @@ test("file documents load only from existing workspace paths and never from a ho
   expect(() => normalizeURL(url(insideFile))).toThrow();
   expect(() => normalizeURL(url(outsideFile), { fileRoots: roots })).toThrow();
   expect(normalizeURL("localhost:3000", { fileRoots: roots })).toBe("http://localhost:3000");
+});
+
+test("explains refused addresses with OpenCode desktop's reasons", () => {
+  const roots = [root];
+  expect(refusal(url(insideFile), { fileRoots: roots })).toBeUndefined();
+  expect(refusal("https://user:pass@example.com")).toBe("browser.address.credentials");
+  expect(refusal(url(outsideFile), { fileRoots: roots })).toBe("browser.address.workspace");
+  expect(refusal(url(insideFile))).toBe("browser.address.web");
+  expect(() => normalizeURL("https://user:pass@example.com")).toThrow("user name or password");
+  expect(() => normalizeURL(url(outsideFile), { fileRoots: roots })).toThrow(
+    "files from this task's workspace only",
+  );
+  expect(() => normalizeURL(url(insideFile))).toThrow("only when OpenCode runs on this computer");
+  expect(() => normalizeURL("javascript:alert(1)", { fileRoots: roots })).toThrow(
+    "Only HTTP, HTTPS, about:blank, and file URLs",
+  );
 });
 
 test("resolved files cannot escape through file or directory symlinks", () => {

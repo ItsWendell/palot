@@ -18,6 +18,7 @@ export default defineConfig({
     lib: {
       entry: {
         index: path.join(APP_ROOT, "src/preload/index.ts"),
+        "voice-overlay": path.join(APP_ROOT, "src/preload/voice-overlay.ts"),
       },
       formats: ["cjs"],
       fileName: (_format, entryName) => `${entryName}.cjs`,

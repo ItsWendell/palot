@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useImperativeHandle, type Ref } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { FileDiffInfo } from "@opencode/client";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   arguments: [] as unknown[],
+  scrollTo: vi.fn(),
 }));
 vi.mock("../../hooks/use-turn-diffs", () => ({
   useTurnDiffs: (...args: unknown[]) => {
@@ -28,15 +30,25 @@ vi.mock("jotai", async (importOriginal) => ({
   useAtomValue: () => ({ codeThemePair: ["light", "dark"], scheme: "light" }),
 }));
 vi.mock("@pierre/diffs/react", () => ({
-  CodeView: ({ items }: { items: Array<{ id: string; type: string }> }) => (
-    <div role="region" aria-label="Turn diff review">
-      {items.map((item) => (
-        <span key={item.id}>
-          {item.id}: {item.type}
-        </span>
-      ))}
-    </div>
-  ),
+  CodeView: ({
+    items,
+    ref,
+  }: {
+    items: Array<{ id: string; type: string }>;
+    ref?: Ref<{ scrollTo: typeof mocks.scrollTo }>;
+  }) => {
+    useImperativeHandle(ref, () => ({ scrollTo: mocks.scrollTo }));
+    return (
+      <div role="region" aria-label="Turn diff review" tabIndex={0}>
+        {items.map((item) => (
+          <span key={item.id}>
+            {item.id}: {item.type}
+          </span>
+        ))}
+        <input aria-label="Comment" />
+      </div>
+    );
+  },
 }));
 
 const tab: Extract<WorkbenchTab, { kind: "turn-diff" }> = {
@@ -93,4 +105,44 @@ it("distinguishes offline, loading, failure, empty and structured file diffs", (
   fireEvent.click(screen.getByRole("button", { name: "Refresh turn changes" }));
   expect(mocks.query.refetch).toHaveBeenCalledTimes(2);
   expect(mocks.arguments).toEqual(["profile", "session", "user-1", true]);
+});
+
+it("steps through changed files with buttons and pane keys, but not while typing", () => {
+  Object.assign(mocks.query, { isPending: false });
+  mocks.query.data = ["src/a.ts", "src/b.ts", "src/c.ts"].map((file) => ({
+    file,
+    status: "modified" as const,
+    patch: "@@ -1 +1 @@\n-before\n+after",
+    additions: 1,
+    deletions: 1,
+  }));
+  render(<TurnDiffTab tab={tab} />);
+  const position = () => screen.getByRole("group", { name: "File navigation" }).textContent;
+  const previous = screen.getByRole("button", { name: "Previous file" }) as HTMLButtonElement;
+  const next = screen.getByRole("button", { name: "Next file" }) as HTMLButtonElement;
+  expect(position()).toContain("1 of 3");
+  expect(previous.disabled).toBe(true);
+  expect(next.getAttribute("aria-keyshortcuts")).toBe("J");
+
+  fireEvent.click(next);
+  expect(mocks.scrollTo).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "item", id: "src/b.ts", align: "start" }),
+  );
+  expect(position()).toContain("2 of 3");
+
+  const review = screen.getByRole("region", { name: "Turn diff review" });
+  fireEvent.keyDown(review, { key: "j" });
+  expect(mocks.scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ id: "src/c.ts" }));
+  expect(position()).toContain("3 of 3");
+  expect(next.disabled).toBe(true);
+
+  // Typing in a field inside the pane, or using modifiers, never moves between files.
+  mocks.scrollTo.mockClear();
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Comment" }), { key: "k" });
+  fireEvent.keyDown(review, { key: "k", metaKey: true });
+  expect(mocks.scrollTo).not.toHaveBeenCalled();
+
+  fireEvent.keyDown(review, { key: "k" });
+  expect(mocks.scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ id: "src/b.ts" }));
+  expect(position()).toContain("2 of 3");
 });

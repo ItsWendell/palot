@@ -2,7 +2,7 @@ import { createStore } from "jotai";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenCodeProfile, PalotProject, PalotSession } from "../../shared";
+import type { OpenCodeProfile, PalotMessage, PalotProject, PalotSession } from "../../shared";
 import type { ConnectionOverview } from "../lib/connection-overview";
 import {
   commandPaletteTabAtom,
@@ -10,13 +10,14 @@ import {
   globalCommandRequestAtom,
 } from "../atoms/command-requests";
 import { commandPaletteOpenAtom, navigationOpenAtom } from "../atoms/ui";
-import { workbenchStateAtom } from "../atoms/workbench";
+import { transcriptJumpTargetAtom, workbenchStateAtom } from "../atoms/workbench";
 import { newTaskDestinationAtom, runtimeAtom } from "../atoms/workspace";
 import { createWorkbenchState, workbenchScopeKey } from "../lib/workbench-tabs";
 import { createRendererQueryClient } from "../lib/query-client";
 import { sessionCatalogInfo, sessionInfoFromPalot } from "../lib/session-catalog-query";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { formatRelativeTime } from "../lib/view-models";
+import { transcriptQueryKey } from "../hooks/use-session-transcript";
 import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router";
 
 const mocks = vi.hoisted(() => ({
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   findWorkspaceFiles: vi.fn(),
   exportSession: vi.fn(),
   compactSession: vi.fn(),
+  loadRecentSessionMessages: vi.fn(),
   overview: {
     connections: [] as ConnectionOverview[],
     includedProfileIDs: [] as string[],
@@ -50,6 +52,10 @@ vi.mock("../services/palot", () => ({
 
 vi.mock("../services/opencode-catalog", () => ({
   listRootSessionInfo: mocks.listRootSessionInfo,
+}));
+
+vi.mock("../services/opencode-message-search", () => ({
+  loadRecentSessionMessages: mocks.loadRecentSessionMessages,
 }));
 
 import { GlobalCommandPalette } from "./global-command-palette";
@@ -145,6 +151,50 @@ function connection(
   };
 }
 
+function message(id: string, type: "user" | "assistant", text: string): PalotMessage {
+  return {
+    id,
+    type,
+    createdAt: 1,
+    completedAt: 1,
+    text: null,
+    agent: null,
+    model: null,
+    tokens: null,
+    finish: null,
+    content: [{ id: `${id}-part`, type: "text", text }],
+    data: null,
+  };
+}
+
+function hydrateTranscript(
+  queryClient: ReturnType<typeof createRendererQueryClient>,
+  connectionID: string,
+  sessionID: string,
+  messages: PalotMessage[] = [],
+) {
+  if (messages.length > 0) {
+    openCodeReconciler(queryClient).setTranscriptSnapshot(
+      connectionID,
+      sessionID,
+      messages,
+      "rooted",
+    );
+  }
+  queryClient.setQueryData(transcriptQueryKey(connectionID, sessionID), {
+    pages: [{ data: [], cursor: { previous: null, next: null } }],
+    pageParams: [null],
+  });
+}
+
+function groupHeading(name: string) {
+  return [
+    ...screen
+      .getByRole("listbox", { name: "Command results" })
+      .querySelectorAll('[data-slot="command-group-heading"]'),
+  ].find((heading) => heading.textContent?.startsWith(name));
+}
+
 /** Happy DOM reports AltGraph for any Alt press; Chromium only does for AltGr. */
 function pressAltDigit(digit: number) {
   const event = new KeyboardEvent("keydown", {
@@ -169,6 +219,8 @@ describe("GlobalCommandPalette", () => {
     mocks.findWorkspaceFiles.mockResolvedValue([]);
     mocks.exportSession.mockReset();
     mocks.compactSession.mockReset();
+    mocks.loadRecentSessionMessages.mockReset();
+    mocks.loadRecentSessionMessages.mockResolvedValue([]);
   });
 
   afterEach(() => cleanup());
@@ -748,5 +800,158 @@ describe("GlobalCommandPalette", () => {
       (heading) => heading.textContent,
     );
     expect(headings.indexOf("Files")).toBeGreaterThan(headings.indexOf("Tasks"));
+  });
+
+  it("searches loaded transcripts without fetching and jumps to the matching turn", async () => {
+    const { queryClient, router, store } = setup();
+    hydrateTranscript(queryClient, "disconnected", "session-1", [
+      message("user-1", "user", "How should we handle keys?"),
+      message("assistant-1", "assistant", "Rotate the signing key every month."),
+    ]);
+    store.set(commandPaletteOpenAtom, true);
+
+    await userEvent.type(
+      await screen.findByRole("combobox", { name: "Search tasks and commands" }),
+      "signing key",
+    );
+    const hit = await screen.findByRole("option", { name: /Rotate the signing key/ });
+    expect(hit.querySelector("mark")?.textContent).toBe("signing key");
+    expect(hit.textContent).toContain("Assistant · Global commander");
+    expect(groupHeading("Messages")?.textContent).toBe("MessagesSearched 1 task loaded in Palot");
+    // All only lists messages that matched; the bounded fetch is offered without running.
+    expect(screen.getByRole("option", { name: /Search messages in 1 recent task/ })).toBeTruthy();
+    expect(mocks.loadRecentSessionMessages).not.toHaveBeenCalled();
+
+    await userEvent.click(hit);
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/session-1"));
+    expect(store.get(transcriptJumpTargetAtom)).toEqual({
+      sessionID: "session-1",
+      messageID: "user-1",
+    });
+  });
+
+  it("fetches recent tasks on request, bounded per server, and reports coverage and failures", async () => {
+    const workSessions = Array.from({ length: 35 }, (_, index) =>
+      session({ id: `work-${index}`, title: `Work task ${index}`, updatedAt: 100 - index }),
+    );
+    mocks.overview = {
+      connections: [
+        connection("work", "Work", workSessions),
+        connection("home", "Home", [
+          session({ id: "home-1", title: "Home one", updatedAt: 60 }),
+          session({ id: "home-2", title: "Home two", updatedAt: 59 }),
+        ]),
+        connection("away", "Away", [session({ id: "away-1", title: "Away one" })], false),
+      ],
+      includedProfileIDs: ["work", "home", "away"],
+      visibleProfileIDs: null,
+    };
+    let active = 0;
+    let peak = 0;
+    mocks.loadRecentSessionMessages.mockImplementation(
+      async (sessionID: string, connectionID: string | undefined) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        if (connectionID === "home-connection") throw new Error("unreachable");
+        return sessionID === "work-3"
+          ? [
+              message("w3-user", "user", "ship it"),
+              message("w3-reply", "assistant", "Deploy notes are ready"),
+            ]
+          : [];
+      },
+    );
+    const { queryClient, router, store } = setup();
+    store.set(commandPaletteTabAtom, "tasks");
+    store.set(commandPaletteOpenAtom, true);
+
+    await userEvent.type(
+      await screen.findByRole("combobox", { name: "Search tasks and commands" }),
+      "deploy notes",
+    );
+    const searchRecent = await screen.findByRole("option", {
+      name: /Search messages in 32 recent tasks/,
+    });
+    expect(mocks.loadRecentSessionMessages).not.toHaveBeenCalled();
+    await userEvent.click(searchRecent);
+
+    const hit = await screen.findByRole("option", { name: /Deploy notes are ready/ });
+    await waitFor(() =>
+      expect(groupHeading("Messages")?.textContent).toBe(
+        "MessagesSearched 30 recent tasks · latest messages only",
+      ),
+    );
+    const calls = mocks.loadRecentSessionMessages.mock.calls;
+    expect(calls.filter((call) => call[1] === "work-connection")).toHaveLength(30);
+    expect(calls.map((call) => call[0])).not.toContain("work-30");
+    expect(calls.filter((call) => call[1] === "home-connection").length).toBeLessThanOrEqual(2);
+    expect(calls.some((call) => call[1] === "away-connection")).toBe(false);
+    expect(peak).toBeLessThanOrEqual(3);
+    expect(screen.getByRole("option", { name: /Retry message search/ }).textContent).toContain(
+      "Couldn't search Home: unreachable",
+    );
+    expect(hit.textContent).toContain("Assistant · Work task 3");
+    expect(hit.textContent).toContain("Work");
+
+    await userEvent.click(hit);
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/work-3"));
+    expect(router.state.location.search).toMatchObject({ profileID: "work" });
+    // The jump waits for the task's own connection to hydrate its transcript.
+    expect(store.get(transcriptJumpTargetAtom)).toBeNull();
+    hydrateTranscript(queryClient, "work-connection", "work-3");
+    expect(store.get(transcriptJumpTargetAtom)).toEqual({
+      sessionID: "work-3",
+      messageID: "w3-user",
+    });
+  });
+
+  it("aborts message requests when the query changes and forgets them on close", async () => {
+    const signals: AbortSignal[] = [];
+    mocks.loadRecentSessionMessages.mockImplementation(
+      (_sessionID: string, _connectionID: string | undefined, signal: AbortSignal) => {
+        signals.push(signal);
+        return new Promise(() => {});
+      },
+    );
+    const { store } = setup();
+    store.set(commandPaletteTabAtom, "tasks");
+    store.set(commandPaletteOpenAtom, true);
+    const input = await screen.findByRole("combobox", { name: "Search tasks and commands" });
+
+    await userEvent.type(input, "rollout");
+    await userEvent.click(
+      await screen.findByRole("option", { name: /Search messages in 1 recent task/ }),
+    );
+    await waitFor(() => expect(signals).toHaveLength(1));
+    expect(mocks.loadRecentSessionMessages).toHaveBeenCalledWith(
+      "session-1",
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect((await screen.findByText(/Messages · Searching 0 of 1 task/)).textContent).toBeTruthy();
+
+    await userEvent.type(input, " plan");
+    await waitFor(() => expect(signals).toHaveLength(2));
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(signals[1]?.aborted).toBe(true);
+
+    store.set(commandPaletteTabAtom, "tasks");
+    store.set(commandPaletteOpenAtom, true);
+    await userEvent.type(
+      await screen.findByRole("combobox", { name: "Search tasks and commands" }),
+      "rollout",
+    );
+    expect(
+      await screen.findByRole("option", { name: /Search messages in 1 recent task/ }),
+    ).toBeTruthy();
+    expect(signals).toHaveLength(2);
   });
 });

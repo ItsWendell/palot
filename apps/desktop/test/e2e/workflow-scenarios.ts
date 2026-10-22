@@ -484,6 +484,7 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
                   "workflow-shared": {
                     name: SHARED_MODEL,
                     limit: { context: 100_000, output: 10_000 },
+                    capabilities: { temperature: name !== "alpha" },
                   },
                 },
               },
@@ -533,12 +534,14 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       await search.fill("workflow-alpha");
       // Search keeps provider groups; each group holds only its own same-ID model.
       const alpha = page.getByRole("region", { name: "Workflow Alpha models", exact: true });
+      await expect(alpha.getByText("Fixed temperature", { exact: true })).toBeVisible();
       await expect(page.getByRole("region", { name: "Workflow Beta models" })).toHaveCount(0);
       const alphaModel = alpha.getByRole("switch", { name: `Show ${SHARED_MODEL}`, exact: true });
       await alphaModel.click();
       await expect(alphaModel).not.toBeChecked();
       await expect(alpha.getByText("0 of 1 shown", { exact: true })).toBeVisible();
       await search.fill("workflow-beta");
+      await expect(page.getByText("Fixed temperature", { exact: true })).toHaveCount(0);
       await expect(
         page
           .getByRole("region", { name: "Workflow Beta models", exact: true })

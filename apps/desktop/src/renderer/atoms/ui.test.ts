@@ -7,6 +7,7 @@ import {
   flushComposerDrafts,
   defaultWorktreeBaseAtom,
   defaultWorkspaceModeAtom,
+  projectWorkspaceModesAtom,
   sessionProjectionPreferenceAtom,
   turnActivityOpenAtomFamily,
 } from "./ui";
@@ -37,6 +38,21 @@ describe("workspace preference", () => {
         window.localStorage.getItem(persistedStorageKey("worktree.default-base")) ?? "null",
       ),
     ).toEqual({ version: 1, value: "current" });
+  });
+
+  it("persists workspace choices without replacing other projects or the global default", () => {
+    const store = createStore();
+    const first = JSON.stringify(["local", "project-1"]);
+    const second = JSON.stringify(["local", "project-2"]);
+    store.set(projectWorkspaceModesAtom, { [first]: "current" });
+    store.set(projectWorkspaceModesAtom, (modes) => ({ ...modes, [second]: "worktree" }));
+
+    expect(
+      JSON.parse(
+        window.localStorage.getItem(persistedStorageKey("workspace.project-modes")) ?? "null",
+      ),
+    ).toEqual({ version: 1, value: { [first]: "current", [second]: "worktree" } });
+    expect(store.get(defaultWorkspaceModeAtom)).toBe("worktree");
   });
 });
 

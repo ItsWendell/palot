@@ -1,5 +1,5 @@
 /** Built-in syntax data. See README.md for maintenance guidance. */
-import type { ThemeRegistration } from "shiki";
+import type { TextMateTheme } from "../code-theme-convert";
 
 export const builtinSyntaxThemes = {
   "absolutely-dark": {
@@ -5658,4 +5658,4 @@ export const builtinSyntaxThemes = {
       },
     ],
   },
-} satisfies Record<string, ThemeRegistration>;
+} satisfies Record<string, TextMateTheme>;

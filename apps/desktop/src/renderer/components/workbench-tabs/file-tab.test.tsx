@@ -20,6 +20,23 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+it("selects a referenced line range", () => {
+  const tab: Extract<WorkbenchTab, { kind: "file" }> = {
+    id: "file-tab",
+    pinned: false,
+    kind: "file",
+    resource: {
+      profileID: "profile-1",
+      location: { directory: "/repo" },
+      path: "src/a.ts",
+      line: 3,
+      endLine: 7,
+    },
+  };
+  render(<FileTab tab={tab} />);
+  expect(mocks.file.mock.lastCall![0]).toMatchObject({ selectedLines: { start: 3, end: 7 } });
+});
+
 it("keeps worker caching available across navigation and invalidates it after a file refresh", () => {
   const tab: Extract<WorkbenchTab, { kind: "file" }> = {
     id: "file-tab",

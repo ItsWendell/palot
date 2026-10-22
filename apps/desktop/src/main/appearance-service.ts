@@ -1,5 +1,6 @@
 /** Main-process persistence and native synchronization for desktop appearance. */
 
+import { windowRole } from "./ipc-security";
 import { BrowserWindow, nativeTheme, systemPreferences } from "electron";
 import Store from "electron-store";
 import { OmarchyAppearance } from "./omarchy-appearance";
@@ -26,6 +27,11 @@ import {
   updateLiquidGlassSettings,
 } from "./liquid-glass";
 
+/** Windows that follow Palot's appearance; the voice overlay keeps its own transparent chrome. */
+function appearanceWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter((window) => windowRole(window) !== "voice-overlay");
+}
+
 class AppearanceService {
   private readonly store = new Store<{ preferences?: AppearancePreferences }>({
     name: "appearance",
@@ -45,7 +51,7 @@ class AppearanceService {
     this.applyMode(preferences);
     this.resolvedScheme = this.currentScheme(preferences);
     this.applyWindowBackground(preferences, this.resolvedScheme);
-    for (const window of BrowserWindow.getAllWindows()) {
+    for (const window of appearanceWindows()) {
       if (!window.isDestroyed())
         window.webContents.send(IPC_CHANNELS.appearanceChanged, preferences);
     }
@@ -163,7 +169,7 @@ class AppearanceService {
     this.applyWindowBackground(preferences, resolvedScheme);
     updateLiquidGlassSettings(nativeGlassOptions(preferences, resolvedScheme));
     if (preferencesChanged) {
-      for (const window of BrowserWindow.getAllWindows()) {
+      for (const window of appearanceWindows()) {
         if (!window.isDestroyed()) {
           window.webContents.send(IPC_CHANNELS.appearanceChanged, preferences);
         }
@@ -284,7 +290,7 @@ class AppearanceService {
     scheme: AppearanceColorScheme,
   ): void {
     const color = this.backgroundColor(preferences, scheme);
-    for (const window of BrowserWindow.getAllWindows()) {
+    for (const window of appearanceWindows()) {
       if (!window.isDestroyed()) window.setBackgroundColor(color);
     }
   }
@@ -301,7 +307,7 @@ class AppearanceService {
 
   private broadcastNativeSystemColors(): void {
     const appearance = this.nativeSystemAppearance();
-    for (const window of BrowserWindow.getAllWindows()) {
+    for (const window of appearanceWindows()) {
       if (!window.isDestroyed()) {
         window.webContents.send(IPC_CHANNELS.nativeSystemAppearanceChanged, appearance);
       }
@@ -325,7 +331,7 @@ class AppearanceService {
       tier = "opaque";
       setResolvedChromeTier(tier);
     } else if (process.platform === "darwin" && tier === "vibrancy" && reduced) {
-      for (const window of BrowserWindow.getAllWindows()) {
+      for (const window of appearanceWindows()) {
         window.setVibrancy(null);
       }
       tier = "opaque";
@@ -337,7 +343,7 @@ class AppearanceService {
       process.env.PALOT_DISABLE_GLASS !== "1" &&
       treatment.native.backdrop !== "opaque"
     ) {
-      const windows = BrowserWindow.getAllWindows();
+      const windows = appearanceWindows();
       const window = windows[0];
       if (this.liquidGlassSuspendedForReducedTransparency && window) {
         setResolvedChromeTier("liquid-glass");
@@ -356,7 +362,7 @@ class AppearanceService {
     const background = this.backgroundColor(preferences, scheme, tier, reduced);
     updateLiquidGlassSettings(nativeGlassOptions(preferences, scheme));
     const appearance = this.nativeSystemAppearance();
-    for (const window of BrowserWindow.getAllWindows()) {
+    for (const window of appearanceWindows()) {
       if (window.isDestroyed()) continue;
       window.setBackgroundColor(background);
       window.webContents.send(IPC_CHANNELS.reducedTransparencyChanged, reduced);

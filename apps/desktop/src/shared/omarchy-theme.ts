@@ -114,7 +114,7 @@ function readable(color: string, background: string): string {
 }
 
 export function omarchyCodeThemeName(theme: OmarchyTheme): string {
-  // Content-addressed names prevent Shiki and worker caches from keeping an old palette.
+  // Content-addressed names prevent highlighter and worker caches from keeping an old palette.
   let hash = 2166136261;
   for (const char of JSON.stringify([theme.mode, theme.colors]))
     hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);

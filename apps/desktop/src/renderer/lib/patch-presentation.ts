@@ -1,4 +1,5 @@
 import { getFiletypeFromFileName, getSharedHighlighter, type DiffsThemeNames } from "@pierre/diffs";
+import { CODE_HIGHLIGHTER } from "./code-highlighter";
 import { STREAMING_PATCH_PAGE_SIZE, type StreamingPatchDocument } from "./streaming-patch-input";
 
 export interface PatchLine {
@@ -491,6 +492,7 @@ async function highlight(page: PatchPage, theme: DiffsThemeNames): Promise<Patch
   const highlighter = await getSharedHighlighter({
     themes: [theme],
     langs: [...new Set(languages)],
+    preferredHighlighter: CODE_HIGHLIGHTER,
   });
   const foreground = highlighter.getTheme(theme).fg;
   const lines: PatchHighlight["lines"][number][] = page.lines.map((line) => [
@@ -510,7 +512,7 @@ async function highlight(page: PatchPage, theme: DiffsThemeNames): Promise<Patch
       if (side === "old" && page.lines[index]!.kind !== "deletion") return;
       const code = page.lines[index]!.code;
       const rowTokens = tokens[row];
-      // Shiki normalizes some line endings. Never lose raw characters to it.
+      // The highlighter may normalize line endings. Never lose raw characters to it.
       if (rowTokens?.map((token) => token.content).join("") === code) lines[index] = rowTokens;
     });
   };

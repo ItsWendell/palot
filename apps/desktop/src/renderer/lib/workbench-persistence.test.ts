@@ -61,6 +61,38 @@ describe("workbench persistence", () => {
     );
   });
 
+  it("round-trips a selection's quote and follow-ups, and an unasked selection", () => {
+    const scope = { profileID: "profile", sessionID: "session" };
+    const quote = { text: "Use a ring buffer.", messageID: "msg_a", turnMessageID: "msg_u" };
+    let state = openWorkbenchTab(
+      createWorkbenchState(),
+      scope,
+      { kind: "btw", location: { directory: "/repo" }, questionID: "one", question: "", quote },
+      {},
+      1,
+      () => "one",
+    ).state;
+    expect(parseWorkbenchState(JSON.parse(JSON.stringify(state)))).toEqual(state);
+    state = updateBtwTab(state, scope, "one", (tab) => ({
+      ...tab,
+      resource: {
+        ...tab.resource,
+        question: "Why?",
+        answer: "Bounded.",
+        followUps: [{ id: "f1", question: "How big?", error: "Stopped." }],
+      },
+    }));
+    expect(parseWorkbenchState(JSON.parse(JSON.stringify(state)))).toEqual(state);
+    const withoutQuote = updateBtwTab(state, scope, "one", (tab) => {
+      const { quote: _quote, followUps: _followUps, ...resource } = tab.resource;
+      return { ...tab, resource: { ...resource, question: " " } };
+    });
+    expect(
+      parseWorkbenchState(JSON.parse(JSON.stringify(withoutQuote))).scopes[workbenchScopeKey(scope)]
+        ?.right.tabs,
+    ).toEqual([]);
+  });
+
   it("rejects saved side questions belonging to another scope", () => {
     const scope = { profileID: "profile", sessionID: "session" };
     const state = openWorkbenchTab(createWorkbenchState(), scope, {
@@ -179,6 +211,42 @@ describe("workbench persistence", () => {
       kind: "file",
       resource: { path: "src/app.ts", line: 42 },
     });
+  });
+
+  it("restores file line ranges and drops unusable end lines", () => {
+    const file = (id: string, resource: Record<string, unknown>) => ({
+      id,
+      kind: "file",
+      pinned: false,
+      resource: { profileID: "profile", location: { directory: "/repo" }, ...resource },
+    });
+    const parsed = parseWorkbenchState({
+      version: 1,
+      scopes: {
+        "profile\u0000session": {
+          updatedAt: 5,
+          right: {
+            requestedOpen: true,
+            activeTabID: "range",
+            tabs: [
+              file("range", { path: "a.ts", line: 4, endLine: 9 }),
+              file("backwards", { path: "b.ts", line: 4, endLine: 2 }),
+              file("corrupt", { path: "c.ts", line: 4, endLine: "9" }),
+            ],
+          },
+          bottom: { requestedOpen: false, activeTabID: null, tabs: [] },
+        },
+      },
+    });
+    expect(
+      parsed.scopes["profile\u0000session"]?.right.tabs.map((tab) =>
+        tab.kind === "file" ? [tab.resource.line, tab.resource.endLine] : null,
+      ),
+    ).toEqual([
+      [4, 9],
+      [4, undefined],
+      [4, undefined],
+    ]);
   });
 
   it("restores one files browser per workspace across panes", () => {

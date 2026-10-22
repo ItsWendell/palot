@@ -26,7 +26,9 @@ import { workbenchStateAtom } from "../atoms/workbench";
 import { composerActionRequestAtom, globalCommandRequestAtom } from "../atoms/command-requests";
 import { composerStateAtomFamily } from "../atoms/composer-state";
 import { composerScope } from "../lib/composer-scope";
-import { createWorkbenchState, workbenchScopeKey } from "../lib/workbench-tabs";
+import { createWorkbenchState, workbenchScopeKey, type WorkbenchTab } from "../lib/workbench-tabs";
+import { openCodeReconciler, sessionInfoFromPalot } from "../lib/open-code-reconciler";
+import { recentPromptScope, saveRecentPrompt } from "../lib/composer-recent-prompts";
 import { selectionMemoriesAtom } from "../lib/selection-memory";
 import { modelProjectPreferenceKey } from "../lib/model-preferences";
 import type { OpenCodeClient } from "@opencode/client";
@@ -79,7 +81,12 @@ function client(overrides: Record<string, unknown> = {}): OpenCodeClient {
   } as unknown as OpenCodeClient;
 }
 
-function renderComposer(composer: ReactElement, store = createStore(), profileID = "test-profile") {
+function renderComposer(
+  composer: ReactElement,
+  store = createStore(),
+  profileID = "test-profile",
+  queryClient = createRendererQueryClient(),
+) {
   store.set(runtimeAtom, {
     connectionID: "test",
     profileID,
@@ -95,7 +102,7 @@ function renderComposer(composer: ReactElement, store = createStore(), profileID
     versionMismatch: null,
   });
   return render(
-    <QueryClientProvider client={createRendererQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <Provider store={store}>{composer}</Provider>
     </QueryClientProvider>,
   );
@@ -3242,5 +3249,216 @@ describe("Composer shortcuts", () => {
     await waitFor(() =>
       expect(switchAgent).toHaveBeenCalledWith({ sessionID: session.id, agent: "review" }),
     );
+  });
+});
+
+describe("Composer mention context", () => {
+  function fileTab(id: string, path: string, profileID = "test-profile"): WorkbenchTab {
+    return {
+      id,
+      pinned: false,
+      kind: "file",
+      resource: { profileID, location: { directory: "/workspace" }, path },
+    };
+  }
+
+  it("suggests the active and open workbench files before workspace search, once each", async () => {
+    const user = userEvent.setup();
+    const find = vi.fn().mockResolvedValue({
+      data: [
+        { path: "src/auth.ts", type: "file" },
+        { path: "test/auth.test.ts", type: "file" },
+      ],
+    });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ file: { find } }));
+    const store = createStore();
+    store.set(workbenchStateAtom, {
+      version: 1,
+      scopes: {
+        [workbenchScopeKey({ profileID: "test-profile", sessionID: session.id })]: {
+          right: {
+            tabs: [
+              fileTab("guide", "docs/guide.md"),
+              fileTab("auth", "src/auth.ts"),
+              fileTab("foreign", "secret.ts", "other-profile"),
+            ],
+            activeTabID: "auth",
+            requestedOpen: true,
+          },
+          bottom: { tabs: [], activeTabID: null, requestedOpen: false },
+          updatedAt: 1,
+        },
+      },
+    });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Palot" }), "@");
+    await waitFor(() => expect(find).toHaveBeenCalled());
+    const listbox = await screen.findByRole("listbox", { name: "Composer suggestions" });
+    await waitFor(() =>
+      expect(
+        within(listbox)
+          .getAllByRole("option")
+          .map((option) => option.textContent),
+      ).toEqual([
+        "@auth.tssrc/auth.ts",
+        "@guide.mddocs/guide.md",
+        "@auth.test.tstest/auth.test.ts",
+      ]),
+    );
+  });
+
+  it("shows resolved mentions beside attachments and removes them explicitly", async () => {
+    const user = userEvent.setup();
+    const find = vi.fn().mockResolvedValue({ data: [{ path: "src/auth.ts", type: "file" }] });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ file: { find } }));
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+
+    await user.type(input, "Check @auth");
+    await user.click(await screen.findByRole("option", { name: /src\/auth\.ts/ }));
+    const mentions = screen.getByRole("group", { name: "Mentions" });
+    expect(within(mentions).getByText("@src/auth.ts")).toBeTruthy();
+    expect(within(mentions).getByText("File")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Remove file mention @src/auth.ts" }));
+    expect(input.value).toBe("Check ");
+    expect(screen.queryByRole("group", { name: "Mentions" })).toBeNull();
+  });
+
+  it("does not show plain text that only looks like a mention", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    await user.type(screen.getByRole("textbox", { name: "Message Palot" }), "mail me@home ");
+    expect(screen.queryByRole("group", { name: "Mentions" })).toBeNull();
+  });
+});
+
+describe("Composer recent prompts", () => {
+  function press(input: HTMLTextAreaElement, key: "ArrowUp" | "ArrowDown", caret: number) {
+    input.setSelectionRange(caret, caret);
+    fireEvent.select(input);
+    fireEvent.keyDown(input, { key });
+  }
+
+  it("recalls a prompt sent from another task of the project with its portable attachments only", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    const send = vi.spyOn(palot, "sendComposerPrompt").mockResolvedValue({
+      id: "sent",
+      sessionID: session.id,
+      type: "user",
+      delivery: "steer",
+      createdAt: 3,
+    });
+    const store = createStore();
+    const state = composerStateAtomFamily(composerScope("test-profile", `session:${session.id}`));
+    store.set(state, (current) => ({
+      ...current,
+      files: [
+        { uri: "data:text/plain;base64,aGk=", name: "notes.txt", mime: "text/plain", size: 2 },
+        { uri: "palot-attachment://grant/1", name: "local.pdf", mime: "application/pdf", size: 9 },
+      ],
+    }));
+    const first = renderComposer(
+      <Composer session={session} messages={[]} isWorking={false} />,
+      store,
+    );
+    await user.type(screen.getByRole("textbox", { name: "Message Palot" }), "Ship the fix{Enter}");
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    first.unmount();
+
+    const sibling = { ...session, id: "session-sibling" };
+    renderComposer(<Composer session={sibling} messages={[]} isWorking={false} />, store);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    await waitFor(() => expect(input.value).toBe(""));
+
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("Ship the fix");
+    const attachments = screen.getByRole("group", { name: "Attachments" });
+    expect(within(attachments).getByText("notes.txt")).toBeTruthy();
+    expect(within(attachments).queryByText("local.pdf")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("local.pdf");
+
+    press(input, "ArrowDown", 0);
+    expect(input.value).toBe("");
+    expect(screen.queryByRole("group", { name: "Attachments" })).toBeNull();
+  });
+
+  it("does not recall prompts from another project or connection profile", () => {
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    const prompt = (text: string) => ({
+      text,
+      mentions: [],
+      comments: [],
+      files: [],
+      omittedFiles: [],
+      createdAt: 1,
+    });
+    saveRecentPrompt(recentPromptScope("test-profile", "project-2"), prompt("Other project"));
+    saveRecentPrompt(recentPromptScope("other-profile", "project-1"), prompt("Other server"));
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    press(input, "ArrowUp", 0);
+    expect(input.value).toBe("");
+  });
+});
+
+describe("Composer recent outputs", () => {
+  it("mentions a file changed by a loaded task of the same project", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    const queryClient = createRendererQueryClient();
+    const reconciler = openCodeReconciler(queryClient);
+    const sibling = { ...session, id: "session-outputs", title: "Fix login" };
+    const foreign = { ...session, id: "session-foreign", projectID: "project-2", title: "Other" };
+    vi.spyOn(reconciler, "sessions").mockReturnValue(
+      [sibling, foreign].map((value) => sessionInfoFromPalot(value)),
+    );
+    const turn = (id: string, filePath: string): PalotMessage[] => [
+      historyMessage(`${id}-user`, "user", "Fix it", 10),
+      {
+        ...historyMessage(`${id}-assistant`, "user", "", 11),
+        type: "assistant",
+        text: null,
+        completedAt: 12,
+        finish: "stop",
+        content: [
+          {
+            type: "tool",
+            id: `${id}-edit`,
+            name: "edit",
+            state: { status: "completed", input: { filePath }, metadata: {} },
+          },
+          { type: "text", id: `${id}-final`, text: "Done" },
+        ],
+      },
+    ];
+    vi.spyOn(reconciler, "messages").mockImplementation((_connection, sessionID) =>
+      sessionID === sibling.id
+        ? turn("s", "/workspace/src/login.ts")
+        : sessionID === foreign.id
+          ? turn("f", "/workspace/src/foreign.ts")
+          : [],
+    );
+    renderComposer(
+      <Composer session={session} messages={[]} isWorking={false} />,
+      createStore(),
+      "test-profile",
+      queryClient,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Recent project outputs" }));
+    const output = await screen.findByRole("option", { name: /login\.ts/ });
+    expect(screen.getByRole("option", { name: /Open original task.*Fix login/ })).toBeTruthy();
+    expect(screen.queryByText("foreign.ts")).toBeNull();
+    await user.click(output);
+
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    await waitFor(() => expect(input.value).toBe("@src/login.ts "));
+    expect(screen.getByRole("button", { name: "Remove file mention @src/login.ts" })).toBeTruthy();
   });
 });

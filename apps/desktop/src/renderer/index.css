@@ -1423,92 +1423,9 @@
     margin-bottom: 0;
   }
 
-  .tanstack-highlight {
-    color: var(--th-token);
-  }
-
-  .tanstack-highlight .th-token {
-    color: var(--th-token);
-  }
-
-  .tanstack-highlight .th-attr {
-    color: var(--th-attr);
-  }
-
-  .tanstack-highlight .th-code-inline {
-    color: var(--th-code-inline);
-  }
-
-  .tanstack-highlight .th-command {
-    color: var(--th-command);
-  }
-
-  .tanstack-highlight .th-comment {
-    color: var(--th-comment);
-  }
-
-  .tanstack-highlight .th-deleted {
-    color: var(--th-deleted);
-  }
-
-  .tanstack-highlight .th-function {
-    color: var(--th-function);
-  }
-
-  .tanstack-highlight .th-heading {
-    color: var(--th-heading);
-  }
-
-  .tanstack-highlight .th-inserted {
-    color: var(--th-inserted);
-  }
-
-  .tanstack-highlight .th-keyword {
-    color: var(--th-keyword);
-  }
-
-  .tanstack-highlight .th-link {
-    color: var(--th-link);
-  }
-
-  .tanstack-highlight .th-literal {
-    color: var(--th-literal);
-  }
-
-  .tanstack-highlight .th-meta {
-    color: var(--th-meta);
-  }
-
-  .tanstack-highlight .th-number {
-    color: var(--th-number);
-  }
-
-  .tanstack-highlight .th-operator {
-    color: var(--th-operator);
-  }
-
-  .tanstack-highlight .th-property {
-    color: var(--th-property);
-  }
-
-  .tanstack-highlight .th-selector {
-    color: var(--th-selector);
-  }
-
-  .tanstack-highlight .th-string {
-    color: var(--th-string);
-  }
-
-  .tanstack-highlight .th-tag {
-    color: var(--th-tag);
-  }
-
-  .tanstack-highlight .th-type {
-    color: var(--th-type);
-  }
-
-  .tanstack-highlight .th-variable {
-    color: var(--th-variable);
+  /* Token colors are inline styles from the active code theme; unstyled text uses its foreground. */
+  .code-highlight {
+    color: var(--code-highlight-fg, var(--foreground));
   }
 
   .markdown-highlight pre.th-code {

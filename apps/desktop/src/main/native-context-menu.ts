@@ -7,6 +7,7 @@ import {
   type MenuItemConstructorOptions,
 } from "electron";
 import { allowedExternalUrl } from "./external-url-policy";
+import { openExternalUrl } from "./external-url";
 import { externalOpenService } from "./external-open/service";
 import { popupNativeContextMenu } from "./native-menu-popup";
 import { openCodeRuntime } from "./opencode-runtime";
@@ -245,7 +246,7 @@ export function installNativeContextMenu(window: BrowserWindow): () => void {
         preferredEditorLabel,
         actions: {
           openLink: (url) => {
-            if (!window.isDestroyed() && !webContents.isDestroyed()) void shell.openExternal(url);
+            if (!window.isDestroyed() && !webContents.isDestroyed()) void openExternalUrl(url);
           },
           copyLinkAddress: (url) => {
             if (!window.isDestroyed() && !webContents.isDestroyed())

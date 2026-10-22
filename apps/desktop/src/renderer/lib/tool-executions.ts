@@ -759,7 +759,7 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
     };
   }
   if (name === "websearch" || name === "web_search" || name === "web_search_preview") {
-    const structured = [value.state.structured, part.providerResultState, part.providerState]
+    const structured = [value.state.structured, part.native]
       .flatMap(structuredWebSearchResults)
       .filter(
         (result, index, results) => results.findIndex((item) => item.url === result.url) === index,

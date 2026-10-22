@@ -15,6 +15,10 @@ import {
   type SelectionMemory,
 } from "../lib/selection-memory";
 import { palot } from "../services/palot";
+import {
+  projectCatalogFailureText,
+  useProjectCatalogRecovery,
+} from "./use-project-catalog-recovery";
 import { useCacheSession } from "./use-session-catalog";
 
 export function useComposerSelection({
@@ -106,6 +110,15 @@ export function useComposerSelection({
     () => (draft ? { ...session, agent, model } : session),
     [draft, session, agent, model],
   );
+  const catalogFailure = useProjectCatalogRecovery({
+    location: session.location,
+    projectID: session.projectID,
+    enabled: draft,
+  });
+  // A failed catalog explains the block; it also outranks an "unavailable" remembered
+  // model, which is only missing because the catalog did not load.
+  const catalogRecovery =
+    catalogFailure && (!catalogsReady || !model || unavailableModel) ? catalogFailure : null;
 
   const remember = useCallback(
     (selectedAgent: string | null, selectedModel?: ModelRef) => {
@@ -256,6 +269,8 @@ export function useComposerSelection({
     assertConnection,
     /** A remembered model the catalog no longer lists; the draft cannot send until it returns. */
     unavailableModel,
+    /** Why this draft's project catalogs failed to load, with a retry for that location. */
+    catalogRecovery,
     blocked:
       (draft && (!catalogsReady || !model || Boolean(unavailableModel))) ||
       (actionState?.identity === identity && (actionState.busy || actionState.failed)),
@@ -263,8 +278,10 @@ export function useComposerSelection({
     error:
       actionState?.identity === identity && actionState.failed
         ? "Selection was not completed. Select a model before sending."
-        : unavailableModel
-          ? `${unavailableModel.id} is unavailable right now. Choose another model to send.`
-          : null,
+        : catalogRecovery
+          ? projectCatalogFailureText(catalogRecovery)
+          : unavailableModel
+            ? `${unavailableModel.id} is unavailable right now. Choose another model to send.`
+            : null,
   };
 }

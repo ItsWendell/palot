@@ -15,6 +15,8 @@ const SPECIAL_USE_SUFFIXES = [
   ".onion",
   ".private",
   ".test",
+  // Tailscale MagicDNS names resolve only inside a tailnet.
+  ".ts.net",
 ];
 
 export function duckDuckGoFaviconUrl(value: string | undefined): string | null {
@@ -32,6 +34,8 @@ export function duckDuckGoFaviconUrl(value: string | undefined): string | null {
 
 function isPublicHostname(hostname: string): boolean {
   if (!hostname.includes(".") || hostname.startsWith("[") || isIPv4Address(hostname)) return false;
+  // Public names end in an alphabetic or IDN top-level label, never a number.
+  if (!/\.(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/.test(hostname)) return false;
   return !SPECIAL_USE_SUFFIXES.some(
     (suffix) => hostname === suffix.slice(1) || hostname.endsWith(suffix),
   );

@@ -510,7 +510,7 @@ function PullRequestCodeReview({
               }}
               className="size-full overflow-auto"
               style={pierreViewerStyle}
-              renderAnnotation={(annotation, item) => {
+              renderAnnotation={(annotation, _contents, item) => {
                 const group =
                   "side" in annotation
                     ? annotationGroups.get(

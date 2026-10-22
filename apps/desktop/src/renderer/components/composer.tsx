@@ -49,7 +49,7 @@ import {
   defaultModelsAtom,
   modelPickerPreferencesAtom,
 } from "../atoms/ui";
-import { useWorkbenchCommands } from "../atoms/workbench";
+import { useWorkbenchCommands, useWorkbenchScope } from "../atoms/workbench";
 import { askBtw } from "../atoms/btw";
 import { draftAfterBtw, parseBtwQuestion } from "../lib/btw";
 import { composerStateAtomFamily } from "../atoms/composer-state";
@@ -83,24 +83,40 @@ import { admitComposerSubmission } from "../lib/composer-admission";
 import {
   applyComposerTextChange,
   emptyComposerDraft,
+  insertComposerFileMention,
   insertComposerSelection,
   normalizeComposerDraft,
   projectComposerSubmission,
+  removeComposerMention,
   type ComposerDraft,
   type ComposerDiscoverySelection,
 } from "../lib/composer-draft";
 import {
   IDLE_HISTORY_CURSOR,
+  composerHistoryEntry,
+  mergeComposerHistory,
   navigateComposerHistory,
   normalPromptHistory,
   shellCommandHistory,
+  swapHistoryContext,
   type ComposerHistoryCursor,
+  type ComposerHistoryEntry,
   type ComposerMode,
 } from "../lib/composer-history";
+import { mentionFileSuggestions, openWorkbenchFiles } from "../lib/composer-open-files";
+import {
+  loadRecentPrompts,
+  recentPromptFromSubmission,
+  recentPromptHistory,
+  recentPromptScope,
+  saveRecentPrompt,
+} from "../lib/composer-recent-prompts";
 import { detectComposerQuery } from "../lib/composer-query";
 import { composerDraftFromMessage } from "../lib/composer-restoration";
 import { COMPOSER_SHORTCUT_KEYS, matchComposerShortcut } from "../lib/composer-shortcuts";
 import { formatShortcut } from "../lib/keyboard-shortcuts";
+import { supportsOpenCodeVoice } from "../lib/voice/voice-support";
+import { VoiceCallButton } from "./voice/voice-call-ui";
 import { primaryAgents } from "../lib/selection-memory";
 import { reviewCommentsFromMessage, type ReviewComment } from "../lib/review-comments";
 import {
@@ -131,6 +147,7 @@ import { projectForSession, type PendingRequestView } from "../lib/view-models";
 import { palot } from "../services/palot";
 import { BackgroundWorkPrompt, type BackgroundWorkItem } from "./subagent-activity";
 import { ComposerDiscovery, type ComposerDiscoveryItem } from "./composer-discovery";
+import { ComposerMentionChip, RecentOutputsPicker } from "./composer-context";
 import { ComposerQueue } from "./composer-queue";
 import { ApprovalSelector } from "./approval-selector";
 import { AgentPicker, ModelPicker, ReasoningPicker } from "./composer-pickers";
@@ -433,6 +450,8 @@ function ComposerView({
   const [historyState, setHistoryState] = useState<{
     key: string;
     cursor: ComposerHistoryCursor;
+    /** Context the recalled entry put in the composer, swapped out on the next step. */
+    shown: Pick<ComposerHistoryEntry, "files" | "comments">;
   } | null>(null);
   const historyCursor =
     historyState?.key === historyKey ? historyState.cursor : IDLE_HISTORY_CURSOR;
@@ -474,6 +493,13 @@ function ComposerView({
   const preferenceScope = modelProjectPreferenceKey(
     runtime?.profileID ?? "disconnected",
     preferenceProject?.id ?? session.projectID,
+  );
+  // Recent prompts and outputs are shared by the project's tasks on this connection only.
+  const outputProjectID = preferenceProject?.id ?? session.projectID;
+  const recentScope = recentPromptScope(runtime?.profileID, outputProjectID);
+  const projectOf = useCallback(
+    (candidate: PalotSession) => projectForSession(projects, candidate)?.id ?? candidate.projectID,
+    [projects],
   );
   const storedPickerPreference = modelPickerPreferences[preferenceScope];
   const pickerPreference = useMemo(
@@ -537,6 +563,16 @@ function ComposerView({
     activeQuery?.kind === "file",
   );
   const fileResults = (fileSearchQuery.data ?? []).map((entry) => entry.path);
+  // Open workbench files lead `@` suggestions; subscribe only while an `@` query is active.
+  const mentionWorkbench = useWorkbenchScope(
+    activeQuery?.kind === "file" && runtime
+      ? { profileID: runtime.profileID, sessionID: session.id }
+      : null,
+  );
+  const openFiles = useMemo(
+    () => openWorkbenchFiles(mentionWorkbench, runtime?.profileID, displayedSession.location),
+    [displayedSession.location, mentionWorkbench, runtime?.profileID],
+  );
   // `@` also offers subagents and OpenCode references, sharing the per-capability settings cache.
   const mentionCatalogQuery = useSettingsSnapshot(
     {
@@ -619,7 +655,7 @@ function ComposerView({
     }
     const matches = (...values: (string | null | undefined)[]) =>
       values.some((value) => value?.toLowerCase().includes(query));
-    // Upstream order: references, then subagents, then workspace files.
+    // Upstream order: references, subagents, open workbench files, then workspace search.
     const references = mentionReferences
       .filter((reference) => !reference.hidden && matches(reference.name, reference.description))
       .slice(0, 10)
@@ -647,7 +683,7 @@ function ComposerView({
     return [
       ...references,
       ...subagents,
-      ...fileResults.map((path) => ({
+      ...mentionFileSuggestions(openFiles, fileResults, deferredQuery).map(({ path }) => ({
         kind: "file" as const,
         key: `file:${path}`,
         path,
@@ -662,6 +698,7 @@ function ComposerView({
     fileResults,
     mentionAgents,
     mentionReferences,
+    openFiles,
   ]);
   const discoveryKey = activeQuery ? `${activeQuery.kind}\0${activeQuery.query}` : "";
   const requestedDiscoveryIndex =
@@ -956,24 +993,52 @@ function ComposerView({
 
   /** Returns true when the key recalled history and the default action must be suppressed. */
   function recallHistory(direction: "up" | "down", element: HTMLTextAreaElement): boolean {
-    const entries =
-      mode === "shell"
-        ? shellCommandHistory(
-            messagesRef.current,
-            submittedShell.scope === draftScope ? submittedShell.commands : [],
-          )
-        : normalPromptHistory(messagesRef.current);
+    const normal = mode === "normal";
+    const entries = normal
+      ? mergeComposerHistory(
+          // Read storage at recall time so prompts sent from other windows are included.
+          recentPromptHistory(loadRecentPrompts(recentScope)),
+          normalPromptHistory(messagesRef.current),
+        )
+      : shellCommandHistory(
+          messagesRef.current,
+          submittedShell.scope === draftScope ? submittedShell.commands : [],
+        );
+    const current = composerHistoryEntry(draft, normal ? { files, comments } : {});
     const result = navigateComposerHistory({
       direction,
-      draft,
+      current,
       selectionStart: element.selectionStart,
       selectionEnd: element.selectionEnd,
       entries,
       cursor: historyCursor,
     });
     if (!result) return false;
-    setDraft(result.draft);
-    setHistoryState({ key: historyKey, cursor: result.cursor });
+    const { entry } = result;
+    setDraft(entry.draft);
+    if (normal) {
+      // Recalled prompts bring their portable attachments and line comments; leaving the
+      // history restores the in-progress draft's own. Browser comments are never swapped.
+      const shown = historyState?.key === historyKey ? historyState.shown : current;
+      setFiles((value) => swapHistoryContext(value, shown.files, entry.files, (file) => file.uri));
+      setComments((value) =>
+        swapHistoryContext(value, shown.comments, entry.comments, (comment) => comment.id),
+      );
+      setAttachmentErrors(
+        entry.omittedFiles.length > 0
+          ? [`Not restored: ${entry.omittedFiles.join(", ")}. Reattach before sending.`]
+          : [],
+      );
+    }
+    setHistoryState(
+      result.cursor.index < 0
+        ? null
+        : {
+            key: historyKey,
+            cursor: result.cursor,
+            shown: { files: entry.files, comments: entry.comments },
+          },
+    );
     setSelection({ start: result.caret, end: result.caret });
     requestAnimationFrame(() => element.setSelectionRange(result.caret, result.caret));
     return true;
@@ -1483,6 +1548,8 @@ function ComposerView({
     const effectiveDelivery =
       isWorking && !onCreateSession ? (deliveryOverride ?? composerDelivery) : "steer";
     const submittedFiles = files;
+    const submittedDraft = draft;
+    const submittedReviewComments = comments;
     const submittedBrowserComments = liveBrowserComments(
       browserComments,
       browser?.bindingID ?? null,
@@ -1547,6 +1614,15 @@ function ComposerView({
         clearLocal: () => {
           clearSubmittedContents();
           setHistoryState(null);
+          saveRecentPrompt(
+            recentScope,
+            recentPromptFromSubmission({
+              draft: submittedDraft,
+              files: submittedFiles,
+              comments: submittedReviewComments,
+              createdAt: Date.now(),
+            }),
+          );
         },
         admitOptimistic: ({ sessionID, message, execution }) => {
           onMessageAdmitted?.();
@@ -1680,6 +1756,38 @@ function ComposerView({
       element.focus();
       element.setSelectionRange(inserted.selectionStart, inserted.selectionEnd);
     });
+  }
+
+  function applyInsertion(inserted: {
+    draft: ComposerDraft;
+    selectionStart: number;
+    selectionEnd: number;
+  }) {
+    setDraft(inserted.draft);
+    setSelection({ start: inserted.selectionStart, end: inserted.selectionEnd });
+    requestAnimationFrame(() => {
+      if (activeDraftScopeRef.current !== draftScope) return;
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(inserted.selectionStart, inserted.selectionEnd);
+    });
+  }
+
+  function removeMention(localID: string) {
+    const removed = removeComposerMention(draft, localID);
+    if (removed) applyInsertion(removed);
+  }
+
+  /** Mentions a recent output by its workspace path; the server checks it again on send. */
+  function attachOutput(path: string) {
+    const existing = draft.mentions.find(
+      (mention) => mention.kind === "file" && mention.value === path,
+    );
+    if (existing) {
+      applyInsertion({ draft, selectionStart: existing.end, selectionEnd: existing.end });
+      return;
+    }
+    const caret = composerRef.current?.selectionStart ?? draft.text.length;
+    applyInsertion(insertComposerFileMention(draft, caret, path, crypto.randomUUID()));
   }
 
   async function attachFiles(
@@ -1845,7 +1953,7 @@ function ComposerView({
           onBackground={handleBackground}
         />
       )}
-      <OpenCodeConnectionAlert />
+      <OpenCodeConnectionAlert recovery={composerSelection.catalogRecovery} />
       <SessionLocationMissingView options={recoveryOptions} recovery={locationRecovery} />
       <ComposerQueue
         sessionID={session.id}
@@ -2145,11 +2253,28 @@ function ComposerView({
               }}
             />
           )}
-          {!requestBody && files.length > 0 ? (
+          {!requestBody &&
+          (files.length > 0 || (mode === "normal" && draft.mentions.length > 0)) ? (
             <AttachmentGroup
               className="palot-native-scrollbar max-h-[min(6rem,15cqh)] shrink-0 overflow-y-auto overscroll-contain px-3 py-1"
-              aria-label="Attachments"
+              role="group"
+              aria-label={
+                mode !== "normal" || draft.mentions.length === 0
+                  ? "Attachments"
+                  : files.length > 0
+                    ? "Attachments and mentions"
+                    : "Mentions"
+              }
             >
+              {mode === "normal"
+                ? draft.mentions.map((mention) => (
+                    <ComposerMentionChip
+                      key={mention.localID}
+                      mention={mention}
+                      onRemove={removeMention}
+                    />
+                  ))
+                : null}
               {files.map((file) => (
                 <FileAttachment
                   key={file.uri}
@@ -2161,7 +2286,7 @@ function ComposerView({
               ))}
             </AttachmentGroup>
           ) : null}
-          {!requestBody && composerSelection.error ? (
+          {!requestBody && composerSelection.error && !composerSelection.catalogRecovery ? (
             <p role="alert" className="px-3 text-compact text-destructive">
               {composerSelection.error}
             </p>
@@ -2239,6 +2364,18 @@ function ComposerView({
                     : "Attachments unavailable for remote servers"}
                 </TooltipContent>
               </Tooltip>
+              {mode === "normal" ? (
+                <RecentOutputsPicker
+                  connectionID={runtime?.connectionID ?? null}
+                  profileID={runtime?.profileID ?? null}
+                  projectID={outputProjectID}
+                  location={displayedSession.location}
+                  projectOf={projectOf}
+                  disabled={sending || locationRecovery.missing}
+                  onAttach={attachOutput}
+                  onSelectionComplete={focusComposer}
+                />
+              ) : null}
               {mode === "shell" ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -2326,6 +2463,15 @@ function ComposerView({
                     onOpenDetails={openContext}
                   />
                 )}
+                <VoiceCallButton
+                  session={displayedSession}
+                  connectionID={runtime?.connected ? runtime.connectionID : null}
+                  projectName={
+                    displayedSession.location.directory.replace(/\/+$/, "").split("/").at(-1) ??
+                    null
+                  }
+                  supported={supportsOpenCodeVoice(runtime?.version)}
+                />
                 {isWorking && !canSubmit ? (
                   <InputGroupButton
                     type="button"

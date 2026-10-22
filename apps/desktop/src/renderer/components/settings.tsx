@@ -121,8 +121,10 @@ import { useCheckPlugins, useSettingsSnapshot } from "../hooks/use-settings-snap
 import { useSelectedSession } from "../hooks/use-session-catalog";
 import { SettingsOwnerContext, useSettingsOwner } from "../hooks/use-settings-owner";
 import { useSettingsServer } from "../hooks/use-settings-server";
+import { useMcpServerRecovery } from "../hooks/use-mcp-server-recovery";
 import { palot } from "../services/palot";
 import { BuildBadge, PalotMark } from "./branding";
+import { ProviderConnectionDialog } from "./provider-connection-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -188,6 +190,10 @@ const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: stri
     title: "Notifications",
     description: "Choose when Palot alerts you or plays a sound for tasks that need you.",
   },
+  voice: {
+    title: "Voice",
+    description: "Talk with your tasks and choose how voice chats sound and behave.",
+  },
   shortcuts: {
     title: "Keyboard shortcuts",
     description: "Keys Palot responds to across tasks, panels, and the composer.",
@@ -234,6 +240,7 @@ const SETTINGS_APP_ICONS: Record<SettingsCategory, AppIconName> = {
   browser: "browser",
   appearance: "appearance",
   notifications: "notifications",
+  voice: "voice",
   shortcuts: "keyboard",
   connections: "servers",
   models: "models",
@@ -246,6 +253,9 @@ const SETTINGS_APP_ICONS: Record<SettingsCategory, AppIconName> = {
   about: "info",
 };
 
+const VoiceSettings = lazy(() =>
+  import("./voice/voice-settings").then((module) => ({ default: module.VoiceSettings })),
+);
 const DiagnosticsSettings = lazy(() =>
   import("./diagnostics-settings").then((module) => ({ default: module.DiagnosticsSettings })),
 );
@@ -620,6 +630,7 @@ export function Settings({
               "browser",
               "appearance",
               "notifications",
+              "voice",
               "shortcuts",
               "connections",
               "diagnostics",
@@ -703,6 +714,13 @@ function SettingsContent({
   if (category === "browser") return <BrowserSettings />;
   if (category === "appearance") return <AppearanceSettings />;
   if (category === "notifications") return <NotificationSettings />;
+  if (category === "voice") {
+    return (
+      <Suspense fallback={<SettingsSkeleton />}>
+        <VoiceSettings />
+      </Suspense>
+    );
+  }
   if (category === "shortcuts") return <KeyboardShortcutsSettings />;
   if (category === "connections") {
     return (
@@ -1082,7 +1100,7 @@ function GeneralSettings() {
         <SettingsGroup>
           <SettingsRow
             title="Default workspace"
-            description="Create isolated worktrees by default, or start in the project checkout."
+            description="Used until you choose a workspace for a project. Each project remembers its own choice."
             control={
               <Select
                 value={workspaceMode}
@@ -2999,7 +3017,6 @@ function McpServerRow({
   refresh(): Promise<void>;
 }) {
   const owner = useSettingsOwner();
-  const [busy, setBusy] = useState(false);
   const input = {
     connectionID: owner?.connectionID,
     server: server.name,
@@ -3007,28 +3024,28 @@ function McpServerRow({
     directory: location.directory,
     ...(location.workspaceID ? { workspaceID: location.workspaceID } : {}),
   };
-  async function run(action: "connect" | "disconnect" | "remove") {
-    setBusy(true);
-    try {
-      if (action === "connect") await palot.connectMcpServer(input);
-      if (action === "disconnect") await palot.disconnectMcpServer(input);
-      if (action === "remove") await palot.removeMcpServer(input);
-      await refresh();
-    } catch (cause) {
-      showError(`Could not ${action} ${server.name}`, cause);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const recovery = useMcpServerRecovery({ input, server, refresh, showError });
+  const { action } = recovery;
   return (
-    <div className="grid min-w-0 gap-3 p-4 @lg/settings:grid-cols-[minmax(0,1fr)_auto] @lg/settings:items-center">
+    <div
+      role="group"
+      aria-label={`${server.name} MCP server`}
+      className="grid min-w-0 gap-3 p-4 @lg/settings:grid-cols-[minmax(0,1fr)_auto] @lg/settings:items-center"
+    >
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <StatusDot status={server.status} />
           <span className="text-sm font-medium wrap-anywhere">{server.name}</span>
           <Badge variant="outline">{server.status.replace("_", " ")}</Badge>
         </div>
-        {server.error ? (
+        {server.status === "needs_auth" ? (
+          <p className="mt-1 text-compact leading-relaxed wrap-anywhere text-muted-foreground">
+            {server.integrationID
+              ? "Sign in to connect this server."
+              : "This server needs authorization OpenCode can't start from Palot."}
+            {server.error ? ` ${server.error}` : ""}
+          </p>
+        ) : server.error ? (
           <p className="mt-1 text-compact leading-relaxed wrap-anywhere text-destructive">
             {server.error}
           </p>
@@ -3037,24 +3054,37 @@ function McpServerRow({
       <div className="flex items-center gap-1 @lg/settings:justify-end">
         <Button
           type="button"
-          variant="ghost"
+          variant={action.type === "sign-in" || action.type === "retry" ? "outline" : "ghost"}
           size="xs"
-          disabled={busy}
-          onClick={() => void run(server.status === "connected" ? "disconnect" : "connect")}
+          disabled={recovery.busy || action.type === "pending" || !owner?.connected}
+          aria-busy={action.type === "pending" || undefined}
+          onClick={() => void recovery.run()}
         >
-          {server.status === "connected" ? "Disconnect" : "Connect"}
+          {action.type === "pending" ? (
+            <LoaderCircle data-icon="inline-start" className="animate-spin" aria-hidden="true" />
+          ) : null}
+          {action.label}
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           aria-label={`Remove ${server.name}`}
-          disabled={busy}
-          onClick={() => void run("remove")}
+          disabled={recovery.busy}
+          onClick={() => void recovery.remove()}
         >
           <Trash2 aria-hidden="true" />
         </Button>
       </div>
+      <ProviderConnectionDialog
+        key={`mcp-sign-in:${recovery.signIn?.id ?? "closed"}`}
+        integration={recovery.signIn}
+        projectID={project.id}
+        location={location}
+        owner={owner}
+        onOpenChange={(open) => !open && recovery.closeSignIn()}
+        onComplete={recovery.completeSignIn}
+      />
     </div>
   );
 }

@@ -1,8 +1,8 @@
-import { createThemeCatalog, createThemeResolver } from "@pierre/theming";
-import { normalizeThemeColors } from "@pierre/theming/color";
+import { createThemeCatalog } from "@pierre/theming";
 import { createTheme, themes } from "@pierre/theming/themes";
-import { registerCustomTheme } from "@pierre/diffs";
-import type { ThemeRegistration } from "shiki";
+import { registerCustomTheme, resolveTheme, type DiffsTheme } from "@pierre/diffs";
+import { CODE_HIGHLIGHTER } from "./code-highlighter";
+import { textMateToZedTheme } from "./code-theme-convert";
 import type { AppearancePreferences } from "../../shared";
 import { effectiveCodeTheme } from "../../shared";
 import { builtinCodeThemes } from "./themes/builtin-code-themes";
@@ -41,8 +41,10 @@ const curatedThemes = themes.pick([
   "min-dark",
 ]);
 
+// Curated themes ship as Zed themes in @pierre/highlights and resolve by name. Palot's own
+// themes register Zed loaders, converted from their TextMate sources where needed.
 const customThemes = builtinCodeThemes.map((theme) => {
-  registerCustomTheme(theme.name, theme.load);
+  registerCustomTheme(theme.name, theme.load, "zed");
   return createTheme(theme);
 });
 
@@ -52,26 +54,19 @@ export const codeThemeCatalog = createThemeCatalog({
   defaultDarkThemeName: "pierre-dark-soft",
 });
 
-const codeThemeResolver = createThemeResolver<ThemeRegistration>();
-const normalizedCodeThemes = new Set<string>();
-const omarchyThemes = new Map<string, ThemeRegistration>();
+const omarchyThemes = new Set<string>();
 
 export function registerOmarchyCodeTheme(theme: OmarchyTheme): void {
   const name = omarchyCodeThemeName(theme);
   if (omarchyThemes.has(name)) return;
-  const code = createOmarchyCodeTheme(theme);
-  omarchyThemes.set(name, code);
-  registerCustomTheme(name, async () => code);
+  const code = textMateToZedTheme(createOmarchyCodeTheme(theme), name);
+  omarchyThemes.add(name);
+  registerCustomTheme(name, async () => code, "zed");
 }
-codeThemeCatalog.registerInto(codeThemeResolver);
 
-export async function resolveCodeTheme(name: string): Promise<ThemeRegistration> {
-  const theme = omarchyThemes.get(name) ?? (await codeThemeResolver.resolveTheme(name));
-  if (!normalizedCodeThemes.has(name)) {
-    normalizeThemeColors(theme);
-    normalizedCodeThemes.add(name);
-  }
-  return theme;
+/** Resolves a code theme the way every Palot code view renders it. */
+export function resolveCodeTheme(name: string): Promise<DiffsTheme> {
+  return resolveTheme(name, CODE_HIGHLIGHTER);
 }
 
 export async function prepareCodeThemes(preferences: AppearancePreferences): Promise<void> {

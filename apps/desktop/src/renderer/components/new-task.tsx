@@ -4,7 +4,11 @@ import { useAtom, useAtomValue, useStore } from "jotai";
 import { FolderGit2, GitBranch } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PalotProject, PalotSession } from "../../shared";
-import { defaultWorktreeBaseAtom, defaultWorkspaceModeAtom } from "../atoms/ui";
+import {
+  defaultWorktreeBaseAtom,
+  defaultWorkspaceModeAtom,
+  projectWorkspaceModesAtom,
+} from "../atoms/ui";
 import { approvalPresetRules } from "../lib/session-permissions";
 import { createSessionInWorkspace, type WorkspaceSelection } from "../lib/new-session-workspace";
 import { runtimeAtom } from "../atoms/workspace";
@@ -169,14 +173,18 @@ export function NewTask({
   const disabledProfiles = useAtomValue(disabledProfileIDsAtom);
   const ownsCatalog = !profileID || profileID === runtime?.profileID;
   const defaultWorktreeBase = useAtomValue(defaultWorktreeBaseAtom);
-  const [defaultWorkspaceMode, setDefaultWorkspaceMode] = useAtom(defaultWorkspaceModeAtom);
+  const defaultWorkspaceMode = useAtomValue(defaultWorkspaceModeAtom);
+  const [projectWorkspaceModes, setProjectWorkspaceModes] = useAtom(projectWorkspaceModesAtom);
   const selectedProject = ownsCatalog
     ? selectedProjectID
       ? (projects.find((project) => project.id === selectedProjectID) ?? null)
       : (taskProjects[0] ?? null)
     : null;
-  const projectIdentity = selectedProject ? `${runtime?.profileID}\0${selectedProject.id}` : "";
-  const workspaceIdentity = selectedProject ? `${projectIdentity}\0${defaultWorkspaceMode}` : "";
+  const projectIdentity = selectedProject
+    ? JSON.stringify([runtime?.profileID, selectedProject.id])
+    : "";
+  const workspaceMode = projectWorkspaceModes[projectIdentity] ?? defaultWorkspaceMode;
+  const workspaceIdentity = selectedProject ? `${projectIdentity}\0${workspaceMode}` : "";
   const [workspaceOverride, setWorkspaceOverride] = useState<{
     identity: string;
     selection: WorkspaceSelection;
@@ -185,10 +193,10 @@ export function NewTask({
     () =>
       workspaceOverride?.identity === workspaceIdentity
         ? workspaceOverride.selection
-        : defaultWorkspaceMode === "current" && selectedProject
+        : workspaceMode === "current" && selectedProject
           ? { type: "current", directory: selectedProject.canonical }
           : { type: "create" },
-    [defaultWorkspaceMode, selectedProject, workspaceIdentity, workspaceOverride],
+    [workspaceMode, selectedProject, workspaceIdentity, workspaceOverride],
   );
   const [creationErrorState, setCreationErrorState] = useState<{
     identity: string;
@@ -407,7 +415,7 @@ export function NewTask({
                       identity: `${projectIdentity}\0${mode}`,
                       selection,
                     });
-                    setDefaultWorkspaceMode(mode);
+                    setProjectWorkspaceModes((modes) => ({ ...modes, [projectIdentity]: mode }));
                   }}
                 />
                 {workspaceSelection.type === "create" && branchOptions.length > 0 ? (

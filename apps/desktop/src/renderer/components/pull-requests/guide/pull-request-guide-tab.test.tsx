@@ -23,7 +23,7 @@ vi.mock("@pierre/diffs/react", async (importOriginal) => ({
       <div data-testid="excerpt-diff">
         {(props.lineAnnotations ?? []).map((annotation) => (
           <div key={`${annotation.side}:${annotation.lineNumber}`}>
-            {props.renderAnnotation?.(annotation)}
+            {props.renderAnnotation?.(annotation, props.fileDiff!)}
           </div>
         ))}
       </div>

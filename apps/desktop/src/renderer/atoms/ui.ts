@@ -206,6 +206,15 @@ export const defaultWorkspaceModeAtom = persistedAtom({
   validate: (value): value is DefaultWorkspaceMode => value === "worktree" || value === "current",
   legacyKeys: ["palot.workspace.default-mode.v1"],
 });
+export const projectWorkspaceModesAtom = persistedAtom({
+  key: "workspace.project-modes",
+  initialValue: {} as Record<string, DefaultWorkspaceMode>,
+  validate: (value): value is Record<string, DefaultWorkspaceMode> =>
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.values(value).every((mode) => mode === "worktree" || mode === "current"),
+});
 export const defaultWorktreeBaseAtom = persistedAtom({
   key: "worktree.default-base",
   initialValue: "repository-default" as DefaultWorktreeBase,

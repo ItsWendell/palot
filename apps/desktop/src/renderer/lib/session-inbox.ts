@@ -399,6 +399,26 @@ export function rootSessionID(sessionID: string, sessions: PalotSession[]): stri
   return current?.id ?? sessionID;
 }
 
+/**
+ * The latest activity across a root task and every descendant loaded in `sessions`, or
+ * null when the root is not loaded.
+ */
+export function sessionFamilyWatermark(
+  sessions: readonly PalotSession[],
+  rootID: string,
+): ActivityWatermark | null {
+  const root = sessions.find((session) => session.id === rootID);
+  if (!root) return null;
+  const children = new Map<string, PalotSession[]>();
+  for (const session of sessions) {
+    if (!session.parentID) continue;
+    const current = children.get(session.parentID);
+    if (current) current.push(session);
+    else children.set(session.parentID, [session]);
+  }
+  return latestSessionWatermark(sessionFamily(root, children));
+}
+
 export function watermarkCovers(through: ActivityWatermark, activity: ActivityWatermark): boolean {
   return (
     activity.updatedAt < through.updatedAt ||

@@ -3,9 +3,11 @@ import { RotateCw, WifiOff } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import type { OpenCodeConnectInput, OpenCodeRuntimeStatus } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
+import type { ProjectCatalogRecovery } from "../hooks/use-project-catalog-recovery";
 import { palot } from "../services/palot";
 import { OpenCodeReleaseSetup } from "./open-code-release-settings";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
+import { Banner } from "./ui/banner";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -92,12 +94,67 @@ export function SharedOpenCodeAction({
 
 const CONNECTION_ALERT_DELAY_MS = 1_200;
 
-export const OpenCodeConnectionAlert = memo(function OpenCodeConnectionAlert() {
+export const OpenCodeConnectionAlert = memo(function OpenCodeConnectionAlert({
+  recovery = null,
+}: {
+  /** A connected server that could not load this project's catalogs. */
+  recovery?: ProjectCatalogRecovery | null;
+}) {
   const runtime = useAtomValue(runtimeAtom);
 
-  if (!runtime || runtime.connected) return null;
+  if (!runtime) return null;
+  if (runtime.connected) {
+    // Only explain the catalogs of the connection that reported them.
+    return recovery && recovery.connectionID === runtime.connectionID ? (
+      <ProjectCatalogAlert recovery={recovery} />
+    ) : null;
+  }
   return <DisconnectedOpenCodeAlert key={runtime.connectionID} runtime={runtime} />;
 });
+
+function ProjectCatalogAlert({ recovery }: { recovery: ProjectCatalogRecovery }) {
+  const labels = recovery.failures.map((failure) => failure.label.toLowerCase()).join(" and ");
+  return (
+    <Banner
+      status="error"
+      className="mb-2"
+      title={`Can't load ${labels} for this project`}
+      actions={
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          disabled={recovery.retrying}
+          onClick={() => void recovery.retry().catch(() => undefined)}
+        >
+          {recovery.retrying ? (
+            <Spinner data-icon="inline-start" aria-hidden="true" />
+          ) : (
+            <RotateCw data-icon="inline-start" aria-hidden="true" />
+          )}
+          Retry
+        </Button>
+      }
+    >
+      <p>
+        New tasks here can't start until OpenCode loads them. Fix the problem below, then retry.
+      </p>
+      <ul className="mt-1 grid gap-1">
+        {recovery.failures.map((failure) => (
+          <li key={failure.capability} className="min-w-0">
+            <span className="font-medium">{failure.label}: </span>
+            <span className="whitespace-pre-wrap wrap-anywhere">{failure.message}</span>
+            {failure.reference ? (
+              <span className="block font-mono text-code-compact text-muted-foreground wrap-anywhere">
+                Reference {failure.reference}
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </Banner>
+  );
+}
 
 function DisconnectedOpenCodeAlert({ runtime }: { runtime: OpenCodeRuntimeStatus }) {
   const setRuntime = useSetAtom(runtimeAtom);

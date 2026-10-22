@@ -3,7 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NewSessionComposerOptions } from "./composer";
-import { defaultWorktreeBaseAtom, defaultWorkspaceModeAtom } from "../atoms/ui";
+import {
+  defaultWorktreeBaseAtom,
+  defaultWorkspaceModeAtom,
+  projectWorkspaceModesAtom,
+} from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
 import { discoveredProfileIDsAtom, includedProfileIDsAtom } from "../atoms/connections";
 import type { OpenCodeRuntimeStatus } from "../../shared";
@@ -119,6 +123,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  catalog.projects.splice(1);
   vi.clearAllMocks();
 });
 
@@ -270,7 +275,69 @@ describe("NewTask", () => {
     await user.click(screen.getByRole("button", { name: "Work in: New worktree" }));
     await user.click(await screen.findByRole("option", { name: /^Current checkout/ }));
     expect(await screen.findByRole("button", { name: "Work in: Current checkout" })).toBeTruthy();
-    expect(store.get(defaultWorkspaceModeAtom)).toBe("current");
+    expect(store.get(defaultWorkspaceModeAtom)).toBe("worktree");
+    expect(store.get(projectWorkspaceModesAtom)[JSON.stringify(["remote", "project-1"])]).toBe(
+      "current",
+    );
+  });
+
+  it("remembers each project's workspace choice across project switches and remounts", async () => {
+    catalog.projects.push({
+      ...catalog.projects[0]!,
+      id: "project-2",
+      canonical: "/repo/two",
+      name: "Two",
+    });
+    const user = userEvent.setup();
+    const store = createDraftStore();
+    const view = (projectID: string) => (
+      <Provider store={store}>
+        <NewTask projectID={projectID} />
+      </Provider>
+    );
+    const { rerender, unmount } = render(view("project-1"));
+
+    await user.click(screen.getByRole("button", { name: "Work in: New worktree" }));
+    await user.click(await screen.findByRole("option", { name: /^Current checkout/ }));
+
+    rerender(view("project-2"));
+    expect(screen.getByRole("button", { name: "Work in: New worktree" })).toBeTruthy();
+    rerender(view("project-1"));
+    expect(screen.getByRole("button", { name: "Work in: Current checkout" })).toBeTruthy();
+    unmount();
+    render(view("project-1"));
+    expect(screen.getByRole("button", { name: "Work in: Current checkout" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() =>
+      expect(services.createSession).toHaveBeenCalledWith(
+        "/repo/one",
+        undefined,
+        "remote-connection",
+        [],
+      ),
+    );
+    expect(services.createProjectCopy).not.toHaveBeenCalled();
+  });
+
+  it("keeps matching project IDs on different servers independent of the global default", async () => {
+    const user = userEvent.setup();
+    const store = createDraftStore();
+    render(
+      <Provider store={store}>
+        <NewTask projectID="project-1" />
+      </Provider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Work in: New worktree" }));
+    await user.click(await screen.findByRole("option", { name: /^Current checkout/ }));
+
+    act(() => store.set(runtimeAtom, { ...owner, profileID: "local" }));
+    expect(screen.getByRole("button", { name: "Work in: New worktree" })).toBeTruthy();
+    act(() => store.set(runtimeAtom, owner));
+    expect(screen.getByRole("button", { name: "Work in: Current checkout" })).toBeTruthy();
+    act(() => store.set(defaultWorkspaceModeAtom, "current"));
+    act(() => store.set(defaultWorkspaceModeAtom, "worktree"));
+    expect(screen.getByRole("button", { name: "Work in: Current checkout" })).toBeTruthy();
   });
 
   it("can default new worktrees to the current branch", () => {

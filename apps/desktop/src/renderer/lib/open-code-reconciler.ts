@@ -131,6 +131,22 @@ function normalizeActivityEvents(events: readonly PalotEvent[]): PalotEvent[] {
   });
 }
 
+/** Project an archive event the way OpenCode does: set or clear `time.archived`, bump `updated`. */
+export function archivedSession(
+  session: SessionInfo,
+  event: Extract<PalotEvent, { type: "session.archived" | "session.unarchived" }>,
+): SessionInfo {
+  const { archived: _archived, ...time } = session.time;
+  return {
+    ...session,
+    time: {
+      ...time,
+      updated: Math.max(session.time.updated, event.createdAt),
+      ...(event.type === "session.archived" ? { archived: event.createdAt } : {}),
+    },
+  };
+}
+
 function mergeSessionInfo(current: SessionInfo | undefined, incoming: SessionInfo): SessionInfo {
   if (!current) return incoming;
   const newer = current.time.updated >= incoming.time.updated ? current : incoming;
@@ -1030,6 +1046,9 @@ export class OpenCodeReconciler {
         title: event.data.title,
         time: { ...session.time, updated: Math.max(session.time.updated, event.createdAt) },
       };
+    }
+    if (event.type === "session.archived" || event.type === "session.unarchived") {
+      return archivedSession(session, event);
     }
     if (event.type === "session.moved") {
       return {

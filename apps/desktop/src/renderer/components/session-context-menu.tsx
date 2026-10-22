@@ -31,6 +31,7 @@ import { useCacheSession } from "../hooks/use-session-catalog";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { removeSession as removeCatalogSession } from "../lib/session-catalog-query";
 import { useCreateProjectCopy, useProjectWorktrees } from "../hooks/use-project-worktrees";
+import { getOpenCodeVcsStatus } from "../services/opencode-vcs";
 import { formatSnoozeMenuTime, sessionSnoozeChoices } from "../lib/session-snooze";
 import {
   formatShortcut,
@@ -42,6 +43,7 @@ import {
   ContextMenuContent,
   ContextMenuGroup,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuSub,
   ContextMenuSubContent,
@@ -108,6 +110,7 @@ export function SessionContextMenu({
   const [deleting, setDeleting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const transfer = useSessionTransfer(session, owner, unavailable);
+  const sessionMove = useSessionMove(session, project, owner, unavailable || moveDisabled);
 
   const fork = useCallback(async () => {
     if (unavailable || forking) return;
@@ -153,6 +156,7 @@ export function SessionContextMenu({
   return (
     <>
       {transfer.serverCopyDialog}
+      {sessionMove.dialog}
       <ContextMenu>
         <ContextMenuTrigger render={trigger} />
         <ContextMenuContent>
@@ -208,12 +212,7 @@ export function SessionContextMenu({
             {onSnooze ? (
               <SessionSnoozeMenu disabled={unavailable || snoozeDisabled} onSnooze={onSnooze} />
             ) : null}
-            <SessionMoveMenu
-              session={session}
-              project={project}
-              owner={owner}
-              disabled={unavailable || moveDisabled}
-            />
+            <SessionMoveMenu session={session} project={project} owner={owner} move={sessionMove} />
           </ContextMenuGroup>
           <ContextMenuSeparator />
           <ContextMenuItem
@@ -513,24 +512,165 @@ function SessionSnoozeMenu({
   );
 }
 
+type SessionMoveTarget = { kind: "existing"; directory: string } | { kind: "new" };
+
+interface PendingSessionMove {
+  target: SessionMoveTarget;
+  connectionID: string | undefined;
+  /** Uncommitted paths in the source checkout; null when they could not be read. */
+  files: string[] | null;
+}
+
+/**
+ * Moving a task relocates the task only: OpenCode's session.move does not carry
+ * uncommitted edits, and a new worktree starts from the last commit. Before moving, the
+ * source checkout is checked; edits (or an unreadable status) ask for confirmation that
+ * says where they stay. Lives above the menu so the confirmation outlives it.
+ */
+function useSessionMove(
+  session: PalotSession,
+  project: PalotProject | null | undefined,
+  owner: OpenCodeRuntimeStatus | null | undefined,
+  disabled: boolean,
+) {
+  const activeRuntime = useAtomValue(runtimeAtom);
+  const runtime = owner === undefined ? activeRuntime : owner;
+  const cacheSession = useCacheSession(runtime);
+  const createProjectCopy = useCreateProjectCopy(project, owner);
+  const [moving, setMoving] = useState(false);
+  const [pending, setPending] = useState<PendingSessionMove | null>(null);
+  const unavailable = disabled || moving || !project;
+  const createUnavailable = runtime?.capabilities?.worktreeCreate === false;
+  const source = session.location.directory;
+  const sourceLabel = checkoutLabel(source, project);
+
+  const perform = useCallback(
+    async (target: SessionMoveTarget, connectionID: string | undefined) => {
+      setMoving(true);
+      try {
+        if (target.kind === "existing") {
+          const moved = await palot.moveSession(session.id, target.directory, connectionID);
+          if (moved) cacheSession(moved);
+          toast.add({
+            type: "success",
+            title: "Task moved",
+            description: `Now working in ${checkoutLabel(target.directory, project)}.`,
+          });
+        } else {
+          const copy = await createProjectCopy.mutateAsync(source);
+          const moved = await palot.moveSession(session.id, copy.directory, connectionID);
+          if (moved) cacheSession(moved);
+          toast.add({
+            type: "success",
+            title: "Task moved to a new worktree",
+            description: directoryLabel(copy.directory),
+          });
+        }
+      } catch (error) {
+        showErrorToast(
+          target.kind === "existing"
+            ? "Could not move task"
+            : "Could not move task to a new worktree",
+          error,
+        );
+      } finally {
+        setMoving(false);
+      }
+    },
+    [cacheSession, createProjectCopy, project, session.id, source],
+  );
+
+  const request = useCallback(
+    async (target: SessionMoveTarget) => {
+      if (unavailable) return;
+      if (target.kind === "existing" && target.directory === source) return;
+      if (target.kind === "new" && createUnavailable) return;
+      const connectionID = runtime?.connectionID;
+      setMoving(true);
+      let files: string[] | null;
+      try {
+        files = (await getOpenCodeVcsStatus(session.location, undefined, connectionID)).map(
+          (file) => file.file,
+        );
+      } catch {
+        files = null;
+      }
+      if (files?.length === 0) {
+        await perform(target, connectionID);
+        return;
+      }
+      setMoving(false);
+      setPending({ target, connectionID, files });
+    },
+    [createUnavailable, perform, runtime?.connectionID, session.location, source, unavailable],
+  );
+
+  const destination = pending
+    ? pending.target.kind === "new"
+      ? "a new worktree"
+      : checkoutLabel(pending.target.directory, project)
+    : "";
+  const dialog = (
+    <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogMedia>
+            <FolderGit2 aria-hidden="true" />
+          </AlertDialogMedia>
+          <AlertDialogTitle>Move task to {destination}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {pending?.files
+              ? `${pending.files.length} uncommitted ${pending.files.length === 1 ? "change stays" : "changes stay"} in ${sourceLabel}. Only the task moves to ${destination}; its edits are not copied.`
+              : `Palot couldn't check ${sourceLabel} for uncommitted changes. Only the task moves to ${destination}; any edits stay in ${sourceLabel}.`}
+            {pending?.target.kind === "new" ? " A new worktree starts from the last commit." : ""}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {pending?.files?.length ? (
+          <div
+            className="max-h-36 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 font-mono text-code-compact text-muted-foreground"
+            aria-label={`Uncommitted changes in ${sourceLabel}`}
+          >
+            {pending.files.slice(0, 20).map((file) => (
+              <div key={file} className="truncate" title={file}>
+                {file}
+              </div>
+            ))}
+            {pending.files.length > 20 ? <div>+{pending.files.length - 20} more</div> : null}
+          </div>
+        ) : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={moving}
+            onClick={() => {
+              const confirmed = pending;
+              setPending(null);
+              if (confirmed) void perform(confirmed.target, confirmed.connectionID);
+            }}
+          >
+            Move task
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
+  return { moving, unavailable, createUnavailable, sourceLabel, request, dialog };
+}
+
 function SessionMoveMenu({
   session,
   project,
   owner,
-  disabled = false,
+  move,
 }: {
   session: PalotSession;
   project?: PalotProject | null;
   owner?: OpenCodeRuntimeStatus | null;
-  disabled?: boolean;
+  move: ReturnType<typeof useSessionMove>;
 }) {
-  const activeRuntime = useAtomValue(runtimeAtom);
-  const runtime = owner === undefined ? activeRuntime : owner;
-  const cacheSession = useCacheSession(runtime);
   const directoriesQuery = useProjectWorktrees(project, false, owner);
-  const createProjectCopy = useCreateProjectCopy(project, owner);
-  const [moving, setMoving] = useState(false);
-  const unavailable = disabled || moving || !project;
+  const { moving, unavailable } = move;
 
   const loadDirectories = useCallback(() => {
     if (unavailable || !project || directoriesQuery.isFetching) return;
@@ -538,55 +678,6 @@ function SessionMoveMenu({
       if (result.error) showErrorToast("Could not load worktrees", result.error);
     });
   }, [directoriesQuery, project, unavailable]);
-
-  const move = useCallback(
-    async (directory: string) => {
-      if (unavailable || directory === session.location.directory) return;
-      setMoving(true);
-      try {
-        const moved = await palot.moveSession(session.id, directory, runtime?.connectionID);
-        if (moved) cacheSession(moved);
-        toast.add({
-          type: "success",
-          title: "Task moved",
-          description: `Now working in ${directoryLabel(directory)}.`,
-        });
-      } catch (error) {
-        showErrorToast("Could not move task", error);
-      } finally {
-        setMoving(false);
-      }
-    },
-    [cacheSession, runtime?.connectionID, session.id, session.location.directory, unavailable],
-  );
-
-  const createAndMove = useCallback(async () => {
-    if (unavailable || !project || runtime?.capabilities?.worktreeCreate === false) return;
-    setMoving(true);
-    try {
-      const copy = await createProjectCopy.mutateAsync(session.location.directory);
-      const moved = await palot.moveSession(session.id, copy.directory, runtime?.connectionID);
-      if (moved) cacheSession(moved);
-      toast.add({
-        type: "success",
-        title: "Task moved to a new worktree",
-        description: directoryLabel(copy.directory),
-      });
-    } catch (error) {
-      showErrorToast("Could not move task to a new worktree", error);
-    } finally {
-      setMoving(false);
-    }
-  }, [
-    createProjectCopy,
-    runtime?.connectionID,
-    runtime?.capabilities?.worktreeCreate,
-    project,
-    session.id,
-    session.location.directory,
-    cacheSession,
-    unavailable,
-  ]);
 
   const directories = directoriesQuery.data;
   const loading = directoriesQuery.isFetching;
@@ -603,7 +694,7 @@ function SessionMoveMenu({
       key={item.directory}
       disabled={unavailable}
       title={item.directory}
-      onClick={() => void move(item.directory)}
+      onClick={() => void move.request({ kind: "existing", directory: item.directory })}
     >
       <FolderGit2 aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">
@@ -624,14 +715,17 @@ function SessionMoveMenu({
       </ContextMenuSubTrigger>
       <ContextMenuSubContent className="min-w-52">
         <ContextMenuGroup>
+          <ContextMenuLabel className="max-w-60">
+            Moves the task only. Uncommitted edits stay in {move.sourceLabel}.
+          </ContextMenuLabel>
           <ContextMenuItem
-            disabled={unavailable || runtime?.capabilities?.worktreeCreate === false}
+            disabled={unavailable || move.createUnavailable}
             title={
-              runtime?.capabilities?.worktreeCreate === false
+              move.createUnavailable
                 ? "Creating worktrees is unavailable on this connection"
                 : undefined
             }
-            onClick={() => void createAndMove()}
+            onClick={() => void move.request({ kind: "new" })}
           >
             {moving ? (
               <LoaderCircle className="animate-spin" aria-hidden="true" />
@@ -667,4 +761,8 @@ function SessionMoveMenu({
 
 function directoryLabel(directory: string): string {
   return directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory;
+}
+
+function checkoutLabel(directory: string, project: PalotProject | null | undefined): string {
+  return directory === project?.canonical ? "the main checkout" : directoryLabel(directory);
 }

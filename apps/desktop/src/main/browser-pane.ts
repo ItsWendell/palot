@@ -684,6 +684,7 @@ export function createBrowserPane() {
       const status = openCodeRuntime.scopedConnection(input.connectionID).runtimeStatus();
       if (!status.connected || status.profileID !== input.profileID)
         throw new Error("Browser connection is unavailable");
+      const localFiles = status.capabilities?.localPathActions === true;
       const connection = await openCodeRuntime.requestConnection({
         profileID: input.profileID,
         connectionID: input.connectionID,
@@ -742,7 +743,9 @@ export function createBrowserPane() {
         partition,
         storageKey,
         clearing: false,
-        fileRoots: [],
+        // Like OpenCode desktop: files load only from the session's workspace on this machine.
+        // Set before any tab restores so a saved file:// page does not race registration.
+        fileRoots: localFiles ? [details.location.directory] : [],
         cleanup: () => {},
       };
       // A private partition's file subresources must not escape the session workspace.
@@ -802,8 +805,6 @@ export function createBrowserPane() {
               directory: currentSession.location.directory,
               workspace: currentSession.location.workspaceID,
             };
-            if (status.source === "shared-service" && status.topology === "same-machine")
-              entry.fileRoots = [location.directory];
             const options = { location };
             const attachment = { sessionID, connectionID: randomUUID() };
             const rpc = client.rpc(Browser.Definition);

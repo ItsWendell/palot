@@ -11,7 +11,6 @@ import {
   powerMonitor,
   screen,
   session,
-  shell,
 } from "electron";
 import log from "electron-log/main";
 import {
@@ -42,15 +41,16 @@ import { destroyTray, installTray } from "./tray";
 import { destroyOpenCodeAttentionIndex } from "./attention-index";
 import { restoreWindowState, saveWindowState, trackWindowState } from "./window-state";
 import { startupWindowPresentation } from "./window-startup";
-import { allowedExternalUrl } from "./external-url-policy";
+import { openExternalUrl } from "./external-url";
 import {
   cleanupStagedAttachments,
   shutdownAttachmentStorage,
   inspectPickedFiles,
 } from "./file-attachments";
-import { registerWindowRole } from "./ipc-security";
+import { isTrustedWindowContents, registerWindowRole } from "./ipc-security";
 import { initializeLogging } from "./logging";
-import { installDenyAllPermissionPolicy } from "./electron-permissions";
+import { installPermissionPolicy } from "./electron-permissions";
+import { installVoiceHost, shutdownVoiceHost } from "./voice/voice-host";
 import { showRecoveryWindow } from "./recovery-window";
 import { completePendingPalotReset } from "./data-recovery";
 import { createShowcaseBackdrop, resolveShowcaseConfiguration } from "./showcase-window";
@@ -70,6 +70,10 @@ const rendererEntryUrl =
   isDevelopment && process.env.ELECTRON_RENDERER_URL
     ? new URL(process.env.ELECTRON_RENDERER_URL).href
     : pathToFileURL(path.join(currentDirectory, "../renderer/index.html")).href;
+const voiceOverlayEntryUrl =
+  isDevelopment && process.env.ELECTRON_RENDERER_URL
+    ? new URL("voice-overlay.html", process.env.ELECTRON_RENDERER_URL).href
+    : pathToFileURL(path.join(currentDirectory, "../renderer/voice-overlay.html")).href;
 const developmentID = isDevelopment
   ? (process.env.PALOT_DEV_INSTANCE_ID ?? path.basename(path.resolve(app.getAppPath(), "../..")))
   : undefined;
@@ -269,16 +273,14 @@ async function createWindow(
     });
   }
   window.webContents.setWindowOpenHandler(({ url }) => {
-    const externalUrl = allowedExternalUrl(url, isDevelopment);
-    if (externalUrl) void shell.openExternal(externalUrl);
+    void openExternalUrl(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
     const currentUrl = window.webContents.getURL();
     if (url === currentUrl) return;
     event.preventDefault();
-    const externalUrl = allowedExternalUrl(url, isDevelopment);
-    if (externalUrl) void shell.openExternal(externalUrl);
+    void openExternalUrl(url);
   });
   window.webContents.on("preload-error", (_event, preloadPath, error) => {
     reportStartupFailure(new Error(`Palot preload failed at ${preloadPath}: ${error.message}`));
@@ -310,6 +312,15 @@ async function createWindow(
     throw error;
   }
   return window;
+}
+
+function isWorkspaceContents(contents: Electron.WebContents | null): boolean {
+  const window = contents ? BrowserWindow.fromWebContents(contents) : null;
+  return Boolean(
+    window &&
+    workspaceWindows.has(window) &&
+    isTrustedWindowContents(contents, rendererEntryUrl, "main"),
+  );
 }
 
 function resolveAppIcon(fileName = "icon.png"): Electron.NativeImage {
@@ -379,7 +390,7 @@ if (helpRequested) {
       hydrateShellEnvironment();
       await appearanceService().initializeDesktopAppearance();
       powerMonitor.on("resume", () => openCodeRuntime.recoverEventStream("resume"));
-      installDenyAllPermissionPolicy(session.defaultSession);
+      installPermissionPolicy(session.defaultSession, { allowMicrophone: isWorkspaceContents });
       await cleanupStagedAttachments();
       app.setAboutPanelOptions({
         applicationName: buildIdentity.displayName,
@@ -391,6 +402,12 @@ if (helpRequested) {
       }
       Menu.setApplicationMenu(Menu.buildFromTemplate(menu));
       desktopNotificationService().configure(buildIdentity.appId);
+      installVoiceHost({
+        isWorkspaceWindow: (window) => workspaceWindows.has(window),
+        fallbackWindow: () => mainWindow,
+        overlayEntryUrl: voiceOverlayEntryUrl,
+        overlayPreload: path.join(currentDirectory, "../preload/voice-overlay.cjs"),
+      });
       registerIpcHandlers({
         expectedWindow: (event) => {
           const window = BrowserWindow.fromWebContents(event.sender);
@@ -469,6 +486,7 @@ if (helpRequested) {
       saveWindowState(mainWindow);
     }
     desktopNotificationService().shutdown();
+    shutdownVoiceHost();
     appearanceService().shutdown();
     const trayShutdown = destroyTray();
     void automationService()

@@ -1,14 +1,23 @@
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
 import type { ReactNode } from "react";
 import type { ModelRef } from "@opencode/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PalotAgent, PalotModel, PalotSession } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
+import { createRendererQueryClient } from "../lib/query-client";
 import { rememberSelection, selectionMemoriesAtom, selectionScope } from "../lib/selection-memory";
 import { useComposerSelection } from "./use-composer-selection";
 
-const services = vi.hoisted(() => ({ switchModel: vi.fn(), switchAgent: vi.fn(), cache: vi.fn() }));
+const services = vi.hoisted(() => ({
+  switchModel: vi.fn(),
+  switchAgent: vi.fn(),
+  cache: vi.fn(),
+  // The composer owns catalog loading; these back the shared queries the hook observes.
+  listModels: vi.fn(),
+  loadSettings: vi.fn(),
+}));
 vi.mock("../services/palot", () => ({ palot: services }));
 vi.mock("./use-session-catalog", () => ({ useCacheSession: () => services.cache }));
 
@@ -70,6 +79,7 @@ function setup(
   draft = false,
   store = createStore(),
   options: { projectDefault?: ModelRef | null } = {},
+  queryClient = createRendererQueryClient(),
 ) {
   if (!store.get(runtimeAtom)) store.set(runtimeAtom, runtime);
   const props = { session, draft, catalogsReady: true, models };
@@ -85,7 +95,9 @@ function setup(
     {
       initialProps: props,
       wrapper: ({ children }: { children: ReactNode }) => (
-        <Provider store={store}>{children}</Provider>
+        <QueryClientProvider client={queryClient}>
+          <Provider store={store}>{children}</Provider>
+        </QueryClientProvider>
       ),
     },
   );
@@ -104,6 +116,8 @@ beforeEach(() => {
   services.switchModel.mockReset();
   services.switchAgent.mockReset();
   services.cache.mockReset();
+  services.listModels.mockReset().mockReturnValue(new Promise(() => {}));
+  services.loadSettings.mockReset().mockReturnValue(new Promise(() => {}));
 });
 afterEach(cleanup);
 
@@ -376,5 +390,102 @@ describe("composer selection ownership", () => {
     expect(
       hook.store.get(selectionMemoriesAtom)[selectionScope("profile-1", "project")]?.agent,
     ).toBe("a");
+  });
+
+  describe("project catalog recovery", () => {
+    const agentFailure = {
+      capability: "agents",
+      label: "Agents",
+      message: "Location plugins did not finish activating",
+      detail: {
+        tag: "ServiceUnavailableError",
+        message: "Location plugins did not finish activating",
+        path: null,
+        issues: [],
+        service: "plugin",
+        field: null,
+        reference: null,
+      },
+    };
+    const snapshot = (errors: unknown[]) => ({ location: session.location, agents, errors });
+
+    it("explains a draft blocked by a failed agent catalog and retries only that location", async () => {
+      services.loadSettings.mockResolvedValueOnce(snapshot([agentFailure]));
+      const hook = setup(true);
+      hook.rerender({ ...hook.props, catalogsReady: false });
+      await waitFor(() => expect(hook.result.current.catalogRecovery).not.toBeNull());
+      expect(hook.result.current.blocked).toBe(true);
+      expect(hook.result.current.error).toBe(
+        "OpenCode couldn't load agents for this project: Location plugins did not finish activating",
+      );
+      expect(hook.result.current.catalogRecovery).toMatchObject({
+        connectionID: "connection-1",
+        location: { directory: "/repo" },
+        failures: [{ capability: "agents", detail: { tag: "ServiceUnavailableError" } }],
+      });
+
+      services.loadSettings.mockResolvedValueOnce(snapshot([]));
+      await act(async () => hook.result.current.catalogRecovery!.retry());
+      expect(services.loadSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          connectionID: "connection-1",
+          directory: "/repo",
+          capabilities: ["agents"],
+        }),
+        expect.any(AbortSignal),
+      );
+      // The model catalog did not fail, so retry leaves it alone.
+      expect(services.listModels).toHaveBeenCalledTimes(1);
+      hook.rerender({ ...hook.props, catalogsReady: true });
+      expect(hook.result.current.catalogRecovery).toBeNull();
+      expect(hook.result.current.error).toBeNull();
+      expect(hook.result.current.blocked).toBe(false);
+    });
+
+    it("blames a failed model list instead of the remembered model it hid", async () => {
+      services.listModels.mockResolvedValueOnce({
+        models: [],
+        defaultModel: null,
+        providers: [],
+        errors: [
+          { capability: "models", label: "Available models", message: "Location not found: /repo" },
+        ],
+      });
+      const store = createStore();
+      store.set(selectionMemoriesAtom, {
+        [selectionScope("profile-1", "project")]: rememberSelection(undefined, null, {
+          id: "reasoner",
+          providerID: "two",
+        }),
+      });
+      const hook = setup(true, store);
+      hook.rerender({ ...hook.props, models: [] });
+      await waitFor(() => expect(hook.result.current.catalogRecovery).not.toBeNull());
+      expect(hook.result.current.unavailableModel).not.toBeNull();
+      expect(hook.result.current.error).toBe(
+        "OpenCode couldn't load available models for this project: Location not found: /repo",
+      );
+    });
+
+    it("never shows one location's failure on another location's draft", async () => {
+      services.loadSettings.mockResolvedValueOnce(snapshot([agentFailure]));
+      const hook = setup(true);
+      hook.rerender({ ...hook.props, catalogsReady: false });
+      await waitFor(() => expect(hook.result.current.catalogRecovery).not.toBeNull());
+      hook.rerender({
+        ...hook.props,
+        catalogsReady: false,
+        session: { ...session, location: { directory: "/other" } },
+      });
+      expect(hook.result.current.catalogRecovery).toBeNull();
+      expect(hook.result.current.error).toBeNull();
+      expect(hook.result.current.blocked).toBe(true);
+    });
+
+    it("does not observe catalogs for an existing task", async () => {
+      setup(false);
+      await act(async () => {});
+      expect(services.loadSettings).not.toHaveBeenCalled();
+    });
   });
 });

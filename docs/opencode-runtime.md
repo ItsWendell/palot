@@ -20,9 +20,9 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot 0.18.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
+Palot 0.19.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
-release-smoke runtime are pinned to **2.0.29** for repeatable checks. Stable
+release-smoke runtime are pinned to **2.1.3** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
 tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
 versions require explicit consent; V1, unknown majors and malformed versions are
@@ -145,6 +145,57 @@ output-token limit with a synthetic instruction that has no description; Palot k
 such synthetic messages out of the transcript. Plugins can assert permissions, and
 managed configuration takes precedence. These require updating the running service
 separately. The connection minimum remains 2.0.7.
+
+The 2.0.32 packages add one operation, the experimental `voice.session` route, which
+Palot's voice chat uses. Voice is offered only on services reporting 2.0.32 or later; the
+connection minimum remains 2.0.7. The route starts GPT-Live with an OpenAI API key stored
+on the OpenCode server (or `OPENAI_API_KEY`); ChatGPT sign-in can't start voice sessions.
+
+The 2.0.30 and 2.0.31 packages keep the operation inventory unchanged. Model
+capabilities add optional temperature support, and model configuration accepts
+reasoning controls and a release-date override. Palot preserves temperature support
+and labels models that explicitly reject it as **Fixed temperature**; an absent
+value stays unknown. Reasoning variants and release dates use the existing catalog
+mapping. The retired `session.share` TUI command is no longer suggested. The
+connection minimum remains 2.0.7. Instruction loading, managed-service environment,
+MCP timeout and provider fixes require updating the running service separately.
+
+The 2.1.0 packages make small breaking renames to message and event data. Provider
+replay data is now always `native`: text and reasoning parts (was `state`), assistant,
+tool and compaction messages (was `providerState`), and step, tool and compaction
+events (was `state`, `providerState` or `resultState`). A tool's call and result data
+share one shallow-merged `native`; Palot merges result events into it, result keys
+winning. Summary compactions no longer store `recent`; they reference the first kept
+message with `metadata.keepID`. Context history and older compactions carry the kept
+text in `metadata.recent`, which Palot shows when present. Compactions without it
+show only the summary, because the kept messages are already in the transcript.
+`Credential.Key.configuration` moved into `metadata` and the unused `session.compacted`
+event was removed; Palot used neither.
+
+The 2.1.0 contract adds `permission.saved.update` and restores session archiving:
+`session.update` accepts `archived`, `session.list` accepts an `archived` filter, and
+the durable `session.archived` and `session.unarchived` events set and clear
+`time.archived`. Palot projects those events onto cached sessions, but does not yet
+archive sessions or edit saved permissions. Plugins gain `session.list`, which the
+voice coordinator does not use yet.
+
+The 2.1.1 and 2.1.2 packages keep the operation and event inventory unchanged. Session
+errors gain an optional `retryAfterMs` (how long the provider asked to wait), and
+configuration accepts `experimental.location_idle_timeout`; Palot uses neither yet.
+Service fixes, such as keeping locations with running sessions loaded, require
+updating the running service separately.
+
+The 2.1.3 packages add two experimental voice operations: `voice.models` lists the
+voice models, their transports and whether the server can start each one (including
+models a connected OpenCode Console hosts), and `voice.instructions` replaces a hosted
+session's instructions. Agent configuration ignores unsupported colors instead of
+dropping the agent. Palot does not use the new voice operations yet.
+
+Against a 2.0.x service, Palot reads the renamed fields as absent: reasoning
+presentation hints, provider-structured web search results and compaction `recent`
+text are not shown. Copying a task from a 2.0.x server to a 2.1 server can fail
+transcript verification after an otherwise successful import, because the
+destination returns the renamed fields. The connection minimum remains 2.0.7.
 
 ### One-time pairing and OpenTunnel
 

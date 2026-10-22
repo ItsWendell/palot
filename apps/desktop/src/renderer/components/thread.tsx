@@ -21,6 +21,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { motion } from "motion/react";
+import { VoiceStage } from "./voice/voice-call-ui";
 import {
   createElement,
   memo,
@@ -59,6 +60,7 @@ import { resolvedAppearanceAtom } from "../atoms/appearance";
 import { retainedTranscriptLayouts } from "../lib/transcript-layout-cache";
 import { useSessionTranscript } from "../hooks/use-session-transcript";
 import { useBrowserSession } from "../hooks/use-browser-session";
+import { openFileInBrowser, workspaceFileTarget } from "../lib/browser-files";
 import { useSessionTranscriptProjection } from "../hooks/use-session-transcript-projection";
 import { useSessionRequests, useSessionFamilyRequestViews } from "../hooks/use-session-requests";
 import type { OwnedPendingRequestView } from "../lib/session-family-requests";
@@ -83,6 +85,12 @@ import { parallelActivityLabel } from "../lib/parallel-activity";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
 import { reviewOfferUserMessageID } from "../lib/turn-review-offer";
 import { TurnReviewOffer } from "./turn-review-offer";
+import {
+  ResponseSelectionAsk,
+  responseAnchorSelector,
+  responseRowIndex,
+  responseSelectionSource,
+} from "./response-selection-ask";
 import { projectToolExecution } from "../lib/tool-executions";
 import { recordStreamingCommit } from "../lib/streaming-latency";
 import {
@@ -144,11 +152,11 @@ import { useVcsInfo } from "../hooks/use-vcs-info";
 import { Composer } from "./composer";
 import { ConnectionDestination } from "./connection-destination";
 import { FileAttachment } from "./file-attachment";
+import { useFileReferenceOpener } from "./file-reference-opener";
 import {
   isLocalMarkdownWebLink,
   MarkdownContent,
   MarkdownWorkspaceProvider,
-  type MarkdownFileReference,
 } from "./markdown-content";
 import { NewTask } from "./new-task";
 import { OpenInSelector } from "./open-in-selector";
@@ -901,13 +909,14 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const [transcriptJumpTarget, setTranscriptJumpTarget] = useAtom(transcriptJumpTargetAtom);
   const compactionJumpFrameRef = useRef(0);
   useEffect(() => () => cancelAnimationFrame(compactionJumpFrameRef.current), []);
-  // Compaction rows live inside a turn's activity, not at a prompt, so prompt
-  // navigation cannot reach them. Scroll their turn into range, then the row.
-  const jumpToCompaction = (messageID: string): boolean => {
-    if (!messages.some((message) => message.id === messageID && message.type === "compaction")) {
-      return false;
-    }
-    const index = turnIndexForMessage(turnRows, messageID);
+  // Compaction rows live inside a turn's activity, and responses in rows without a
+  // prompt, so prompt navigation cannot reach them. Scroll their turn into range,
+  // then the anchor itself.
+  const revealTurnAnchor = (
+    index: number,
+    selector: string,
+    anchor: "compaction" | "response",
+  ): boolean => {
     const row = turnRows[index];
     if (!row) return false;
     navigation.cancel();
@@ -917,12 +926,12 @@ const SessionThreadContents = memo(function SessionThreadContents({
     cancelAnimationFrame(compactionJumpFrameRef.current);
     const startedAt = performance.now();
     const reveal = () => {
-      const element = scrollRef.current?.querySelector<HTMLElement>(
-        compactionAnchorSelector(messageID),
-      );
+      const element = scrollRef.current?.querySelector<HTMLElement>(selector);
       if (element) {
-        element.scrollIntoView({ block: "center" });
-        element.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+        // A response may be taller than the viewport; show where it starts.
+        element.scrollIntoView({ block: anchor === "response" ? "start" : "center" });
+        if (anchor === "compaction")
+          element.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
         return;
       }
       if (performance.now() - startedAt < 700) {
@@ -932,13 +941,31 @@ const SessionThreadContents = memo(function SessionThreadContents({
     compactionJumpFrameRef.current = requestAnimationFrame(reveal);
     return true;
   };
-  const jumpToRequestedTurn = useEffectEvent((messageID: string) => {
-    if (!jumpToCompaction(messageID)) navigation.jump(messageID);
-  });
+  const jumpToCompaction = (messageID: string): boolean =>
+    messages.some((message) => message.id === messageID && message.type === "compaction") &&
+    revealTurnAnchor(
+      turnIndexForMessage(turnRows, messageID),
+      compactionAnchorSelector(messageID),
+      "compaction",
+    );
+  const jumpToRequestedTurn = useEffectEvent(
+    ({ messageID, fallbackMessageID }: { messageID: string; fallbackMessageID?: string }) => {
+      if (jumpToCompaction(messageID)) return;
+      if (
+        revealTurnAnchor(
+          responseRowIndex(turnRows, messageID),
+          responseAnchorSelector(messageID),
+          "response",
+        )
+      )
+        return;
+      navigation.jump(fallbackMessageID ?? messageID);
+    },
+  );
   useEffect(() => {
     if (transcriptJumpTarget?.sessionID !== session.id) return;
     setTranscriptJumpTarget(null);
-    jumpToRequestedTurn(transcriptJumpTarget.messageID);
+    jumpToRequestedTurn(transcriptJumpTarget);
   }, [session.id, setTranscriptJumpTarget, transcriptJumpTarget]);
 
   const find = useTranscriptFind({
@@ -1023,42 +1050,40 @@ const SessionThreadContents = memo(function SessionThreadContents({
       transcript.connectionID,
     ],
   );
-  const openWorkspaceFile = useCallback(
-    (reference: MarkdownFileReference, event?: React.MouseEvent | React.KeyboardEvent) => {
-      const modifier = event ? event.metaKey || event.ctrlKey : false;
-      const path = workspaceRelativePath(reference.path, session.location.directory);
-
-      if (modifier || !path) {
-        const absolutePath =
-          reference.path.startsWith("/") || reference.path.startsWith("~")
-            ? reference.path
-            : `${session.location.directory.replace(/\/+$/, "")}/${reference.path}`;
-        void palot.externalOpen(
-          {
-            resource: {
-              kind: "file",
-              path: absolutePath,
-              line: reference.line,
-              sessionID: session.id,
-            },
-          },
-          runtime?.connectionID,
-        );
-        return;
-      }
-
-      workbench.openTab(
-        {
-          kind: "file",
-          location: session.location,
-          path,
-          ...(reference.line ? { line: reference.line } : {}),
-        },
-        { pane: "right" },
+  const fileReferenceMessagesRef = useRef(messages);
+  useEffect(() => {
+    fileReferenceMessagesRef.current = messages;
+  }, [messages]);
+  const getFileReferenceMessages = useCallback(() => fileReferenceMessagesRef.current, []);
+  const openFileTab = useCallback(
+    (input: Parameters<typeof workbench.openTab>[0]) => workbench.openTab(input, { pane: "right" }),
+    [workbench],
+  );
+  const localPathActions = runtime?.capabilities?.localPathActions === true;
+  const browserBindingID = browser?.bindingID;
+  const openHtmlInBrowser = useCallback(
+    async (absolutePath: string) => {
+      if (!browserEnabled || !localPathActions || !runtime?.connected || !browserBindingID)
+        return false;
+      const target = workspaceFileTarget(session.location.directory, absolutePath);
+      if (target.kind === "outside") return false;
+      return openFileInBrowser(browserBindingID, target.absolute).then(
+        () => true,
+        () => false,
       );
     },
-    [session.id, session.location, workbench, runtime?.connectionID],
+    [browserBindingID, browserEnabled, localPathActions, runtime?.connected, session.location],
   );
+  const fileReferences = useFileReferenceOpener({
+    sessionID: session.id,
+    location: session.location,
+    connectionID: runtime?.connectionID,
+    localPathActions,
+    getMessages: getFileReferenceMessages,
+    openTab: openFileTab,
+    openHtml: openHtmlInBrowser,
+  });
+  const openWorkspaceFile = fileReferences.open;
   const openWebLink = useCallback(
     (href: string) => {
       let url: URL;
@@ -1163,7 +1188,9 @@ const SessionThreadContents = memo(function SessionThreadContents({
       onOpenSession: openReferencedSession,
       workspaceDirectory: session.location.directory,
       workspaceLocation: session.location,
+      allowHomePaths: localPathActions,
     },
+    fileReferences.picker,
     <CompactionTranscriptContext.Provider value={compactionActions}>
       <SessionThreadHeader
         session={session}
@@ -1221,6 +1248,12 @@ const SessionThreadContents = memo(function SessionThreadContents({
             pointerEvents: initialTranscriptVisible ? undefined : "none",
           }}
         >
+          <ResponseSelectionAsk
+            rootRef={scrollRef}
+            rows={turnRows}
+            sessionID={session.id}
+            location={session.location}
+          />
           <ScrollAreaRoot
             data-slot="message-scroller"
             className="group/message-scroller relative flex size-full min-h-0 flex-col overflow-hidden"
@@ -1523,16 +1556,6 @@ const SessionThreadContents = memo(function SessionThreadContents({
   );
 });
 
-function workspaceRelativePath(path: string, directory: string): string | null {
-  const normalizedPath = path.replaceAll("\\", "/");
-  const normalizedDirectory = directory.replaceAll("\\", "/").replace(/\/$/, "");
-  const relative = normalizedPath.startsWith(`${normalizedDirectory}/`)
-    ? normalizedPath.slice(normalizedDirectory.length + 1)
-    : normalizedPath.replace(/^\.\//, "");
-  if (!relative || relative.startsWith("/") || relative.split("/").includes("..")) return null;
-  return relative;
-}
-
 export const SessionThreadHeader = memo(function SessionThreadHeader({
   session,
   historyActions,
@@ -1683,6 +1706,7 @@ const SessionDockContents = memo(function SessionDockContents({
       <PendingRequests sessionID={session.id} requests={floatingRequests} />
       <SessionRevertDock session={session} messages={revertMessages} />
       <PlanCard key={session.id} sessionID={session.id} messages={revertMessages} />
+      {session.parentID ? null : <VoiceStage sessionID={session.id} />}
       {session.parentID ? (
         <>
           <PendingRequests sessionID={session.id} requests={dockRequests} />
@@ -2206,11 +2230,13 @@ const TranscriptPresentationRowContent = memo(function TranscriptPresentationRow
     return (
       <>
         <div className="group/final-message">
-          <MessageRow
-            message={row.final.message}
-            parts={finalParts}
-            className={cn(turn.user && turn.activity.length === 0 && "mt-6")}
-          />
+          <div className="relative" {...responseSelectionSource(row.final.message.id)}>
+            <MessageRow
+              message={row.final.message}
+              parts={finalParts}
+              className={cn(turn.user && turn.activity.length === 0 && "mt-6")}
+            />
+          </div>
           {turn.status !== "working" && turn.completedAt !== null ? (
             <FinalMessageMeta
               turn={turn}

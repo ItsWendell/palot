@@ -152,14 +152,22 @@ describe("text burst validation", () => {
 });
 
 describe("TestLLMServer routed scripts", () => {
-  it.each(["chat/completions", "responses"] as const)(
+  it.each([
+    [
+      "chat/completions",
+      "You are a title generator. You output ONLY a thread title. Nothing else.",
+    ],
+    ["responses", "You are a title generator. You output ONLY a thread title. Nothing else."],
+    // OpenCode 2.1.3 rewrote the title agent's prompt.
+    ["chat/completions", "You name conversations so the user can find them later in a list."],
+    ["responses", "You name conversations so the user can find them later in a list."],
+  ] as const)(
     "handles upstream title generation without consuming a scripted response on %s",
-    async (endpoint) => {
+    async (endpoint, title) => {
       const server = new TestLLMServer();
       servers.push(server);
       await server.start();
       server.text("Scripted task response");
-      const title = "You are a title generator. You output ONLY a thread title. Nothing else.";
       const request = (input: Record<string, unknown>) =>
         fetch(`${server.url}/${endpoint}`, {
           method: "POST",

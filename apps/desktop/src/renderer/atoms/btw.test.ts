@@ -2,11 +2,19 @@ import { createStore } from "jotai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeClient } from "@opencode/client";
 import type { OpenCodeRuntimeStatus } from "../../shared";
-import { askBtw, btwPendingAtom, retryBtw } from "./btw";
+import {
+  askAboutSelection,
+  askBtw,
+  btwFocusRequestAtom,
+  btwPendingAtom,
+  cancelBtw,
+  retryBtw,
+  submitBtwQuestion,
+} from "./btw";
 import { runtimeAtom } from "./workspace";
 import { flushWorkbenchPersistence, workbenchCommandAtom, workbenchStateAtom } from "./workbench";
 import { findBtwTab } from "../lib/btw";
-import { createWorkbenchState, workbenchScopeKey } from "../lib/workbench-tabs";
+import { createWorkbenchState, MAX_WORKBENCH_TABS, workbenchScopeKey } from "../lib/workbench-tabs";
 import { openCodeClient } from "../services/opencode-client";
 
 vi.mock("../services/opencode-client", () => ({ openCodeClient: vi.fn() }));
@@ -25,6 +33,9 @@ function setup() {
 }
 function tabs(store: ReturnType<typeof createStore>) {
   return store.get(workbenchStateAtom).scopes[workbenchScopeKey(owner)]!.right.tabs;
+}
+function sideChat(store: ReturnType<typeof createStore>, tabID: string) {
+  return findBtwTab(store.get(workbenchStateAtom), owner, tabID)!.resource;
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -134,5 +145,75 @@ describe("BTW ownership", () => {
     expect(() => askBtw(store, owner, "  ")).toThrow("Enter a question");
     expect(store.get(workbenchStateAtom)).toEqual(createWorkbenchState());
     expect(openCodeClient).not.toHaveBeenCalled();
+  });
+});
+
+const quote = { text: "Use a ring buffer.", messageID: "msg_a", turnMessageID: "msg_u" };
+
+describe("Ask about selection", () => {
+  it("opens a focused side chat without generating until the question is written", async () => {
+    const generate = vi.fn().mockResolvedValue({ text: "Bounded memory." });
+    vi.mocked(openCodeClient).mockReturnValue({
+      session: { generate },
+    } as unknown as OpenCodeClient);
+    const store = setup();
+    const tabID = askAboutSelection(store, owner, quote);
+    expect(tabs(store)).toMatchObject([{ id: tabID, resource: { question: "", quote } }]);
+    expect(store.get(btwFocusRequestAtom)).toBe(tabID);
+    expect(generate).not.toHaveBeenCalled();
+
+    submitBtwQuestion(store, owner, tabID, owner.connectionID, "  Why?  ");
+    await vi.waitFor(() => expect(store.get(btwPendingAtom).size).toBe(0));
+    expect(generate.mock.calls[0]![0].prompt).toContain(
+      "<excerpt>\nUse a ring buffer.\n</excerpt>",
+    );
+    expect(generate.mock.calls[0]![0].prompt).toContain("Do not call any tools");
+    expect(tabs(store)[0]!.resource).toMatchObject({ question: "Why?", answer: "Bounded memory." });
+
+    generate.mockResolvedValueOnce({ text: "About 1 MiB." });
+    submitBtwQuestion(store, owner, tabID, owner.connectionID, "How big?");
+    await vi.waitFor(() => expect(store.get(btwPendingAtom).size).toBe(0));
+    expect(generate.mock.calls[1]![0].prompt).toContain("Question: Why?\nAnswer: Bounded memory.");
+    expect(sideChat(store, tabID).followUps).toEqual([
+      { id: expect.any(String), question: "How big?", answer: "About 1 MiB." },
+    ]);
+  });
+
+  it("stops a pending answer, keeps the question, and retries it", async () => {
+    const first = Promise.withResolvers<{ text: string }>();
+    const generate = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue({ text: "Recovered" });
+    vi.mocked(openCodeClient).mockReturnValue({
+      session: { generate },
+    } as unknown as OpenCodeClient);
+    const store = setup();
+    const tabID = askAboutSelection(store, owner, quote);
+    submitBtwQuestion(store, owner, tabID, owner.connectionID, "Why?");
+    expect(() => submitBtwQuestion(store, owner, tabID, owner.connectionID, "Again?")).toThrow(
+      "Wait for the current answer",
+    );
+    cancelBtw(store, owner, tabID);
+    expect(generate.mock.calls[0]![1].signal.aborted).toBe(true);
+    expect(store.get(btwPendingAtom).size).toBe(0);
+    expect(tabs(store)[0]!.resource).toMatchObject({
+      question: "Why?",
+      error: "Stopped before an answer arrived.",
+    });
+    first.resolve({ text: "Too late" });
+    await first.promise;
+    retryBtw(store, owner, tabID, owner.connectionID);
+    await vi.waitFor(() => expect(sideChat(store, tabID).answer).toBe("Recovered"));
+  });
+
+  it("rejects empty quotes and reports the workbench tab limit", () => {
+    const store = setup();
+    expect(() => askAboutSelection(store, owner, { ...quote, text: "  " })).toThrow(
+      "Select some text",
+    );
+    for (let index = 0; index < MAX_WORKBENCH_TABS; index++)
+      askAboutSelection(store, owner, { ...quote, messageID: `msg_${index}` });
+    expect(() => askAboutSelection(store, owner, quote)).toThrow("Close a workbench tab");
   });
 });

@@ -50,10 +50,15 @@ export const contextMessageTargetAtom = atom<{
   messageID: string;
 } | null>(null);
 
-/** Asks the task's transcript to scroll to a user message's turn or a compaction row. */
+/**
+ * Asks the task's transcript to scroll to a user message's turn, a compaction row, or an
+ * assistant response. `fallbackMessageID` (a user message) is used when the target is not
+ * loaded, so earlier history can be fetched by prompt.
+ */
 export const transcriptJumpTargetAtom = atom<{
   sessionID: string;
   messageID: string;
+  fallbackMessageID?: string;
 } | null>(null);
 
 /** Sites opened in the task browser, per connection profile, for New tab suggestions. */

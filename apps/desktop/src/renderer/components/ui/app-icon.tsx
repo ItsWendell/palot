@@ -29,6 +29,7 @@ import {
   Wrench,
   X,
   type LucideIcon,
+  Mic,
 } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore, type ComponentProps } from "react";
 import { cn } from "@/lib/cn";
@@ -61,6 +62,7 @@ const APP_ICONS = {
   sidebarTrailing: { fallback: PanelRight, symbol: "sidebar.right" },
   tools: { fallback: Wrench, symbol: "wrench.and.screwdriver" },
   usage: { fallback: BarChart3, symbol: "chart.bar" },
+  voice: { fallback: Mic, symbol: "mic" },
   warning: { fallback: TriangleAlert, symbol: "exclamationmark.triangle" },
   chevronUp: { fallback: ChevronUp, symbol: "chevron.up" },
 } as const satisfies Record<string, { fallback: LucideIcon; symbol: string }>;

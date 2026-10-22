@@ -16,6 +16,7 @@ import {
   ZoomIn,
 } from "lucide-react";
 import {
+  Children,
   createContext,
   isValidElement,
   memo,
@@ -42,7 +43,13 @@ import { MarkdownCodeBlock } from "./markdown-code-block";
 import type { CodeAnimationRange } from "./highlighted-code";
 import { PalotMarkdown, useMarkdownBlockStreaming } from "./palot-markdown-react";
 import { ImageLightbox } from "./read-image-preview";
-import { workspaceRelativePath } from "./workbench-tabs/workspace-files-tab";
+import {
+  fileReferenceHref,
+  fileReferenceLabel,
+  parseFileReference,
+  workspaceRelativePath,
+  type FileReference,
+} from "../lib/file-reference";
 import { MarkdownInlineMath, MarkdownMath } from "./markdown-rich";
 import {
   DropdownMenu,
@@ -61,64 +68,11 @@ const MARKDOWN_EXTENSIONS = [
   indentedCodeExtension(),
   streamingMarkdownExtension(),
 ];
-const WORKSPACE_FILE_EXTENSIONS = new Set([
-  "c",
-  "cc",
-  "cpp",
-  "cs",
-  "css",
-  "docx",
-  "env",
-  "fish",
-  "gif",
-  "go",
-  "gql",
-  "graphql",
-  "h",
-  "hpp",
-  "html",
-  "java",
-  "jpeg",
-  "jpg",
-  "js",
-  "json",
-  "jsonc",
-  "jsx",
-  "kt",
-  "lock",
-  "md",
-  "mdx",
-  "mp3",
-  "mp4",
-  "ogg",
-  "opus",
-  "pdf",
-  "png",
-  "pptx",
-  "py",
-  "rb",
-  "rs",
-  "scss",
-  "sh",
-  "sql",
-  "swift",
-  "toml",
-  "ts",
-  "tsx",
-  "txt",
-  "wav",
-  "webm",
-  "webp",
-  "xml",
-  "xlsx",
-  "yaml",
-  "yml",
-  "zsh",
-]);
 const MarkdownRenderContext = createContext({
   baseUrl: undefined as string | undefined,
   idPrefix: "markdown",
   passiveMedia: false,
+  remoteFavicons: false,
   streaming: false,
 });
 const MarkdownLinkContext = createContext(false);
@@ -129,6 +83,8 @@ export type WorkspaceFileOpenHandler = (
 const MarkdownWorkspaceDirectoryContext = createContext<string | undefined>(undefined);
 const MarkdownWorkspaceLocationContext = createContext<LocationRef | undefined>(undefined);
 const MarkdownWorkspaceFileContext = createContext<WorkspaceFileOpenHandler | null>(null);
+/** `~` is the server's home; only a local connection can open it. */
+const MarkdownHomePathsContext = createContext(false);
 const MarkdownWebLinkContext = createContext<((url: string) => void) | null>(null);
 const MarkdownSessionLinkContext = createContext<((sessionID: string) => void) | null>(null);
 
@@ -152,10 +108,7 @@ function MarkdownDetails({
   );
 }
 
-export interface MarkdownFileReference {
-  path: string;
-  line?: number;
-}
+export type MarkdownFileReference = FileReference;
 
 export function MarkdownWorkspaceProvider({
   children,
@@ -164,6 +117,7 @@ export function MarkdownWorkspaceProvider({
   onOpenSession,
   workspaceDirectory,
   workspaceLocation,
+  allowHomePaths = false,
 }: {
   children?: ReactNode;
   onOpenFile(reference: MarkdownFileReference, event?: ReactMouseEvent | ReactKeyboardEvent): void;
@@ -172,19 +126,23 @@ export function MarkdownWorkspaceProvider({
   workspaceDirectory?: string;
   /** Lets local workspace images load through the task's own OpenCode server. */
   workspaceLocation?: LocationRef;
+  /** Link `~/…` paths; only meaningful when the server shares this machine's home. */
+  allowHomePaths?: boolean;
 }) {
   return (
-    <MarkdownWorkspaceLocationContext.Provider value={workspaceLocation}>
-      <MarkdownWorkspaceDirectoryContext.Provider value={workspaceDirectory}>
-        <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
-          <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
-            <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
-              {children}
-            </MarkdownSessionLinkContext.Provider>
-          </MarkdownWebLinkContext.Provider>
-        </MarkdownWorkspaceFileContext.Provider>
-      </MarkdownWorkspaceDirectoryContext.Provider>
-    </MarkdownWorkspaceLocationContext.Provider>
+    <MarkdownHomePathsContext.Provider value={allowHomePaths}>
+      <MarkdownWorkspaceLocationContext.Provider value={workspaceLocation}>
+        <MarkdownWorkspaceDirectoryContext.Provider value={workspaceDirectory}>
+          <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
+            <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
+              <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
+                {children}
+              </MarkdownSessionLinkContext.Provider>
+            </MarkdownWebLinkContext.Provider>
+          </MarkdownWorkspaceFileContext.Provider>
+        </MarkdownWorkspaceDirectoryContext.Provider>
+      </MarkdownWorkspaceLocationContext.Provider>
+    </MarkdownHomePathsContext.Provider>
   );
 }
 
@@ -325,16 +283,13 @@ function milliseconds(value: string | number | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function MarkdownLink({
-  href,
-  children,
-  remoteFavicons,
-  ...props
-}: MarkdownComponentProps<"a"> & { remoteFavicons: boolean }) {
-  const { baseUrl, idPrefix } = useContext(MarkdownRenderContext);
+function MarkdownLink({ href, children, ...props }: MarkdownComponentProps<"a">) {
+  const { baseUrl, idPrefix, remoteFavicons } = useContext(MarkdownRenderContext);
   const openWorkspaceFile = useContext(MarkdownWorkspaceFileContext);
   const openWebLink = useContext(MarkdownWebLinkContext);
-  const fileReference = !baseUrl && openWorkspaceFile ? parseWorkspaceFileReference(href) : null;
+  const allowHome = useContext(MarkdownHomePathsContext);
+  const fileReference =
+    !baseUrl && openWorkspaceFile ? parseFileReference(href, { source: "href", allowHome }) : null;
   if (fileReference && openWorkspaceFile) {
     return (
       <MarkdownLinkContext.Provider value>
@@ -348,7 +303,11 @@ function MarkdownLink({
   const isWebUrl = Boolean(
     resolvedHref && (/^https?:\/\//i.test(resolvedHref) || resolvedHref.startsWith("//")),
   );
-  const icon = markdownLinkIcon(resolvedHref, remoteFavicons);
+  // Like OpenCode, only labelled web links get a site icon; email, files and image links stay plain.
+  const icon =
+    isWebUrl && !containsMarkdownImage(children)
+      ? markdownLinkIcon(resolvedHref, remoteFavicons)
+      : null;
   return (
     <MarkdownLinkContext.Provider value>
       <a
@@ -380,6 +339,16 @@ function MarkdownLink({
         )}
       </a>
     </MarkdownLinkContext.Provider>
+  );
+}
+
+function containsMarkdownImage(children: ReactNode): boolean {
+  return Children.toArray(children).some(
+    (child) =>
+      isValidElement<{ children?: ReactNode }>(child) &&
+      (child.type === MarkdownImage ||
+        child.type === "img" ||
+        containsMarkdownImage(child.props.children)),
   );
 }
 
@@ -423,15 +392,26 @@ function RemoteMarkdownLinkIcon({ faviconUrl }: { faviconUrl: string }) {
 
 function MarkdownInlineCode({ children, className, ...props }: MarkdownComponentProps<"code">) {
   const openWorkspaceFile = useContext(MarkdownWorkspaceFileContext);
+  const allowHome = useContext(MarkdownHomePathsContext);
+  const linked = useContext(MarkdownLinkContext);
   const value = projectStreamingCode(children).code;
+  // Code that is exactly a web URL opens like a link; code inside a link already goes there.
+  const url = !className && !linked ? inlineCodeUrl(value) : undefined;
+  if (url) {
+    return (
+      <MarkdownLink href={url}>
+        <code {...props}>{children}</code>
+      </MarkdownLink>
+    );
+  }
   const reference =
     !className && !value.includes("\n") && openWorkspaceFile
-      ? parseWorkspaceFileReference(value)
+      ? parseFileReference(value, { source: "code", allowHome })
       : null;
   if (reference && openWorkspaceFile) {
     return (
       <MarkdownFileLink reference={reference} onOpen={openWorkspaceFile}>
-        {workspaceFileLabel(reference)}
+        {fileReferenceLabel(reference)}
       </MarkdownFileLink>
     );
   }
@@ -453,53 +433,30 @@ function MarkdownFileLink({
 }) {
   const workspaceDirectory = useContext(MarkdownWorkspaceDirectoryContext);
   const icon = workspaceFileIcon(reference.path);
-  const absolutePath = resolveFileReferenceAbsolutePath(reference.path, workspaceDirectory);
-  const fileHref = absolutePath
-    ? `file://${encodeURI(absolutePath)}${reference.line ? `#L${reference.line}` : ""}`
-    : `file://${encodeURI(reference.path)}${reference.line ? `#L${reference.line}` : ""}`;
+  const fileHref = fileReferenceHref(reference, workspaceDirectory);
+  const label = fileReferenceLabel(reference);
+  const open = (event: ReactMouseEvent | ReactKeyboardEvent) => {
+    event.preventDefault();
+    onOpen(reference, event);
+  };
 
   return (
     <a
       href={fileHref}
-      title={workspaceFileLabel(reference)}
-      aria-label={`Open ${workspaceFileLabel(reference)}`}
-      onClick={(event) => {
-        event.preventDefault();
-        if (event.metaKey || event.ctrlKey) {
-          onOpen(reference, event);
-        } else {
-          onOpen(reference);
-        }
+      role={fileHref ? undefined : "link"}
+      tabIndex={fileHref ? undefined : 0}
+      title={label}
+      aria-label={`Open ${label}`}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (!fileHref && event.key === "Enter") open(event);
       }}
-      className="inline-flex max-w-full cursor-pointer items-center gap-1 text-info underline-offset-4 outline-none hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring"
+      className="inline-flex max-w-full cursor-pointer items-center gap-1 text-info underline-offset-4 outline-none hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70"
     >
       {icon}
       <span className="min-w-0 truncate">{children}</span>
     </a>
   );
-}
-
-function resolveFileReferenceAbsolutePath(
-  filePath: string,
-  workspaceDirectory?: string,
-): string | null {
-  if (filePath.startsWith("file://")) {
-    try {
-      return decodeURIComponent(new URL(filePath).pathname);
-    } catch {
-      return null;
-    }
-  }
-  if (filePath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(filePath)) {
-    return filePath;
-  }
-  if (filePath.startsWith("~/")) {
-    return filePath;
-  }
-  if (workspaceDirectory) {
-    return `${workspaceDirectory.replace(/\/+$/, "")}/${filePath.replace(/^\.\//, "")}`;
-  }
-  return null;
 }
 
 function workspaceFileIcon(path: string) {
@@ -696,6 +653,7 @@ function MarkdownImageView({
 }
 
 const MARKDOWN_COMPONENTS = {
+  a: MarkdownLink,
   code: MarkdownInlineCode,
   img: MarkdownImage,
   pre: MarkdownPre,
@@ -772,21 +730,14 @@ const MarkdownBody = memo(function MarkdownBody({
   const generatedID = useId().replaceAll(":", "");
   const idPrefix = `markdown-${generatedID}`;
   const context = useMemo(
-    () => ({ baseUrl, idPrefix, passiveMedia, streaming }),
-    [baseUrl, idPrefix, passiveMedia, streaming],
-  );
-  const components = useMemo<MarkdownComponents>(
-    () => ({
-      ...MARKDOWN_COMPONENTS,
-      a: (props) => <MarkdownLink {...props} remoteFavicons={remoteFavicons} />,
-    }),
-    [remoteFavicons],
+    () => ({ baseUrl, idPrefix, passiveMedia, remoteFavicons, streaming }),
+    [baseUrl, idPrefix, passiveMedia, remoteFavicons, streaming],
   );
   return (
     <MarkdownRenderContext.Provider value={context}>
       <PalotMarkdown
         allowHtml={false}
-        components={components}
+        components={MARKDOWN_COMPONENTS}
         extensions={extensions}
         frontmatter={false}
         headingIds
@@ -940,109 +891,6 @@ function mathExtension(): MarkdownExtension {
   };
 }
 
-const POSIX_ROOT_PREFIXES = [
-  "/Users/",
-  "/home/",
-  "/tmp/",
-  "/var/",
-  "/etc/",
-  "/opt/",
-  "/mnt/",
-  "/Volumes/",
-  "/private/",
-  "/root/",
-  "/usr/",
-  "/workspace/",
-  "/workspaces/",
-];
-
-const KNOWN_EXTENSIONLESS_FILES = new Set([
-  "dockerfile",
-  "makefile",
-  "gnumakefile",
-  "justfile",
-  "gemfile",
-  "procfile",
-  "brewfile",
-  "caddyfile",
-  "vagrantfile",
-  "jenkinsfile",
-  "license",
-  "licence",
-  "copying",
-  "notice",
-  "readme",
-  "changelog",
-]);
-
-function parseWorkspaceFileReference(value: string | undefined): MarkdownFileReference | null {
-  if (!value) return null;
-  let path = value.trim();
-  if (!path || /^(?:https?|mailto):/i.test(path)) return null;
-
-  if (path.startsWith("<") && path.endsWith(">")) {
-    path = path.slice(1, -1).trim();
-  }
-
-  let line: number | undefined;
-  const lineLabel = path.match(/\s+\(line\s+(\d+)\)$/i);
-  if (lineLabel) {
-    line = Number(lineLabel[1]);
-    path = path.slice(0, lineLabel.index).trim();
-  }
-
-  const hashLine = path.match(/#L(\d+)(?:-L?\d+|[Cc]\d+)?$/i);
-  if (hashLine) {
-    line ??= Number(hashLine[1]);
-    path = path.slice(0, hashLine.index);
-  }
-
-  const queryIndex = path.indexOf("?");
-  if (queryIndex >= 0) {
-    const search = new URLSearchParams(path.slice(queryIndex + 1));
-    const start = Number(search.get("start"));
-    if (!line && Number.isSafeInteger(start) && start > 0) line = start;
-    path = path.slice(0, queryIndex);
-  }
-
-  const colonLine = path.match(/:(\d+)(?::\d+)?$/);
-  if (colonLine) {
-    line ??= Number(colonLine[1]);
-    path = path.slice(0, colonLine.index);
-  }
-
-  if (path.startsWith("file://")) {
-    try {
-      const parsed = new URL(path);
-      path = decodeURIComponent(parsed.pathname);
-      if (process.platform === "win32" && path.startsWith("/")) {
-        path = path.slice(1);
-      }
-    } catch {
-      return null;
-    }
-  }
-
-  path = path.replaceAll("\\", "/");
-  if (!likelyWorkspaceFile(path)) return null;
-  return { path, ...(line ? { line } : {}) };
-}
-
-function likelyWorkspaceFile(path: string): boolean {
-  if (!path || path.endsWith("/")) return false;
-  if (POSIX_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
-  if (path.startsWith("~/") || /^[A-Za-z]:\//.test(path)) return true;
-
-  const name = path.split("/").at(-1) ?? "";
-  if (KNOWN_EXTENSIONLESS_FILES.has(name.toLowerCase())) return true;
-  const extension = name.match(/\.([a-z0-9+_-]{1,15})$/i)?.[1]?.toLowerCase();
-  return Boolean(extension && (path.includes("/") || WORKSPACE_FILE_EXTENSIONS.has(extension)));
-}
-
-function workspaceFileLabel(reference: MarkdownFileReference): string {
-  return `${reference.path}${reference.line ? ` (line ${reference.line})` : ""}`;
-}
-
 function indentedCodeExtension(): MarkdownExtension {
   return {
     name: "palot-indented-code",
@@ -1128,6 +976,8 @@ function autoLinkText(value: string): InlineNode[] {
     const start = match.index;
     if (insideIncompleteLinkDestination(value, start)) continue;
     const literal = trimAutoLinkLiteral(match[0]);
+    // Like GFM, a web autolink needs a host right after its prefix.
+    if (/^(?:https?:\/\/|www\.)(?![A-Za-z0-9-])/i.test(literal)) continue;
     const href = literal.startsWith("www.")
       ? `http://${literal}`
       : literal.startsWith("http://") ||
@@ -1143,12 +993,28 @@ function autoLinkText(value: string): InlineNode[] {
   return nodes.length > 0 ? nodes : [{ type: "text", value }];
 }
 
+/** GFM-style trailing punctuation backtracking, matching OpenCode's marked autolinks. */
 function trimAutoLinkLiteral(value: string): string {
   let end = value.length;
-  while (/[.,!?;:]$/.test(value.slice(0, end))) end -= 1;
-  while (value[end - 1] === ")" && unbalancedClosing(value.slice(0, end), "(", ")")) end -= 1;
-  while (value[end - 1] === "]" && unbalancedClosing(value.slice(0, end), "[", "]")) end -= 1;
+  let previous = -1;
+  while (end !== previous) {
+    previous = end;
+    while (/[.,!?;:*_'"~]$/.test(value.slice(0, end))) end -= 1;
+    while (value[end - 1] === ")" && unbalancedClosing(value.slice(0, end), "(", ")")) end -= 1;
+    while (value[end - 1] === "]" && unbalancedClosing(value.slice(0, end), "[", "]")) end -= 1;
+  }
   return value.slice(0, end);
+}
+
+/** OpenCode links inline code only when the whole span is one web URL. */
+function inlineCodeUrl(value: string): string | undefined {
+  const href = value.trim().replace(/[),.;!?]+$/, "");
+  if (!/^https?:\/\/[^\s<>()`"']+$/i.test(href)) return undefined;
+  try {
+    return new URL(href).href;
+  } catch {
+    return undefined;
+  }
 }
 
 function unbalancedClosing(value: string, open: string, close: string): boolean {
