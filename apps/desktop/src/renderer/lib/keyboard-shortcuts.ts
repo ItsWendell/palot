@@ -37,6 +37,7 @@ export const KEYBOARD_SHORTCUT_GROUPS: readonly { id: KeyboardShortcutGroup; lab
 export type KeyboardShortcutID =
   | "palette.open"
   | "task.new"
+  | "chat.new"
   | "task.choose-project"
   | "settings.open"
   | "navigation.toggle"
@@ -105,6 +106,7 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     required: true,
   },
   { id: "task.new", group: "general", label: "New task", keys: ["Mod", "N"] },
+  { id: "chat.new", group: "general", label: "New chat", keys: ["Mod", "Alt", "N"] },
   {
     id: "task.choose-project",
     group: "general",
@@ -752,7 +754,11 @@ export function shortcutBindingProblem(
       ? "Include ⌘ or ⌃ so typing isn't interrupted."
       : "Include Ctrl so typing isn't interrupted.";
   }
-  if (shortcutScope(shortcut) === "global" && modifiers.has("Alt")) {
+  if (
+    shortcutScope(shortcut) === "global" &&
+    modifiers.has("Alt") &&
+    !sameShortcut(keys, shortcut.keys)
+  ) {
     return `${mac ? "⌥" : "Alt"} isn't available for shortcuts that work everywhere.`;
   }
   const system = SYSTEM_SHORTCUTS.find(

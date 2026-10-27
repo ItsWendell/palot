@@ -102,6 +102,23 @@ it("combines connected owners and refreshes only the server whose task changed",
   ).toEqual(["b"]);
 });
 
+it("labels project-free chats as Chat instead of their folder's project", async () => {
+  const chat = {
+    ...sessionInfo("chat-a"),
+    location: { directory: "/home/me/.palot/chats/2026-10-27-hello-abc123" },
+  };
+  vi.mocked(mocks.clients.get("a")!.session.list).mockResolvedValue({ data: [chat] } as never);
+  await installTray({
+    currentDirectory: "/unused",
+    displayName: "Test",
+    appID: "test",
+    iconVariant: "test",
+  });
+  await vi.advanceTimersByTimeAsync(500);
+  const recent = mocks.publish.mock.calls.at(-1)![0].recent as Array<{ detail: string }>;
+  expect(recent.map((item) => item.detail.split(" · ")[1])).toEqual(["Chat", "Project"]);
+});
+
 function runtime(profileID: string): OpenCodeRuntimeStatus {
   return { profileID, connectionID: profileID, connected: true } as OpenCodeRuntimeStatus;
 }

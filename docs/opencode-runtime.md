@@ -20,7 +20,7 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot 0.20.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
+Palot 0.21.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
 release-smoke runtime are pinned to **2.2.0** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
@@ -221,6 +221,16 @@ the setting changed and Full access tasks that still carry older ask rules. In a
 with asking on and no saved rule, the tool handler fails closed: when the task's own rules would
 not make OpenCode ask, it adds the ask rules and has the model retry.
 
+Agents organize tasks with `settle_task`, `snooze_task`, `pin_task` and `archive_task`,
+named after the verbs because Code Mode's `search` ranks tool paths far above descriptions;
+renaming uses OpenCode's own `session_rename`. Settling records the task's latest activity,
+and a running turn's end is newer activity, so a task settling itself mid-turn would return
+at once. Like T3 Code, `settle_task` on the caller's own running task waits for
+`session.execution.succeeded` and then settles through the later of the family's activity
+and that event's time; a failed or interrupted turn, or moving the task back to the Inbox
+first, cancels it. The wait is in memory and ends when the tools detach. Settling another
+task that is running or waiting on a request is refused with `task_busy`.
+
 Against a 2.0.x service, Palot reads the renamed fields as absent: reasoning
 presentation hints, provider-structured web search results and compaction `recent`
 text are not shown. Copying a task from a 2.0.x server to a 2.1 server can fail
@@ -241,6 +251,30 @@ published tunnel-management API, so Palot does not provision a separate tunnel.
 Starting with 2.0.25, `opencode pair --remote` enables remote access through the official CLI.
 That action exposes the service through OpenTunnel and can restart the shared
 service. Run it only when intended, then generate fresh pairing details in Palot.
+
+## Project-free chats
+
+OpenCode has no session without a directory, and every directory resolves to a
+project (a non-VCS folder becomes a directory project). Palot's chats therefore
+each get their own folder, `<default>/.palot/chats/<date>-<slug>-<id>`, where
+`<default>` is the folder `location.get` returns without a location: the server's
+working directory, which is the home folder for Palot's local service. Palot
+creates the folder by writing a `.palot-chat` marker with `file.write`, which
+creates parent directories on local and remote servers, then calls
+`session.create` there. Both operations exist since 2.0.7.
+
+OpenCode resolves a folder to the nearest enclosing `.git` or `.hg`, so a chat folder
+inside a repository would join that repository's project. Palot therefore refuses
+to start chats when the default folder is inside a repository or is one (its
+`location.get` project is rooted elsewhere, or that project has a VCS), as T3
+Code does for its scratch folders. Desktop E2E runs live inside the checkout, so
+the `project-free-chat` scenario sets `homeOutsideCheckout`, which links the
+isolated home to a temporary folder outside it.
+
+Palot recognizes chats by that path alone. It shows their sessions as chats and
+removes their directory projects from project lists and pickers, and the tray labels them "Chat".
+"Move to project…" uses `session.move`, after which the session is an ordinary
+task in that project. Archiving or moving a chat leaves its folder on the server.
 
 ## Experimental browser
 

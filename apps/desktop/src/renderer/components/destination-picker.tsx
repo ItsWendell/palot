@@ -20,10 +20,12 @@ export function DestinationPicker({
   value,
   projects = [],
   onChange,
+  onChat,
 }: {
   value: NewTaskDestination;
   projects?: PalotProject[];
   onChange?(destination: NewTaskDestination): void;
+  onChat?(): void;
 }) {
   const runtime = useAtomValue(runtimeAtom);
   const disabled = useAtomValue(disabledProfileIDsAtom);
@@ -38,7 +40,8 @@ export function DestinationPicker({
   const project = selected?.projects.find((entry) => entry.id === value.projectID);
   const offline =
     value.profileID === runtime?.profileID ? !runtime.connected : !selected?.runtime?.connected;
-  const sections: ComposerPickerSection<NewTaskDestination>[] = groups.map((entry) => {
+  type Destination = NewTaskDestination | "chat";
+  const sections: ComposerPickerSection<Destination>[] = groups.map((entry) => {
     const isDisabled = disabled.includes(entry.profile.id);
     const connected =
       entry.profile.id === runtime?.profileID ? runtime.connected : entry.runtime?.connected;
@@ -60,9 +63,21 @@ export function DestinationPicker({
       })),
     };
   });
+  if (onChat)
+    sections.unshift({
+      key: "chat",
+      options: [
+        {
+          key: "chat",
+          value: "chat",
+          label: "No project — just chat",
+          description: "Start a chat on the current server",
+        },
+      ],
+    });
 
   return (
-    <ComposerPicker<NewTaskDestination>
+    <ComposerPicker<Destination>
       size="context"
       triggerRole="combobox"
       label={project ? projectName(project) : "Choose destination"}
@@ -89,7 +104,7 @@ export function DestinationPicker({
       selectedKey={destinationKey(value.profileID, project ?? null)}
       emptyLabel="No destinations found"
       errorTitle="Could not change the destination"
-      onSelect={(option) => onChange?.(option.value)}
+      onSelect={(option) => (option.value === "chat" ? onChat?.() : onChange?.(option.value))}
     />
   );
 }

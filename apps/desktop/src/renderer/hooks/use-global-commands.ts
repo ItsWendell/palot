@@ -12,6 +12,7 @@ import {
   GitPullRequest,
   Layers2,
   Inbox,
+  MessageCircle,
   MessageSquare,
   Mic,
   PhoneOff,
@@ -35,7 +36,7 @@ import {
 } from "lucide-react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useSyncExternalStore } from "react";
 import type { PalotSession } from "../../shared";
 import { useAttentionItems } from "./use-attention-items";
@@ -99,6 +100,7 @@ export function useGlobalCommands({
 }: UseGlobalCommandsOptions) {
   // Command shortcuts follow personal bindings.
   useShortcutOverrides();
+  const navigate = useNavigate();
   const allProjects = useProjectCatalog();
   const loadedSessions = useSessionCatalog();
   const queryClient = useQueryClient();
@@ -351,6 +353,18 @@ export function useGlobalCommands({
     suggested: true,
     kind: "action",
     run: () => openNewTask(),
+  });
+  commands.push({
+    id: "chat.new",
+    title: "New chat",
+    description: "Ask a question without choosing a project",
+    group: "actions",
+    icon: MessageCircle,
+    keywords: ["create", "conversation", "question", "no project"],
+    shortcut: boundShortcutKeys("chat.new"),
+    suggested: true,
+    kind: "action",
+    run: () => navigate({ to: "/new", search: { chat: true } }),
   });
   if (projects.length > 0) {
     commands.push({

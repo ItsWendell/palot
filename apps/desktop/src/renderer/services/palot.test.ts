@@ -240,7 +240,11 @@ describe("palot over the official OpenCode client", () => {
     async (operation) => {
       const mutation = Promise.withResolvers<void>();
       const mutate = vi.fn().mockReturnValue(mutation.promise);
-      const get = vi.fn().mockResolvedValue(session);
+      const get = vi
+        .fn()
+        .mockResolvedValue(
+          operation === "move" ? { ...session, location: { directory: "/new-worktree" } } : session,
+        );
       setOpenCodeClientForTest(
         client({
           session: { get, move: mutate, revert: { stage: mutate, clear: mutate, commit: mutate } },

@@ -8,6 +8,7 @@ import {
   FolderPlus,
   FolderGit2,
   GitBranch,
+  MessageCircle,
   Plus,
   Undo2,
   Upload,
@@ -48,6 +49,7 @@ import {
   type SidebarSessionStatus,
 } from "../lib/sidebar-session-status";
 import { cn } from "../lib/cn";
+import { isChatSession, withoutChatProjects } from "../lib/chats";
 import { ScrollArea } from "./ui/scroll-area";
 import { showErrorToast } from "../lib/toast-error";
 import { formatSnoozeWakeTime } from "../lib/session-snooze";
@@ -98,7 +100,8 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { toast } from "./ui/toast";
 import { INBOX_CARD_ACTION_BUTTON_CLASS } from "./inbox-card-surface";
-import { SnoozeMenuButton } from "./inbox-sidebar";
+import { SectionTrigger, SnoozeMenuButton } from "./inbox-sidebar";
+import { MoveToProjectDialog } from "./move-to-project-dialog";
 import {
   SidebarFluidList,
   sectionChevronRevealClass,
@@ -167,8 +170,19 @@ export function ProjectSidebarContent({
     [groupedScheduledSessionIDs, sessions],
   );
   const groups = useMemo(
-    () => groupSessions(projects, visibleSessions),
+    () =>
+      groupSessions(
+        withoutChatProjects(projects),
+        visibleSessions.filter((session) => !isChatSession(session)),
+      ),
     [projects, visibleSessions],
+  );
+  const chats = useMemo(
+    () =>
+      visibleSessions.filter(
+        (session) => isChatSession(session) && !session.parentID && !session.archivedAt,
+      ),
+    [visibleSessions],
   );
   const recentSessions = useMemo(() => {
     const activeSessionIDs = new Set(
@@ -603,6 +617,52 @@ export function ProjectSidebarContent({
                 <ScrollArea className="h-full min-h-0">
                   <nav aria-label="Projects and tasks">
                     <SidebarMenu>
+                      {chats.length ? (
+                        <SidebarMenuItem>
+                          <Collapsible
+                            open={sectionOpen("chats")}
+                            onOpenChange={(open) => setSectionOpen("chats", open)}
+                          >
+                            <SectionTrigger
+                              title="Chats"
+                              count={chats.length}
+                              open={sectionOpen("chats")}
+                            />
+                            <CollapsibleContent>
+                              <SidebarFluidList gapClick={{ maxDistance: 2 }}>
+                                <SidebarMenuSub className="mx-0 w-full translate-x-0 gap-px border-l-0 px-0 py-0.5">
+                                  {chats.map((session) => {
+                                    const item = inboxItems.get(session.id);
+                                    return (
+                                      <SessionRow
+                                        key={session.id}
+                                        session={session}
+                                        selected={session.id === activeSessionID}
+                                        status={sidebarSessionStatus(
+                                          executionStates.get(session.id),
+                                        )}
+                                        attention={attentionSessionIDs.has(session.id)}
+                                        triageThrough={item?.activityThrough}
+                                        triageSection={item?.section}
+                                        snoozedUntil={item?.snoozedUntil ?? null}
+                                        canSettle={Boolean(
+                                          item?.canSettle && item.section !== "settled",
+                                        )}
+                                        onSelect={selectSession}
+                                        onPreload={preloadSession}
+                                        onSnooze={snoozeSession}
+                                        onSettle={settleSession}
+                                        onWake={wakeSession}
+                                        onUnsettle={unsettleSession}
+                                      />
+                                    );
+                                  })}
+                                </SidebarMenuSub>
+                              </SidebarFluidList>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        </SidebarMenuItem>
+                      ) : null}
                       {groups.map(({ project, sessions: projectSessions }) => {
                         const projectKey = JSON.stringify([runtime?.profileID, project.id]);
                         const projectOpen =
@@ -753,7 +813,7 @@ export function ProjectSidebarContent({
                         );
                       })}
                     </SidebarMenu>
-                    {projects.length === 0 ? (
+                    {projects.length === 0 && chats.length === 0 ? (
                       <Empty className="min-h-24 border px-3 py-4">
                         <EmptyHeader>
                           <EmptyMedia variant="icon">
@@ -841,8 +901,10 @@ const SessionRow = memo(function SessionRow({
   onUnsettle?(sessionID: string, through: ActivityWatermark): void;
 }) {
   const title = useSessionTitleEditor(session);
+  const chat = isChatSession(session);
+  const [moveOpen, setMoveOpen] = useState(false);
   const windowDrag = useSessionWindowDrag(session.id);
-  const isAdditionalCheckout = sessionIsAdditionalCheckout(session, project);
+  const isAdditionalCheckout = !chat && sessionIsAdditionalCheckout(session, project);
   const state = sidebarSessionState(
     status ?? sidebarSessionStatus(undefined, session.outcome),
     attention,
@@ -955,6 +1017,7 @@ const SessionRow = memo(function SessionRow({
               title.start();
             }}
           >
+            {chat ? <MessageCircle aria-hidden="true" /> : null}
             <span className="min-w-0 flex-1 truncate">{session.title ?? "Untitled task"}</span>
             {/* Metadata yields to the actions with opacity only, so nothing visibly moves. */}
             <span
@@ -973,7 +1036,7 @@ const SessionRow = memo(function SessionRow({
                   <GitBranch aria-hidden="true" />
                 </span>
               ) : null}
-              <PullRequestBadge links={pullRequests} />
+              {chat ? null : <PullRequestBadge links={pullRequests} />}
               <SessionStatusIndicator status={state} reserveSpace={recent} />
               {recent ? (
                 <time
@@ -998,18 +1061,28 @@ const SessionRow = memo(function SessionRow({
   );
 
   return (
-    <SessionContextMenu
-      trigger={row}
-      session={session}
-      project={project}
-      moveDisabled={state === "running"}
-      onSnooze={snooze}
-      onRename={title.start}
-    >
-      {canSettle && triageThrough !== undefined ? (
-        <ContextMenuItem onClick={settle}>Settle</ContextMenuItem>
+    <>
+      {moveOpen ? (
+        <MoveToProjectDialog session={session} onClose={() => setMoveOpen(false)} />
       ) : null}
-    </SessionContextMenu>
+      <SessionContextMenu
+        trigger={row}
+        session={session}
+        project={project}
+        moveDisabled={state === "running"}
+        onSnooze={snooze}
+        onRename={title.start}
+      >
+        {chat ? (
+          <ContextMenuItem disabled={state === "running"} onClick={() => setMoveOpen(true)}>
+            Move to project…
+          </ContextMenuItem>
+        ) : null}
+        {canSettle && triageThrough !== undefined ? (
+          <ContextMenuItem onClick={settle}>Settle</ContextMenuItem>
+        ) : null}
+      </SessionContextMenu>
+    </>
   );
 });
 

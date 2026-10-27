@@ -1,5 +1,5 @@
 import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
-import { CircleAlert, FolderGit2, GitBranch } from "lucide-react";
+import { CircleAlert, FolderGit2, GitBranch, MessageCircle } from "lucide-react";
 import { catalogSessionIsUnread } from "../hooks/use-session-info";
 import { cn } from "../lib/cn";
 import {
@@ -96,6 +96,9 @@ export function InboxCardSurface({
         <div className="flex min-w-0 items-center gap-2 text-meta text-muted-foreground">
           <span className="flex min-w-0 flex-1 items-center gap-1.5 font-medium text-sidebar-foreground/70">
             {connectionBadge}
+            {item.kind === "chat" ? (
+              <MessageCircle className="size-3.5 shrink-0" aria-hidden="true" />
+            ) : null}
             <span className="truncate">{item.projectName}</span>
           </span>
           {visualState === "running" ? (
@@ -123,31 +126,34 @@ export function InboxCardSurface({
             <span className="min-w-0 flex-1 truncate">{item.session.title ?? "Untitled task"}</span>
           </div>
         )}
-        <div
-          className="mt-1 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground"
-          data-inbox-location
-        >
-          {detachedWorktree ? (
-            <FolderGit2
-              className="size-[11px] shrink-0 text-sidebar-foreground/55 transition-colors group-hover/inbox-card:text-sidebar-foreground/70"
-              aria-hidden="true"
-            />
-          ) : (
-            <GitBranch
-              className="size-[11px] shrink-0 text-sidebar-foreground/55 transition-colors group-hover/inbox-card:text-sidebar-foreground/70"
-              aria-hidden="true"
-            />
-          )}
-          <span
-            className="min-w-0 -translate-y-px truncate"
-            title={item.session.location.directory}
+        {/* A chat's folder has no branch, worktree or pull request. */}
+        {item.kind === "chat" ? null : (
+          <div
+            className="mt-1 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground"
+            data-inbox-location
           >
-            {branchLabel(vcs, item)}
-          </span>
-          {pullRequest ? (
-            <span className="ml-auto flex shrink-0 items-center">{pullRequest}</span>
-          ) : null}
-        </div>
+            {detachedWorktree ? (
+              <FolderGit2
+                className="size-[11px] shrink-0 text-sidebar-foreground/55 transition-colors group-hover/inbox-card:text-sidebar-foreground/70"
+                aria-hidden="true"
+              />
+            ) : (
+              <GitBranch
+                className="size-[11px] shrink-0 text-sidebar-foreground/55 transition-colors group-hover/inbox-card:text-sidebar-foreground/70"
+                aria-hidden="true"
+              />
+            )}
+            <span
+              className="min-w-0 -translate-y-px truncate"
+              title={item.session.location.directory}
+            >
+              {branchLabel(vcs, item)}
+            </span>
+            {pullRequest ? (
+              <span className="ml-auto flex shrink-0 items-center">{pullRequest}</span>
+            ) : null}
+          </div>
+        )}
       </div>
       <div className="absolute top-0 right-1.5 z-20 flex items-center gap-0 opacity-0 transition-opacity group-hover/inbox-card:opacity-100 group-has-[:focus-visible]/inbox-card:opacity-100 group-has-[[data-popup-open]]/inbox-card:opacity-100">
         {actions}

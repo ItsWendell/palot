@@ -5,6 +5,7 @@ import type {
   SessionRequestSnapshot,
   SessionTriageSnapshot,
 } from "../../shared";
+import { isChatSession } from "./chats";
 import {
   actionableRequestViews,
   projectForSession,
@@ -14,9 +15,11 @@ import {
 
 export type InboxSection = "pinned" | "inbox" | "snoozed" | "settled";
 export type InboxOrdering = "newest" | "oldest" | "attention";
+export const CHATS_PROJECT_FILTER = "@chats";
 
 export interface InboxSessionView {
   session: PalotSession;
+  kind: "task" | "chat";
   project: PalotProject | null;
   projectName: string;
   section: InboxSection;
@@ -36,6 +39,7 @@ export interface InboxSessionView {
 export function sameInboxSessionView(left: InboxSessionView, right: InboxSessionView): boolean {
   return (
     left.session === right.session &&
+    left.kind === right.kind &&
     left.project === right.project &&
     left.projectName === right.projectName &&
     left.section === right.section &&
@@ -51,6 +55,12 @@ export function sameInboxSessionView(left: InboxSessionView, right: InboxSession
     left.activityThrough.updatedAt === right.activityThrough.updatedAt &&
     left.activityThrough.sessionID === right.activityThrough.sessionID
   );
+}
+
+export function inboxMatchesProject(item: InboxSessionView, projectID: string | null): boolean {
+  if (projectID === null) return true;
+  if (projectID === CHATS_PROJECT_FILTER) return item.kind === "chat";
+  return item.kind !== "chat" && item.project?.id === projectID;
 }
 
 export type InboxSessionState = "attention" | "failed" | "running" | "unread" | null;
@@ -215,7 +225,8 @@ export function projectSessionInbox(input: {
     const failed = !running && session.outcome === "failed";
     const attention = blockers.length > 0;
     const record = records.get(session.id);
-    const project = projectForSession(input.projects, session) ?? null;
+    const chat = isChatSession(session);
+    const project = chat ? null : (projectForSession(input.projects, session) ?? null);
     const section = effectiveSection({
       session,
       activityThrough,
@@ -231,8 +242,9 @@ export function projectSessionInbox(input: {
     });
     const view: InboxSessionView = {
       session,
+      kind: chat ? "chat" : "task",
       project,
-      projectName: project ? projectName(project) : "Unknown project",
+      projectName: chat ? "Chat" : project ? projectName(project) : "Unknown project",
       section,
       attention,
       attentionCount: blockers.length,

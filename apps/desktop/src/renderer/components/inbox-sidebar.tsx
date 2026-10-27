@@ -11,6 +11,7 @@ import {
   Ellipsis,
   ListFilter,
   LoaderCircle,
+  MessageCircle,
   PinOff,
   SlidersHorizontal,
   Undo2,
@@ -71,7 +72,9 @@ import {
   sessionSnoozeChoices,
 } from "../lib/session-snooze";
 import {
+  CHATS_PROJECT_FILTER,
   groupInboxSections,
+  inboxMatchesProject,
   inboxSessionState,
   orderInboxSection,
   sameInboxSessionView,
@@ -130,6 +133,7 @@ import {
 import { PullRequestBadge } from "./pull-requests/pull-request-badge";
 import { announceSettledBatch, SettleIdleMenu } from "./settle-idle-menu";
 import { samePullRequestLinks } from "./pull-requests/pull-request-presentation";
+import { MoveToProjectDialog } from "./move-to-project-dialog";
 
 const INBOX_SECTIONS: readonly InboxSection[] = ["pinned", "inbox", "snoozed", "settled"];
 const inboxRowKey = (item: InboxSessionView) => `${item.section}:${item.session.id}`;
@@ -143,7 +147,10 @@ export function InboxSidebarContent() {
       runtime?.connectionID ?? "disconnected",
       `project:${filters.projectID ?? ""}`,
     ),
-    enabled: canFetchOpenCode(runtime) && Boolean(filters.projectID),
+    enabled:
+      canFetchOpenCode(runtime) &&
+      Boolean(filters.projectID) &&
+      filters.projectID !== CHATS_PROJECT_FILTER,
     queryFn: ({ signal }) =>
       listRootSessionInfo(
         {
@@ -189,7 +196,11 @@ export function InboxSidebarContent() {
   const mutationsDisabled = triageLoading || triageSnapshot === null || triageError !== null;
 
   useEffect(() => {
-    if (filters.projectID && !projectIDs.has(filters.projectID)) {
+    if (
+      filters.projectID &&
+      filters.projectID !== CHATS_PROJECT_FILTER &&
+      !projectIDs.has(filters.projectID)
+    ) {
       setFilters((current) => ({ ...current, projectID: null }));
     }
   }, [filters.projectID, projectIDs, setFilters]);
@@ -205,9 +216,10 @@ export function InboxSidebarContent() {
     const apply = (items: InboxSessionView[]) =>
       items.filter((item) => {
         if (!item.attention && groupedScheduledSessionIDs.has(item.session.id)) return false;
-        if (filters.projectID && item.project?.id !== filters.projectID) return false;
+        if (!inboxMatchesProject(item, filters.projectID)) return false;
         if (!matchesState(item)) return false;
-        if (filters.projectID && remoteSessionIDs) return remoteSessionIDs.has(item.session.id);
+        if (filters.projectID && filters.projectID !== CHATS_PROJECT_FILTER && remoteSessionIDs)
+          return remoteSessionIDs.has(item.session.id);
         return true;
       });
     return INBOX_SECTIONS.flatMap((section) =>
@@ -226,6 +238,7 @@ export function InboxSidebarContent() {
   const branchLocations = useMemo(() => {
     const locations = new Map<string, LocationRef>();
     for (const item of [...filtered.pinned, ...filtered.inbox]) {
+      if (item.kind === "chat") continue;
       locations.set(vcsLocationKey(item.session.location), item.session.location);
     }
     return [...locations.values()];
@@ -592,9 +605,9 @@ export function InboxToolbar({
                 <DropdownMenuSubTrigger className="min-h-9">
                   <FolderGit2 aria-hidden="true" />
                   <span>Project</span>
-                  {selectedProject ? (
+                  {selectedProject || filters.projectID === CHATS_PROJECT_FILTER ? (
                     <span className="ml-auto max-w-24 truncate text-xs text-muted-foreground">
-                      {selectedProject.name}
+                      {filters.projectID === CHATS_PROJECT_FILTER ? "Chats" : selectedProject?.name}
                     </span>
                   ) : null}
                 </DropdownMenuSubTrigger>
@@ -603,6 +616,11 @@ export function InboxToolbar({
                     projects={projects}
                     value={filters.projectID}
                     allLabel="All projects"
+                    extraOption={{
+                      value: CHATS_PROJECT_FILTER,
+                      label: "Chats",
+                      keywords: "chats conversations no project",
+                    }}
                     onValueChange={(projectID) =>
                       onFiltersChange((current) => ({ ...current, projectID }))
                     }
@@ -881,6 +899,7 @@ const InboxCard = memo(function InboxCard({
   pullRequests,
 }: InboxRowProps) {
   const title = useSessionTitleEditor(item.session);
+  const [moveOpen, setMoveOpen] = useState(false);
   const windowDrag = useSessionWindowDrag(item.session.id);
   const selected = selectedID === item.session.id;
   const vcs = branches?.get(vcsLocationKey(item.session.location));
@@ -893,10 +912,12 @@ const InboxCard = memo(function InboxCard({
       vcs={vcs}
       hint={windowDrag.hint}
       pullRequest={
-        <PullRequestBadge
-          links={pullRequests?.get(item.session.id)}
-          onActivate={() => onSelect(item.session.id)}
-        />
+        item.kind !== "chat" ? (
+          <PullRequestBadge
+            links={pullRequests?.get(item.session.id)}
+            onActivate={() => onSelect(item.session.id)}
+          />
+        ) : undefined
       }
       buttonProps={{
         ...windowDrag.handleProps,
@@ -975,22 +996,32 @@ const InboxCard = memo(function InboxCard({
     />
   );
   return (
-    <SessionContextMenu
-      trigger={row}
-      session={item.session}
-      project={item.project}
-      moveDisabled={item.running}
-      snoozeDisabled={actionsDisabled}
-      onSnooze={onSnooze ? (until) => onSnooze(item, until) : undefined}
-      onRename={title.start}
-    >
-      <ContextMenuItem
-        disabled={actionsDisabled}
-        onClick={() => void onAction(item, item.section === "pinned" ? "unpin" : "pin")}
+    <>
+      {moveOpen ? (
+        <MoveToProjectDialog session={item.session} onClose={() => setMoveOpen(false)} />
+      ) : null}
+      <SessionContextMenu
+        trigger={row}
+        session={item.session}
+        project={item.project}
+        moveDisabled={item.running}
+        snoozeDisabled={actionsDisabled}
+        onSnooze={onSnooze ? (until) => onSnooze(item, until) : undefined}
+        onRename={title.start}
       >
-        {item.section === "pinned" ? "Unpin" : "Pin"}
-      </ContextMenuItem>
-    </SessionContextMenu>
+        {item.kind === "chat" ? (
+          <ContextMenuItem disabled={item.running} onClick={() => setMoveOpen(true)}>
+            Move to project…
+          </ContextMenuItem>
+        ) : null}
+        <ContextMenuItem
+          disabled={actionsDisabled}
+          onClick={() => void onAction(item, item.section === "pinned" ? "unpin" : "pin")}
+        >
+          {item.section === "pinned" ? "Unpin" : "Pin"}
+        </ContextMenuItem>
+      </SessionContextMenu>
+    </>
   );
 }, sameInboxCardProps);
 
@@ -1178,6 +1209,7 @@ const CompactRow = memo(function CompactRow({
   pullRequests,
 }: InboxRowProps) {
   const windowDrag = useSessionWindowDrag(item.session.id);
+  const [moveOpen, setMoveOpen] = useState(false);
   const action = item.section === "snoozed" ? "wake" : "inbox";
   const row = (
     <InboxCompactRowSurface
@@ -1217,20 +1249,30 @@ const CompactRow = memo(function CompactRow({
     </InboxCompactRowSurface>
   );
   return (
-    <SessionContextMenu
-      trigger={row}
-      session={item.session}
-      project={item.project}
-      snoozeDisabled={actionsDisabled}
-      onSnooze={onSnooze ? (until) => onSnooze(item, until) : undefined}
-    >
-      <ContextMenuItem disabled={actionsDisabled} onClick={() => void onAction(item, "pin")}>
-        Pin
-      </ContextMenuItem>
-      <ContextMenuItem disabled={actionsDisabled} onClick={() => void onAction(item, action)}>
-        {action === "wake" ? "Wake" : "Unsettle"}
-      </ContextMenuItem>
-    </SessionContextMenu>
+    <>
+      {moveOpen ? (
+        <MoveToProjectDialog session={item.session} onClose={() => setMoveOpen(false)} />
+      ) : null}
+      <SessionContextMenu
+        trigger={row}
+        session={item.session}
+        project={item.project}
+        snoozeDisabled={actionsDisabled}
+        onSnooze={onSnooze ? (until) => onSnooze(item, until) : undefined}
+      >
+        {item.kind === "chat" ? (
+          <ContextMenuItem disabled={item.running} onClick={() => setMoveOpen(true)}>
+            Move to project…
+          </ContextMenuItem>
+        ) : null}
+        <ContextMenuItem disabled={actionsDisabled} onClick={() => void onAction(item, "pin")}>
+          Pin
+        </ContextMenuItem>
+        <ContextMenuItem disabled={actionsDisabled} onClick={() => void onAction(item, action)}>
+          {action === "wake" ? "Wake" : "Unsettle"}
+        </ContextMenuItem>
+      </SessionContextMenu>
+    </>
   );
 }, sameCompactRowProps);
 
@@ -1276,16 +1318,23 @@ export function InboxCompactRowSurface({
         <span className="min-w-0 flex-1 truncate text-compact font-normal">
           {item.session.title ?? "Untitled task"}
         </span>
-        {pullRequest}
+        {item.kind !== "chat" ? pullRequest : null}
         {connectionBadge}
         <span className="flex min-w-0 max-w-28 shrink-0 items-center gap-1 text-right text-micro text-muted-foreground transition-opacity group-hover/compact:opacity-0 group-has-[:focus-visible]/compact:opacity-0">
           {item.section === "snoozed" && item.snoozedUntil ? (
             <>
               <InboxStateGlyph state={visualState} />
+              {item.kind === "chat" ? (
+                <>
+                  <MessageCircle aria-hidden="true" />
+                  <span>Chat ·</span>
+                </>
+              ) : null}
               {formatSnoozeWakeTime(item.snoozedUntil)}
             </>
           ) : (
             <>
+              {item.kind === "chat" ? <MessageCircle aria-hidden="true" /> : null}
               <span className="truncate">{item.projectName}</span>
               <span className="flex shrink-0 items-center gap-1">
                 · <InboxStateGlyph state={visualState} />

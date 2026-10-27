@@ -283,7 +283,10 @@ const PALOT_TOOL_TITLES: Record<string, string> = {
   list_tasks: "List tasks",
   read_task: "Read task",
   wait_tasks: "Wait for tasks",
-  organize_task: "Organize task",
+  settle_task: "Settle task",
+  snooze_task: "Snooze task",
+  pin_task: "Pin task",
+  archive_task: "Archive task",
 };
 
 /** What a Palot tool call is doing, in the terms Palot's sidebar and Scheduled page use. */
@@ -309,20 +312,24 @@ function palotSummary(tool: string, input: RecordValue): { label: string | null;
       args: tool === "update_automation" && changes.length ? [`changes ${changes.join(", ")}`] : [],
     };
   }
-  if (tool === "organize_task") {
-    const changes = [
-      ...(value("title") ? [`rename to “${value("title")}”`] : []),
-      ...(input.pinned === true ? ["pin"] : input.pinned === false ? ["unpin"] : []),
-      ...(input.state === "settled"
-        ? ["settle"]
-        : input.state === "snoozed"
-          ? [`snooze until ${(value("snoozeUntil") ?? "later").replace("T", " ")}`]
-          : input.state === "inbox"
-            ? ["move to Inbox"]
-            : []),
-      ...(input.archived === true ? ["archive"] : input.archived === false ? ["unarchive"] : []),
-    ];
-    return { label: changes.join(", ") || null, args: value("taskId") ? [value("taskId")!] : [] };
+  if (
+    tool === "settle_task" ||
+    tool === "snooze_task" ||
+    tool === "pin_task" ||
+    tool === "archive_task"
+  ) {
+    // Each tool's title names the change; the label notes a reversal or the snooze time.
+    const detail =
+      tool === "settle_task" && input.settled === false
+        ? "back to Inbox"
+        : tool === "pin_task" && input.pinned === false
+          ? "unpin"
+          : tool === "archive_task" && input.archived === false
+            ? "restore"
+            : tool === "snooze_task" && value("until")
+              ? `until ${value("until")!.replace("T", " ")}`
+              : null;
+    return { label: detail, args: value("taskId") ? [value("taskId")!] : [] };
   }
   if (tool === "wait_tasks") {
     const ids = Array.isArray(input.taskIds) ? input.taskIds.length : 0;

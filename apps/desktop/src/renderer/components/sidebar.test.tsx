@@ -95,6 +95,59 @@ afterEach(() => {
 });
 
 describe("ProjectSidebarContent attention", () => {
+  it("groups chat sessions once under Chats and never lists their backing projects", async () => {
+    const store = createStore();
+    const queryClient = createRendererQueryClient();
+    const directory = "/home/user/.palot/chats/2026-10-27-question-abc";
+    const chat = {
+      ...session,
+      id: "chat",
+      projectID: "chat-project",
+      title: "Quick question",
+      location: { directory },
+    };
+    seedCatalog(queryClient, {
+      projects: [
+        {
+          id: "project-1",
+          name: "Palot",
+          canonical: "/repo",
+          sandboxes: [],
+          vcs: null,
+          updatedAt: 1,
+        },
+        {
+          id: "chat-project",
+          name: "Backing chat folder",
+          canonical: directory,
+          sandboxes: [],
+          vcs: null,
+          updatedAt: 1,
+        },
+      ],
+      sessions: [
+        session,
+        chat,
+        { ...chat, id: "chat-child", parentID: chat.id, title: "Chat child" },
+      ],
+    });
+    renderWithRouter(
+      <SidebarProvider>
+        <ProjectSidebarContent onNewSession={vi.fn()} />
+      </SidebarProvider>,
+      store,
+      "/new",
+      queryClient,
+    );
+    const projects = screen.getByRole("navigation", { name: "Projects and tasks" });
+    expect(within(projects).getByRole("button", { name: "Chats 1" })).toBeTruthy();
+    expect(within(projects).getAllByRole("button", { name: /Quick question/ })).toHaveLength(1);
+    expect(within(projects).queryByText("Backing chat folder")).toBeNull();
+    expect(within(projects).queryByText("Chat child")).toBeNull();
+    fireEvent.contextMenu(within(projects).getByRole("button", { name: /Quick question/ }));
+    expect(await screen.findByRole("menuitem", { name: "Move to project…" })).toBeTruthy();
+  });
+
   it.each(["folder", "remote", "import"] as const)(
     "keeps %s creation and navigation on its original owner after focus changes",
     async (action) => {

@@ -10,10 +10,11 @@ import { runtimeAtom } from "../atoms/workspace";
 import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { openCodeKeys } from "../lib/opencode-query";
+import { projectSessionInbox } from "../lib/session-inbox";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { palot } from "../services/palot";
 import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router";
-import { InboxSidebarContent } from "./inbox-sidebar";
+import { InboxCompactRowSurface, InboxSidebarContent } from "./inbox-sidebar";
 import { installSourceControl, pullRequestLink } from "./pull-requests/test-fixtures";
 import { SidebarProvider } from "./ui/sidebar";
 import { toast } from "./ui/toast";
@@ -87,6 +88,108 @@ afterEach(() => {
 });
 
 describe("InboxSidebarContent", () => {
+  it("labels compact chat rows without pull request badges", () => {
+    const chat = {
+      ...session("chat", "Quick question", 20),
+      location: { directory: "/home/user/.palot/chats/2026-10-27-question-abc" },
+    };
+    const item = projectSessionInbox({
+      sessions: [chat],
+      projects: [],
+      requests: new Map(),
+      activeIDs: new Set(),
+      runningSinceBySession: new Map(),
+      triage: null,
+      now: 50,
+    }).inbox[0]!;
+    renderWithRouter(
+      <InboxCompactRowSurface
+        item={{ ...item, section: "settled" }}
+        selected={false}
+        buttonProps={{}}
+        pullRequest={<span>Pull request badge</span>}
+      />,
+      createStore(),
+    );
+    expect(screen.getByRole("button", { name: /Quick question.*Chat/ })).toBeTruthy();
+    expect(screen.queryByText("Pull request badge")).toBeNull();
+  });
+
+  it("keeps chats in Inbox, offers Chats filtering, and hides their PR badges", async () => {
+    const store = createStore();
+    const queryClient = createRendererQueryClient();
+    store.set(runtimeAtom, {
+      connectionID: "disconnected",
+      profileID: "profile",
+      connected: false,
+    } as OpenCodeRuntimeStatus);
+    const chat = {
+      ...session("chat", "Quick question", 20),
+      projectID: "chat-project",
+      location: { directory: "/home/user/.palot/chats/2026-10-27-question-abc" },
+    };
+    seedCatalog(queryClient, {
+      projects: [
+        {
+          id: "project-1",
+          canonical: "/repo",
+          name: "Palot",
+          sandboxes: [],
+          vcs: null,
+          updatedAt: 1,
+        },
+        {
+          id: "chat-project",
+          canonical: chat.location.directory,
+          name: "Backing chat folder",
+          sandboxes: [],
+          vcs: null,
+          updatedAt: 1,
+        },
+      ],
+      sessions: [chat, session("task", "Project work", 10)],
+    });
+    installSourceControl({
+      listPullRequestLinks: vi.fn(async () => ({
+        ok: true as const,
+        value: [pullRequestLink("chat", 4)],
+      })),
+    });
+    renderWithRouter(
+      <SidebarProvider>
+        <InboxSidebarContent />
+      </SidebarProvider>,
+      store,
+      "/new",
+      queryClient,
+    );
+    const card = screen
+      .getByRole("button", { name: /^Open Quick question, Chat,/ })
+      .closest<HTMLElement>("[data-inbox-card]")!;
+    expect(within(card).getByText("Chat")).toBeTruthy();
+    await waitFor(() => expect(card.querySelector("[data-pull-request-badge]")).toBeNull());
+    fireEvent.contextMenu(screen.getByRole("button", { name: /^Open Quick question,/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to project…" }));
+    expect(await screen.findByRole("dialog", { name: "Move to project" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
+    const submenu = await screen.findByRole("menuitem", { name: "Project" });
+    fireEvent.mouseEnter(submenu);
+    fireEvent.click(submenu);
+    fireEvent.click(await screen.findByRole("option", { name: "Chats" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(store.get(inboxFiltersAtom).projectID).toBe("@chats"));
+    expect(screen.getByRole("button", { name: /^Open Quick question,/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Open Project work,/ })).toBeNull();
+    act(() => store.set(inboxFiltersAtom, { projectID: "project-1", states: [] }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^Open Quick question,/ })).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: /^Open Project work,/ })).toBeTruthy();
+  });
+
   it("keeps folder creation on the original connection while a native picker is open", async () => {
     const store = createStore();
     const runtime: OpenCodeRuntimeStatus = {

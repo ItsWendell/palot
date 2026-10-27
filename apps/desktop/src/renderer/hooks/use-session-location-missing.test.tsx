@@ -39,10 +39,12 @@ const owner = {
   phase: "connected",
 } as unknown as OpenCodeRuntimeStatus;
 
-function setup(props: SessionLocationMissingOptions = { session, project, owner }) {
-  const queryClient = new QueryClient({
+function setup(
+  props: SessionLocationMissingOptions = { session, project, owner },
+  queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  }),
+) {
   return renderHook(
     (options: SessionLocationMissingOptions) => useSessionLocationMissing(options),
     {
@@ -85,6 +87,19 @@ describe("missing workspace recovery", () => {
     expect(isMissingSessionLocation(missing, "/deleted", false)).toBe(false);
     expect(isMissingSessionLocation(missing, "/deleted", true)).toBe(true);
   });
+  it("checks again when a connection-wide cancel interrupts the first check", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    api.getLocation.mockImplementationOnce(
+      (_input, { signal }: { signal: AbortSignal }) =>
+        new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason))),
+    );
+    const { result } = setup({ session, project, owner }, queryClient);
+    await waitFor(() => expect(api.getLocation).toHaveBeenCalledOnce());
+    await act(() => queryClient.cancelQueries());
+    await waitFor(() => expect(result.current.missing).toBe(true));
+    expect(api.getLocation).toHaveBeenCalledTimes(2);
+  });
+
   it("does not probe or recover an offline owner", async () => {
     const { result } = setup({
       session,

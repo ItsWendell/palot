@@ -1,6 +1,6 @@
 # Install Palot
 
-Palot 0.20.0 is pre-release software, not a supported stable release. Use a desktop
+Palot 0.21.0 is pre-release software, not a supported stable release. Use a desktop
 asset from a current [GitHub release](https://github.com/ItsWendell/palot/releases),
 when available, or build from source below. The 0.12.0 release is source-only;
 older 0.11.x installers are the previous application, not Palot v2. Updates are
@@ -66,7 +66,7 @@ your installed OpenCode, or let you explicitly download a verified fallback from
 opencode.ai in **OpenCode release settings**. Starting or restarting the shared
 service is a separate confirmation. See [runtime management](opencode-runtime.md).
 
-Palot 0.20.0 requires stable OpenCode **2.0.7 or later in the 2.x series** and uses
+Palot 0.21.0 requires stable OpenCode **2.0.7 or later in the 2.x series** and uses
 the **2.2.0** client and exact isolated release-smoke runtime. Earlier stable
 services are refused; V2 betas require explicit consent. Update an older service
 separately before connecting. Updating Palot does not upgrade or restart OpenCode.
@@ -87,7 +87,7 @@ Build on the machine where you intend to use it, as your normal user.
 
 ## Platform status
 
-These are the existing platform checks, not a claim that every 0.20.0 artifact or
+These are the existing platform checks, not a claim that every 0.21.0 artifact or
 new feature is qualified on each system. Browser development scenarios do not
 verify the packaged Lighthouse dependency. See [desktop testing](desktop-testing.md)
 for the narrower scenario scopes.

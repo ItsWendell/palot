@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useState, type ReactElement, type ReactNode } from "react";
+import { MoveToProjectDialog } from "./move-to-project-dialog";
 import { useAtom, useAtomValue } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
 import { BellRing, Check, Ellipsis, PinOff, Plus, Server, Undo2 } from "lucide-react";
@@ -21,6 +22,7 @@ import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionWindowDrag } from "../hooks/use-session-window-drag";
 import { useOwnedVcsInfoMap, ownedVcsLocationKey } from "../hooks/use-vcs-info";
 import {
+  CHATS_PROJECT_FILTER,
   groupInboxSections,
   orderInboxSection,
   orderInboxSessions,
@@ -109,20 +111,38 @@ function OwnedSessionInteractions({
 }) {
   const owner = item.connection.phase === "ready" ? (item.connection.runtime ?? null) : null;
   const drag = useSessionWindowDrag(item.session.id, owner);
+  const [moveOpen, setMoveOpen] = useState(false);
   return (
-    <SessionContextMenu
-      owner={owner}
-      disabled={disabled}
-      trigger={renderRow(drag)}
-      session={item.session}
-      project={item.project}
-      moveDisabled={item.running || disabled}
-      snoozeDisabled={disabled}
-      onRename={disabled ? undefined : onRename}
-      onSnooze={onSnooze}
-    >
-      {children}
-    </SessionContextMenu>
+    <>
+      {moveOpen ? (
+        <MoveToProjectDialog
+          session={item.session}
+          owner={owner}
+          onClose={() => setMoveOpen(false)}
+        />
+      ) : null}
+      <SessionContextMenu
+        owner={owner}
+        disabled={disabled}
+        trigger={renderRow(drag)}
+        session={item.session}
+        project={item.project}
+        moveDisabled={item.running || disabled}
+        snoozeDisabled={disabled}
+        onRename={disabled ? undefined : onRename}
+        onSnooze={onSnooze}
+      >
+        {item.kind === "chat" ? (
+          <ContextMenuItem
+            disabled={item.running || disabled || !owner}
+            onClick={() => setMoveOpen(true)}
+          >
+            Move to project…
+          </ContextMenuItem>
+        ) : null}
+        {children}
+      </SessionContextMenu>
+    </>
   );
 }
 
@@ -206,9 +226,12 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
     }
   }, [projectOwnerReady, selectedProjectProfileID, selectedProjectID, selectedProjectConnectionID]);
   const matches = (item: OwnedItem) => {
-    if (
+    if (filters.projectID === CHATS_PROJECT_FILTER) {
+      if (item.kind !== "chat") return false;
+    } else if (
       filters.projectID &&
-      filters.projectID !== JSON.stringify([item.connection.profile.id, item.session.projectID])
+      (item.kind === "chat" ||
+        filters.projectID !== JSON.stringify([item.connection.profile.id, item.session.projectID]))
     )
       return false;
     return (
@@ -233,7 +256,11 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
     )
     .filter(matches);
   const inProject = (connection: Connection, projectID: string) => (item: OwnedItem) =>
-    item.connection.profile.id === connection.profile.id && item.session.projectID === projectID;
+    item.connection.profile.id === connection.profile.id &&
+    item.kind !== "chat" &&
+    item.session.projectID === projectID;
+  const inChats = (connection: Connection) => (item: OwnedItem) =>
+    item.connection.profile.id === connection.profile.id && item.kind === "chat";
   const liveRows =
     mode === "inbox"
       ? sections.flatMap((section) =>
@@ -243,11 +270,12 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
             preferences,
           ),
         )
-      : visible.flatMap((connection) =>
-          connection.projects.flatMap((project) =>
+      : visible.flatMap((connection) => [
+          ...orderInboxSessions(items.filter(inChats(connection)), preferences),
+          ...connection.projects.flatMap((project) =>
             orderInboxSessions(items.filter(inProject(connection, project.id)), preferences),
           ),
-        );
+        ]);
   // Hold the rendered order while the pointer is over the list so rows never
   // move under the cursor; pending reorders apply when it leaves.
   const { frozen, freezeProps } = usePointerFreeze();
@@ -701,6 +729,43 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
     return rows.map(renderRow);
   };
 
+  /** Each server's chats, ahead of its projects; chat folders are not projects. */
+  const chatSection = (connection: Connection) => {
+    const rows = stableRows.filter(inChats(connection));
+    if (rows.length === 0) return null;
+    const key = JSON.stringify([connection.profile.id, CHATS_PROJECT_FILTER]);
+    const open = projectSections[key] ?? true;
+    return (
+      <Collapsible
+        key={key}
+        data-project-section
+        data-profile-id={connection.profile.id}
+        open={open}
+        onOpenChange={(value) => setProjectSections((current) => ({ ...current, [key]: value }))}
+        aria-label={`Chats · ${connectionDescription(connection.profile)}`}
+      >
+        <SectionTrigger
+          title="Chats"
+          count={rows.length}
+          open={open}
+          label={`Chats ${rows.length} · ${connectionDescription(connection.profile)}`}
+          badge={
+            connection.profile.kind !== "local" ? (
+              <ConnectionBadge
+                profile={connection.profile}
+                connected={connection.runtime?.connected === true}
+                compact
+              />
+            ) : null
+          }
+        />
+        <CollapsibleContent>
+          {open ? <SidebarFluidList>{boundedRows(rows)}</SidebarFluidList> : null}
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  };
+
   return (
     <>
       <InboxToolbar
@@ -929,8 +994,9 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
                     </Collapsible>
                   );
                 })
-              : visible.flatMap((connection) =>
-                  connection.projects.map((project) => {
+              : visible.flatMap((connection) => [
+                  chatSection(connection),
+                  ...connection.projects.map((project) => {
                     const key = JSON.stringify([connection.profile.id, project.id]);
                     const open = projectSections[key] ?? true;
                     const rows = stableRows.filter(inProject(connection, project.id));
@@ -984,7 +1050,7 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
                       </Collapsible>
                     );
                   }),
-                )}
+                ])}
             {items.length > limit ? (
               <Button variant="ghost" size="sm" onClick={() => setLimit((n) => n + pageSize)}>
                 Show more tasks

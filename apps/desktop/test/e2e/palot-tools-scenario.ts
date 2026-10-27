@@ -8,12 +8,13 @@ const NAME = "Check CI";
 const PROMPT = "Check whether CI passed.";
 const READY = "Palot tool capability probe complete.";
 const FINAL = "CI check scheduled and tasks listed.";
+const SETTLED = "Settling this task when my turn ends.";
 
 export const palotToolsScenario: Scenario = {
   description:
     "approve an agent-scheduled task through client-hosted MCP, list tasks without approval, and verify the Scheduled page",
   prompt: "Schedule a CI check tomorrow at 09:00, then list my tasks.",
-  expectedModelCalls: 4,
+  expectedModelCalls: 6,
   arrange(llm) {
     // Inspect a real model request before choosing direct MCP or Code Mode invocation.
     llm.text(READY);
@@ -135,6 +136,32 @@ export const palotToolsScenario: Scenario = {
       destination: { type: "session", sessionID: session.id },
       trigger: { type: "once", at: schedule.instant },
     });
+
+    // A task settling itself mid-turn settles when the turn ends, and stays settled: the
+    // turn's own end must not count as new activity.
+    llm.tool(
+      direct ? "palot_settle_task" : "execute",
+      direct ? {} : { code: "return await tools.palot.settle_task({})" },
+    );
+    llm.text(SETTLED);
+    await client.session.prompt({ sessionID: session.id, text: "That's all, settle this task." });
+    await expect(page.getByText(SETTLED, { exact: true })).toBeVisible({ timeout: 30_000 });
+    await client.session.wait({ sessionID: session.id });
+    const settleResult = llm.requests.filter((request) => !isTitleRequest(request.body)).at(-1)!
+      .body.messages as Array<{ role: string; content: unknown }>;
+    expect(
+      JSON.stringify(settleResult.filter((message) => message.role === "tool").at(-1)),
+    ).toContain("settlesWhenTurnEnds");
+    const idle = (await client.session.get({ sessionID: session.id })).time.idle!;
+    const triage = () =>
+      page.evaluate(async (sessionID) => {
+        const { profileID } = await window.palot.runtimeStatus();
+        const snapshot = await window.palot.loadSessionTriage(profileID);
+        return snapshot.sessions.find((record) => record.sessionID === sessionID) ?? null;
+      }, session.id);
+    await expect.poll(async () => (await triage())?.disposition).toBe("settled");
+    expect((await triage())!.settledThrough!.updatedAt).toBeGreaterThanOrEqual(idle);
+
     await page.getByRole("button", { name: "Scheduled", exact: true }).click();
   },
   async assert(page, { llm, runRoot }) {
@@ -142,7 +169,7 @@ export const palotToolsScenario: Scenario = {
     await expect(
       page.getByRole("main", { name: "Scheduled tasks" }).getByText(NAME, { exact: true }),
     ).toBeVisible();
-    expect(llm.scriptedCalls()).toBe(4);
+    expect(llm.scriptedCalls()).toBe(6);
     await page.screenshot({ path: join(runRoot, "palot-tools-scheduled.png") });
   },
 };

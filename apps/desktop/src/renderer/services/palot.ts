@@ -1231,7 +1231,18 @@ export const palot = {
     if (!apiAvailable()) return null;
     const client = openCodeClient(connectionID);
     await client.session.move({ sessionID, directory });
-    return getOwnedSession(client, sessionID);
+    // OpenCode applies a move through the session's inbox, so it lands shortly after the request
+    // returns (or at a running turn's next step). Return the session once it reports the
+    // destination; otherwise null and let `session.moved` update the catalog, since caching a
+    // read from before the move would overwrite that event.
+    const destination = directory.replace(/[\\/]+$/, "");
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const session = await getOwnedSession(client, sessionID);
+      if (!session || session.location.directory.replace(/[\\/]+$/, "") === destination)
+        return session;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return null;
   },
 
   async forkSession(input: { sessionID: string; beforeMessageID?: string }, connectionID?: string) {

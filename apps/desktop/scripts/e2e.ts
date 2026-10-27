@@ -2,10 +2,10 @@
 
 import { type ChildProcess, execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { inspect as inspectError, parseArgs, promisify } from "node:util";
@@ -141,6 +141,8 @@ Object.assign(process.env, {
 let browser: Browser | null = null;
 let page: Page | null = null;
 let runRoot = "";
+/** A scenario's real home outside the checkout, removed with the run's artifacts. */
+let externalHome: string | null = null;
 let pageWebSocketUrl: string | undefined;
 let passed = false;
 type VideoCapture = Awaited<ReturnType<typeof startVideoCapture>>;
@@ -192,6 +194,13 @@ try {
     "projectName" in scenario ? scenario.projectName : showcase ? "palot" : "project",
   );
   const home = path.join(runRoot, "home");
+  if ("homeOutsideCheckout" in scenario && scenario.homeOutsideCheckout) {
+    // OpenCode resolves a folder to the nearest enclosing repository, and run roots live in
+    // this checkout. The service resolves its working directory through the link, so its
+    // default folder is outside any repository; the link keeps the home with the artifacts.
+    externalHome = await mkdtemp(path.join(tmpdir(), "palot-e2e-home-"));
+    await symlink(externalHome, home, "dir");
+  }
   const palotUserData = path.join(runRoot, "palot-user-data");
   await Promise.all([
     mkdir(projectDirectory, { recursive: true }),
@@ -539,9 +548,13 @@ try {
 } finally {
   try {
     await lifecycle.close();
-    if (passed && !lifecycle.failed && !lifecycle.cleanupFailed && !keep && runRoot)
+    if (passed && !lifecycle.failed && !lifecycle.cleanupFailed && !keep && runRoot) {
       await rm(runRoot, { recursive: true, force: true });
-    else if (passed && runRoot) console.log(`Palot E2E artifacts kept: ${runRoot}`);
+      if (externalHome) await rm(externalHome, { recursive: true, force: true });
+    } else {
+      if (passed && runRoot) console.log(`Palot E2E artifacts kept: ${runRoot}`);
+      if (externalHome) console.log(`Palot E2E home kept outside the checkout: ${externalHome}`);
+    }
   } finally {
     lifecycle.dispose();
   }

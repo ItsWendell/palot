@@ -1,6 +1,6 @@
 # Privacy
 
-This policy describes the Palot 0.20.0 source. It may change as pre-release
+This policy describes the Palot 0.21.0 source. It may change as pre-release
 features evolve.
 
 ## Data sent by Palot
@@ -74,7 +74,7 @@ before disposing of a machine or sharing it.
 ## Agent tools
 
 With an OpenCode 2.1.4 or later server, Palot gives tasks tools to schedule work, list and
-read other tasks, wait for them, and rename, pin, settle, snooze or archive them. Palot's main
+read other tasks, wait for them, and pin, settle, snooze or archive them. Palot's main
 process serves these tools to the connected server over its existing connection. When a task
 reads another task, that task's title, status and recent messages enter the reading task's
 conversation, so they reach its model provider like any other context. Scheduling, changing or
@@ -163,6 +163,13 @@ does not uninstall or change a separate global OpenCode installation.
 Connection credentials use Electron's operating-system-backed secure storage
 when it is available. Palot refuses to save them when secure storage is not
 available.
+
+Starting a chat without a project creates a folder for it under `.palot/chats`
+in the OpenCode server's default folder (your home folder for a local server),
+so the agent has somewhere to work. The folder holds a small `.palot-chat` marker
+and any files the agent writes there. Palot does not delete these folders when you
+archive a chat or move it into a project; remove them yourself if you no longer
+need them.
 
 Pasted clipboard images are written to a Palot directory under the operating
 system's temporary directory before they are sent as attachments. Palot uses

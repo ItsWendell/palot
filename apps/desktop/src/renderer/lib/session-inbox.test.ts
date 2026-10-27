@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { PalotSession, SessionRequestSnapshot, SessionTriageSnapshot } from "../../shared";
 import {
+  CHATS_PROJECT_FILTER,
   autoSettleCandidates,
   idleInboxTasks,
   inboxSessionState,
+  inboxMatchesProject,
   type InboxSessionView,
   orderInboxSection,
   orderInboxSessions,
@@ -80,6 +82,60 @@ function project(
 }
 
 describe("projectSessionInbox", () => {
+  it("marks chats by their directory, without exposing their backing project", () => {
+    const chat = {
+      ...root,
+      location: { directory: "/home/user/.palot/chats/2026-10-27-question-abc" },
+    };
+    const result = projectSessionInbox({
+      sessions: [chat],
+      projects: [
+        {
+          id: chat.projectID,
+          canonical: chat.location.directory,
+          name: "Backing folder",
+          sandboxes: [],
+          vcs: null,
+          updatedAt: 1,
+        },
+      ],
+      requests: new Map(),
+      activeIDs: new Set(),
+      runningSinceBySession: new Map(),
+      triage: null,
+      now: 500,
+    });
+    const item = result.inbox[0]!;
+    expect(item).toMatchObject({ kind: "chat", projectName: "Chat", project: null });
+    expect(inboxMatchesProject(item, null)).toBe(true);
+    expect(inboxMatchesProject(item, CHATS_PROJECT_FILTER)).toBe(true);
+    expect(inboxMatchesProject(item, chat.projectID)).toBe(false);
+
+    const moved = project(null, emptyRequests, inactive, {
+      ...chat,
+      location: { directory: "/repo" },
+    }).inbox[0]!;
+    expect(moved.kind).toBe("task");
+    expect(inboxMatchesProject(moved, CHATS_PROJECT_FILTER)).toBe(false);
+  });
+
+  it("filters real projects independently of chats", () => {
+    const item = project(null).inbox[0]!;
+    const task = {
+      ...item,
+      project: {
+        id: root.projectID,
+        canonical: "/repo",
+        name: "Palot",
+        sandboxes: [],
+        vcs: null,
+        updatedAt: 1,
+      },
+    };
+    expect(inboxMatchesProject(task, root.projectID)).toBe(true);
+    expect(inboxMatchesProject(task, "other-project")).toBe(false);
+    expect(inboxMatchesProject(task, CHATS_PROJECT_FILTER)).toBe(false);
+  });
   it("restores persisted failure state after live execution state is gone", () => {
     const result = project(null, emptyRequests, inactive, { ...root, outcome: "failed" });
 
@@ -602,6 +658,7 @@ describe("autoSettleCandidates", () => {
   const idleFor = (days: number) => now - days * DAY;
   const view = (id: string, overrides: Partial<InboxSessionView> = {}): InboxSessionView => ({
     session: { ...root, id, updatedAt: idleFor(4) },
+    kind: "task",
     project: null,
     projectName: "Palot",
     section: "inbox",

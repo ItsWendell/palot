@@ -23,7 +23,10 @@ export const PALOT_TOOL_APPROVALS = {
   list_tasks: "allow",
   read_task: "allow",
   wait_tasks: "allow",
-  organize_task: "allow",
+  settle_task: "allow",
+  snooze_task: "allow",
+  pin_task: "allow",
+  archive_task: "allow",
 } as const satisfies Record<string, "allow" | "ask">;
 
 export type PalotToolName = keyof typeof PALOT_TOOL_APPROVALS;

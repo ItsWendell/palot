@@ -11,7 +11,12 @@ import { NewTask } from "../components/new-task";
 import { validateProjectSearch } from "../lib/route-search";
 
 export const Route = createFileRoute("/_workspace/new")({
-  validateSearch: validateProjectSearch,
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): ReturnType<typeof validateProjectSearch> & { chat?: boolean } => ({
+    ...validateProjectSearch(search),
+    chat: search.chat === true || search.chat === "true" ? true : undefined,
+  }),
   component: NewTaskRoute,
 });
 
@@ -34,8 +39,10 @@ function NewTaskRoute() {
   return (
     <NewTask
       key={search.profileID}
+      chat={search.chat}
       profileID={search.profileID}
       projectID={search.projectID}
+      onChat={() => void navigate({ to: "/new", search: { chat: true }, replace: true })}
       onDestinationChange={({ profileID, projectID }) =>
         void navigate({
           to: "/new",

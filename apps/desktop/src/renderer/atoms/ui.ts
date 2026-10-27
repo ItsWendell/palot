@@ -144,6 +144,13 @@ export const autoSettleAfterDaysAtom = persistedAtom({
   validate: (value): value is AutoSettleAfterDays =>
     value === null || AUTO_SETTLE_DAY_CHOICES.some((days) => days === value),
 });
+/** Settle idle chats after this many days; chats usually end when the answer arrives. */
+export const chatAutoSettleAfterDaysAtom = persistedAtom({
+  key: "inbox.chat-auto-settle-after-days",
+  initialValue: 1 as AutoSettleAfterDays,
+  validate: (value): value is AutoSettleAfterDays =>
+    value === null || AUTO_SETTLE_DAY_CHOICES.some((days) => days === value),
+});
 export const inboxShelvesAtom = persistedAtom({
   key: "ui.inbox-shelves",
   initialValue: { pinned: true, inbox: true, snoozed: false, settled: false },

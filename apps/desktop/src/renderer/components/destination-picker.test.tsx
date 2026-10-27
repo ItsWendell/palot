@@ -41,6 +41,7 @@ function setup(entries = [local, remote], profileID = "local", projects?: PalotP
     connected: true,
   } as OpenCodeRuntimeStatus);
   const onChange = vi.fn();
+  const onChat = vi.fn();
   render(
     <QueryClientProvider client={new QueryClient()}>
       <Provider store={store}>
@@ -48,19 +49,27 @@ function setup(entries = [local, remote], profileID = "local", projects?: PalotP
           value={{ profileID, projectID: "same" }}
           projects={projects}
           onChange={onChange}
+          onChat={onChat}
         />
       </Provider>
     </QueryClientProvider>,
   );
-  return { onChange, store };
+  return { onChange, onChat, store };
 }
 
 afterEach(cleanup);
 describe("destination picker", () => {
+  it("offers a chat without changing the project destination", async () => {
+    const { onChange, onChat } = setup();
+    await userEvent.click(screen.getByRole("combobox", { name: "Task destination" }));
+    await userEvent.click(screen.getByRole("option", { name: /No project — just chat/ }));
+    expect(onChat).toHaveBeenCalledExactlyOnceWith();
+    expect(onChange).not.toHaveBeenCalled();
+  });
   it("searches name, path, and server and selects colliding IDs atomically", async () => {
     const { onChange } = setup();
     await userEvent.click(screen.getByRole("combobox", { name: "Task destination" }));
-    expect(screen.getAllByRole("option")).toHaveLength(2);
+    expect(screen.getAllByRole("option")).toHaveLength(3);
     expect(screen.getByText("/repo/same")).toBeTruthy();
     expect(screen.getByText("/srv/same")).toBeTruthy();
     await userEvent.type(

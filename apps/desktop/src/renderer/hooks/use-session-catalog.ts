@@ -14,6 +14,7 @@ import { mapProject, mapSession } from "../services/opencode-mappers";
 import { useOpenCodeRecords } from "./use-open-code-records";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
+import { withoutChatProjects } from "../lib/chats";
 
 class SessionCatalogSelection<T> {
   private initialized = false;
@@ -34,12 +35,13 @@ class SessionCatalogSelection<T> {
   };
 }
 
-export function useProjectCatalog(): PalotProject[] {
-  return useProjectCatalogState().projects;
+export function useProjectCatalog(owner?: OpenCodeRuntimeStatus | null): PalotProject[] {
+  return useProjectCatalogState(owner).projects;
 }
 
-export function useProjectCatalogState() {
-  const runtime = useAtomValue(runtimeAtom);
+export function useProjectCatalogState(owner?: OpenCodeRuntimeStatus | null) {
+  const activeRuntime = useAtomValue(runtimeAtom);
+  const runtime = owner === undefined ? activeRuntime : owner;
   const queryClient = useQueryClient();
   const connectionID = runtime?.connectionID ?? "disconnected";
   const query = useQuery({
@@ -47,7 +49,10 @@ export function useProjectCatalogState() {
     enabled: canFetchOpenCode(runtime),
   });
   const records = useOpenCodeRecords(connectionID, "project");
-  const projects = useMemo(() => records.map((record) => mapProject(record.value)), [records]);
+  const projects = useMemo(
+    () => withoutChatProjects(records.map((record) => mapProject(record.value))),
+    [records],
+  );
   return {
     projects,
     ready: query.data !== undefined,

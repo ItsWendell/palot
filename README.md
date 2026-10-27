@@ -19,7 +19,7 @@ and managing local OpenCode connections.
 upgrade from Palot 0.11.x. “Palot v2” names the rebuild; the application follows
 the `0.x` SemVer release sequence. OpenCode has its own independent version.
 
-Palot 0.20.0 is open-source pre-release software under active development, with
+Palot 0.21.0 is open-source pre-release software under active development, with
 desktop packaging targets for Linux x64 and macOS Apple Silicon. Available
 packages are experimental, not supported stable releases. macOS downloads are
 ad-hoc signed, not Apple Developer ID signed or notarized. Updates are manual.
@@ -33,7 +33,14 @@ still pre-release and should not be the only protection for important work.
 The 0.12.0 release is source-only. Earlier 0.11.x downloads install the previous
 application, not Palot v2.
 
-### New in 0.20.0
+### New in 0.21.0
+
+- Chats without a project: start one with "New chat" or Mod+Alt+N, keep it in
+  the Inbox as a Chat, and move it into a project when it turns into real work.
+- Agents find Palot's settle, snooze, pin and archive tools by name, and a task
+  asked to settle itself stays settled after its reply.
+
+### Added in 0.20.0
 
 - Agents can schedule follow-ups and recurring work, read and wait on other
   tasks, and organize the Inbox through Palot's own tools, following each
@@ -45,18 +52,6 @@ application, not Palot v2.
 - MCP server forms, approvals that can start new tasks in Full access, and a
   fix for settled tasks returning to the Inbox after a restart.
 - OpenCode 2.2.0.
-
-### Added in 0.19.0
-
-- Voice chat (beta): talk with a task through a GPT-Live assistant that hands
-  your requests to its agent and tells you when it finishes or needs approval.
-- Ask about a selected part of a reply in a side question, search messages from
-  the command palette, and retire merged worktrees after a safety review.
-- Composer mention chips, open-files-first `@` suggestions, a Recent outputs
-  picker, and prompt recall per project.
-- Faster code highlighting with Pierre's WebAssembly highlighter, code blocks
-  that follow your code theme, and HTML files that open rendered in Palot Browser.
-- OpenCode 2.1.3 and Electron 45.
 
 ## Install
 

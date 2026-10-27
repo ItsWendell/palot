@@ -146,6 +146,12 @@ describe("recentTaskShortcutIndex", () => {
 });
 
 describe("keyboard shortcut catalog", () => {
+  it("matches the chat shortcut separately from new task and voice chat", () => {
+    const event = key({ key: "n", code: "KeyN", ctrlKey: true, altKey: true });
+    expect(matchesShortcut(event, shortcutKeys("chat.new"))).toBe(true);
+    expect(matchesShortcut(event, shortcutKeys("task.new"))).toBe(false);
+    expect(matchesShortcut(event, shortcutKeys("task.voice.toggle"))).toBe(false);
+  });
   // Two shortcuts with the same keys in overlapping scopes would make one unreachable.
   it("ships default bindings without conflicts", () => {
     for (const shortcut of KEYBOARD_SHORTCUTS) {
@@ -161,6 +167,18 @@ describe("personal bindings", () => {
   afterEach(() => {
     resetShortcutBindings();
     delete document.documentElement.dataset.platform;
+  });
+
+  it("can rebind, clear, and restore the chat shortcut", () => {
+    setShortcutBinding("chat.new", ["Mod", "Shift", "J"]);
+    expect(
+      matchesShortcut(key({ key: "J", ctrlKey: true, shiftKey: true }), shortcutKeys("chat.new")),
+    ).toBe(true);
+    setShortcutBinding("chat.new", null);
+    expect(boundShortcutKeys("chat.new")).toBeUndefined();
+    expect(shortcutBindingProblem("chat.new", defaultShortcutKeys("chat.new"))).toBeNull();
+    setShortcutBinding("chat.new", defaultShortcutKeys("chat.new"));
+    expect(isShortcutCustomized("chat.new")).toBe(false);
   });
 
   it("allows rebinding and clearing the terminal quote action through the shared registry", () => {

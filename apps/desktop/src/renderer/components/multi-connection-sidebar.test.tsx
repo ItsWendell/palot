@@ -127,7 +127,50 @@ function renderSidebar(mode: "inbox" | "project" = "inbox", store = createStore(
   );
 }
 
+/** Adds a project-free chat to a connection; its folder's project is not in the catalog. */
+function withChat(target: Overview["connections"][number]) {
+  const chat: PalotSession = {
+    ...target.sessions[0]!,
+    id: "chat-session",
+    projectID: "chat-folder-project",
+    title: "Quick question",
+    location: { directory: "/home/me/.palot/chats/2026-10-27-hi-abc123" },
+  };
+  target.sessions = [...target.sessions, chat];
+  target.inbox = projectSessionInbox({
+    sessions: target.sessions,
+    projects: target.projects,
+    requests: new Map(),
+    activeIDs: new Set(),
+    runningSinceBySession: new Map(),
+    triage: { profileID: target.profile.id, bootstrapThrough: null, sessions: [] },
+    now: 1,
+  });
+}
+
 describe("MultiConnectionSidebar", () => {
+  it("groups each server's chats, filters to Chats and offers Move to project", async () => {
+    withChat(overview.connections[1]!);
+    const store = createStore();
+    const { unmount } = renderSidebar("project", store);
+    const chats = document.querySelector<HTMLElement>('[aria-label^="Chats · "]')!;
+    expect(within(chats).getByText("Quick question")).toBeTruthy();
+    const projects = [
+      ...document.querySelectorAll<HTMLElement>('[data-project-id="same-project"]'),
+    ];
+    expect(projects).toHaveLength(2);
+    expect(projects.some((group) => within(group).queryByText("Quick question"))).toBe(false);
+    fireEvent.contextMenu(within(chats).getByText("Quick question"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to project…" }));
+    expect(await screen.findByRole("dialog", { name: "Move to project" })).toBeTruthy();
+    unmount();
+
+    store.set(overviewProjectFilterAtom, "@chats");
+    renderSidebar("inbox", store);
+    expect(screen.getByText("Quick question")).toBeTruthy();
+    expect(screen.queryByText("Same task")).toBeNull();
+  });
+
   it.each(["inbox", "project"] as const)(
     "keeps offline connection errors out of the %s task list without hiding cached tasks",
     (mode) => {

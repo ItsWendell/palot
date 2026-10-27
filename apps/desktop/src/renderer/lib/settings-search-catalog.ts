@@ -29,6 +29,7 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     ["Default shell", "terminal command login"],
     ["Default sidebar", "inbox projects navigation"],
     ["Auto-settle idle tasks", "auto settle automatic inactivity inbox settled"],
+    ["Settle idle chats after", "chat auto settle automatic inactivity inbox settled no project"],
     ["Launch at login", "startup schedules autostart"],
     ["Prevent sleep during runs", "awake scheduled automation"],
     ["Palot tools for agents", "schedule follow-ups triage pin snooze archive"],

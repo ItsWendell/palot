@@ -3,7 +3,7 @@ import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { useCallback, useEffect, useEffectEvent, useRef } from "react";
 import { SESSION_TRIAGE_BATCH_LIMIT } from "../../shared";
 import { dispatchSessionTriageAtom, sessionTriageLoadingAtom } from "../atoms/inbox";
-import { autoSettleAfterDaysAtom } from "../atoms/ui";
+import { autoSettleAfterDaysAtom, chatAutoSettleAfterDaysAtom } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
 import { announceSettledBatch } from "../components/settle-idle-menu";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../lib/connection-overview";
 import { openCodeKeys } from "../lib/opencode-query";
 import { autoSettleCandidates } from "../lib/session-inbox";
+import { isChatSession } from "../lib/chats";
 
 const SWEEP_INTERVAL_MS = 60_000;
 
@@ -40,13 +41,14 @@ export function useTriageDispatcher() {
  */
 export function useAutoSettle(): void {
   const afterDays = useAtomValue(autoSettleAfterDaysAtom);
+  const chatAfterDays = useAtomValue(chatAutoSettleAfterDaysAtom);
   const store = useStore();
   const queryClient = useQueryClient();
   const controller = connectionOverview(queryClient);
   const dispatch = useTriageDispatcher();
   const inFlight = useRef(new Set<string>());
   const sweep = useEffectEvent(() => {
-    if (afterDays === null) return;
+    if (afterDays === null && chatAfterDays === null) return;
     const now = Date.now();
     const snapshot = controller.getSnapshot();
     for (const connection of snapshot) {
@@ -60,10 +62,12 @@ export function useAutoSettle(): void {
       // The Inbox may still be loading this profile's triage and would overwrite the result.
       if (store.get(runtimeAtom)?.profileID === profileID && store.get(sessionTriageLoadingAtom))
         continue;
-      const candidates = autoSettleCandidates(connection.inbox.inbox, now, afterDays).slice(
-        0,
-        SESSION_TRIAGE_BATCH_LIMIT,
-      );
+      const candidates = connection.inbox.inbox
+        .filter((item) => {
+          const delay = isChatSession(item.session) ? chatAfterDays : afterDays;
+          return delay !== null && autoSettleCandidates([item], now, delay).length > 0;
+        })
+        .slice(0, SESSION_TRIAGE_BATCH_LIMIT);
       if (candidates.length === 0) continue;
       const sessionIDs = candidates.map((item) => item.session.id);
       inFlight.current.add(profileID);
@@ -82,7 +86,8 @@ export function useAutoSettle(): void {
           announceSettledBatch({
             count: candidates.length,
             title: `Auto-settled ${tasks}${where}`,
-            description: `No activity for ${afterDays === 1 ? "a day" : `${afterDays} days`}. Change this in Settings.`,
+            description:
+              "No activity for the time set in Settings. Chats and project tasks have separate settings.",
             undo: () => dispatch(profileID, { type: "inbox-many", at: Date.now(), sessionIDs }),
           });
         })
@@ -93,7 +98,7 @@ export function useAutoSettle(): void {
   });
 
   useEffect(() => {
-    if (afterDays === null) return;
+    if (afterDays === null && chatAfterDays === null) return;
     // Sweep as soon as another connection becomes ready, without re-rendering on updates.
     let readyKey: string | null = null;
     const onChange = () => {
@@ -109,7 +114,7 @@ export function useAutoSettle(): void {
       unsubscribe();
       window.clearInterval(timer);
     };
-  }, [afterDays, controller]);
+  }, [afterDays, chatAfterDays, controller]);
 }
 
 function isSweepable(connection: ConnectionOverview): boolean {

@@ -307,7 +307,7 @@ describe("Palot agent tools", () => {
     expect(deleted.value).toEqual({ deleted: { automationId: "aut_1", name: "Daily" } });
   });
 
-  it("organizes the task: renames, pins and settles through its subagents' activity", async () => {
+  it("settles through its subagents' activity, and moves it back to the Inbox", async () => {
     const harness = setup([
       session("ses_root"),
       session("ses_child", {
@@ -315,28 +315,103 @@ describe("Palot agent tools", () => {
         time: { created: NOW - 200, updated: NOW, idle: NOW - 100 },
       }),
     ]);
-    const result = await harness.call("organize_task", {
-      title: "Ship it",
-      pinned: true,
-      state: "settled",
-    });
-    expect(result.error).toBe(false);
-    expect(harness.client.session.update).toHaveBeenCalledWith({
+    const settled = await harness.call("settle_task", {});
+    expect(settled.error).toBe(false);
+    expect(harness.triageDispatch.mock.calls[0]?.[0]).toMatchObject({
+      type: "settle",
       sessionID: "ses_root",
-      title: "Ship it",
-    });
-    expect(harness.triageDispatch.mock.calls.map(([command]) => command.type)).toEqual([
-      "pin",
-      "settle",
-    ]);
-    expect(harness.triageDispatch.mock.calls[1]?.[0]).toMatchObject({
       through: { updatedAt: NOW - 100, sessionID: "ses_child" },
     });
     expect(harness.onTriageChanged).toHaveBeenCalledTimes(1);
-    expect(result.value.organized).toMatchObject({ taskId: "ses_root", inbox: "settled" });
+    expect(settled.value.task).toMatchObject({ taskId: "ses_root", inbox: "settled" });
 
-    const snooze = await harness.call("organize_task", { state: "snoozed" });
-    expect(snooze.value.error.code).toBe("invalid_arguments");
+    await harness.call("settle_task", { settled: false });
+    expect(harness.triageDispatch.mock.calls[1]?.[0]).toMatchObject({ type: "inbox" });
+  });
+
+  it("settles the calling task when its running turn succeeds, not before", async () => {
+    const harness = setup([session("ses_root"), session("ses_sub", { parentID: "ses_root" })]);
+    harness.active.ses_root = { type: "running" };
+    // A subagent settling its task settles the task it belongs to.
+    const pending = await harness.call("settle_task", {}, "ses_sub");
+    expect(pending.value).toMatchObject({ settlesWhenTurnEnds: true, task: { inbox: "inbox" } });
+    expect(harness.triageDispatch).not.toHaveBeenCalled();
+
+    harness.emit({
+      type: "session.execution.succeeded",
+      created: NOW + 5_000,
+      data: { sessionID: "ses_root" },
+    } as never);
+    await vi.waitFor(() => expect(harness.triageDispatch).toHaveBeenCalledTimes(1));
+    expect(harness.triageDispatch.mock.calls[0]?.[0]).toMatchObject({
+      type: "settle",
+      sessionID: "ses_root",
+      through: { updatedAt: NOW + 5_000, sessionID: "ses_root" },
+    });
+    expect(harness.onTriageChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["session.execution.failed", "session.execution.interrupted"])(
+    "keeps a self-settling task in the Inbox after %s, and when moved back first",
+    async (type) => {
+      const harness = setup();
+      harness.active.ses_root = { type: "running" };
+      await harness.call("settle_task", {});
+      harness.emit({ type, created: NOW, data: { sessionID: "ses_root" } } as never);
+
+      await harness.call("settle_task", {});
+      await harness.call("settle_task", { settled: false });
+      harness.emit({
+        type: "session.execution.succeeded",
+        created: NOW,
+        data: { sessionID: "ses_root" },
+      } as never);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(harness.triageDispatch.mock.calls.map(([command]) => command.type)).toEqual(["inbox"]);
+    },
+  );
+
+  it("refuses to settle another task that is running or waiting for the user", async () => {
+    const harness = setup([session("ses_root"), session("ses_other")]);
+    harness.active.ses_other = { type: "running" };
+    const running = await harness.call("settle_task", { taskId: "ses_other" });
+    expect(running.value.error.code).toBe("task_busy");
+
+    delete harness.active.ses_other;
+    vi.mocked(harness.client.permission.list).mockImplementation((async ({
+      sessionID,
+    }: {
+      sessionID: string;
+    }) => (sessionID === "ses_other" ? [{ id: "per_1", action: "shell" }] : [])) as never);
+    const waiting = await harness.call("settle_task", { taskId: "ses_other" });
+    expect(waiting.value.error.code).toBe("task_busy");
+    expect(harness.triageDispatch).not.toHaveBeenCalled();
+  });
+
+  it("snoozes until a future time, pins, and archives in OpenCode", async () => {
+    const harness = setup();
+    for (const until of [undefined, "2020-01-01T09:00", "soon"]) {
+      const result = await harness.call("snooze_task", until ? { until } : {});
+      expect(result.value.error.code).toBe("invalid_arguments");
+    }
+    const snoozed = await harness.call("snooze_task", { until: "2026-10-28T09:00" });
+    expect(snoozed.error).toBe(false);
+    expect(harness.triageDispatch.mock.calls[0]?.[0]).toMatchObject({ type: "snooze" });
+
+    await harness.call("pin_task", {});
+    await harness.call("pin_task", { pinned: false });
+    expect(harness.triageDispatch.mock.calls.slice(1).map(([command]) => command.type)).toEqual([
+      "pin",
+      "unpin",
+    ]);
+
+    const archived = await harness.call("archive_task", {});
+    expect(archived.error).toBe(false);
+    expect(harness.client.session.update).toHaveBeenCalledWith({
+      sessionID: "ses_root",
+      archived: true,
+    });
+    expect(harness.triageDispatch).toHaveBeenCalledTimes(3);
   });
 
   it("waits for the first task to finish or need the user", async () => {

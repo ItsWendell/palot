@@ -1,4 +1,5 @@
-import { LoaderCircle, Server } from "lucide-react";
+import { LoaderCircle, MessageCircle, Server } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "jotai";
 import { memo, useState } from "react";
 import type { OpenCodeProfileSnapshot, OpenCodeRuntimeStatus, SidebarMode } from "../../shared";
@@ -85,6 +86,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         : `${connectedCount} of ${enabledConnections.length} ${enabledConnections.length === 1 ? "server" : "servers"} connected`;
   const title = mode === "inbox" ? "Inbox" : "Projects";
   const searchKeys = useShortcutKeys("palette.open");
+  const chatKeys = useShortcutKeys("chat.new");
+  const navigate = useNavigate();
   const searchShortcut = formatShortcut(searchKeys);
 
   return (
@@ -141,6 +144,17 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                   >
                     <AppIcon name="add" aria-hidden="true" />
                     <span>New task</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    className={sidebarItemVariants()}
+                    aria-keyshortcuts={shortcutAriaKeys(chatKeys)}
+                    title={`New chat without a project (${formatShortcut(chatKeys)})`}
+                    onClick={() => void navigate({ to: "/new", search: { chat: true } })}
+                  >
+                    <MessageCircle aria-hidden="true" />
+                    <span>New chat</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>

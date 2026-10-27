@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { withoutChatProjects } from "./chats";
 import type {
   ActivityWatermark,
   OpenCodeProfile,
@@ -794,7 +795,11 @@ export class ConnectionOverviewController {
     const id = entry.runtime.connectionID;
     const reconciler = openCodeReconciler(this.queryClient);
     const sessions = reuseSessionRows(entry.sessions, reconciler.sessions(id).map(mapSession));
-    const projects = reuseRows(entry.projects, reconciler.projects(id).map(mapProject));
+    // Chat folders are directory projects to OpenCode, but not projects to the user.
+    const projects = reuseRows(
+      entry.projects,
+      withoutChatProjects(reconciler.projects(id).map(mapProject)),
+    );
     const activity = reconciler.activity(id);
     const inbox = projectSessionInbox({
       sessions,

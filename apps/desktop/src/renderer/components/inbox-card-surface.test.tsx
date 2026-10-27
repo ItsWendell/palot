@@ -38,6 +38,7 @@ describe("InboxCardSurface", () => {
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         },
         project: null,
+        kind: "task",
         projectName: "Palot",
         section: "inbox",
         attention: false,

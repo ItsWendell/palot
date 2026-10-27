@@ -615,6 +615,9 @@ async function extractTar(archive: string, destination: string) {
     if (!found) throw new Error("No regular opencode executable found in archive.");
   } finally {
     await output?.close();
+    // Stopping early (a refused or truncated archive) makes the composed pipeline emit an
+    // AbortError after the reader is gone; the extraction error above is the one to report.
+    stream.on("error", () => undefined);
     stream.destroy();
   }
 }

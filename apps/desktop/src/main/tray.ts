@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isChatDirectory } from "../shared/chat-folders";
 import type { OpenCodeEvent, Project, SessionInfo } from "@opencode/client";
 import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions } from "electron";
 import type {
@@ -362,25 +363,17 @@ class TrayController {
       return {
         attention: entry?.sections.attention ?? [],
         pinned: pinnedRoots.map(({ session }) =>
-          taskItem(
-            session,
-            `${projectNames.get(session.projectID) ?? "Project"} · Pinned`,
-            profileID,
-          ),
+          taskItem(session, `${trayProjectLabel(session, projectNames)} · Pinned`, profileID),
         ),
         running: activeRoots
           .toSorted((left, right) => right.time.updated - left.time.updated)
           .map((session) =>
-            taskItem(
-              session,
-              `${projectNames.get(session.projectID) ?? "Project"} · Running`,
-              profileID,
-            ),
+            taskItem(session, `${trayProjectLabel(session, projectNames)} · Running`, profileID),
           ),
         recent: recent.map((session) =>
           taskItem(
             session,
-            `${projectNames.get(session.projectID) ?? "Project"} · ${formatTrayRelativeTime(session.time.updated)}`,
+            `${trayProjectLabel(session, projectNames)} · ${formatTrayRelativeTime(session.time.updated)}`,
             profileID,
           ),
         ),
@@ -503,6 +496,15 @@ export async function installTray(input: {
   } catch (error) {
     console.warn("[tray] Desktop tray unavailable", error);
   }
+}
+
+/** The project name, or "Chat" for a project-free chat, whose folder is not a project to the user. */
+function trayProjectLabel(
+  session: { projectID: string; location: { directory: string } },
+  projectNames: ReadonlyMap<string, string>,
+): string {
+  if (isChatDirectory(session.location.directory)) return "Chat";
+  return projectNames.get(session.projectID) ?? "Project";
 }
 
 export function refreshTrayMenu(): void {

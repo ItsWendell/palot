@@ -696,18 +696,21 @@ describe("projectToolExecution", () => {
     });
     expect(
       projectToolExecution(
-        tool("execute", { code: "return await tools.palot.organize_task({...})" }, "{}", {
+        tool("execute", { code: "return await tools.palot.snooze_task({...})" }, "{}", {
           toolCalls: [
             {
-              tool: "palot.organize_task",
+              tool: "palot.snooze_task",
               status: "completed",
-              input: { pinned: true, state: "settled" },
+              input: { until: "2026-10-28T09:00" },
             },
           ],
         }),
         0,
       ),
-    ).toMatchObject({ calls: [{ title: "Organize task", args: ["pin, settle"] }] });
+    ).toMatchObject({ calls: [{ title: "Snooze task", args: ["until 2026-10-28 09:00"] }] });
+    expect(
+      projectToolExecution(tool("palot_settle_task", { settled: false }, "{}"), 0),
+    ).toMatchObject({ title: "Settle task", label: "back to Inbox" });
     expect(
       projectToolExecution(tool("palot_wait_tasks", { taskIds: ["a", "b"] }, "{}"), 0),
     ).toMatchObject({ title: "Wait for tasks", label: "2 tasks" });

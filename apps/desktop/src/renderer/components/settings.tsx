@@ -86,6 +86,7 @@ import {
   showTimelineCacheBustsAtom,
   defaultSidebarModeAtom,
   autoSettleAfterDaysAtom,
+  chatAutoSettleAfterDaysAtom,
   AUTO_SETTLE_DAY_CHOICES,
   type AutoSettleAfterDays,
   defaultWorktreeBaseAtom,
@@ -1036,6 +1037,9 @@ function GeneralSettings() {
   const [remoteMarkdownFavicons, setRemoteMarkdownFavicons] = useAtom(remoteMarkdownFaviconsAtom);
   const [defaultSidebarMode, setDefaultSidebarMode] = useAtom(defaultSidebarModeAtom);
   const [autoSettleAfterDays, setAutoSettleAfterDays] = useAtom(autoSettleAfterDaysAtom);
+  const [chatAutoSettleAfterDays, setChatAutoSettleAfterDays] = useAtom(
+    chatAutoSettleAfterDaysAtom,
+  );
   const [automationHostSettings, setAutomationHostSettings] =
     useState<AutomationHostSettings | null>(null);
   const resolvedProjection = useMemo(
@@ -1260,6 +1264,35 @@ function GeneralSettings() {
                   aria-label="Auto-settle idle tasks"
                 >
                   <SelectValue>{autoSettleLabel(autoSettleAfterDays)}</SelectValue>
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="off">Off</SelectItem>
+                  {AUTO_SETTLE_DAY_CHOICES.map((days) => (
+                    <SelectItem key={days} value={String(days)}>
+                      {autoSettleLabel(days)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Settle idle chats after"
+            description="Move idle chats to Settled sooner than project tasks. The same activity and Inbox protections apply."
+            control={
+              <Select
+                value={chatAutoSettleAfterDays === null ? "off" : String(chatAutoSettleAfterDays)}
+                onValueChange={(value) =>
+                  setChatAutoSettleAfterDays(
+                    value === "off" ? null : (Number(value) as AutoSettleAfterDays),
+                  )
+                }
+              >
+                <SelectTrigger
+                  className="w-full @lg/settings:w-44"
+                  aria-label="Settle idle chats after"
+                >
+                  <SelectValue>{autoSettleLabel(chatAutoSettleAfterDays)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent align="end">
                   <SelectItem value="off">Off</SelectItem>

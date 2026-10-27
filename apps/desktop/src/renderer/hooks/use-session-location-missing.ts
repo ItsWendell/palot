@@ -49,6 +49,13 @@ export function useSessionLocationMissing(options: SessionLocationMissingOptions
     retry: false,
     refetchOnWindowFocus: false,
   });
+  // A connection-wide cancel reverts a check that has no answer yet to idle, and nothing else
+  // refetches it, so the missing-workspace prompt would never appear. Run it again.
+  const cancelledBeforeAnswer = location.status === "pending" && location.fetchStatus === "idle";
+  const refetchLocation = location.refetch;
+  useEffect(() => {
+    if (healthy && cancelledBeforeAnswer) void refetchLocation();
+  }, [cancelledBeforeAnswer, healthy, refetchLocation]);
   const [state, setState] = useState<{
     identity: string;
     pending: boolean;

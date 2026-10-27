@@ -15,11 +15,14 @@ export function ProjectPickerContent({
   value,
   onValueChange,
   allLabel,
+  extraOption,
 }: {
   projects: PalotProject[];
   value: string | null;
   onValueChange(value: string | null): void;
   allLabel?: string;
+  /** An entry after "All projects" that is not a project, such as the Inbox's Chats filter. */
+  extraOption?: { value: string; label: string; keywords: string };
 }) {
   return (
     <Command className="bg-transparent p-0">
@@ -36,6 +39,17 @@ export function ProjectPickerContent({
             >
               <ProjectPickerCheckbox checked={value === null} />
               <span className="min-w-0 flex-1 truncate">{allLabel}</span>
+            </CommandItem>
+          ) : null}
+          {extraOption ? (
+            <CommandItem
+              value={extraOption.keywords}
+              className="[&>svg:last-child]:hidden"
+              data-checked={value === extraOption.value || undefined}
+              onSelect={() => onValueChange(extraOption.value)}
+            >
+              <ProjectPickerCheckbox checked={value === extraOption.value} />
+              <span className="min-w-0 flex-1 truncate">{extraOption.label}</span>
             </CommandItem>
           ) : null}
           {projects.map((project) => (

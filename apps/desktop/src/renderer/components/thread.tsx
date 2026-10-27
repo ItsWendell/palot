@@ -15,6 +15,7 @@ import {
   GitBranch,
   GitFork,
   LoaderCircle,
+  MessageCircle,
   Pencil,
   RotateCcw,
   Sparkles,
@@ -76,6 +77,7 @@ import {
   useSessionCatalogSelector,
 } from "../hooks/use-session-catalog";
 import { cn } from "../lib/cn";
+import { isChatSession } from "../lib/chats";
 import { BoundedScroll } from "./transcript/bounded-scroll";
 import { createMarkdownSessionOpener } from "../lib/markdown-session-links";
 import { writeClipboardText } from "../lib/clipboard";
@@ -162,6 +164,7 @@ import {
 } from "./markdown-content";
 import { NewTask } from "./new-task";
 import { OpenInSelector } from "./open-in-selector";
+import { MoveToProjectDialog } from "./move-to-project-dialog";
 import { PullRequestControl } from "./pull-requests/pull-request-control";
 import { SessionExportMenu, type SessionHistoryActions } from "./session-context-menu";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
@@ -1583,9 +1586,17 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
     };
   }, [session.title]);
   const runtime = useAtomValue(runtimeAtom);
+  const chat = isChatSession(session);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const activity = useSessionActivityForSession(session.id).data;
+  const movingDisabled = !canFetchOpenCode(runtime) || Boolean(activity?.active);
   const projects = useProjectCatalog();
   const project = projectForSession(projects, session);
-  const name = project ? projectName(project) : session.location.directory.split("/").at(-1);
+  const name = chat
+    ? "Chat"
+    : project
+      ? projectName(project)
+      : session.location.directory.split("/").at(-1);
   const location = project ? projectLocation(project) : session.location.directory;
   return (
     <header className="palot-main-surface-header window-drag thread-header @container/thread-header flex h-(--shell-header-height) min-h-(--shell-header-height) items-center gap-2 border-b bg-background/90 px-3 pr-(--window-controls-width) pl-[18px]">
@@ -1596,19 +1607,27 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
               <button
                 type="button"
                 className="window-no-drag flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label="Show project details"
+                aria-label={chat ? "Chat" : "Show project details"}
               />
             }
           >
-            <FolderGit2 className="size-3.5" aria-hidden="true" />
+            {chat ? (
+              <MessageCircle className="size-3.5" aria-hidden="true" />
+            ) : (
+              <FolderGit2 className="size-3.5" aria-hidden="true" />
+            )}
           </TooltipTrigger>
           <TooltipContent
             align="start"
             className="flex-col items-start gap-1 px-2.5 py-2 leading-tight"
           >
             <span className="font-medium">{name ?? "Project"}</span>
-            <span className="max-w-72 break-all text-muted-foreground">{location}</span>
-            {session.location.directory !== location ? (
+            {chat ? (
+              <span className="text-muted-foreground">A conversation without a project</span>
+            ) : (
+              <span className="max-w-72 break-all text-muted-foreground">{location}</span>
+            )}
+            {!chat && session.location.directory !== location ? (
               <span className="max-w-72 break-all text-muted-foreground">
                 Checkout: {session.location.directory}
               </span>
@@ -1668,11 +1687,26 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
           </Tooltip>
         ) : null}
       </div>
-      {session.parentID ? null : <PullRequestControl session={session} />}
-      {runtime?.capabilities?.localPathActions === true ? (
+      {chat && !session.parentID ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="window-no-drag"
+          disabled={movingDisabled}
+          onClick={() => setMoveOpen(true)}
+        >
+          <FolderGit2 aria-hidden="true" />
+          Move to project…
+        </Button>
+      ) : null}
+      {session.parentID || chat ? null : <PullRequestControl session={session} />}
+      {!chat && runtime?.capabilities?.localPathActions === true ? (
         <OpenInSelector key={runtime.connectionID} sessionID={session.id} />
       ) : null}
       <SessionExportMenu session={session} historyActions={historyActions} />
+      {moveOpen ? (
+        <MoveToProjectDialog session={session} onClose={() => setMoveOpen(false)} />
+      ) : null}
     </header>
   );
 });
@@ -1768,7 +1802,9 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
   const runtime = useAtomValue(runtimeAtom);
   const sessions = useSessionCatalog();
   const projects = useProjectCatalog();
-  const branchQuery = useVcsInfo(session.location);
+  // A chat's folder has no checkout or branch to show.
+  const chat = isChatSession(session);
+  const branchQuery = useVcsInfo(chat ? null : session.location);
   const shellSessionIDs = useMemo(
     () =>
       new Set([
@@ -1809,23 +1845,26 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
   const isAdditionalCheckout = sessionIsAdditionalCheckout(session, project ?? undefined);
   const navigateToNewTask = useCallback(
     () =>
-      void navigate({
-        to: "/new",
-        search: { projectID: session.projectID, profileID: runtime?.profileID },
-      }),
-    [navigate, runtime?.profileID, session.projectID],
+      void navigate(
+        chat
+          ? { to: "/new", search: { chat: true } }
+          : { to: "/new", search: { projectID: session.projectID, profileID: runtime?.profileID } },
+      ),
+    [chat, navigate, runtime?.profileID, session.projectID],
   );
   const composerContextBar = useMemo(
     () => (
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-0.5 gap-y-1">
         <ConnectionDestination />
-        <div
-          className="flex h-6 min-w-0 items-center gap-1 px-1.5 text-meta leading-none font-medium text-foreground"
-          title={isAdditionalCheckout ? "Additional checkout" : "Current checkout"}
-        >
-          <FolderGit2 className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="truncate">{isAdditionalCheckout ? "Worktree" : "Checkout"}</span>
-        </div>
+        {chat ? null : (
+          <div
+            className="flex h-6 min-w-0 items-center gap-1 px-1.5 text-meta leading-none font-medium text-foreground"
+            title={isAdditionalCheckout ? "Additional checkout" : "Current checkout"}
+          >
+            <FolderGit2 className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="truncate">{isAdditionalCheckout ? "Worktree" : "Checkout"}</span>
+          </div>
+        )}
         <div className="ml-auto flex h-6 min-w-0 items-center gap-2 px-1.5 text-meta leading-none text-muted-foreground max-[560px]:ml-0">
           {runtime ? (
             <RunningWorkControl
@@ -1836,16 +1875,21 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
               connectionID={runtime.connectionID}
             />
           ) : null}
-          <GitBranch className="size-3 shrink-0" aria-hidden="true" />
-          <span className="truncate">
-            {branchQuery.isPending
-              ? "Loading branch"
-              : (branchQuery.data?.currentBranch ?? "Detached HEAD")}
-          </span>
+          {chat ? null : (
+            <>
+              <GitBranch className="size-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">
+                {branchQuery.isPending
+                  ? "Loading branch"
+                  : (branchQuery.data?.currentBranch ?? "Detached HEAD")}
+              </span>
+            </>
+          )}
         </div>
       </div>
     ),
     [
+      chat,
       backgroundWork,
       branchQuery.data?.currentBranch,
       branchQuery.isPending,

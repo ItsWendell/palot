@@ -63,10 +63,12 @@ export interface PalotSchedulingState {
   created: Map<string, string>;
   /** Creates run one at a time, so each can identify the record it added. */
   queue: Promise<unknown>;
+  /** Tasks that settled themselves mid-turn, settling when that turn succeeds. */
+  settleAfterTurn: Map<string, symbol>;
 }
 
 export function palotSchedulingState(): PalotSchedulingState {
-  return { created: new Map(), queue: Promise.resolve() };
+  return { created: new Map(), queue: Promise.resolve(), settleAfterTurn: new Map() };
 }
 
 type Args = Record<string, unknown>;
@@ -155,6 +157,81 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     // Only a running turn can be blocked on the user.
     ...(active[session.id] ? await pendingRequests(client, session.id) : {}),
   });
+
+  const triageBase = (sessionID: string) => ({
+    profileID: context.profileID,
+    sessionID,
+    at: context.now(),
+  });
+
+  /** Applies one Inbox change, if any, and returns the task as list_tasks describes it. */
+  const triaged = async (
+    client: OpenCodeClient,
+    callerID: string,
+    taskID: string,
+    command: SessionTriageCommand | null,
+  ) => {
+    const snapshot = command ? context.triage.dispatch(command) : null;
+    if (snapshot) context.onTriageChanged(snapshot);
+    const [session, active, root] = await Promise.all([
+      getSession(client, taskID),
+      client.session.active(),
+      rootSession(client, callerID),
+    ]);
+    return {
+      task: await describeTask(
+        client,
+        session,
+        root.id,
+        active,
+        triageRecords(snapshot ?? context.triage.load(context.profileID)),
+      ),
+    };
+  };
+
+  /**
+   * Settles a task once its running turn succeeds, as T3 Code does for a thread settling itself.
+   * A failed or interrupted turn stays in the Inbox; steering joins the same turn. Kept in
+   * memory: a restart or reconnect mid-turn leaves the task in the Inbox.
+   */
+  const settleAfterTurn = (taskID: string) => {
+    const token = Symbol(taskID);
+    scheduling.settleAfterTurn.set(taskID, token);
+    const current = () => scheduling.settleAfterTurn.get(taskID) === token;
+    const stop = () => {
+      if (current()) scheduling.settleAfterTurn.delete(taskID);
+      clearTimeout(timer);
+      unsubscribe();
+      context.signal.removeEventListener("abort", stop);
+    };
+    const unsubscribe = context.onEvent((event) => {
+      if (
+        (event.type !== "session.execution.succeeded" &&
+          event.type !== "session.execution.failed" &&
+          event.type !== "session.execution.interrupted") ||
+        event.data.sessionID !== taskID
+      )
+        return;
+      const settle = event.type === "session.execution.succeeded" && current();
+      stop();
+      if (!settle) return;
+      void context
+        .withClient(async (client) => {
+          const family = await familyWatermark(client, await getSession(client, taskID));
+          // Covers the turn's own end even if the read raced OpenCode's idle stamp.
+          const through =
+            family.updatedAt >= event.created
+              ? family
+              : { updatedAt: event.created, sessionID: taskID };
+          context.onTriageChanged(
+            context.triage.dispatch({ ...triageBase(taskID), type: "settle", through }),
+          );
+        })
+        .catch(() => undefined);
+    });
+    const timer = setTimeout(stop, DAY);
+    context.signal.addEventListener("abort", stop, { once: true });
+  };
 
   return [
     tool(
@@ -529,73 +606,95 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
       },
     ),
     tool(
-      "organize_task",
-      [
-        "Organize a Palot task like the user would in the sidebar: rename it, pin it, settle it (done for now), snooze it until a time, move it back to the Inbox, or archive it. Defaults to the calling task.",
-        "Only settle or archive a task when its work is finished or the user asked. A settled or snoozed task returns to the Inbox when it has new activity.",
-      ].join("\n"),
-      {
-        taskId: { type: "string" },
-        title: { type: "string", maxLength: 200 },
-        pinned: { type: "boolean" },
-        state: { type: "string", enum: ["inbox", "settled", "snoozed"] },
-        snoozeUntil: {
-          type: "string",
-          description: 'ISO 8601 date-time; required when state is "snoozed".',
-        },
-        archived: { type: "boolean" },
-      },
+      "settle_task",
+      "Settle a Palot task (session) as done for now, as the user does in the sidebar: it leaves the Inbox until it has new activity. Defaults to the calling task; settling the calling task takes effect when its current turn ends, unless the turn fails or is interrupted. Another task must not be running or waiting for the user: use wait_tasks first. Pass settled false to move a task back to the Inbox. Only settle a task when its work is finished or the user asked.",
+      { taskId: { type: "string" }, settled: { type: "boolean" } },
       [],
       async (args, sessionID, client) => {
-        const title = text(args, "title", 200);
-        const pinned = flag(args, "pinned");
-        const state = choice(args, "state", ["inbox", "settled", "snoozed"]);
-        const archived = flag(args, "archived");
-        const snooze = text(args, "snoozeUntil", 64);
-        if (title === undefined && pinned === undefined && !state && archived === undefined)
-          throw new ToolFailure("invalid_arguments", "Pass at least one change.");
-        const now = context.now();
-        let until: number | null = null;
-        if (state === "snoozed") {
-          until = snooze ? automationInstant(snooze, context.timezone()) : null;
-          if (until === null || until <= now)
+        const settled = flag(args, "settled") ?? true;
+        const [task, caller] = await Promise.all([
+          rootSession(client, text(args, "taskId", 200) ?? sessionID),
+          rootSession(client, sessionID),
+        ]);
+        const base = triageBase(task.id);
+        if (!settled) {
+          scheduling.settleAfterTurn.delete(task.id);
+          return triaged(client, sessionID, task.id, { ...base, type: "inbox" });
+        }
+        const running = Boolean((await client.session.active())[task.id]);
+        // Settling now would not stick: the turn's end is new activity that unsettles it.
+        if (running && task.id === caller.id) {
+          settleAfterTurn(task.id);
+          return {
+            ...(await triaged(client, sessionID, task.id, null)),
+            settlesWhenTurnEnds: true,
+          };
+        }
+        if (running)
+          throw new ToolFailure(
+            "task_busy",
+            "That task is still running. Use wait_tasks until it finishes, then settle it.",
+          );
+        for (const member of await familyIDs(client, task.id)) {
+          if ("waitingForUser" in (await pendingRequests(client, member)))
             throw new ToolFailure(
-              "invalid_arguments",
-              "snoozeUntil must be a future ISO 8601 date-time.",
+              "task_busy",
+              "That task is waiting for the user to answer a request. It can be settled once they do.",
             );
         }
+        return triaged(client, sessionID, task.id, {
+          ...base,
+          type: "settle",
+          through: await familyWatermark(client, task),
+        });
+      },
+    ),
+    tool(
+      "snooze_task",
+      "Snooze a Palot task (session) until a time: it leaves the Inbox and returns then, or sooner if it has new activity. Defaults to the calling task. To wake it now, use settle_task with settled false.",
+      {
+        taskId: { type: "string" },
+        until: { type: "string", description: "Future ISO 8601 date-time." },
+      },
+      ["until"],
+      async (args, sessionID, client) => {
+        const value = text(args, "until", 64, true)!;
+        const until = automationInstant(value, context.timezone());
+        if (until === null || until <= context.now())
+          throw new ToolFailure("invalid_arguments", "until must be a future ISO 8601 date-time.");
         const task = await rootSession(client, text(args, "taskId", 200) ?? sessionID);
-        if (title !== undefined) await client.session.update({ sessionID: task.id, title });
-        if (archived !== undefined) await client.session.update({ sessionID: task.id, archived });
-        const commands: SessionTriageCommand[] = [];
-        const base = { profileID: context.profileID, sessionID: task.id, at: now };
-        if (state === "inbox") commands.push({ ...base, type: "inbox" });
-        if (pinned !== undefined) commands.push({ ...base, type: pinned ? "pin" : "unpin" });
-        if (state === "settled" || state === "snoozed") {
-          const through = await familyWatermark(client, task);
-          commands.push(
-            state === "settled"
-              ? { ...base, type: "settle", through }
-              : { ...base, type: "snooze", until: until!, through },
-          );
-        }
-        let snapshot: SessionTriageSnapshot | null = null;
-        for (const command of commands) snapshot = context.triage.dispatch(command);
-        if (snapshot) context.onTriageChanged(snapshot);
-        const [session, active] = await Promise.all([
-          getSession(client, task.id),
-          client.session.active(),
-        ]);
-        const root = await rootSession(client, sessionID);
-        return {
-          organized: await describeTask(
-            client,
-            session,
-            root.id,
-            active,
-            triageRecords(snapshot ?? context.triage.load(context.profileID)),
-          ),
-        };
+        return triaged(client, sessionID, task.id, {
+          ...triageBase(task.id),
+          type: "snooze",
+          until,
+          through: await familyWatermark(client, task),
+        });
+      },
+    ),
+    tool(
+      "pin_task",
+      "Pin a Palot task (session) to the top of the Inbox, or pass pinned false to unpin it. Defaults to the calling task.",
+      { taskId: { type: "string" }, pinned: { type: "boolean" } },
+      [],
+      async (args, sessionID, client) => {
+        const pinned = flag(args, "pinned") ?? true;
+        const task = await rootSession(client, text(args, "taskId", 200) ?? sessionID);
+        return triaged(client, sessionID, task.id, {
+          ...triageBase(task.id),
+          type: pinned ? "pin" : "unpin",
+        });
+      },
+    ),
+    tool(
+      "archive_task",
+      "Archive a Palot task (session) in OpenCode, which hides it in every app, or pass archived false to restore it. Defaults to the calling task. Only archive a task when the user asked; to mark it done for now, use settle_task.",
+      { taskId: { type: "string" }, archived: { type: "boolean" } },
+      [],
+      async (args, sessionID, client) => {
+        const archived = flag(args, "archived") ?? true;
+        const task = await rootSession(client, text(args, "taskId", 200) ?? sessionID);
+        await client.session.update({ sessionID: task.id, archived });
+        return triaged(client, sessionID, task.id, null);
       },
     ),
   ];

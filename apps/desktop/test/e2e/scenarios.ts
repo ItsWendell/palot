@@ -5,6 +5,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { compactQuestionScenario } from "./compact-question-scenario.ts";
+import { projectFreeChatScenario } from "./project-free-chat-scenario.ts";
 import { subagentRequestsScenario } from "./subagent-requests-scenario.ts";
 import { beaconMotionScenario } from "./beacon-motion-scenario.ts";
 import { checkSourceUpdateInstructions, sourceUpdatesScenario } from "./source-updates-scenario.ts";
@@ -148,6 +149,8 @@ export interface Scenario {
   expectedModelCalls: number;
   onboarding?: boolean;
   modelRuntime?: "native-openai";
+  /** Keep the isolated home outside this checkout, so its folders are not in a repository. */
+  homeOutsideCheckout?: boolean;
   arrange(llm: TestLLMServer): void;
   prepare?(home: string): Promise<void>;
   prepareProject?(context: ScenarioSeedContext): Promise<void>;
@@ -215,6 +218,7 @@ export const scenarios = {
   "browser-native": browserNativeScenario,
   btw: btwScenario,
   "destination-recovery": destinationRecoveryScenario,
+  "project-free-chat": projectFreeChatScenario,
   "browser-native-http": browserNativeHttpScenario,
   "project-settings": projectSettingsScenario,
   "project-scripts": projectScriptsScenario,

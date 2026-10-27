@@ -1,5 +1,13 @@
 import { Provider, createStore } from "jotai";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderComponent,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NewSessionComposerOptions } from "./composer";
@@ -28,6 +36,12 @@ const catalog = vi.hoisted(() => ({
 }));
 
 const services = vi.hoisted(() => ({
+  createChatSession: vi.fn(),
+  getLocation: vi.fn().mockResolvedValue({
+    directory: "/home/remote",
+    project: { id: "home", directory: "/home/remote", canonical: "/home/remote" },
+  }),
+  listProjects: vi.fn().mockResolvedValue([{ id: "home", canonical: "/home/remote" }]),
   createProjectCopy: vi.fn().mockResolvedValue({ directory: "/worktrees/new" }),
   createSession: vi.fn().mockResolvedValue({
     id: "session-1",
@@ -79,7 +93,29 @@ vi.mock("../hooks/use-vcs-info", () => ({
 }));
 
 vi.mock("../services/palot", () => ({ palot: services }));
-vi.mock("./connection-destination", () => ({ ConnectionDestination: () => null }));
+vi.mock("../services/opencode-chats", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/opencode-chats")>()),
+  createChatSession: services.createChatSession,
+}));
+vi.mock("../services/opencode-client", () => ({
+  openCodeClient: () => ({
+    location: { get: services.getLocation },
+    project: { list: services.listProjects },
+  }),
+}));
+vi.mock("./destination-picker", () => ({
+  DestinationPicker: () => <button type="button">Task destination</button>,
+}));
+
+const defaultProject = catalog.projects[0]!;
+function render(component: React.ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderComponent(component, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
 
 vi.mock("./composer", () => ({
   Composer: ({
@@ -124,11 +160,108 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  catalog.projects.splice(1);
+  catalog.projects.splice(0, catalog.projects.length, defaultProject);
   vi.clearAllMocks();
 });
 
 describe("NewTask", () => {
+  it("starts a chat without any project or workspace pickers and applies selections before navigation", async () => {
+    catalog.projects.splice(0);
+    const session = {
+      parentID: null,
+      title: null,
+      agent: null,
+      model: null,
+      id: "chat-1",
+      projectID: "chat-folder",
+      location: { directory: "/home/remote/.palot/chats/today-chat-1" },
+    };
+    services.createChatSession.mockResolvedValueOnce(session);
+    creation.options = {
+      approvalMode: "full",
+      agent: "plan",
+      model: { id: "deep", providerID: "openai" },
+    };
+    const onProjectChange = vi.fn();
+    const onSessionCreated = vi.fn();
+    render(
+      <Provider store={createDraftStore()}>
+        <NewTask chat onProjectChange={onProjectChange} onSessionCreated={onSessionCreated} />
+      </Provider>,
+    );
+    expect(screen.getByRole("heading", { name: "What do you want to ask?" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(onSessionCreated).toHaveBeenCalledWith("chat-1"));
+    expect(services.createChatSession).toHaveBeenCalledExactlyOnceWith({
+      connectionID: "remote-connection",
+      permissions: approvalPresetRules("full"),
+    });
+    expect(services.switchAgent).toHaveBeenCalledWith({ sessionID: "chat-1", agent: "plan" });
+    expect(services.switchModel).toHaveBeenCalledWith({
+      sessionID: "chat-1",
+      model: creation.options.model,
+    });
+    expect(services.switchModel.mock.invocationCallOrder[0]).toBeLessThan(
+      onSessionCreated.mock.invocationCallOrder[0]!,
+    );
+    expect(services.createProjectCopy).not.toHaveBeenCalled();
+    expect(services.createSession).not.toHaveBeenCalled();
+    expect(onProjectChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Task destination" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Work in:|Source branch:/ })).toBeNull();
+  });
+
+  it.each([
+    ["inside a repository", { id: "repo", directory: "/home", canonical: "/home" }, null],
+    [
+      "a repository itself",
+      { id: "home", directory: "/home/remote", canonical: "/home/remote" },
+      [{ id: "home", canonical: "/home/remote", vcs: "git" }],
+    ],
+  ])("explains why chats cannot start when the server folder is %s", async (_, project, list) => {
+    services.getLocation.mockResolvedValueOnce({ directory: "/home/remote", project });
+    if (list) services.listProjects.mockResolvedValueOnce(list);
+    render(
+      <Provider store={createDraftStore()}>
+        <NewTask chat />
+      </Provider>,
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Chats need a folder outside a repository",
+    );
+    expect(screen.queryByRole("button", { name: "Create task" })).toBeNull();
+  });
+
+  it("keeps a chat draft when creation fails", async () => {
+    services.createChatSession.mockRejectedValueOnce(new Error("Folder unavailable"));
+    const onSessionCreated = vi.fn();
+    render(
+      <Provider store={createDraftStore()}>
+        <NewTask chat onSessionCreated={onSessionCreated} />
+      </Provider>,
+    );
+    const draft = await screen.findByRole<HTMLInputElement>("textbox", { name: "Draft" });
+    fireEvent.change(draft, { target: { value: "my question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(creation.error).toEqual(new Error("Folder unavailable")));
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Draft" }).value).toBe(
+      "my question",
+    );
+    expect(screen.getByRole("alert").textContent).toContain("Folder unavailable");
+    expect(onSessionCreated).not.toHaveBeenCalled();
+  });
+
+  it("offers a quiet switch from a project task to a chat", () => {
+    const onChat = vi.fn();
+    render(
+      <Provider store={createDraftStore()}>
+        <NewTask onChat={onChat} />
+      </Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "…or just chat" }));
+    expect(onChat).toHaveBeenCalledOnce();
+  });
+
   it.each(["normal", "full"] as const)(
     "sets %s permissions in the creation payload before handing a session to the composer",
     async (approvalMode) => {

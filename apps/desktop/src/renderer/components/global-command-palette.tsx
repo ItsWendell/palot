@@ -515,6 +515,15 @@ export function GlobalCommandPalette() {
         return;
       }
 
+      // New chat defaults to Mod+Alt+N; matchesShortcut tells that chord apart from AltGr typing.
+      if (!open && matchesShortcut(event, shortcutKeys("chat.new"))) {
+        event.preventDefault();
+        if (otherDialogOpen()) return;
+        const command = commands.find((candidate) => candidate.id === "chat.new");
+        if (command) execute(command);
+        return;
+      }
+
       if (event.altKey || event.getModifierState("AltGraph")) return;
       if (inTerminal && event.ctrlKey && !event.metaKey && !event.shiftKey && event.key !== "`")
         return;

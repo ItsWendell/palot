@@ -454,6 +454,16 @@ describe("GlobalCommandPalette", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("starts a chat with Mod+Alt+N, but not with Alt+N alone", async () => {
+    const { router } = setup("/sessions/session-1");
+    fireEvent.keyDown(window, { key: "n", altKey: true });
+    expect(router.state.location.pathname).toBe("/sessions/session-1");
+    // Linux and Windows report the Ctrl+Alt chord as AltGraph; the physical key decides.
+    fireEvent.keyDown(window, { key: "n", code: "KeyN", ctrlKey: true, altKey: true });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/new"));
+    expect(router.state.location.search).toMatchObject({ chat: true });
+  });
+
   it("keeps the explicit project chooser available in the command palette", async () => {
     const { store } = setup("/new", [
       project,

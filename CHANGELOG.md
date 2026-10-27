@@ -5,6 +5,42 @@ file records user-visible changes. Internal refactors belong in Git history
 unless they change behavior, compatibility, security, privacy, or release
 operations.
 
+## 0.21.0
+
+This remains an experimental pre-release, not a supported stable release.
+
+### Added
+
+- Chats without a project: start one from "…or just chat" on the new-task page,
+  "No project" in the destination picker, "New chat" in the Inbox or command
+  palette, or Mod+Alt+N. Each chat gets its own folder under `.palot/chats` in
+  the server's default folder (your home folder for a local server). Chats are
+  ordinary Inbox items labeled "Chat", have their own "Chats" filter and Projects
+  group, hide branch, worktree and pull request controls, and settle after one
+  idle day by default (Settings → General → "Settle idle chats after"). "Move to
+  project…" moves a chat and its history into a real project. Chats are not
+  available when the server's default folder is inside a Git repository.
+
+### Changed
+
+- Palot's agent tool for organizing tasks is now four tools named after what they
+  do: `settle_task`, `snooze_task`, `pin_task` and `archive_task`. Agents look
+  tools up by name, and missed `organize_task` when asked to settle a task.
+  Renaming uses OpenCode's own `session_rename` tool.
+- A task asked to settle itself now settles when its current turn ends. Before,
+  the end of that turn counted as new activity and moved it straight back to the
+  Inbox. A failed or interrupted turn keeps it in the Inbox, and agents can no
+  longer settle another task while it runs or waits for you.
+
+### Fixed
+
+- Moving a task to another worktree could briefly show it in its old location,
+  because OpenCode applies a move just after the request returns.
+- The prompt to recover a task whose folder was deleted could fail to appear
+  when Palot cancelled in-flight requests at the same moment.
+- Refusing an unsafe OpenCode download archive no longer raises a second,
+  unhandled error in Palot's main process.
+
 ## 0.20.0
 
 This remains an experimental pre-release, not a supported stable release.
