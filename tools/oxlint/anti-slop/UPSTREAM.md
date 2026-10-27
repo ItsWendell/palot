@@ -30,8 +30,8 @@ These are AST/scope checks, not TypeScript cross-file proofs or performance guar
 
 ## Toolchain and local changes
 
-- Vite+: `1.3.0`, with bundled Oxlint `1.88.0` (`vp exec -- oxlint --version`).
-- Root development dependency `@oxlint/plugins`: exactly `1.88.0`, matched to that
+- Vite+: `1.4.0`, with bundled Oxlint `1.89.0` (`vp exec -- oxlint --version`).
+- Root development dependency `@oxlint/plugins`: exactly `1.89.0`, matched to that
   Oxlint runtime; Vite+'s own transitive plugin-helper version is left untouched.
 - Upstream implementations are unmodified. Only this provenance file and the
   upstream root license were added to the copied tree.

@@ -206,6 +206,12 @@ export const defaultWorkspaceModeAtom = persistedAtom({
   validate: (value): value is DefaultWorkspaceMode => value === "worktree" || value === "current",
   legacyKeys: ["palot.workspace.default-mode.v1"],
 });
+/** The approvals new tasks start with: Defaults, or Full access, which never asks. */
+export const newTaskApprovalModeAtom = persistedAtom({
+  key: "tasks.default-approval",
+  initialValue: "normal" as "normal" | "full",
+  validate: (value): value is "normal" | "full" => value === "normal" || value === "full",
+});
 export const projectWorkspaceModesAtom = persistedAtom({
   key: "workspace.project-modes",
   initialValue: {} as Record<string, DefaultWorkspaceMode>,
@@ -381,7 +387,8 @@ export function isComposerDraft(value: unknown): value is ComposerDraft {
         mention &&
         typeof mention === "object" &&
         typeof mention.localID === "string" &&
-        (mention.kind === "file" || mention.kind === "skill") &&
+        (mention.kind === "file" || mention.kind === "skill" || mention.kind === "task") &&
+        (mention.title === undefined || typeof mention.title === "string") &&
         typeof mention.value === "string" &&
         typeof mention.text === "string" &&
         Number.isInteger(mention.start) &&

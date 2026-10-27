@@ -161,6 +161,8 @@ function referencedSchemas(document: OpenApiDocument, value: unknown): Record<st
 
 export function clientPathFromOperationID(operationID: string): string {
   if (operationID === "session.message.list") return "message.list";
+  // 2.2.0 publishes media.get inside the experimental group, like the persistent PTY routes.
+  if (operationID === "experimental.media.get") return operationID;
   if (operationID.startsWith("server.experimental.")) {
     return operationID.replace(/^server\./, "");
   }

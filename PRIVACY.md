@@ -1,6 +1,6 @@
 # Privacy
 
-This policy describes the Palot 0.19.0 source. It may change as pre-release
+This policy describes the Palot 0.20.0 source. It may change as pre-release
 features evolve.
 
 ## Data sent by Palot
@@ -70,6 +70,16 @@ browser in other Palot windows before clearing. This does not remove other tasks
 data or files already exported to the OpenCode server. Interrupted cleanup or an
 app crash can leave temporary files behind; review local app and temporary data
 before disposing of a machine or sharing it.
+
+## Agent tools
+
+With an OpenCode 2.1.4 or later server, Palot gives tasks tools to schedule work, list and
+read other tasks, wait for them, and rename, pin, settle, snooze or archive them. Palot's main
+process serves these tools to the connected server over its existing connection. When a task
+reads another task, that task's title, status and recent messages enter the reading task's
+conversation, so they reach its model provider like any other context. Scheduling, changing or
+deleting a scheduled task asks you first in tasks with Defaults approvals, unless you chose to
+always allow it; Full access tasks do not ask.
 
 ## Voice chat
 

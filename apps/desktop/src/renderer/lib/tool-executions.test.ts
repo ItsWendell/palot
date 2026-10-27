@@ -678,6 +678,41 @@ describe("projectToolExecution", () => {
     });
   });
 
+  it("describes Palot's own tools in the terms its sidebar uses", () => {
+    expect(
+      projectToolExecution(
+        tool(
+          "palot_schedule_task",
+          { name: "Check CI", at: "2026-10-27T09:00", rrule: "FREQ=DAILY", prompt: "Check." },
+          "{}",
+        ),
+        0,
+      ),
+    ).toMatchObject({
+      kind: "generic",
+      title: "Schedule task",
+      label: "Check CI",
+      args: ["at 2026-10-27 09:00", "repeats FREQ=DAILY"],
+    });
+    expect(
+      projectToolExecution(
+        tool("execute", { code: "return await tools.palot.organize_task({...})" }, "{}", {
+          toolCalls: [
+            {
+              tool: "palot.organize_task",
+              status: "completed",
+              input: { pinned: true, state: "settled" },
+            },
+          ],
+        }),
+        0,
+      ),
+    ).toMatchObject({ calls: [{ title: "Organize task", args: ["pin, settle"] }] });
+    expect(
+      projectToolExecution(tool("palot_wait_tasks", { taskIds: ["a", "b"] }, "{}"), 0),
+    ).toMatchObject({ title: "Wait for tasks", label: "2 tasks" });
+  });
+
   it("accepts normalized output and durable structured execute progress", () => {
     const part: PalotMessageContent = {
       type: "tool",

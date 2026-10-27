@@ -714,10 +714,54 @@ export const BackgroundWorkPrompt = memo(function BackgroundWorkPrompt({
   );
 });
 
+/** "Running 1m 20s", "Done in 3m", "Failed after 40s": the subagent's state at a glance. */
+function SubagentDockState({
+  session,
+  execution,
+}: {
+  session: PalotSession;
+  execution: SessionExecutionState | null;
+}) {
+  const running = execution?.status === "running";
+  const outcome = running ? null : (execution?.status ?? session.outcome ?? null);
+  const label = running
+    ? "Running"
+    : outcome === "failed"
+      ? "Failed after"
+      : outcome === "interrupted"
+        ? "Stopped after"
+        : "Done in";
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center gap-1 tabular-nums",
+        outcome === "failed" && "text-destructive",
+      )}
+      data-palot-subagent-state={running ? "running" : (outcome ?? "done")}
+    >
+      {running ? <PulseDot className="size-1.5" aria-hidden="true" /> : null}
+      {label}{" "}
+      <ElapsedTime
+        startedAt={execution?.startedAt ?? session.createdAt}
+        completedAt={execution?.completedAt ?? session.idleAt ?? null}
+        running={running}
+        titlePrefix={running ? "Running for" : "Ran for"}
+      />
+      <span aria-hidden="true">·</span>
+    </span>
+  );
+}
+
+function modelName(model: PalotSession["model"]): string | null {
+  if (!model) return null;
+  return model.variant ? `${model.id} ${model.variant}` : model.id;
+}
+
 export function SubagentSessionDock({ session }: { session: PalotSession }) {
   const { openSession } = usePalotNavigation();
   const parentID = session.parentID;
   const siblings = useChildSessions(parentID);
+  const execution = useSessionActivity().data?.execution.get(session.id) ?? null;
 
   if (!parentID) return null;
   const index = siblings.findIndex((candidate) => candidate.id === session.id);
@@ -737,8 +781,13 @@ export function SubagentSessionDock({ session }: { session: PalotSession }) {
             {presentation.agent} subagent
             {siblings.length > 0 && index >= 0 ? ` · ${index + 1} of ${siblings.length}` : ""}
           </span>
-          <span className="block truncate text-micro text-muted-foreground">
-            {presentation.description} · Read-only session
+          <span className="flex min-w-0 items-center gap-1 text-micro text-muted-foreground">
+            <SubagentDockState session={session} execution={execution} />
+            <span className="min-w-0 truncate">
+              {[presentation.description, modelName(session.model), "Read-only session"]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
           </span>
         </span>
         {/* The task header's breadcrumb owns navigation back to the parent. */}

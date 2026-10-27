@@ -127,14 +127,16 @@ export function openCodeInvalidationKeys(connectionID: string, event: PalotEvent
     );
   }
   if (event.type === "filesystem.changed") {
+    // Watches and their events are scoped to a directory, not a workspace: match file queries
+    // for the directory under any workspace ID by key prefix.
     keys.push(
       event.location
-        ? openCodeKeys.fileSearchLocation(connectionID, event.location)
+        ? [...openCodeKeys.fileSearches(connectionID), event.location.directory]
         : openCodeKeys.fileSearches(connectionID),
     );
     keys.push(
       event.location
-        ? openCodeKeys.fileLocation(connectionID, event.location)
+        ? [...openCodeKeys.files(connectionID), event.location.directory]
         : openCodeKeys.files(connectionID),
     );
     keys.push(

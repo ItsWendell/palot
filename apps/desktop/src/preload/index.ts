@@ -6,6 +6,7 @@ import type {
   AutomationChangedEvent,
   AutomationNotificationTarget,
 } from "../shared/automation-contract";
+import type { SessionTriageSnapshot } from "../shared/session-triage-contract";
 import type { SourceControlChangedEvent } from "../shared/source-control-contract";
 import type { ProjectScriptRun } from "../shared/project-scripts-contract";
 import { VOICE_IPC_CHANNELS, type VoiceHostCommand } from "../shared/voice-contract";
@@ -149,6 +150,13 @@ const api: PalotApi = {
   },
   loadSessionTriage: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.triageLoad, profileID),
   dispatchSessionTriage: (command) => ipcRenderer.invoke(IPC_CHANNELS.triageDispatch, command),
+  onSessionTriageChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, snapshot: SessionTriageSnapshot) =>
+      listener(snapshot);
+    ipcRenderer.on(IPC_CHANNELS.triageChanged, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.triageChanged, handler);
+  },
+  setPalotToolsFocus: (focus) => ipcRenderer.invoke(IPC_CHANNELS.palotToolsFocus, focus),
   loadAutomations: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.automationLoad, profileID),
   dispatchAutomation: (command) => ipcRenderer.invoke(IPC_CHANNELS.automationDispatch, command),
   previewAutomationSchedule: (trigger) =>
@@ -200,6 +208,7 @@ const api: PalotApi = {
     ipcRenderer.invoke(IPC_CHANNELS.attachmentPreview, grant, connectionID),
   downloadUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.downloadUrl, url),
   performanceSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.performanceSnapshot),
+  heapSnapshots: (input) => ipcRenderer.invoke(IPC_CHANNELS.heapSnapshots, input),
   performanceTraceStart: () => ipcRenderer.invoke(IPC_CHANNELS.performanceTraceStart),
   performanceTraceStop: () => ipcRenderer.invoke(IPC_CHANNELS.performanceTraceStop),
   restartApp: (input) => ipcRenderer.invoke(IPC_CHANNELS.restartApp, input),

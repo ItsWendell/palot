@@ -656,7 +656,7 @@ describe("connection overview", () => {
     await start(["a"]);
     // An opened task or route preload caches a subagent without an OpenCode event.
     seedSessionDetails(queryClient, "a-1", [
-      { ...session("child"), parentID: "same", time: { created: 2, updated: 9 } },
+      { ...session("child"), parentID: "same", time: { created: 2, updated: 9, idle: 9 } },
     ]);
     await controller.dispatch("a", {
       type: "settle",

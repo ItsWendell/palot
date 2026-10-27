@@ -1,6 +1,7 @@
 import { createStore } from "jotai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { persistedStorageKey } from "./persisted";
+import { insertComposerSelection } from "../lib/composer-draft";
 import {
   activityGroupOpenAtomFamily,
   composerDraftAtomFamily,
@@ -119,6 +120,34 @@ describe("session projection preference", () => {
 describe("composer drafts", () => {
   beforeEach(() => window.localStorage.clear());
   afterEach(() => flushComposerDrafts());
+
+  it("restores persisted task chips, their titles and wire tokens in the same composer scope", () => {
+    const scope = "profile:task-mention-persistence";
+    const value = composerDraftAtomFamily(scope);
+    const first = createStore();
+    const unsubscribe = first.sub(value, () => {});
+    const draft = insertComposerSelection(
+      { text: "@task", mentions: [], command: null },
+      { kind: "file", start: 0, end: 5, query: "task" },
+      {
+        kind: "task",
+        id: "ses_0123456789abcdefghijklmnop",
+        title: "A persisted title",
+        localID: "task",
+      },
+    ).draft;
+    first.set(value, draft);
+    unsubscribe();
+    const next = createStore();
+    const detach = next.sub(value, () => {});
+    expect(next.get(value)).toEqual(draft);
+    expect(next.get(composerDraftAtomFamily("profile:other-task"))).toEqual({
+      text: "",
+      mentions: [],
+      command: null,
+    });
+    detach();
+  });
 
   it("keeps structured drafts isolated by composer scope", () => {
     const store = createStore();

@@ -33,10 +33,12 @@ import type { LocationRef } from "@opencode/client";
 import { useClipboardCopy } from "../hooks/use-clipboard-copy";
 import { useWorkspaceFile } from "../hooks/use-workspace-file";
 import { remoteMarkdownFaviconsAtom } from "../atoms/ui";
+import { runtimeAtom } from "../atoms/workspace";
 import { cn } from "../lib/cn";
 import { duckDuckGoFaviconUrl } from "../lib/markdown-favicon";
 import { transformInlineMath } from "../lib/markdown-math";
 import { isCompleteSessionID, sessionLinksExtension } from "../lib/markdown-session-links";
+import { taskMentionsExtension } from "../lib/task-mentions";
 import { palot } from "../services/palot";
 import { isLocalBrowserURL } from "../lib/browser-address";
 import { MarkdownCodeBlock } from "./markdown-code-block";
@@ -58,6 +60,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { Button } from "./ui/button";
+import { TaskMentionChip } from "./task-mention-chip";
 
 const MARKDOWN_EXTENSIONS = [
   calloutsExtension(),
@@ -87,6 +90,7 @@ const MarkdownWorkspaceFileContext = createContext<WorkspaceFileOpenHandler | nu
 const MarkdownHomePathsContext = createContext(false);
 const MarkdownWebLinkContext = createContext<((url: string) => void) | null>(null);
 const MarkdownSessionLinkContext = createContext<((sessionID: string) => void) | null>(null);
+const MarkdownSessionConnectionContext = createContext<string | undefined>(undefined);
 
 function MarkdownDetails({
   children,
@@ -129,6 +133,8 @@ export function MarkdownWorkspaceProvider({
   /** Link `~/…` paths; only meaningful when the server shares this machine's home. */
   allowHomePaths?: boolean;
 }) {
+  const runtime = useAtomValue(runtimeAtom);
+  const [sessionConnectionID] = useState(runtime?.connectionID);
   return (
     <MarkdownHomePathsContext.Provider value={allowHomePaths}>
       <MarkdownWorkspaceLocationContext.Provider value={workspaceLocation}>
@@ -136,7 +142,9 @@ export function MarkdownWorkspaceProvider({
           <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
             <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
               <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
-                {children}
+                <MarkdownSessionConnectionContext.Provider value={sessionConnectionID}>
+                  {children}
+                </MarkdownSessionConnectionContext.Provider>
               </MarkdownSessionLinkContext.Provider>
             </MarkdownWebLinkContext.Provider>
           </MarkdownWorkspaceFileContext.Provider>
@@ -672,15 +680,12 @@ function MarkdownSessionLink({
   "data-session-id"?: string;
 }) {
   const openSession = useContext(MarkdownSessionLinkContext);
+  const connectionID = useContext(MarkdownSessionConnectionContext);
   if (!openSession || !sessionID || !isCompleteSessionID(sessionID)) return <>{children}</>;
   return (
-    <button
-      type="button"
-      className="cursor-pointer text-info underline-offset-4 outline-none hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring"
-      onClick={() => openSession(sessionID)}
-    >
+    <TaskMentionChip sessionID={sessionID} connectionID={connectionID} onOpen={openSession}>
       {children}
-    </button>
+    </TaskMentionChip>
   );
 }
 
@@ -723,7 +728,11 @@ const MarkdownBody = memo(function MarkdownBody({
   const extensions = useMemo(
     () =>
       openSession && !baseUrl
-        ? [...MARKDOWN_EXTENSIONS, sessionLinksExtension(streaming)]
+        ? [
+            ...MARKDOWN_EXTENSIONS,
+            taskMentionsExtension(streaming),
+            sessionLinksExtension(streaming),
+          ]
         : MARKDOWN_EXTENSIONS,
     [baseUrl, openSession, streaming],
   );

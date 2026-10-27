@@ -168,4 +168,14 @@ export interface AutomationNotificationTarget {
 export interface AutomationHostSettings {
   launchAtLogin: boolean;
   preventSleepWhileRunning: boolean;
+  /**
+   * Serve Palot's agent tools (scheduling, reading and organizing tasks) to OpenCode 2.1.4+.
+   * Off by default in development builds, so Dev and Nightly on one server do not compete.
+   */
+  agentTools: boolean;
+  /**
+   * Ask before agents schedule, change or delete scheduled tasks in Defaults tasks. Full access
+   * tasks never ask. Off lets agents do it without asking in every task.
+   */
+  askBeforeAgentScheduling: boolean;
 }

@@ -1,6 +1,8 @@
 import type { ComposerQuery } from "./composer-query";
+import { isCompleteSessionID } from "./markdown-session-links";
+import { serializeTaskMention } from "./task-mentions";
 
-export type ComposerMentionKind = "file" | "skill" | "agent" | "reference";
+export type ComposerMentionKind = "file" | "skill" | "agent" | "reference" | "task";
 
 export interface ComposerMention {
   localID: string;
@@ -8,6 +10,8 @@ export interface ComposerMention {
   value: string;
   /** Absolute directory of a reference mention; its value is the reference name. */
   path?: string;
+  /** Display title captured when a task was chosen; the value remains its session ID. */
+  title?: string;
   text: string;
   start: number;
   end: number;
@@ -37,6 +41,7 @@ export type ComposerDiscoverySelection =
   | { kind: "skill"; id: string; localID: string }
   | { kind: "file"; path: string; localID: string }
   | { kind: "agent"; name: string; localID: string }
+  | { kind: "task"; id: string; title: string; localID: string }
   | { kind: "reference"; name: string; path: string; localID: string };
 
 export interface ComposerInsertion {
@@ -111,7 +116,11 @@ export function normalizeComposerDraft(draft: ComposerDraft): ComposerDraft {
       return (
         validRange(mention.start, mention.end, draft.text.length) &&
         draft.text.slice(mention.start, mention.end) === mention.text &&
-        mention.text === `${mention.kind === "skill" ? "$" : "@"}${mention.value}` &&
+        mention.text ===
+          (mention.kind === "task"
+            ? serializeTaskMention(mention.value)
+            : `${mention.kind === "skill" ? "$" : "@"}${mention.value}`) &&
+        (mention.kind !== "task" || isCompleteSessionID(mention.value)) &&
         (mention.kind !== "reference" || Boolean(mention.path))
       );
     });
@@ -195,9 +204,11 @@ export function insertComposerSelection(
   query: ComposerQuery,
   selection: ComposerDiscoverySelection,
 ): ComposerInsertion {
-  // `@` queries choose files, subagents, and references alike.
+  // `@` queries choose files, subagents, references, and other tasks alike.
   const selectionQueryKind =
-    selection.kind === "agent" || selection.kind === "reference" ? "file" : selection.kind;
+    selection.kind === "agent" || selection.kind === "reference" || selection.kind === "task"
+      ? "file"
+      : selection.kind;
   if (query.kind !== selectionQueryKind)
     throw new TypeError("Composer query and selection kinds differ.");
   if (query.start < 0 || query.end > draft.text.length || query.start >= query.end) {
@@ -207,10 +218,13 @@ export function insertComposerSelection(
   const value =
     selection.kind === "command" || selection.kind === "agent" || selection.kind === "reference"
       ? selection.name
-      : selection.kind === "skill"
+      : selection.kind === "skill" || selection.kind === "task"
         ? selection.id
         : selection.path;
-  const displayText = `${selection.kind === "command" ? "/" : selection.kind === "skill" ? "$" : "@"}${value}`;
+  const displayText =
+    selection.kind === "task"
+      ? serializeTaskMention(value)
+      : `${selection.kind === "command" ? "/" : selection.kind === "skill" ? "$" : "@"}${value}`;
   const replacement = replacementWithSeparator(draft.text, query.end, displayText);
   let next = applyComposerTextEdit(draft, {
     start: query.start,
@@ -236,6 +250,7 @@ export function insertComposerSelection(
           start: query.start,
           end: query.start + displayText.length,
           ...(selection.kind === "reference" ? { path: selection.path } : {}),
+          ...(selection.kind === "task" ? { title: selection.title } : {}),
         },
       ],
     });
@@ -321,6 +336,8 @@ export function projectComposerSubmission(draft: ComposerDraft): ComposerSubmiss
   const references: ComposerProjectedDirectoryReference[] = [];
 
   for (const mention of normalized.mentions) {
+    // OpenCode session mentions are ordinary prompt text, not file/agent/skill parts.
+    if (mention.kind === "task") continue;
     const projected = { start: mention.start, end: mention.end, text: mention.text };
     if (mention.kind === "file") {
       files.push({ path: mention.value, name: basename(mention.value), mention: projected });

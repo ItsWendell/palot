@@ -561,6 +561,31 @@ export class OpenCodeReconciler {
     this.#upsert(sessionRecord(connectionID, update(current)));
   }
 
+  /**
+   * Forgets a transcript nobody is viewing so memory does not grow with every task opened.
+   * Running tasks keep theirs; reopening a task loads its transcript again.
+   */
+  evictTranscript(connectionID: string, sessionID: string): boolean {
+    const runtime = this.graph.collection.get(
+      openCodeDataGraphKeys.sessionRuntime(connectionID, sessionID),
+    );
+    if (runtime?.kind === "session-runtime" && runtime.value.active) return false;
+    if (!this.graph.selectSessionRecords(connectionID, sessionID, "session-message").length)
+      return false;
+    this.#staleTranscripts.get(connectionID)?.delete(sessionID);
+    this.#commit((writer, touched) => {
+      writer.deleteWhere((record) => {
+        const remove =
+          record.kind === "session-message" &&
+          record.connectionID === connectionID &&
+          record.sessionID === sessionID;
+        if (remove) touched.add(openCodeDataGraphRecordKey(record));
+        return remove;
+      });
+    });
+    return true;
+  }
+
   removeSession(connectionID: string, sessionID: string): void {
     const deleted = this.#sessionFamily(connectionID, sessionID);
     this.#commit((writer, touched) => {
@@ -1261,8 +1286,18 @@ export class OpenCodeReconciler {
 export function openCodeReconciler(queryClient: QueryClient): OpenCodeReconciler {
   let reconciler = reconcilers.get(queryClient);
   if (!reconciler) {
-    reconciler = new OpenCodeReconciler();
-    reconcilers.set(queryClient, reconciler);
+    const created = new OpenCodeReconciler();
+    reconciler = created;
+    reconcilers.set(queryClient, created);
+    // A transcript query is dropped after nobody has viewed it for its gcTime. Drop its
+    // messages with it, as OpenCode desktop's transcript retention does.
+    queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "removed") return;
+      const [scope, connectionID, kind, sessionID] = event.query.queryKey;
+      if (scope !== "opencode" || kind !== "transcripts") return;
+      if (typeof connectionID === "string" && typeof sessionID === "string")
+        created.evictTranscript(connectionID, sessionID);
+    });
   }
   return reconciler;
 }

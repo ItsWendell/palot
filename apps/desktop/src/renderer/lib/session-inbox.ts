@@ -368,14 +368,27 @@ function effectiveSection(input: {
   return "inbox";
 }
 
+/**
+ * A task's last real activity. OpenCode also bumps `updatedAt` for permission, title and
+ * metadata writes, such as its browser plugin's attach and detach when Palot starts or quits,
+ * so cap it at the latest turn end (or creation). A turn's last write lands a few milliseconds
+ * before its idle stamp, so the cap keeps marks saved under the plain `updatedAt` rule valid.
+ * A new prompt moves a task back to the Inbox through its inbox event.
+ */
 export function sessionWatermark(
-  session: Pick<PalotSession, "id" | "updatedAt">,
+  session: Pick<PalotSession, "id" | "createdAt" | "updatedAt" | "idleAt">,
 ): ActivityWatermark {
-  return { updatedAt: session.updatedAt, sessionID: session.id };
+  return { updatedAt: sessionTriageActivity(session), sessionID: session.id };
+}
+
+export function sessionTriageActivity(
+  session: Pick<PalotSession, "createdAt" | "updatedAt" | "idleAt">,
+): number {
+  return Math.min(session.updatedAt, Math.max(session.idleAt ?? 0, session.createdAt));
 }
 
 export function latestSessionWatermark(
-  sessions: Array<Pick<PalotSession, "id" | "updatedAt">>,
+  sessions: Array<Pick<PalotSession, "id" | "createdAt" | "updatedAt" | "idleAt">>,
 ): ActivityWatermark {
   return sessions.reduce<ActivityWatermark>(
     (latest, session) => {

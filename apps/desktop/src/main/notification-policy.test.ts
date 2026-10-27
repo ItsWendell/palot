@@ -33,6 +33,14 @@ describe("desktop notification policy", () => {
         }),
       ),
     ).toEqual({ sessionID: "s1", requestID: "q1", type: "question" });
+    // Location-wide MCP elicitations have no task to open from a notification.
+    expect(
+      attentionCandidate(
+        event("form.created", {
+          form: { id: "e1", sessionID: "global", metadata: { kind: "mcp-elicitation" } },
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("extracts terminal execution outcomes and ignores user aborts", () => {

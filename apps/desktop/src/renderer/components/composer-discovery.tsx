@@ -1,9 +1,23 @@
-import { Bot, FileText, FolderSymlink, Sparkles, TerminalSquare } from "lucide-react";
+import {
+  Bot,
+  FileText,
+  FolderSymlink,
+  MessageSquare,
+  Sparkles,
+  TerminalSquare,
+} from "lucide-react";
 import { Fragment, useEffect, useRef } from "react";
 import { cn } from "../lib/cn";
 import { SurfaceBackdrop } from "./ui/surface-backdrop";
 
 export type ComposerDiscoveryItem =
+  | {
+      kind: "task";
+      key: string;
+      id: string;
+      name: string;
+      description: string;
+    }
   | {
       kind: "command";
       key: string;
@@ -46,6 +60,7 @@ const GROUP_LABELS: Record<ComposerDiscoveryItem["kind"], string> = {
   file: "Files",
   agent: "Agents",
   reference: "References",
+  task: "Tasks",
 };
 
 /** Runs of consecutive same-kind items, keeping each item's index in the full list. */
@@ -80,7 +95,7 @@ export function ComposerDiscovery({
   onSelect(item: ComposerDiscoveryItem): void;
 }) {
   const groups = groupItems(items);
-  // A single kind needs no heading; `@` mixes references, agents, and files.
+  // A single kind needs no heading; `@` mixes references, agents, tasks, and files.
   const labelled = groups.length > 1;
   return (
     <div
@@ -175,6 +190,8 @@ function DiscoveryOption({
           <Bot className="size-3.5" aria-hidden="true" />
         ) : item.kind === "reference" ? (
           <FolderSymlink className="size-3.5" aria-hidden="true" />
+        ) : item.kind === "task" ? (
+          <MessageSquare className="size-3.5" aria-hidden="true" />
         ) : (
           <FileText className="size-3.5" aria-hidden="true" />
         )}
@@ -186,7 +203,9 @@ function DiscoveryOption({
               ? `/${item.name}`
               : item.kind === "skill"
                 ? `$${item.id}`
-                : `@${item.name}`}
+                : item.kind === "task"
+                  ? item.name
+                  : `@${item.name}`}
           </span>
           {item.kind === "command" && item.detail ? (
             <span className="truncate text-meta text-muted-foreground">{item.detail}</span>

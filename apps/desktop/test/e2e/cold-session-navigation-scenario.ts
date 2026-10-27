@@ -363,10 +363,12 @@ export const coldSessionNavigationScenario: Scenario = {
       );
       await page.setViewportSize({ width: 1440, height: 920 });
       const inbox = page.getByRole("button", { name: /^Show inbox/ });
+      const options = page.getByRole("button", { name: "Inbox options", exact: true });
       if (!(await inbox.isVisible()))
         await page.getByRole("button", { name: "Show navigation", exact: true }).click();
-      await inbox.click();
-      await page.getByRole("button", { name: "Inbox options", exact: true }).click();
+      // The rail toggles the active view's column, so only open the Inbox when it is closed.
+      if (!(await options.isVisible())) await inbox.click();
+      await options.click();
       await page.getByRole("menuitem", { name: "Enabled servers", exact: true }).hover();
       const monitor = page.getByRole("menuitemcheckbox", {
         name: new RegExp(`^Enable ${remoteName}`),

@@ -23,6 +23,7 @@ import { rendererQueryClient } from "./lib/query-client";
 import { useOpenCodeQueryEvents } from "./hooks/use-opencode-query-events";
 import { useSessionActivity } from "./hooks/use-session-activity";
 import { useNotificationSounds } from "./hooks/use-notification-sounds";
+import { usePalotToolsFocus } from "./hooks/use-palot-tools-focus";
 import { VoiceCallBridge } from "./components/voice/voice-call-bridge";
 
 const diffWorkerPoolOptions = {
@@ -95,5 +96,6 @@ function OpenCodeQueryEvents() {
   useOpenCodeQueryEvents();
   useSessionActivity({ synchronize: true });
   useNotificationSounds();
+  usePalotToolsFocus();
   return null;
 }

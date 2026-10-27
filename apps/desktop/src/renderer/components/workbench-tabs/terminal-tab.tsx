@@ -1,10 +1,16 @@
 import type { Terminal as GhosttyTerminal } from "ghostty-web";
 import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url&no-inline";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useStore } from "jotai";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { resolvedAppearanceAtom } from "../../atoms/appearance";
-import { runtimeAtom } from "../../atoms/workspace";
+import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { prepareCodeFont } from "../../lib/font-loading";
+import {
+  formatShortcut,
+  matchesShortcut,
+  shortcutAriaKeys,
+  useShortcutKeys,
+} from "../../lib/keyboard-shortcuts";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import { palot } from "../../services/palot";
 import { ptyNotFound } from "../../services/opencode-pty";
@@ -13,6 +19,7 @@ import {
   type WorkbenchTerminalStatus,
 } from "../../services/workbench-terminal";
 import { Button } from "../ui/button";
+import { quoteTerminalInComposer } from "./terminal-quote";
 
 type TerminalTabDescriptor = Extract<WorkbenchTab, { kind: "terminal" }>;
 type TerminalSnapshot = {
@@ -44,6 +51,11 @@ function loadGhostty() {
 export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
   const runtime = useAtomValue(runtimeAtom);
+  const store = useStore();
+  const selectedSessionID = useAtomValue(selectedSessionIDAtom);
+  const [selection, setSelection] = useState("");
+  const canQuote = Boolean(selectedSessionID && runtime?.profileID === tab.resource.profileID);
+  const quoteKeys = useShortcutKeys("terminal.quote");
   const [ending, setEnding] = useState(false);
   const [terminalVersion, setTerminalVersion] = useState(0);
   const [viewAttempt, setViewAttempt] = useState(0);
@@ -145,6 +157,9 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
       fitRef.current = fit;
       term.loadAddon(fit);
       term.open(container);
+      setSelection("");
+      const selectionSubscription = term.onSelectionChange(() => setSelection(term.getSelection()));
+      cleanups.push(() => selectionSubscription.dispose());
       const updateCursorVisibility = () =>
         term.setOption(
           "cursorBlink",
@@ -339,13 +354,58 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
     };
   }, [canManage, runtime?.connectionID, readOnly, terminalVersion, snapshotKey, tab.resource]);
 
+  function quoteSelection(): boolean {
+    if (!canQuote || !runtime || !selectedSessionID) return false;
+    const text = terminalRef.current?.getSelection() ?? "";
+    if (!quoteTerminalInComposer(store, runtime.profileID, selectedSessionID, text)) return false;
+    terminalRef.current?.clearSelection();
+    document.querySelector<HTMLElement>("[data-palot-composer-input]")?.focus();
+    return true;
+  }
+
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-code-background font-mono text-code-foreground">
+    <div
+      className="relative flex min-h-0 flex-1 flex-col bg-code-background font-mono text-code-foreground"
+      onKeyDownCapture={(event) => {
+        if (
+          !event.defaultPrevented &&
+          matchesShortcut(event.nativeEvent, quoteKeys) &&
+          quoteSelection()
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+    >
       <div className="flex items-center justify-between gap-2 border-b px-3 py-1 font-sans">
         <span className="text-micro text-muted-foreground">
           {readOnly ? "Read-only terminal" : "Terminal"}
         </span>
         <div className="flex items-center gap-2">
+          {canQuote && selection.trim() ? (
+            <Button
+              size="xs"
+              variant="outline"
+              className="absolute top-12 right-3 z-10 bg-popover text-popover-foreground"
+              title={
+                quoteKeys.length
+                  ? `Quote in composer (${formatShortcut(quoteKeys)})`
+                  : "Quote in composer"
+              }
+              aria-keyshortcuts={shortcutAriaKeys(quoteKeys)}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={quoteSelection}
+            >
+              Quote in composer
+            </Button>
+          ) : null}
           {status === "error" ? (
             <Button
               size="xs"

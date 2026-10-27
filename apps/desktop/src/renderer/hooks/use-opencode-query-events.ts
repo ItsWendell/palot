@@ -115,6 +115,16 @@ export function useOpenCodeQueryEvents(): void {
         if (usageChanged) revalidateSessionStats(batch.connectionID);
         if (terminalSessionIDs.size > 0) {
           void hydrateSessionLineage(queryClient, batch.connectionID, [...terminalSessionIDs]);
+          // A task nobody has open only collected this turn's live messages; drop them once it
+          // ends, after activity settles, so background tasks do not grow memory unseen.
+          const finished = [...terminalSessionIDs];
+          setTimeout(() => {
+            for (const sessionID of finished) {
+              const queryKey = openCodeKeys.transcript(batch.connectionID, sessionID);
+              if (queryClient.getQueryCache().find({ queryKey, exact: true })) continue;
+              openCodeReconciler(queryClient).evictTranscript(batch.connectionID, sessionID);
+            }
+          }, 0);
         }
         if (requestSessionIDs.size > 0) {
           const sessionIDs = [...requestSessionIDs];

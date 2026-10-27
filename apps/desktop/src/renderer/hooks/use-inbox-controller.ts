@@ -63,6 +63,16 @@ export function useInboxController(): void {
     );
   });
 
+  // An agent tool can pin, settle or snooze a task; show it without a reload.
+  useEffect(
+    () =>
+      palot.onSessionTriageChanged((next) => {
+        if (runtime?.profileID === next.profileID) setSnapshot(next);
+        else connectionOverview(queryClient).acceptTriage(next);
+      }),
+    [queryClient, runtime?.profileID, setSnapshot],
+  );
+
   useEffect(() => {
     if (sidebarMode !== "inbox" || phase !== "ready" || !catalogReady || !runtime?.profileID) {
       return;

@@ -58,6 +58,37 @@ function recurrenceBoundary(instant: number, timezone: string, lower: boolean): 
   return new Date(date.getTime() - (lower ? Math.max(0, difference) : Math.min(0, difference)));
 }
 
+/**
+ * The instant an ISO 8601 date-time names. Without an offset it is wall-clock time in
+ * `timezone`; with `Z` or an offset it is that exact instant. Null when it does not parse.
+ */
+export function automationInstant(value: string, timezone: string): number | null {
+  const text = value.trim();
+  const match = text.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?(Z|[+-]\d{2}:?\d{2})?$/i,
+  );
+  if (!match) return null;
+  const [year, month, day, hour, minute, second] = match
+    .slice(1, 7)
+    .map((part) => Number(part ?? 0));
+  const millisecond = Number((match[7] ?? "0").padEnd(3, "0"));
+  // Reject fields that would roll over, such as February 30th or 09:99.
+  if (hour! > 23 || minute! > 59 || second! > 59) return null;
+  const wall = new Date(Date.UTC(year!, month! - 1, day!, hour!, minute!, second!, millisecond));
+  if (wall.getUTCMonth() !== month! - 1 || wall.getUTCDate() !== day) return null;
+  if (match[8]) {
+    const instant = Date.parse(text.replace(" ", "T"));
+    return Number.isFinite(instant) ? instant : null;
+  }
+  if (!validTimezone(timezone)) return null;
+  return occurrenceTime(wall, timezone);
+}
+
+/** `instant` as an ISO 8601 wall-clock time in `timezone`, without an offset. */
+export function automationLocalTime(instant: number, timezone: string): string {
+  return recurrenceDate(instant, timezone).toISOString().slice(0, 16);
+}
+
 function validTimezone(timezone: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(0);

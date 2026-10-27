@@ -137,6 +137,68 @@ afterEach(() => {
 });
 
 describe("Composer discovery", () => {
+  it("offers only this connection's root tasks, inserts/removes chips, and sends the exact session mention text", async () => {
+    const user = userEvent.setup();
+    const taskID = "ses_0123456789abcdefghijklmnop";
+    const queryClient = createRendererQueryClient();
+    const reconciler = openCodeReconciler(queryClient);
+    reconciler.upsertPalotProjects("test", [
+      {
+        id: session.projectID,
+        canonical: "/workspace",
+        name: "Palot project",
+        sandboxes: [],
+        vcs: null,
+        updatedAt: 1,
+      },
+    ]);
+    reconciler.upsertPalotSessions("test", [
+      { ...session, id: taskID, title: "Related task" },
+      { ...session, id: `ses_${"c".repeat(26)}`, title: "Child task", parentID: taskID },
+    ]);
+    reconciler.upsertPalotSessions("other", [
+      { ...session, id: `ses_${"o".repeat(26)}`, title: "Wrong server task" },
+    ]);
+    setOpenCodeClientForTest(
+      client({ project: { list: vi.fn().mockResolvedValue(reconciler.projects("test")) } }),
+    );
+    const send = vi.spyOn(palot, "sendComposerPrompt").mockResolvedValue({
+      id: "msg-task-mention",
+      sessionID: session.id,
+      type: "user",
+      delivery: "steer",
+      createdAt: 3,
+    });
+    renderComposer(
+      <Composer session={session} messages={[]} isWorking={false} />,
+      createStore(),
+      "test-profile",
+      queryClient,
+    );
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    await user.type(input, "See @");
+    const option = await screen.findByRole("option", { name: "Related task Palot project" });
+    expect(screen.queryByRole("option", { name: /Child task/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Wrong server task/ })).toBeNull();
+    await user.click(option);
+    expect(input.value).toBe(`See @session:${taskID} `);
+    await user.click(screen.getByRole("button", { name: "Remove task mention Related task" }));
+    expect(input.value).toBe("See ");
+    await user.type(input, "@Related");
+    await user.click(await screen.findByRole("option", { name: "Related task Palot project" }));
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({ text: `See @session:${taskID} ` }),
+      ),
+    );
+    const sent = send.mock.calls[0]![0];
+    expect(sent.fileReferences).toBeUndefined();
+    expect(sent.skillReferences).toBeUndefined();
+    expect(sent.agentReferences).toBeUndefined();
+    expect(sent.directoryReferences).toBeUndefined();
+  });
+
   it("launches typed /btw outside steer/queue and keeps attachments while the composer remains free", async () => {
     const response = Promise.withResolvers<{ text: string }>();
     const generate = vi.fn().mockReturnValue(response.promise);

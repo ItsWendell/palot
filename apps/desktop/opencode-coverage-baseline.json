@@ -1,6 +1,6 @@
 {
-  "contractFingerprint": "55d1ac2917d40d1c02686fab96639b1a2e9933af5197b99f7f08ac79bfb783c6",
-  "contractVersion": "2.1.3",
+  "contractFingerprint": "072d215c5190b6df2bcd4789ae734fcb86b517ae295e34352b9f436ca133d8f0",
+  "contractVersion": "2.2.0",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
@@ -256,7 +256,7 @@
     },
     "session.revert.staged": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "043b0b83cba6a68dc5c5f9715501632bb9b4d71421788057b593bbef7ff773d3"
+      "payloadFingerprint": "d4a14c30113be22fc34aad7331721d7e5542c8041532b778198c2eec4741afca"
     },
     "session.shell.ended": {
       "expectedProductionMention": true,
@@ -444,6 +444,10 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
+    "debug.heapDump": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
     "debug.location.evict": {
       "disposition": "intentional-omit",
       "expectedProductionReference": false,
@@ -462,12 +466,32 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
+    "experimental.fs.unwatch": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.fs.watch": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
     "experimental.fs.write": {
       "disposition": "integrated",
       "expectedProductionReference": true,
       "note": "Native picker and clipboard selections upload bounded bytes to the captured remote or SSH service's temporary directory. Focus changes abort uploads; failed files never fall back to desktop URIs."
     },
+    "experimental.generate.decisions": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.generate.image": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
     "experimental.generate.text": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.generate.textLegacy": {
       "disposition": "integrated",
       "expectedProductionReference": true
     },
@@ -478,6 +502,14 @@
     "experimental.mcp.add": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "experimental.mcp.client": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.mcp.client.token": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
     },
     "experimental.mcp.connect": {
       "disposition": "integrated",
@@ -490,6 +522,10 @@
     "experimental.mcp.remove": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "experimental.media.get": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
     },
     "experimental.migration.v1.status": {
       "disposition": "intentional-omit",
@@ -529,7 +565,7 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
-    "experimental.voice.instructions": {
+    "experimental.usage.limits": {
       "disposition": "not-integrated",
       "expectedProductionReference": false
     },
@@ -650,6 +686,10 @@
     "plugin.check": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "plugin.gui": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
     },
     "plugin.list": {
       "disposition": "integrated",

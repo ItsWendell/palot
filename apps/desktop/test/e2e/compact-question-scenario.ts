@@ -57,8 +57,9 @@ export const compactQuestionScenario: Scenario = {
     const reasoning = page.getByRole("button", { name: /^Reasoning:/ });
     await expect(attach).toBeVisible();
     await expect(model).toBeVisible();
-    // The default scripted model has no reasoning variants. Preserve whatever
-    // controls the real catalog exposes instead of inventing a model capability.
+    // Count only after the catalog names the model: its variants decide whether a Reasoning
+    // control exists. Preserve whatever the real catalog exposes instead of inventing one.
+    await expect(page.getByRole("button", { name: /^Model: Test Model/ })).toBeVisible();
     const reasoningCount = await reasoning.count();
 
     async function assertBlockedComposer() {

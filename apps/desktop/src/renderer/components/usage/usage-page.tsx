@@ -9,7 +9,7 @@ import { runtimeAtom } from "../../atoms/workspace";
 import { usageRangeAtom, usageToolDetailsOpenAtom } from "../../atoms/ui";
 import { useModelCatalog } from "../../hooks/use-model-catalog";
 import { useSessionStats } from "../../hooks/use-session-stats";
-import { useProjectCatalogState } from "../../hooks/use-session-catalog";
+import { useProjectCatalogState, useSelectedSession } from "../../hooks/use-session-catalog";
 import { openCodeKeys } from "../../lib/opencode-query";
 import {
   isUsageRangeDays,
@@ -24,12 +24,13 @@ import {
 } from "../../lib/session-stats-range";
 import { orderProjects, projectLocation, visibleProjects } from "../../lib/view-models";
 import { ProjectSelect } from "../project-select";
-import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { Banner } from "../ui/banner";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { UsageActivityChart } from "./usage-activity-chart";
+import { UsageLimitsSection } from "./usage-limits-section";
 
 type ModelSort = "cost" | "tokens" | "steps";
 
@@ -49,6 +50,7 @@ export function UsagePage() {
   const setUsageRange = useSetAtom(usageRangeAtom);
   const projectCatalog = useProjectCatalogState();
   const projects = projectCatalog.projects;
+  const selectedSession = useSelectedSession();
   const visible = useMemo(() => visibleProjects(orderProjects(projects, [])), [projects]);
   const selectedProject = visible.find((project) => project.id === search.projectID) ?? null;
   const modelCatalog = useModelCatalog(
@@ -210,6 +212,15 @@ export function UsagePage() {
             </div>
           </header>
 
+          <UsageLimitsSection
+            directory={
+              selectedSession?.location.directory ??
+              selectedProject?.canonical ??
+              visible[0]?.canonical ??
+              ""
+            }
+          />
+
           {!data && runtime?.connected === false ? <UsageUnavailable /> : null}
           {!data && runtime?.connected !== false && projectScopeError ? (
             <UsageError
@@ -269,15 +280,14 @@ export function UsagePage() {
               />
             </>
           ) : null}
-          {data && summary.error ? (
-            <Alert className="mt-5">
-              <TriangleAlert aria-hidden="true" />
-              <AlertTitle>Showing cached usage</AlertTitle>
-              <AlertDescription>
-                The latest background refresh failed. Refresh to try again.
-              </AlertDescription>
-            </Alert>
-          ) : null}
+          <Banner
+            open={Boolean(data && summary.error)}
+            status="warning"
+            className="mt-5"
+            title="Showing cached usage"
+          >
+            The latest background refresh failed. Refresh to try again.
+          </Banner>
         </div>
       </div>
     </main>

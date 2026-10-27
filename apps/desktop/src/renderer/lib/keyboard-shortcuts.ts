@@ -48,6 +48,7 @@ export type KeyboardShortcutID =
   | "task.terminal.toggle"
   | "task.voice.toggle"
   | "workbench.tab.close"
+  | "terminal.quote"
   | "composer.focus"
   | "composer.send"
   | "composer.newline"
@@ -178,6 +179,13 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     label: "Focus composer",
     keys: ["Mod", "L"],
     scope: "global",
+  },
+  {
+    id: "terminal.quote",
+    group: "panels",
+    label: "Quote terminal selection in composer",
+    keys: ["Mod", "Shift", "L"],
+    note: "While the terminal has focus and text is selected",
   },
   {
     id: "composer.send",

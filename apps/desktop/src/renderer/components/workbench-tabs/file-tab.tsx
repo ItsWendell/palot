@@ -15,6 +15,7 @@ import { experimentalBrowserAtom } from "../../atoms/ui";
 import { useWorkbenchCommands } from "../../atoms/workbench";
 import { runtimeAtom } from "../../atoms/workspace";
 import { useBrowserSession } from "../../hooks/use-browser-session";
+import { useFileWatch } from "../../hooks/use-file-watch";
 import { useImageZoom } from "../../hooks/use-image-zoom";
 import { useWorkspaceFile } from "../../hooks/use-workspace-file";
 import { isHtmlFilePath, openFileInBrowser } from "../../lib/browser-files";
@@ -125,6 +126,11 @@ export function FileTab({
   const browserEnabled = useAtomValue(experimentalBrowserAtom);
   const browser = useBrowserSession(scope ?? { profileID: "", sessionID: "" });
   const query = useWorkspaceFile(tab.resource.location, tab.resource.path, active);
+  useFileWatch(
+    tab.resource.location,
+    tab.resource.path,
+    active && runtime?.profileID === tab.resource.profileID,
+  );
   const preview = useMemo(
     () => (query.data ? classifyWorkspaceFile(tab.resource.path, query.data) : null),
     [tab.resource.path, query.data],

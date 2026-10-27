@@ -5,6 +5,7 @@ import type { JsonValue, PalotMessage, PalotMessageContent } from "../../shared"
 import type { SessionExecutionState, SessionRuntimeStatus } from "../atoms/workspace";
 import { compareMessages } from "./message-reconcile";
 import { projectToolExecution } from "./tool-executions";
+import { usageLimitResetText, usageLimitTitle } from "./usage-limit-reset";
 import { transcriptPromptLabel, type TranscriptPromptAnchor } from "./transcript-outline";
 import {
   ACTIVITY_CATEGORIES,
@@ -192,12 +193,26 @@ function messageData(message: PalotMessage): Record<string, JsonValue> {
 function structuredError(message: PalotMessage): {
   type: string | null;
   message: string | null;
+  retryAfterMs?: number;
 } | null {
   const error = recordValue(messageData(message).error);
   const nested = recordValue(error.data);
   const type = stringValue(error.type) ?? stringValue(error.name);
   const detail = stringValue(error.message) ?? stringValue(nested.message);
-  return type || detail ? { type, message: detail } : null;
+  const retryAfterMs = typeof error.retryAfterMs === "number" ? error.retryAfterMs : undefined;
+  return type || detail
+    ? { type, message: detail, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) }
+    : null;
+}
+
+/** A failure's text, with when a usage or rate limit resets when the provider said. */
+function failureText(
+  message: PalotMessage,
+  error: { message: string | null; retryAfterMs?: number },
+): string | undefined {
+  const reset = usageLimitResetText(message.completedAt ?? message.createdAt, error.retryAfterMs);
+  if (!reset) return error.message ?? undefined;
+  return error.message ? `${error.message}\n\n${reset}` : reset;
 }
 
 function interruptedError(error: { type: string | null; message: string | null } | null): boolean {
@@ -435,8 +450,10 @@ function assistantBoundaryParts(
     {
       type: "timeline-boundary",
       id: `${message.id}:${interrupted ? "interrupted" : "error"}`,
-      name: interrupted ? "Response interrupted" : "Response failed",
-      text: interrupted ? interruptionDetail(error.message) : (error.message ?? undefined),
+      name: interrupted
+        ? "Response interrupted"
+        : (usageLimitTitle(error.type) ?? "Response failed"),
+      text: interrupted ? interruptionDetail(error.message) : failureText(message, error),
       status: interrupted ? "interrupted" : "failed",
       data: {
         kind: interrupted ? "interrupted" : "error",
@@ -557,7 +574,9 @@ function executionBoundaryPart(
   return {
     type: "timeline-boundary",
     id: interrupted ? "execution:interrupted" : "execution:error",
-    name: interrupted ? "Response interrupted" : "Response failed",
+    name: interrupted
+      ? "Response interrupted"
+      : (usageLimitTitle(execution.error?.type) ?? "Response failed"),
     text: interrupted
       ? interruptionDetail(execution.error?.message ?? null)
       : execution.error?.message,

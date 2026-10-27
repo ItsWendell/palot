@@ -1,8 +1,10 @@
 import type { PermissionRuleset, Project, SessionInfo, SessionLogOutput } from "@opencode/client";
 import { describe, expect, it, vi } from "vitest";
 import type { PalotEvent, PalotEventBatch, PalotMessage } from "../../shared";
+import { QueryClient } from "@tanstack/react-query";
 import {
   OpenCodeReconciler,
+  openCodeReconciler,
   projectInfoFromPalot,
   sessionInfoFromPalot,
 } from "./open-code-reconciler";
@@ -1019,5 +1021,30 @@ describe("OpenCodeReconciler", () => {
     );
 
     expect(reconciler.activity("connection").execution.get("session")?.startedAt).toBe(25);
+  });
+});
+
+describe("transcript retention", () => {
+  it("forgets an unviewed transcript when its query is dropped, but keeps running tasks", () => {
+    const queryClient = new QueryClient();
+    const reconciler = openCodeReconciler(queryClient);
+    for (const id of ["idle", "busy"]) {
+      reconciler.setTranscriptSnapshot("c1", id, [assistant(id)], "rooted");
+      queryClient.setQueryData(["opencode", "c1", "transcripts", id], {
+        pages: [],
+        pageParams: [],
+      });
+    }
+    reconciler.replaceActivity("c1", {
+      activeIDs: new Set(["busy"]),
+      execution: new Map(),
+      statuses: new Map(),
+    });
+
+    queryClient.removeQueries({ queryKey: ["opencode", "c1", "transcripts"] });
+
+    expect(reconciler.messages("c1", "idle")).toEqual([]);
+    expect(reconciler.messages("c1", "busy")).toHaveLength(1);
+    expect(reconciler.evictTranscript("c1", "idle")).toBe(false);
   });
 });

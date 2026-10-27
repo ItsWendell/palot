@@ -1,4 +1,4 @@
-export const SUPPORTED_OPENCODE_VERSION = "2.1.3";
+export const SUPPORTED_OPENCODE_VERSION = "2.2.0";
 
 // Published contracts used by Palot were compared across these exact releases.
 // A channel name is not a compatibility guarantee (Beta can even lag Stable).
@@ -32,6 +32,13 @@ export function supportsOneTimeOpenCodePairing(version: string | null): boolean 
   if (!version || !isStableOpenCodeV2(version)) return false;
   const [, minor, patch] = version.split(".").map(Number);
   return minor! > 0 || patch! >= 17;
+}
+
+/** OpenCode 2.1.4 added client-hosted MCP, which serves Palot's agent tools. */
+export function supportsClientHostedMcp(version: string | null): boolean {
+  if (!version || !isStableOpenCodeV2(version)) return false;
+  const [, minor, patch] = version.split(".").map(Number);
+  return minor! > 1 || (minor === 1 && patch! >= 4);
 }
 
 export function supportedOpenCodeVersionLabel(): string {

@@ -1,6 +1,10 @@
 import { createStore, Provider } from "jotai";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { runtimeAtom } from "../../atoms/workspace";
+import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
+import { composerDraftAtomFamily } from "../../atoms/ui";
+import { composerScope } from "../../lib/composer-scope";
+import { terminalQuote } from "./terminal-quote";
+import { resetShortcutBindings, setShortcutBinding } from "../../lib/keyboard-shortcuts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PalotEventBatch } from "../../../shared";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
@@ -13,9 +17,14 @@ const ghostty = vi.hoisted(() => ({
   resize: null as ((size: { cols: number; rows: number }) => void) | null,
   writes: [] as string[],
   disposed: 0,
+  selection: "",
+  selectionChange: null as (() => void) | null,
 }));
 
-vi.mock("../../atoms/workspace", async () => ({ runtimeAtom: (await import("jotai")).atom(null) }));
+vi.mock("../../atoms/workspace", async () => ({
+  runtimeAtom: (await import("jotai")).atom(null),
+  selectedSessionIDAtom: (await import("jotai")).atom(null),
+}));
 
 vi.mock("../../lib/font-loading", () => ({
   prepareCodeFont: vi.fn().mockResolvedValue(undefined),
@@ -39,6 +48,21 @@ vi.mock("ghostty-web", () => ({
     onResize(callback: (size: { cols: number; rows: number }) => void) {
       ghostty.resize = callback;
       return { dispose() {} };
+    }
+    onSelectionChange(callback: () => void) {
+      ghostty.selectionChange = callback;
+      return {
+        dispose() {
+          ghostty.selectionChange = null;
+        },
+      };
+    }
+    getSelection() {
+      return ghostty.selection;
+    }
+    clearSelection() {
+      ghostty.selection = "";
+      ghostty.selectionChange?.();
     }
     dispose() {
       ghostty.disposed += 1;
@@ -70,12 +94,119 @@ afterEach(() => {
   ghostty.resize = null;
   ghostty.writes.length = 0;
   ghostty.disposed = 0;
+  ghostty.selection = "";
+  ghostty.selectionChange = null;
+  resetShortcutBindings();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
 describe("TerminalTab", () => {
+  it("quotes from the terminal shortcut before shell input and follows effective bindings", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, {
+      profileID: "profile-1",
+      connectionID: "owner",
+      connected: false,
+    } as never);
+    store.set(selectedSessionIDAtom, "shortcut-task");
+    const view = render(
+      <Provider store={store}>
+        <TerminalTab tab={{ ...tab, resource: { ...tab.resource, ptyID: "quote-shortcut" } }} />
+      </Provider>,
+    );
+    await waitFor(() => expect(ghostty.selectionChange).not.toBeNull());
+    const terminal = view.container.querySelector<HTMLElement>("[data-workbench-terminal]")!;
+    const shortcut = () =>
+      new KeyboardEvent("keydown", {
+        key: "L",
+        code: "KeyL",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+    const empty = shortcut();
+    fireEvent(terminal, empty);
+    expect(empty.defaultPrevented).toBe(false);
+    act(() => {
+      ghostty.selection = "from keyboard";
+      ghostty.selectionChange?.();
+    });
+    const selected = shortcut();
+    fireEvent(terminal, selected);
+    expect(selected.defaultPrevented).toBe(true);
+    const draft = composerDraftAtomFamily(composerScope("profile-1", "session:shortcut-task"));
+    expect(store.get(draft).text).toBe(terminalQuote("from keyboard"));
+    act(() => {
+      setShortcutBinding("terminal.quote", ["Mod", "Shift", "J"]);
+      ghostty.selection = "after rebind";
+      ghostty.selectionChange?.();
+    });
+    const old = shortcut();
+    fireEvent(terminal, old);
+    expect(old.defaultPrevented).toBe(false);
+    expect(
+      view.getByRole("button", { name: "Quote in composer" }).getAttribute("aria-keyshortcuts"),
+    ).toBe("Control+Shift+J");
+    const rebound = new KeyboardEvent("keydown", {
+      key: "J",
+      code: "KeyJ",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(terminal, rebound);
+    expect(rebound.defaultPrevented).toBe(true);
+    expect(store.get(draft).text).toBe(
+      `${terminalQuote("from keyboard")}${terminalQuote("after rebind")}`,
+    );
+  });
+
+  it("offers selected output as a quote in the active task, not the terminal's originating task", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, {
+      profileID: "profile-1",
+      connectionID: "owner",
+      connected: false,
+    } as never);
+    store.set(selectedSessionIDAtom, "active-task");
+    const view = render(
+      <Provider store={store}>
+        <TerminalTab tab={{ ...tab, resource: { ...tab.resource, ptyID: "quote-selection" } }} />
+      </Provider>,
+    );
+    await waitFor(() => expect(ghostty.selectionChange).not.toBeNull());
+    expect(view.queryByRole("button", { name: "Quote in composer" })).toBeNull();
+    act(() => {
+      ghostty.selection = "  command failed\nexit 1";
+      ghostty.selectionChange?.();
+    });
+    fireEvent.click(view.getByRole("button", { name: "Quote in composer" }));
+    expect(
+      store.get(composerDraftAtomFamily(composerScope("profile-1", "session:active-task"))).text,
+    ).toBe(terminalQuote("  command failed\nexit 1"));
+    expect(
+      store.get(composerDraftAtomFamily(composerScope("profile-1", "session:session-1"))).text,
+    ).toBe("");
+    expect(ghostty.selection).toBe("");
+    expect(view.queryByRole("button", { name: "Quote in composer" })).toBeNull();
+    act(() => {
+      ghostty.selection = "other output";
+      ghostty.selectionChange?.();
+      store.set(runtimeAtom, {
+        profileID: "other-profile",
+        connectionID: "other",
+        connected: false,
+      } as never);
+    });
+    expect(view.queryByRole("button", { name: "Quote in composer" })).toBeNull();
+    view.unmount();
+    expect(ghostty.selectionChange).toBeNull();
+  });
+
   it.each([
     ["replacement", "success"],
     ["replacement", "failure"],

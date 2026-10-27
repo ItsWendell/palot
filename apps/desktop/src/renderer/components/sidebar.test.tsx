@@ -38,6 +38,7 @@ const session: PalotSession = {
   location: { directory: "/repo" },
   createdAt: 1,
   updatedAt: 2,
+  idleAt: 2,
   archivedAt: null,
   cost: null,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },

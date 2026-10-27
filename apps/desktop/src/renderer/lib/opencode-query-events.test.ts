@@ -99,6 +99,22 @@ describe("OpenCode query event routing", () => {
     for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
     client.clear();
   });
+  it("refreshes a watched directory's files under any workspace ID", async () => {
+    const client = new QueryClient();
+    const watched = openCodeKeys.file("connection", { directory: "/repo", workspaceID: "wt" }, "a");
+    const other = openCodeKeys.file("connection", { directory: "/other" }, "a");
+    for (const key of [watched, other]) client.setQueryData(key, "text");
+    for (const queryKey of openCodeInvalidationKeys("connection", {
+      type: "filesystem.changed",
+      location: { directory: "/repo" },
+      data: {},
+    } as PalotEvent)) {
+      await client.invalidateQueries({ queryKey });
+    }
+    expect(client.getQueryState(watched)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(other)?.isInvalidated).toBe(false);
+    client.clear();
+  });
   it.each(["session.inbox.cancelled", "session.revert.committed"])(
     "invalidates only the affected prompt index after %s",
     async (type) => {

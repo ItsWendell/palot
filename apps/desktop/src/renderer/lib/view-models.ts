@@ -13,7 +13,11 @@ import type {
   PalotSession,
   SessionRequestSnapshot,
 } from "../../shared";
-import { permissionPreview, type PermissionPreview } from "./permission-presentation";
+import {
+  permissionPreview,
+  permissionTitle,
+  type PermissionPreview,
+} from "./permission-presentation";
 
 export interface ProjectGroup {
   project: PalotProject;
@@ -33,6 +37,11 @@ export interface PendingRequestView {
   delivery?: "steer" | "queue";
   ownerMessageID?: string;
   createdAt?: number;
+  /**
+   * The directory of a location-wide MCP elicitation. OpenCode owns these by location, not
+   * session (`sessionID: "global"`), and settles them through that directory.
+   */
+  locationDirectory?: string;
 }
 
 export interface PendingQuestionOptionView {
@@ -218,7 +227,7 @@ function permissionView(value: PermissionRequest, index: number): PendingRequest
   return {
     id: value.id || `permission-${index}`,
     type: "permission",
-    title: value.action || "Permission needed",
+    title: permissionTitle(value.action),
     detail: value.message,
     resources: [...value.resources],
     savePatterns: [...(value.save ?? [])],
@@ -306,7 +315,7 @@ function formFieldView(field: FormField): PendingFormFieldView {
   }
 }
 
-function formView(value: FormInfo, index: number): PendingRequestView {
+export function formView(value: FormInfo, index: number): PendingRequestView {
   const fields = value.fields.map(formFieldView);
   const question = value.metadata?.kind === "question" && !fields.some((field) => field.hidden);
   const questions = question

@@ -28,6 +28,32 @@ const items: ComposerDiscoveryItem[] = [
 afterEach(cleanup);
 
 describe("ComposerDiscovery", () => {
+  it("groups tasks separately from files and shows the task title and project", () => {
+    const task: ComposerDiscoveryItem = {
+      kind: "task",
+      key: "task:1",
+      id: "ses_0123456789abcdefghijklmnop",
+      name: "Fix hydration",
+      description: "Palot",
+    };
+    const onSelect = vi.fn();
+    render(
+      <ComposerDiscovery
+        id="tasks"
+        items={[items[2]!, task]}
+        activeIndex={1}
+        loading={false}
+        error={null}
+        onActiveIndexChange={vi.fn()}
+        onSelect={onSelect}
+      />,
+    );
+    expect(screen.getByRole("group", { name: "Tasks" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Files" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: "Fix hydration Palot" }));
+    expect(onSelect).toHaveBeenCalledWith(task);
+  });
+
   it("renders type-specific labels and the active option", () => {
     render(
       <ComposerDiscovery

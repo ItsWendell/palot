@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { PALOT_TOOL_PERMISSIONS } from "../../shared/palot-tools-contract";
 import path from "node:path";
 import type {
   OpenCodeClient,
@@ -306,6 +307,8 @@ export class AutomationRunner {
           ...(definition.action.agent ? { agent: definition.action.agent } : {}),
           ...(definition.action.model ? { model: definition.action.model } : {}),
           location: { directory: location },
+          // Same as a new task's default approval: Palot's tools that schedule still ask.
+          permissions: [...PALOT_TOOL_PERMISSIONS],
         };
         const session = await client.session
           .create(input, { signal: requestSignal(signal) })

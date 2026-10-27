@@ -69,7 +69,11 @@ import { useModelCatalog } from "../hooks/use-model-catalog";
 import { useComposerSelection } from "../hooks/use-composer-selection";
 import { useComposerPermissions } from "../hooks/use-composer-permissions";
 import { useSettingsSnapshot } from "../hooks/use-settings-snapshot";
-import { useCacheSession, useProjectCatalog } from "../hooks/use-session-catalog";
+import {
+  useCacheSession,
+  useProjectCatalog,
+  useSessionCatalog,
+} from "../hooks/use-session-catalog";
 import {
   compactionRunning,
   findContextModel,
@@ -104,6 +108,7 @@ import {
   type ComposerMode,
 } from "../lib/composer-history";
 import { mentionFileSuggestions, openWorkbenchFiles } from "../lib/composer-open-files";
+import { taskMentionSuggestions } from "../lib/task-mentions";
 import {
   loadRecentPrompts,
   recentPromptFromSubmission,
@@ -584,6 +589,7 @@ function ComposerView({
   );
   const mentionAgents = mentionCatalogQuery.data?.agents ?? EMPTY_AGENTS;
   const mentionReferences = mentionCatalogQuery.data?.references ?? EMPTY_REFERENCES;
+  const mentionSessions = useSessionCatalog();
   const discoveryError =
     activeQuery?.kind === "file"
       ? fileSearchQuery.error instanceof Error
@@ -689,6 +695,15 @@ function ComposerView({
         path,
         name: basename(path),
       })),
+      ...taskMentionSuggestions(mentionSessions, projects, session.id, deferredQuery).map(
+        (task) => ({
+          kind: "task" as const,
+          key: `task:${task.id}`,
+          id: task.id,
+          name: task.title,
+          description: task.project,
+        }),
+      ),
     ];
   }, [
     activeQuery,
@@ -698,7 +713,10 @@ function ComposerView({
     fileResults,
     mentionAgents,
     mentionReferences,
+    mentionSessions,
     openFiles,
+    projects,
+    session.id,
   ]);
   const discoveryKey = activeQuery ? `${activeQuery.kind}\0${activeQuery.query}` : "";
   const requestedDiscoveryIndex =
@@ -1736,7 +1754,10 @@ function ComposerView({
       element.selectionEnd,
       { isComposing },
     );
-    const itemQueryKind = item.kind === "agent" || item.kind === "reference" ? "file" : item.kind;
+    const itemQueryKind =
+      item.kind === "agent" || item.kind === "reference" || item.kind === "task"
+        ? "file"
+        : item.kind;
     if (!freshQuery || freshQuery.kind !== itemQueryKind) return;
     const localID = crypto.randomUUID();
     const selectionValue: ComposerDiscoverySelection =
@@ -1744,11 +1765,13 @@ function ComposerView({
         ? { kind: "command", name: item.name }
         : item.kind === "skill"
           ? { kind: "skill", id: item.id, localID }
-          : item.kind === "agent"
-            ? { kind: "agent", name: item.name, localID }
-            : item.kind === "reference"
-              ? { kind: "reference", name: item.name, path: item.path, localID }
-              : { kind: "file", path: item.path, localID };
+          : item.kind === "task"
+            ? { kind: "task", id: item.id, title: item.name, localID }
+            : item.kind === "agent"
+              ? { kind: "agent", name: item.name, localID }
+              : item.kind === "reference"
+                ? { kind: "reference", name: item.name, path: item.path, localID }
+                : { kind: "file", path: item.path, localID };
     const inserted = insertComposerSelection(draft, freshQuery, selectionValue);
     setDraft(inserted.draft);
     setSelection({ start: inserted.selectionStart, end: inserted.selectionEnd });

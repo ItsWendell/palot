@@ -269,6 +269,71 @@ export function readableToolName(name: string): string {
     .join(" ");
 }
 
+/** Palot's own agent tools, called directly (`palot_x`) or through code mode (`palot.x`). */
+function palotTool(name: string): string | null {
+  const match = name.match(/^palot[._](\w+)$/);
+  return match ? match[1]! : null;
+}
+
+const PALOT_TOOL_TITLES: Record<string, string> = {
+  schedule_task: "Schedule task",
+  list_automations: "List scheduled tasks",
+  update_automation: "Change scheduled task",
+  delete_automation: "Delete scheduled task",
+  list_tasks: "List tasks",
+  read_task: "Read task",
+  wait_tasks: "Wait for tasks",
+  organize_task: "Organize task",
+};
+
+/** What a Palot tool call is doing, in the terms Palot's sidebar and Scheduled page use. */
+function palotSummary(tool: string, input: RecordValue): { label: string | null; args: string[] } {
+  const value = (key: string) => genericScalar(input[key]);
+  if (tool === "schedule_task") {
+    const repeats = value("rrule");
+    return {
+      label: value("name"),
+      args: [
+        ...(value("at") ? [`at ${value("at")!.replace("T", " ")}`] : []),
+        ...(repeats ? [`repeats ${repeats}`] : []),
+        ...(input.target === "new_task" ? ["as a new task"] : []),
+      ],
+    };
+  }
+  if (tool === "update_automation" || tool === "delete_automation") {
+    const changes = ["name", "prompt", "at", "rrule", "timezone", "status"].filter(
+      (key) => input[key] !== undefined,
+    );
+    return {
+      label: value("name") ?? value("automationId"),
+      args: tool === "update_automation" && changes.length ? [`changes ${changes.join(", ")}`] : [],
+    };
+  }
+  if (tool === "organize_task") {
+    const changes = [
+      ...(value("title") ? [`rename to “${value("title")}”`] : []),
+      ...(input.pinned === true ? ["pin"] : input.pinned === false ? ["unpin"] : []),
+      ...(input.state === "settled"
+        ? ["settle"]
+        : input.state === "snoozed"
+          ? [`snooze until ${(value("snoozeUntil") ?? "later").replace("T", " ")}`]
+          : input.state === "inbox"
+            ? ["move to Inbox"]
+            : []),
+      ...(input.archived === true ? ["archive"] : input.archived === false ? ["unarchive"] : []),
+    ];
+    return { label: changes.join(", ") || null, args: value("taskId") ? [value("taskId")!] : [] };
+  }
+  if (tool === "wait_tasks") {
+    const ids = Array.isArray(input.taskIds) ? input.taskIds.length : 0;
+    return { label: ids ? `${ids} task${ids === 1 ? "" : "s"}` : null, args: [] };
+  }
+  if (tool === "list_tasks")
+    return { label: value("search"), args: value("status") === "running" ? ["running"] : [] };
+  if (tool === "read_task") return { label: value("taskId") ?? "this task", args: [] };
+  return { label: null, args: [] };
+}
+
 function genericSummary(input: RecordValue) {
   const labelKey = GENERIC_LABEL_KEYS.find((key) => genericScalar(input[key]) !== null);
   const label = labelKey ? genericScalar(input[labelKey]) : null;
@@ -693,11 +758,16 @@ function executeCalls(value: JsonValue | undefined): ExecuteExecution["calls"] {
     const call = record(item);
     const tool = string(call.tool) ?? string(call.name);
     if (!tool || !["running", "completed", "error"].includes(string(call.status) ?? "")) return [];
-    const summary = genericSummary(record(call.input));
+    const palot = palotTool(tool);
+    const summary = palot
+      ? palotSummary(palot, record(call.input))
+      : genericSummary(record(call.input));
     return [
       {
         tool,
-        title: readableToolName(tool),
+        title: palot
+          ? (PALOT_TOOL_TITLES[palot] ?? readableToolName(palot))
+          : readableToolName(tool),
         status: call.status as ExecuteExecution["calls"][number]["status"],
         args: [...(summary.label ? [summary.label] : []), ...summary.args],
       },
@@ -920,11 +990,14 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
       runtimeError: boolean(metadata.error),
     };
   }
-  const summary = genericSummary(value.input);
+  const palot = palotTool(name);
+  const summary = palot ? palotSummary(palot, value.input) : genericSummary(value.input);
   return {
     ...value.value,
     kind: "generic",
-    title: readableToolName(value.value.name),
+    title: palot
+      ? (PALOT_TOOL_TITLES[palot] ?? readableToolName(palot))
+      : readableToolName(value.value.name),
     label: summary.label,
     args: summary.args,
   };

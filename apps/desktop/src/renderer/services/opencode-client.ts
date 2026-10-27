@@ -163,6 +163,20 @@ function targetedFetch(target: Target | null): typeof globalThis.fetch {
 export const openCodeFetch: typeof globalThis.fetch = (input, init) =>
   targetedFetch(focusedTarget)(input, init);
 
+/**
+ * A fetch to one connection for routes the pinned client no longer names, such as older
+ * servers' paths. `path` is the server path, for example `/api/experimental/generate`.
+ */
+export function openCodeConnectionFetch(
+  connectionID: string | undefined,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const target = connectionID === undefined ? focusedTarget : targets.get(connectionID);
+  if (target === undefined) throw new Error(`Unknown OpenCode connection: ${connectionID}`);
+  return targetedFetch(target)(`${CLIENT_BASE_URL}${path}`, init);
+}
+
 export function openCodeClient(connectionID?: string): OpenCodeClient {
   if (testClient) return testClient;
   const target = connectionID === undefined ? focusedTarget : targets.get(connectionID);

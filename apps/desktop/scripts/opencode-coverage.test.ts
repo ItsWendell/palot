@@ -80,6 +80,8 @@ describe("OpenCode coverage contract", () => {
     expect(clientPathFromOperationID("session.form.reply")).toBe("session.form.reply");
     expect(clientPathFromOperationID("form.list")).toBe("form.list");
     expect(clientPathFromOperationID("session.permission.reply")).toBe("permission.reply");
+    expect(clientPathFromOperationID("experimental.media.get")).toBe("experimental.media.get");
+    expect(clientPathFromOperationID("experimental.usage.limits")).toBe("usage.limits");
     expect(clientPathFromOperationID("session.message.list")).toBe("message.list");
     expect(clientPathFromOperationID("v2.session.permission.create")).toBe("permission.create");
     expect(clientPathFromOperationID("v2.experimental.integration.wellknown.add")).toBe(

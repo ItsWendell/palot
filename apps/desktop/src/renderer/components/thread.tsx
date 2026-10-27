@@ -62,6 +62,7 @@ import { useSessionTranscript } from "../hooks/use-session-transcript";
 import { useBrowserSession } from "../hooks/use-browser-session";
 import { openFileInBrowser, workspaceFileTarget } from "../lib/browser-files";
 import { useSessionTranscriptProjection } from "../hooks/use-session-transcript-projection";
+import { useMcpElicitations } from "../hooks/use-mcp-elicitations";
 import { useSessionRequests, useSessionFamilyRequestViews } from "../hooks/use-session-requests";
 import type { OwnedPendingRequestView } from "../lib/session-family-requests";
 import { useSessionActivityForSession } from "../hooks/use-session-activity";
@@ -85,6 +86,7 @@ import { parallelActivityLabel } from "../lib/parallel-activity";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
 import { reviewOfferUserMessageID } from "../lib/turn-review-offer";
 import { TurnReviewOffer } from "./turn-review-offer";
+import { UsageLimitActions } from "./usage-limit-actions";
 import {
   ResponseSelectionAsk,
   responseAnchorSelector,
@@ -438,9 +440,18 @@ const SessionThreadContents = memo(function SessionThreadContents({
     () => requestViews.filter((request) => request.type === "input"),
     [requestViews],
   );
+  // MCP servers ask for input through forms owned by the task's location, not the task.
+  const elicitations = useMcpElicitations(
+    transcript.connectionID,
+    session.location.directory,
+    !session.parentID,
+  );
   const composerRequests = useMemo(
-    () => requestViews.filter((request) => request.type === "question" || request.type === "form"),
-    [requestViews],
+    () => [
+      ...requestViews.filter((request) => request.type === "question" || request.type === "form"),
+      ...elicitations,
+    ],
+    [elicitations, requestViews],
   );
   const projectedMessages = useMemo(() => withPersistedTurnFailures(messages), [messages]);
   const projection = useSessionTranscriptProjection({
@@ -3297,6 +3308,7 @@ function StandardTimelineBoundary({
               {detail}
             </p>
           ) : null}
+          {failed ? <UsageLimitActions message={group.entries[0]?.message} /> : null}
         </div>
       </div>
     );
@@ -3914,6 +3926,11 @@ function MessagePartView({
   );
 }
 
+/** The location a location-wide MCP elicitation is settled through, when the request is one. */
+function locationOf(request: PendingRequestView): { locationDirectory?: string } {
+  return request.locationDirectory ? { locationDirectory: request.locationDirectory } : {};
+}
+
 export const PendingRequests = memo(function PendingRequests({
   sessionID,
   requests,
@@ -4011,7 +4028,11 @@ export const PendingRequests = memo(function PendingRequests({
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            {ownerSessionID !== sessionID ? (
+            {request.locationDirectory ? (
+              <p className="mb-1 truncate px-1 text-meta font-medium text-muted-foreground">
+                MCP server request
+              </p>
+            ) : ownerSessionID !== sessionID ? (
               <p
                 className="mb-1 truncate px-1 text-meta font-medium text-warning"
                 title={request.sessionTitle}
@@ -4066,6 +4087,7 @@ export const PendingRequests = memo(function PendingRequests({
                         sessionID: ownerSessionID,
                         formID: request.id,
                         answer,
+                        ...locationOf(request),
                       }),
                     "Could not submit this form",
                   )
@@ -4073,7 +4095,12 @@ export const PendingRequests = memo(function PendingRequests({
                 onCancel={() =>
                   respond(
                     responseKey,
-                    () => palot.cancelForm({ sessionID: ownerSessionID, formID: request.id }),
+                    () =>
+                      palot.cancelForm({
+                        sessionID: ownerSessionID,
+                        formID: request.id,
+                        ...locationOf(request),
+                      }),
                     "Could not cancel this form",
                   )
                 }

@@ -91,6 +91,8 @@ import { registerProjectScriptsIpc } from "./project-scripts/ipc";
 import { projectScriptsService, startProjectScripts } from "./project-scripts/runtime";
 import { shutdownSourceControlService, sourceControlService } from "./source-control/runtime";
 import { registerVoiceHostIpc } from "./voice/voice-host";
+import { heapSnapshots } from "./diagnostics/heap-snapshots";
+import { palotToolHost, shutdownPalotToolHost } from "./palot-tools";
 
 let performanceTraceActive = false;
 const requestProxy = new OpenCodeRequestProxy({
@@ -358,6 +360,16 @@ const desktopNotificationSettingsSchema = v.strictObject({
   permissionRequests: v.boolean(),
   questionRequests: v.boolean(),
 });
+const palotToolsFocusSchema = v.nullable(
+  v.strictObject({
+    connectionID: identifier,
+    directories: v.pipe(
+      v.array(v.pipe(v.string(), v.minLength(1), v.maxLength(4_096))),
+      v.maxLength(8),
+    ),
+  }),
+);
+const palotToolsFocusOwners = new WeakSet<Electron.WebContents>();
 const activityWatermarkSchema = v.strictObject({
   updatedAt: timestamp,
   // An empty ID is the lower-bound sentinel when a profile has no sessions yet.
@@ -442,6 +454,8 @@ const automationCommandSchema = v.variant("type", [
 const automationHostSettingsSchema = v.strictObject({
   launchAtLogin: v.boolean(),
   preventSleepWhileRunning: v.boolean(),
+  agentTools: v.boolean(),
+  askBeforeAgentScheduling: v.boolean(),
 });
 
 let ipcTrust:
@@ -996,6 +1010,17 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     refreshTrayMenu();
     return snapshot;
   });
+  register(IPC_CHANNELS.palotToolsFocus, (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    const focus = v.parse(palotToolsFocusSchema, input);
+    const sender = event.sender;
+    const ownerID = sender.id;
+    if (!palotToolsFocusOwners.has(sender)) {
+      palotToolsFocusOwners.add(sender);
+      sender.once("destroyed", () => palotToolHost().setFocus(ownerID, null));
+    }
+    palotToolHost().setFocus(ownerID, focus);
+  });
   register(IPC_CHANNELS.automationLoad, (event, input: unknown) => {
     assertTrustedMainFrame(event);
     const profileID = v.parse(identifier, input);
@@ -1022,7 +1047,11 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   });
   register(IPC_CHANNELS.automationSettingsUpdate, (event, input: unknown) => {
     assertTrustedMainFrame(event);
-    return automationService().updateSettings(v.parse(automationHostSettingsSchema, input));
+    const settings = automationService().updateSettings(
+      v.parse(automationHostSettingsSchema, input),
+    );
+    palotToolHost().refresh();
+    return settings;
   });
   register(IPC_CHANNELS.request, (event, input: unknown) => {
     const sender = assertTrustedMainFrame(event);
@@ -1218,6 +1247,9 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     if (typeof input !== "string") throw new Error("Attachment URL is invalid.");
     return readAttachmentPreview(input);
   });
+  register(IPC_CHANNELS.heapSnapshots, (event, input: unknown) =>
+    heapSnapshots(assertTrustedMainFrame(event), input),
+  );
   register(IPC_CHANNELS.performanceSnapshot, (event) => {
     assertTrustedMainFrame(event);
     const hostWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1333,6 +1365,7 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
       await resetPalotSettings();
     } else {
       await automationService().shutdown();
+      await shutdownPalotToolHost();
       await shutdownSourceControlService();
       await openCodeRuntime.shutdown();
       closePalotDatabase();

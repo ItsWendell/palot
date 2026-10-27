@@ -39,6 +39,7 @@ import { desktopNotificationService } from "./notification-service";
 import { appearanceService } from "./appearance-service";
 import { destroyTray, installTray } from "./tray";
 import { destroyOpenCodeAttentionIndex } from "./attention-index";
+import { palotToolHost, shutdownPalotToolHost } from "./palot-tools";
 import { restoreWindowState, saveWindowState, trackWindowState } from "./window-state";
 import { startupWindowPresentation } from "./window-startup";
 import { openExternalUrl } from "./external-url";
@@ -462,6 +463,7 @@ if (helpRequested) {
         else send();
       });
       await automationService().start();
+      palotToolHost().start();
       sourceControlService().start();
       await createWindow();
       app.on("activate", () => {
@@ -494,6 +496,9 @@ if (helpRequested) {
       .finally(async () => {
         await trayShutdown;
         destroyOpenCodeAttentionIndex();
+        await shutdownPalotToolHost().catch((error) =>
+          log.warn("Palot tool shutdown failed", error),
+        );
         await shutdownBrowserPane();
         await shutdownSourceControlService().catch((error) =>
           log.warn("Source control shutdown failed", error),

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useAtomValue, useStore } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
 import type { PalotSession } from "../../shared";
+import { newTaskApprovalModeAtom } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
 import {
   approvalPresetRules,
@@ -17,16 +18,18 @@ export function useComposerPermissions(session: PalotSession, draft: boolean, sc
   const store = useStore();
   const queryClient = useQueryClient();
   const identity = JSON.stringify([runtime?.connectionID, scope]);
+  // New drafts start in the approval mode chosen in Settings.
+  const initialMode = useAtomValue(newTaskApprovalModeAtom);
   const [selection, setSelection] = useState<{ identity: string; mode: ApprovalPreset }>({
     identity,
-    mode: "normal",
+    mode: initialMode,
   });
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
-  // Never carry an elevated draft preset into another thread/project/connection.
-  if (selection.identity !== identity) setSelection({ identity, mode: "normal" });
+  // Never carry a draft's choice into another thread/project/connection; start from Settings.
+  if (selection.identity !== identity) setSelection({ identity, mode: initialMode });
 
-  const draftMode = selection.identity === identity ? selection.mode : "normal";
+  const draftMode = selection.identity === identity ? selection.mode : initialMode;
   const assertReady = useCallback(() => {
     if (inFlight.current)
       throw new Error("Wait for the permission change to finish before sending.");
@@ -87,7 +90,10 @@ export function useComposerPermissions(session: PalotSession, draft: boolean, sc
   );
 
   const isBusy = useCallback(() => inFlight.current, []);
-  const resetDraft = useCallback(() => setSelection({ identity, mode: "normal" }), [identity]);
+  const resetDraft = useCallback(
+    () => setSelection({ identity, mode: initialMode }),
+    [identity, initialMode],
+  );
 
   return {
     mode: draft ? draftMode : sessionApprovalMode(session.permissions),

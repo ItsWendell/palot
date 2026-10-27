@@ -592,6 +592,7 @@ describe("subagent activity", () => {
 
     expect(screen.getByText(/Explore subagent · 1 of 2/)).toBeTruthy();
     expect(screen.getByText(/Read-only session/)).toBeTruthy();
+    expect(document.querySelector("[data-palot-subagent-state]")?.textContent).toMatch(/^Running /);
     // Parent navigation moved to the task header breadcrumb.
     expect(screen.queryByRole("button", { name: "Parent task" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Next subagent" }));
@@ -623,6 +624,9 @@ describe("subagent activity", () => {
     );
 
     expect(screen.getByText(/subagent · 2 of 3/)).toBeTruthy();
+    expect(document.querySelector("[data-palot-subagent-state]")?.textContent).toMatch(
+      /^Failed after /,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Previous subagent" }));
     expect(mocks.openSession).toHaveBeenLastCalledWith(first.id);
     await userEvent.click(screen.getByRole("button", { name: "Next subagent" }));

@@ -250,6 +250,37 @@ describe("GlobalCommandPalette", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/welcome"));
   });
 
+  it.each([
+    ["auto-settle", "Auto-settle idle tasks", "/settings/general"],
+    ["microphone", "Microphone", "/settings/voice"],
+    ["proxy", "Tailscale", "/settings/connections/web-access"],
+  ])("finds the %s setting and opens its page", async (query, title, route) => {
+    const { router } = setup("/new?projectID=project-1");
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await userEvent.type(
+      await screen.findByRole("combobox", { name: "Search tasks and commands" }),
+      query,
+    );
+    const option = await screen.findByRole("option", { name: new RegExp(`^${title}`) });
+    await userEvent.click(option);
+    await waitFor(() => expect(router.state.location.pathname).toBe(route));
+    expect(router.state.location.search).toMatchObject({ projectID: "project-1" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("includes individual settings in the Settings tab but not the Commands tab", async () => {
+    const { store } = setup();
+    store.set(commandPaletteTabAtom, "settings");
+    store.set(commandPaletteOpenAtom, true);
+    await userEvent.type(
+      await screen.findByRole("combobox", { name: "Search tasks and commands" }),
+      "auto-settle",
+    );
+    expect(await screen.findByRole("option", { name: /^Auto-settle idle tasks/ })).toBeTruthy();
+    await userEvent.click(screen.getByRole("tab", { name: "Commands" }));
+    expect(screen.queryByRole("option", { name: /^Auto-settle idle tasks/ })).toBeNull();
+  });
+
   it("navigates commands with the keyboard and closes from the root page", async () => {
     const { store } = setup();
     store.set(commandPaletteOpenAtom, true);

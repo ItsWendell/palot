@@ -9,6 +9,7 @@ export * from "./opencode-contract";
 export * from "./opencode-release-contract";
 export * from "./opencode-installation-contract";
 export * from "./opencode-login-contract";
+export * from "./palot-tools-contract";
 export * from "./session-triage-contract";
 export * from "./voice-contract";
 export * from "./window-chrome";

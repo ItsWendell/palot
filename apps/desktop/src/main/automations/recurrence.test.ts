@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import type { AutomationTrigger } from "../../shared";
 import {
   advanceNextRun,
+  automationInstant,
+  automationLocalTime,
   automationOccurrences,
   initialNextRun,
   nextAutomationOccurrence,
@@ -168,5 +170,34 @@ describe("automation recurrence", () => {
     expect(isMissedAutomationOccurrence(1, 30_000)).toBe(false);
     expect(isMissedAutomationOccurrence(59_999, 30_000)).toBe(false);
     expect(isMissedAutomationOccurrence(60_001, 30_000)).toBe(true);
+  });
+
+  it("reads agent date-times as wall-clock time in the task's time zone", () => {
+    // Amsterdam is UTC+2 in summer and UTC+1 after the October change.
+    expect(automationInstant("2026-08-21T09:00", "Europe/Amsterdam")).toBe(
+      Date.parse("2026-08-21T07:00:00Z"),
+    );
+    expect(automationInstant("2026-11-02 09:30:15", "Europe/Amsterdam")).toBe(
+      Date.parse("2026-11-02T08:30:15Z"),
+    );
+    // An explicit offset names the exact instant.
+    expect(automationInstant("2026-08-21T09:00Z", "Europe/Amsterdam")).toBe(
+      Date.parse("2026-08-21T09:00:00Z"),
+    );
+    expect(automationInstant("2026-08-21T09:00:00.25", "Europe/Amsterdam")).toBe(
+      Date.parse("2026-08-21T07:00:00.250Z"),
+    );
+    for (const value of [
+      "tomorrow",
+      "2026-02-30T09:00",
+      "2026-08-21",
+      "2026-10-27T09:99",
+      "2026-10-27T24:00",
+    ])
+      expect(automationInstant(value, "Europe/Amsterdam")).toBeNull();
+    expect(automationInstant("2026-08-21T09:00", "Mars/Olympus")).toBeNull();
+    expect(automationLocalTime(Date.parse("2026-08-21T07:00:00Z"), "Europe/Amsterdam")).toBe(
+      "2026-08-21T09:00",
+    );
   });
 });

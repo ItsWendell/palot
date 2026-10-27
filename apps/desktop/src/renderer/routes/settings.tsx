@@ -1,25 +1,7 @@
 import { Outlet, createFileRoute, useRouterState } from "@tanstack/react-router";
 import { Settings } from "../components/settings";
 import { validateProjectSearch } from "../lib/route-search";
-import type { SettingsCategory } from "../lib/settings-navigation";
-
-const SETTINGS_CATEGORIES = [
-  "project",
-  "general",
-  "browser",
-  "appearance",
-  "notifications",
-  "shortcuts",
-  "connections",
-  "models",
-  "providers",
-  "tools",
-  "agents",
-  "permissions",
-  "config",
-  "diagnostics",
-  "about",
-] as const satisfies readonly SettingsCategory[];
+import { SETTINGS_CATEGORIES } from "../lib/settings-navigation";
 
 export const Route = createFileRoute("/settings")({
   validateSearch: validateProjectSearch,

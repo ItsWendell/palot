@@ -31,6 +31,7 @@ import { workflowScenarios } from "./workflow-scenarios.ts";
 import { pairingAddressScenario } from "./pairing-address-scenario.ts";
 import { composerSelectionMemoryScenario } from "./composer-selection-memory-scenario.ts";
 import { composerPermissionsScenario } from "./composer-permissions-scenario.ts";
+import { palotToolsScenario } from "./palot-tools-scenario.ts";
 import { composerContextScenario } from "./composer-context-scenario.ts";
 import { themePresetsScenario } from "./theme-presets-scenario.ts";
 import { markdownRichScenario } from "./markdown-rich-scenario.ts";
@@ -205,6 +206,7 @@ export const scenarios = {
   "conversation-permission": conversationPermissionScenario,
   "composer-selection-memory": composerSelectionMemoryScenario,
   "composer-permissions": composerPermissionsScenario,
+  "palot-tools": palotToolsScenario,
   "compact-question": compactQuestionScenario,
   "subagent-requests": subagentRequestsScenario,
   "process-picker": processPickerScenario,

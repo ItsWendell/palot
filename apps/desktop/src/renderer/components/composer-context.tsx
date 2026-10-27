@@ -4,7 +4,16 @@ import type { LocationRef } from "@opencode/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useSetAtom } from "jotai";
-import { ArrowUpRight, Bot, FileClock, FileText, FolderSymlink, Sparkles, X } from "lucide-react";
+import {
+  ArrowUpRight,
+  Bot,
+  FileClock,
+  FileText,
+  FolderSymlink,
+  MessageSquare,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import type { PalotSession } from "../../shared";
 import { transcriptJumpTargetAtom } from "../atoms/workbench";
@@ -37,12 +46,14 @@ const MENTION_KIND_LABELS: Record<ComposerMention["kind"], string> = {
   agent: "Agent",
   skill: "Skill",
   reference: "Reference",
+  task: "Task",
 };
 
 function MentionIcon({ kind }: { kind: ComposerMention["kind"] }) {
   if (kind === "agent") return <Bot aria-hidden="true" />;
   if (kind === "skill") return <Sparkles aria-hidden="true" />;
   if (kind === "reference") return <FolderSymlink aria-hidden="true" />;
+  if (kind === "task") return <MessageSquare aria-hidden="true" />;
   return <FileText aria-hidden="true" />;
 }
 
@@ -55,6 +66,7 @@ export const ComposerMentionChip = memo(function ComposerMentionChip({
   onRemove(localID: string): void;
 }) {
   const kind = MENTION_KIND_LABELS[mention.kind];
+  const label = mention.kind === "task" ? (mention.title ?? mention.value) : mention.text;
   return (
     <Attachment
       size="xs"
@@ -66,12 +78,12 @@ export const ComposerMentionChip = memo(function ComposerMentionChip({
         <MentionIcon kind={mention.kind} />
       </AttachmentMedia>
       <AttachmentContent>
-        <AttachmentTitle>{mention.text}</AttachmentTitle>
+        <AttachmentTitle>{label}</AttachmentTitle>
         <AttachmentDescription>{kind}</AttachmentDescription>
       </AttachmentContent>
       <AttachmentActions>
         <AttachmentAction
-          aria-label={`Remove ${kind.toLowerCase()} mention ${mention.text}`}
+          aria-label={`Remove ${kind.toLowerCase()} mention ${label}`}
           onClick={() => onRemove(mention.localID)}
         >
           <X aria-hidden="true" />

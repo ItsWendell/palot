@@ -63,6 +63,35 @@ describe("composer draft edits", () => {
 });
 
 describe("composer discovery insertion", () => {
+  it("inserts removable task chips as exact OpenCode session tokens without inventing attachment parts", () => {
+    const id = "ses_0123456789abcdefghijklmnop";
+    const inserted = insertComposerSelection(
+      {
+        text: "See @task then @file.ts",
+        mentions: [mention("file", "file", "file.ts", 15)],
+        command: null,
+      },
+      { kind: "file", start: 4, end: 9, query: "task" },
+      { kind: "task", id, title: "Task title", localID: "task" },
+    );
+    expect(inserted.draft.text).toBe(`See @session:${id} then @file.ts`);
+    expect(inserted.draft.mentions[0]).toMatchObject({
+      kind: "task",
+      value: id,
+      title: "Task title",
+      text: `@session:${id}`,
+    });
+    const submission = projectComposerSubmission(inserted.draft);
+    expect(submission.text).toBe(inserted.draft.text);
+    expect(submission.files).toHaveLength(1);
+    expect(submission.skills).toEqual([]);
+    expect(submission.agents).toEqual([]);
+    expect(submission.references).toEqual([]);
+    const removed = removeComposerMention(inserted.draft, "task");
+    expect(removed?.draft.text).toBe("See then @file.ts");
+    expect(removed?.draft.mentions[0]).toMatchObject({ kind: "file", start: 9, end: 17 });
+  });
+
   it.each([
     [
       { kind: "file", start: 4, end: 8, query: "src" } as ComposerQuery,

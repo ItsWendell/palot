@@ -110,7 +110,17 @@ describe("projectSessionInbox", () => {
     expect(after.inbox).toHaveLength(0);
     expect(after.settled[0]).toMatchObject({ failed: true, section: "settled" });
 
-    const updated = project(triage, emptyRequests, inactive, { ...session, updatedAt: 20 });
+    // A permission, title or metadata write is not activity: OpenCode's browser plugin edits
+    // permissions whenever Palot starts or quits, which used to unsettle every attached task.
+    const rewritten = project(triage, emptyRequests, inactive, { ...session, updatedAt: 20 });
+    expect(rewritten.inbox).toHaveLength(0);
+    expect(rewritten.settled).toHaveLength(1);
+
+    const updated = project(triage, emptyRequests, inactive, {
+      ...session,
+      updatedAt: 20,
+      idleAt: 20,
+    });
     expect(updated.settled).toHaveLength(0);
     expect(updated.inbox[0]).toMatchObject({ failed: true });
 
@@ -337,8 +347,14 @@ describe("projectSessionInbox", () => {
   });
 
   it("projects recursive descendant activity onto the root task", () => {
-    const child = { ...root, id: "child", parentID: root.id, updatedAt: 20 };
-    const grandchild = { ...root, id: "grandchild", parentID: child.id, updatedAt: 30 };
+    const child = { ...root, id: "child", parentID: root.id, updatedAt: 20, idleAt: 20 };
+    const grandchild = {
+      ...root,
+      id: "grandchild",
+      parentID: child.id,
+      updatedAt: 30,
+      idleAt: 30,
+    };
     const snapshot = projectSessionInbox({
       sessions: [root, child, grandchild],
       projects: [],

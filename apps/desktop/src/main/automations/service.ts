@@ -44,7 +44,11 @@ export class AutomationService {
   private readonly registry = new AutomationDefinitionRegistry(
     path.join(app.getPath("userData"), "automations"),
   );
-  private readonly settingsStore = new Store<{ preventSleepWhileRunning: boolean }>({
+  private readonly settingsStore = new Store<{
+    preventSleepWhileRunning: boolean;
+    agentTools?: boolean;
+    askBeforeAgentScheduling?: boolean;
+  }>({
     name: "automation-settings",
     defaults: { preventSleepWhileRunning: false },
   });
@@ -146,12 +150,24 @@ export class AutomationService {
     return {
       launchAtLogin: app.getLoginItemSettings().openAtLogin,
       preventSleepWhileRunning: this.settingsStore.get("preventSleepWhileRunning"),
+      agentTools: this.agentToolsEnabled(),
+      askBeforeAgentScheduling: this.askBeforeAgentScheduling(),
     };
+  }
+
+  askBeforeAgentScheduling(): boolean {
+    return this.settingsStore.get("askBeforeAgentScheduling") ?? true;
+  }
+
+  agentToolsEnabled(): boolean {
+    return this.settingsStore.get("agentTools") ?? app.isPackaged;
   }
 
   updateSettings(settings: AutomationHostSettings): AutomationHostSettings {
     app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
     this.settingsStore.set("preventSleepWhileRunning", settings.preventSleepWhileRunning);
+    this.settingsStore.set("agentTools", settings.agentTools);
+    this.settingsStore.set("askBeforeAgentScheduling", settings.askBeforeAgentScheduling);
     this.syncPowerSaveBlocker();
     return this.settings();
   }

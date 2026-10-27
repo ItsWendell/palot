@@ -11,6 +11,7 @@ import {
 import { runtimeAtom } from "../atoms/workspace";
 import { discoveredProfileIDsAtom, includedProfileIDsAtom } from "../atoms/connections";
 import type { OpenCodeRuntimeStatus } from "../../shared";
+import { approvalPresetRules } from "../lib/session-permissions";
 import { NewTask } from "./new-task";
 
 const catalog = vi.hoisted(() => ({
@@ -145,7 +146,7 @@ describe("NewTask", () => {
           "/worktrees/new",
           undefined,
           "remote-connection",
-          approvalMode === "full" ? [{ action: "*", resource: "*", effect: "allow" }] : [],
+          approvalPresetRules(approvalMode),
         ),
       );
       expect(creation.result).toBeUndefined();
@@ -314,7 +315,7 @@ describe("NewTask", () => {
         "/repo/one",
         undefined,
         "remote-connection",
-        [],
+        approvalPresetRules("normal"),
       ),
     );
     expect(services.createProjectCopy).not.toHaveBeenCalled();

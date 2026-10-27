@@ -138,7 +138,9 @@ export const composerSelectionMemoryScenario: Scenario = {
     const automaticRequests = llm.requests.filter(({ body }) => !isTitleRequest(body));
     expect(automaticRequests).toHaveLength(1);
     expect(automaticRequests[0]!.body.model).toBe(MODEL);
-    expect(automaticRequests[0]!.body.reasoning_effort).toBeUndefined();
+    // OpenCode 2.2.0 applies the agent's configured variant (test-model#low) to a session
+    // without a model of its own; before, configured variant bodies were not merged.
+    expect(automaticRequests[0]!.body.reasoning_effort).toBe("low");
     expect(JSON.stringify(automaticRequests[0]!.body)).toContain(ALPHA_SYSTEM);
     await openNewTask(page, projectID);
     await expect(

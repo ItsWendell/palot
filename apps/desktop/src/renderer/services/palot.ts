@@ -61,6 +61,7 @@ import type {
   SessionTriageSnapshot,
   SessionRequestSnapshot,
   PalotSettingsSnapshot,
+  PalotToolsFocus,
   RejectQuestionInput,
   ReplyQuestionInput,
   UpdatePendingInput,
@@ -380,7 +381,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "2.1.3",
+  contractVersion: "2.2.0",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -397,7 +398,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.1.3",
+  version: "2.2.0",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,
@@ -503,6 +504,19 @@ function apiAvailable(): boolean {
 
 function getApi(): PalotApi | undefined {
   return window.palot;
+}
+
+/** The owner OpenCode gives MCP elicitations that belong to a location rather than a session. */
+export const MCP_ELICITATION_OWNER = "global";
+
+/**
+ * OpenCode resolves a location-wide MCP elicitation's location from this header, because the
+ * `"global"` owner has no session row to read it from.
+ */
+function globalFormOptions(sessionID: string, directory?: string) {
+  return sessionID === MCP_ELICITATION_OWNER && directory
+    ? { headers: { "x-opencode-directory": encodeURIComponent(directory) } }
+    : undefined;
 }
 
 export const palot = {
@@ -715,6 +729,12 @@ export const palot = {
     return api.exportSupportBundle();
   },
 
+  async heapSnapshots(input: Parameters<PalotApi["heapSnapshots"]>[0]) {
+    const api = getApi();
+    if (!api) throw new Error("Heap snapshots are only available in the desktop app");
+    return api.heapSnapshots(input);
+  },
+
   async resetPalotData(scope: "settings" | "all"): Promise<void> {
     const api = getApi();
     if (!api) throw new Error("Palot data recovery is unavailable in preview mode");
@@ -859,6 +879,14 @@ export const palot = {
     return dispatchTriage(command);
   },
 
+  onSessionTriageChanged(listener: (snapshot: SessionTriageSnapshot) => void): () => void {
+    return getApi()?.onSessionTriageChanged?.(listener) ?? (() => undefined);
+  },
+
+  async setPalotToolsFocus(focus: PalotToolsFocus | null): Promise<void> {
+    await getApi()?.setPalotToolsFocus?.(focus);
+  },
+
   async loadAutomations(profileID: string): Promise<AutomationSnapshot> {
     const api = getApi();
     if (!api) return { profileID, automations: [], runs: [] };
@@ -886,6 +914,8 @@ export const palot = {
       getApi()?.loadAutomationHostSettings() ?? {
         launchAtLogin: false,
         preventSleepWhileRunning: false,
+        agentTools: false,
+        askBeforeAgentScheduling: true,
       }
     );
   },
@@ -1708,12 +1738,21 @@ export const palot = {
     }
   },
 
-  async replyForm(input: SessionFormReplyInput): Promise<void> {
-    if (apiAvailable()) await openCodeClient().session.form.reply(input);
+  /** `locationDirectory` settles a location-wide MCP elicitation (`sessionID: "global"`). */
+  async replyForm(input: SessionFormReplyInput & { locationDirectory?: string }): Promise<void> {
+    if (!apiAvailable()) return;
+    const { locationDirectory, ...request } = input;
+    const options = globalFormOptions(request.sessionID, locationDirectory);
+    const form = openCodeClient().session.form;
+    await (options ? form.reply(request, options) : form.reply(request));
   },
 
-  async cancelForm(input: SessionFormCancelInput): Promise<void> {
-    if (apiAvailable()) await openCodeClient().session.form.cancel(input);
+  async cancelForm(input: SessionFormCancelInput & { locationDirectory?: string }): Promise<void> {
+    if (!apiAvailable()) return;
+    const { locationDirectory, ...request } = input;
+    const options = globalFormOptions(request.sessionID, locationDirectory);
+    const form = openCodeClient().session.form;
+    await (options ? form.cancel(request, options) : form.cancel(request));
   },
 
   async updatePending(input: UpdatePendingInput): Promise<void> {

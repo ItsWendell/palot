@@ -1,14 +1,18 @@
-import type { SessionStatsInfo } from "@opencode/client";
+import { OpenCode, type SessionStatsInfo } from "@opencode/client";
 import type { PalotProject } from "../../../shared";
 import { createStore } from "jotai";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { runtimeAtom } from "../../atoms/workspace";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { usageToolDetailsOpenAtom } from "../../atoms/ui";
 import { createRendererQueryClient } from "../../lib/query-client";
 import { previousUsageDateRange, usageDateRange } from "../../lib/session-stats-range";
 import { palot } from "../../services/palot";
+import {
+  resetOpenCodeClientForTest,
+  setOpenCodeClientForTest,
+} from "../../services/opencode-client";
 import { renderWithRouter, seedCatalog } from "../../test-utils/render-with-router";
 import { UsagePage } from "./usage-page";
 
@@ -69,8 +73,18 @@ const project: PalotProject = {
   updatedAt: 1,
 };
 
+const limitsFetch = vi.fn(async (_request: RequestInfo | URL) =>
+  Response.json({ location: { directory: "/repo" }, data: null }),
+);
+
+beforeEach(() => {
+  limitsFetch.mockClear();
+  setOpenCodeClientForTest(OpenCode.make({ baseUrl: "https://example.test", fetch: limitsFetch }));
+});
+
 afterEach(() => {
   cleanup();
+  resetOpenCodeClientForTest();
   vi.restoreAllMocks();
 });
 
@@ -94,6 +108,45 @@ function connectedStore() {
 }
 
 describe("UsagePage", () => {
+  it.each([false, true])(
+    "loads limits for the selected task, otherwise the first project (task selected: %s)",
+    async (selected) => {
+      vi.spyOn(palot, "sessionStats").mockResolvedValue(stats);
+      const store = connectedStore();
+      store.set(selectedSessionIDAtom, selected ? "task" : null);
+      const queryClient = createRendererQueryClient();
+      seedCatalog(
+        queryClient,
+        {
+          projects: [project],
+          sessions: [
+            {
+              id: "task",
+              parentID: null,
+              projectID: project.id,
+              title: "Task",
+              agent: null,
+              model: null,
+              location: { directory: "/worktree" },
+              createdAt: 1,
+              updatedAt: 1,
+              archivedAt: null,
+              cost: null,
+              tokens: stats.tokens,
+            },
+          ],
+        },
+        "connection",
+      );
+      renderWithRouter(<UsagePage />, store, "/usage?days=7", queryClient);
+      await screen.findByText("Sign in to OpenCode Console on this server to see plan limits.");
+      const request = new URL(String(limitsFetch.mock.calls[0]![0]));
+      expect(request.searchParams.get("location[directory]")).toBe(
+        selected ? "/worktree" : "/repo",
+      );
+    },
+  );
+
   it("renders aggregate usage and sends an explicit stable range", async () => {
     const sessionStats = vi
       .spyOn(palot, "sessionStats")
@@ -113,6 +166,10 @@ describe("UsagePage", () => {
     renderWithRouter(<UsagePage />, store, "/usage?days=30&projectID=project-1", queryClient);
 
     expect(await screen.findByText("$12.34")).toBeTruthy();
+    expect(
+      await screen.findByText("Sign in to OpenCode Console on this server to see plan limits."),
+    ).toBeTruthy();
+    expect(limitsFetch).toHaveBeenCalledTimes(1);
     expect(screen.getAllByText("gpt-5").length).toBeGreaterThan(0);
     expect(screen.getByText("Token composition")).toBeTruthy();
     expect(screen.getByText("Input", { exact: true })).toBeTruthy();

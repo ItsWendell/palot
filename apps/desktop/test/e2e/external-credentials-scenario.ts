@@ -106,7 +106,9 @@ export const externalCredentialsScenario: Scenario = {
     expect((await client.server.info()).version).toBe(SUPPORTED_OPENCODE_VERSION);
     const input = { integrationID: INTEGRATION_ID, location: { directory: projectDirectory } };
     await expect
-      .poll(async () => (await client.integration.get(input)).data, {
+      // OpenCode 2.2.0 loads its catalog asynchronously, so the integration can be briefly
+      // missing; keep polling instead of failing on the first "not found".
+      .poll(async () => (await client.integration.get(input).catch(() => null))?.data ?? null, {
         timeout: 30_000,
         message: "Wait for the dummy external integration method to activate",
       })

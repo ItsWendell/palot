@@ -393,7 +393,7 @@ export function DiagnosticsSettings() {
 function DataManagement() {
   const [locations, setLocations] = useState<PalotDataLocations | null>(null);
   const [confirmation, setConfirmation] = useState<"settings" | "all" | null>(null);
-  const [pending, setPending] = useState<"support" | "settings" | "all" | null>(null);
+  const [pending, setPending] = useState<"support" | "heap" | "settings" | "all" | null>(null);
 
   useEffect(() => {
     void palot
@@ -409,6 +409,36 @@ function DataManagement() {
       if (file) toast.add({ type: "success", title: "Support bundle exported" });
     } catch (error) {
       showDiagnosticsError("Could not export support bundle", error);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function captureHeaps() {
+    setPending("heap");
+    try {
+      const capture = await palot.heapSnapshots({ type: "capture" });
+      toast.add({
+        type: capture.complete ? "success" : "warning",
+        title: capture.complete
+          ? "Heap snapshots captured"
+          : "Some heap snapshots could not be captured",
+        description: capture.complete
+          ? capture.directory
+          : `See manifest.json for details. ${capture.directory}`,
+        actionProps: {
+          children: "Show in folder",
+          onClick: () => {
+            void palot
+              .heapSnapshots({ type: "reveal", captureID: capture.captureID })
+              .catch((error) => {
+                showDiagnosticsError("Could not show heap snapshots", error);
+              });
+          },
+        },
+      });
+    } catch (error) {
+      showDiagnosticsError("Could not capture heap snapshots", error);
     } finally {
       setPending(null);
     }
@@ -445,6 +475,22 @@ function DataManagement() {
           <DetailRow label="Data" value={locations?.data ?? "Unavailable"} />
           <DetailRow label="Logs" value={locations?.logs ?? "Unavailable"} />
           <DetailRow label="Database backups" value={locations?.backups ?? "Unavailable"} />
+          <SettingsRow
+            title="Heap snapshots"
+            description="Large files that can include credentials and task content. Capture pauses Palot and can take a while. Remote servers are skipped."
+            control={
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending !== null}
+                aria-busy={pending === "heap"}
+                onClick={() => void captureHeaps()}
+              >
+                <MemoryStick data-icon="inline-start" aria-hidden="true" />
+                {pending === "heap" ? "Capturing…" : "Capture heap snapshots"}
+              </Button>
+            }
+          />
         </CardContent>
         <CardFooter className="flex-wrap gap-2 border-t">
           <Button

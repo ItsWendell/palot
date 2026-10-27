@@ -76,6 +76,17 @@ afterEach(() => {
 });
 
 describe("PluginSettings", () => {
+  it("explains desktop interfaces only for plugins that advertise GUI support", () => {
+    renderPlugins([{ ...plugins[0]!, features: { server: true, gui: true } }, plugins[1]!]);
+    const notice = "Has an OpenCode Desktop interface Palot can't run yet";
+    expect(
+      within(screen.getByRole("group", { name: "Tools plugin" })).getByText(notice),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByRole("group", { name: "/repo/broken.ts plugin" })).queryByText(notice),
+    ).toBeNull();
+  });
+
   it("shows source, features and failures with missing IDs without automatic actions", async () => {
     const check = vi.spyOn(palot, "checkPlugins");
     const update = vi.spyOn(palot, "updatePlugins");

@@ -90,6 +90,7 @@ import {
   type AutoSettleAfterDays,
   defaultWorktreeBaseAtom,
   defaultWorkspaceModeAtom,
+  newTaskApprovalModeAtom,
   experimentalBrowserAtom,
   sessionProjectionPreferenceAtom,
 } from "../atoms/ui";
@@ -1023,6 +1024,7 @@ function BrowserSettings() {
 
 function GeneralSettings() {
   const [workspaceMode, setWorkspaceMode] = useAtom(defaultWorkspaceModeAtom);
+  const [newTaskApprovals, setNewTaskApprovals] = useAtom(newTaskApprovalModeAtom);
   const [worktreeBase, setWorktreeBase] = useAtom(defaultWorktreeBaseAtom);
   const [projection, setProjection] = useAtom(sessionProjectionPreferenceAtom);
   const [customizeProjection, setCustomizeProjection] = useState(false);
@@ -1112,6 +1114,29 @@ function GeneralSettings() {
                 <SelectContent align="end">
                   <SelectItem value="worktree">New worktree</SelectItem>
                   <SelectItem value="current">Current checkout</SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Approvals for new tasks"
+            description="Full access runs commands, edits files and schedules tasks without asking you. You can still change a task's approvals from its composer."
+            control={
+              <Select
+                value={newTaskApprovals}
+                onValueChange={(value) => setNewTaskApprovals(value as typeof newTaskApprovals)}
+              >
+                <SelectTrigger
+                  className="w-full @lg/settings:w-44"
+                  aria-label="Approvals for new tasks"
+                >
+                  <SelectValue>
+                    {newTaskApprovals === "full" ? "Full access" : "Defaults"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="normal">Defaults</SelectItem>
+                  <SelectItem value="full">Full access</SelectItem>
                 </SelectContent>
               </Select>
             }
@@ -1273,6 +1298,34 @@ function GeneralSettings() {
                   void updateAutomationHostSettings({
                     preventSleepWhileRunning: Boolean(checked),
                   })
+                }
+              />
+            }
+          />
+          <SettingsRow
+            title="Palot tools for agents"
+            description="Let tasks schedule follow-ups, read and wait on other tasks, and pin, settle, snooze or archive them. Needs OpenCode 2.1.4 or later. If Palot Dev and Nightly share a server, turn this on in only one of them."
+            control={
+              <Switch
+                aria-label="Palot tools for agents"
+                checked={automationHostSettings?.agentTools ?? false}
+                disabled={!automationHostSettings}
+                onCheckedChange={(checked) =>
+                  void updateAutomationHostSettings({ agentTools: Boolean(checked) })
+                }
+              />
+            }
+          />
+          <SettingsRow
+            title="Ask before agents schedule tasks"
+            description="In tasks with Defaults approvals, ask before an agent schedules, changes or deletes a scheduled task. Full access tasks never ask. Turn off to let agents do it without asking in every task."
+            control={
+              <Switch
+                aria-label="Ask before agents schedule tasks"
+                checked={automationHostSettings?.askBeforeAgentScheduling ?? true}
+                disabled={!automationHostSettings || !automationHostSettings.agentTools}
+                onCheckedChange={(checked) =>
+                  void updateAutomationHostSettings({ askBeforeAgentScheduling: Boolean(checked) })
                 }
               />
             }
@@ -2980,6 +3033,11 @@ export function PluginSettings({
                   {plugin.features.tui ? <span>TUI</span> : null}
                   {plugin.features.rpc ? <span>RPC</span> : null}
                 </div>
+                {plugin.features.gui ? (
+                  <p className="mt-2 text-meta text-muted-foreground">
+                    Has an OpenCode Desktop interface Palot can't run yet
+                  </p>
+                ) : null}
               </div>
               {source.type === "package" && (outdated || updating) ? (
                 <Button

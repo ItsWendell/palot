@@ -2,6 +2,7 @@ import type { OpenCodeClient, PermissionRuleset, SessionMessageInfo } from "@ope
 import { expect, type Page } from "@playwright/test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { PALOT_TOOL_PERMISSIONS } from "../../src/shared/palot-tools-contract.ts";
 import type { Scenario } from "./scenarios.ts";
 
 const FULL_ACCESS: PermissionRuleset = [{ action: "*", resource: "*", effect: "allow" }];
@@ -135,6 +136,7 @@ export const composerPermissionsScenario: Scenario = {
     await confirmation.getByRole("button", { name: "Enable Full access", exact: true }).click();
     await expect(confirmation).toHaveCount(0);
     await expectApprovals(page, "Full access");
+    // Full access allows Palot's own tools too; only Defaults adds rules for them.
     await expectRules(client, sessionID, FULL_ACCESS);
     await expectPending(client, sessionID, requestID);
     await expect(pendingCard).toBeVisible();
@@ -148,7 +150,7 @@ export const composerPermissionsScenario: Scenario = {
     await page.getByRole("button", { name: "Approvals: Full access", exact: true }).click();
     await page.getByRole("option", { name: /^Defaults\b/ }).click();
     await expectApprovals(page, "Defaults");
-    await expectRules(client, sessionID, []);
+    await expectRules(client, sessionID, PALOT_TOOL_PERMISSIONS);
     await expect(confirmation).toHaveCount(0);
 
     // External official-client writes must reconcile through service events without a reload.

@@ -16,6 +16,8 @@ export function attentionCandidate(event: OpenCodeEvent): AttentionNotificationI
     return { sessionID: event.data.sessionID, requestID: event.data.id, type: "permission" };
   }
   if (event.type === "form.created") {
+    // Location-wide MCP elicitations have no task to open; Palot shows them in the task view.
+    if (event.data.form.sessionID === "global") return null;
     return {
       sessionID: event.data.form.sessionID,
       requestID: event.data.form.id,

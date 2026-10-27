@@ -20,9 +20,9 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot 0.19.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
+Palot 0.20.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
-release-smoke runtime are pinned to **2.1.3** for repeatable checks. Stable
+release-smoke runtime are pinned to **2.2.0** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
 tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
 versions require explicit consent; V1, unknown majors and malformed versions are
@@ -190,6 +190,36 @@ voice models, their transports and whether the server can start each one (includ
 models a connected OpenCode Console hosts), and `voice.instructions` replaces a hosted
 session's instructions. Agent configuration ignores unsupported colors instead of
 dropping the agent. Palot does not use the new voice operations yet.
+
+The 2.1.4 packages add `debug.heapDump`, which Palot's heap snapshot capture uses, and the
+experimental client-hosted MCP endpoint (`mcp.client`, `mcp.clientToken` and the
+`@opencode/client/mcp` helper). Palot's main process uses that endpoint to serve its agent
+tools as the `palot` MCP server, with the connection's own credentials. OpenCode scopes each
+attachment to one location, so Palot attaches only where tasks need the tools: directories a
+window shows, and directories with a running task (kept for 15 minutes after the turn ends).
+Against servers older than 2.1.4, or when "Palot tools for agents" is off in Settings, Palot
+does not attach the tools. Development (unpacked) builds default to off: OpenCode serves the
+most recently attached `palot` server, so two Palot builds on one server would compete. Location-wide MCP
+elicitation forms (`sessionID: "global"`) appear in Palot's request dock.
+
+The 2.2.0 packages move `generate.text` to `/api/experimental/generate/text` and keep the
+original `/api/experimental/generate` as `generate.textLegacy`, which the client does not
+expose. Palot retries the original address when the new one returns 404, so older servers
+still generate commit messages and review guides. 2.2.0 removes `voice.instructions`, which
+Palot never used, and adds `usage.limits`, `fs.watch`/`fs.unwatch`, `media.get` (opt-in
+server-stored attachments), image and decision generation, and `plugin.gui` for OpenCode
+Desktop's Solid GUI plugins, which Palot does not host. `experimental.background_compaction`
+is a config option only; OpenCode's config API writes just the shell, so Palot cannot set it.
+
+OpenCode checks each tool call against the permission action `palot_<tool>`. Like ChatGPT's
+app tools, Palot's tools follow the task's approvals. Full access (`*: allow`) allows them all.
+Defaults adds rules that allow reading and organizing tasks and ask for `palot_schedule_task`,
+`palot_update_automation` and `palot_delete_automation`. "Always allow for this project" saves
+OpenCode's own project rule, which applies after session rules. With "Ask before agents
+schedule tasks" off, Palot approves those prompts itself, including for tasks created before
+the setting changed and Full access tasks that still carry older ask rules. In a Defaults task
+with asking on and no saved rule, the tool handler fails closed: when the task's own rules would
+not make OpenCode ask, it adds the ask rules and has the model retry.
 
 Against a 2.0.x service, Palot reads the renamed fields as absent: reasoning
 presentation hints, provider-structured web search results and compaction `recent`

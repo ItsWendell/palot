@@ -61,6 +61,7 @@ import {
   PROJECT_SCRIPTS_IPC_CHANNELS,
   type PalotProjectScriptsApi,
 } from "./project-scripts-contract";
+import type { PalotToolsFocus } from "./palot-tools-contract";
 import type { PalotVoiceApi } from "./voice-contract";
 
 export type JsonPrimitive = string | number | boolean | null;
@@ -1253,6 +1254,7 @@ export const IPC_CHANNELS = {
   attachmentPreview: "palot:system:attachment-preview",
   downloadUrl: "palot:system:download-url",
   performanceSnapshot: "palot:system:performance-snapshot",
+  heapSnapshots: "palot:system:heap-snapshots",
   performanceTraceStart: "palot:system:performance-trace-start",
   performanceTraceStop: "palot:system:performance-trace-stop",
   restartApp: "palot:system:restart-app",
@@ -1273,6 +1275,8 @@ export const IPC_CHANNELS = {
   openTargetRequested: "palot:system:open-target-requested",
   triageLoad: "palot:triage:load",
   triageDispatch: "palot:triage:dispatch",
+  triageChanged: "palot:triage:changed",
+  palotToolsFocus: "palot:palot-tools:focus",
   automationLoad: "palot:automation:load",
   automationDispatch: "palot:automation:dispatch",
   automationPreview: "palot:automation:preview",
@@ -1402,6 +1406,10 @@ export interface PalotApi {
   attachmentPreview(grant: string, connectionID?: string): Promise<PalotAttachmentPreview | null>;
   downloadUrl(url: string): Promise<void>;
   performanceSnapshot(): Promise<PalotPerformanceSnapshot>;
+  /** Capture locally, or reveal a capture owned by this window without accepting a file path. */
+  heapSnapshots(
+    input: { type: "capture" } | { type: "reveal"; captureID: string },
+  ): Promise<{ captureID: string; directory: string; complete: boolean }>;
   performanceTraceStart(): Promise<void>;
   performanceTraceStop(): Promise<string>;
   restartApp(input?: RestartAppInput): Promise<void>;
@@ -1426,6 +1434,10 @@ export interface PalotApi {
   onOpenTargetRequested(listener: (target: PalotOpenTarget) => void): () => void;
   loadSessionTriage(profileID: string): Promise<SessionTriageSnapshot>;
   dispatchSessionTriage(command: SessionTriageCommand): Promise<SessionTriageSnapshot>;
+  /** Triage changed outside this window's own dispatch, such as by an agent tool. */
+  onSessionTriageChanged(listener: (snapshot: SessionTriageSnapshot) => void): () => void;
+  /** Where this window's tasks run, so Palot's agent tools are attached there; null clears. */
+  setPalotToolsFocus(focus: PalotToolsFocus | null): Promise<void>;
   loadAutomations(profileID: string): Promise<AutomationSnapshot>;
   dispatchAutomation(command: AutomationCommand): Promise<AutomationSnapshot>;
   previewAutomationSchedule(trigger: AutomationTrigger): Promise<AutomationSchedulePreview>;

@@ -178,3 +178,23 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
     group: "System",
   },
 ];
+
+/** Settings pages the settings route renders; every navigation entry needs one. */
+export const SETTINGS_CATEGORIES = [
+  "project",
+  "general",
+  "browser",
+  "appearance",
+  "notifications",
+  "voice",
+  "shortcuts",
+  "connections",
+  "models",
+  "providers",
+  "tools",
+  "agents",
+  "permissions",
+  "config",
+  "diagnostics",
+  "about",
+] as const satisfies readonly SettingsCategory[];

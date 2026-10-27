@@ -5,6 +5,69 @@ file records user-visible changes. Internal refactors belong in Git history
 unless they change behavior, compatibility, security, privacy, or release
 operations.
 
+## 0.20.0
+
+This remains an experimental pre-release, not a supported stable release.
+
+### Added
+
+- MCP servers that ask for input (for example to pick a repository or sign in) show their form
+  above the composer, labeled "MCP server request". Before, the MCP call waited with nothing
+  shown. Needs OpenCode 2.1.4 or later.
+- Agents can use Palot's own tools (OpenCode 2.1.4 or later): schedule a follow-up for the
+  current task or recurring work in its project, list, change or delete scheduled tasks, list
+  and read other tasks, wait until one finishes or needs you, and rename, pin, settle, snooze
+  or archive tasks. Like ChatGPT's tools, they follow the task's approvals: Full access never
+  asks, and Defaults asks before an agent schedules, changes or deletes a scheduled task, with a
+  card that names it and its time and prompt. "Always allow for this project" on that card, or
+  turning off Settings → General → "Ask before agents schedule tasks", stops asking. Reading and
+  organizing tasks never asks. An agent's changes to the
+  Inbox appear right away, and its Palot tool calls read as "Schedule task · Check CI · at
+  2026-10-27 09:00" in the transcript. Settings → General → "Palot tools for agents" turns them
+  off; development builds start with them off, so a Dev and a Nightly build on one server do
+  not compete.
+- Settings → General → "Approvals for new tasks" can start new tasks in Full access.
+- The Usage page has a Limits section for servers signed in to OpenCode Console (OpenCode
+  2.2.0 or later): OpenCode Go's 5-hour, weekly and monthly allowance with how much is left,
+  whether you are ahead of an even pace, and when each resets, plus the workspace's monthly
+  budgets and a link to manage usage. When a usage limit stops a task, its failure offers to
+  continue the task when the limit resets, as a one-time scheduled task, and to view usage.
+- Type `@` in the composer to mention another task. Mentions in prompts and replies show the
+  task's current title and status and open it on click.
+- Select text in a terminal tab and choose Quote in composer (Mod+Shift+L) to paste it into
+  the task's message as a code block.
+- File tabs update live when the file changes on disk (OpenCode 2.2.0 or later).
+- The command palette finds settings by name and opens their page.
+- A subagent's view shows whether it is running, how long it ran, and its model.
+- Settings → Plugins notes plugins whose OpenCode Desktop interface Palot cannot run yet.
+- Settings → Diagnostics can capture heap snapshots of Palot's windows, its main process, and a
+  same-machine OpenCode server into one folder, with a manifest. Snapshots can contain
+  credentials and task content.
+
+### Changed
+
+- Usage and rate-limit failures say so in their heading, and say when to try again when the
+  provider reports it.
+- Pinned OpenCode dependencies and the isolated release-smoke runtime to 2.2.0, and updated
+  Vite+, Electron Builder, KaTeX, TanStack Query, Lucide, and other libraries. Commit message
+  and review guide generation keep working with servers older than 2.2.0, which serve text
+  generation from its original address.
+- Code highlighting covers `.ini`, `.env`, CSV, Prisma, nginx and about 90 more language names
+  (Pierre Highlights 0.3.0). Diffs and other code views now share one highlighter instead of
+  loading two versions.
+- Transcripts of tasks you have not viewed for 10 minutes, and messages from background tasks
+  you never open, are released from memory and load again when you open the task. Running tasks
+  keep theirs. The supported stable connection minimum
+  remains 2.0.7.
+
+### Fixed
+
+- Settled and snoozed tasks no longer return to the Inbox when Palot restarts. OpenCode's
+  browser plugin edits a task's permissions whenever Palot attaches or detaches its browser,
+  which OpenCode records as an update; the Inbox now counts only finished turns as activity.
+- Settings → Voice opened an empty page.
+- Live usage-limit failures are titled as such before the transcript records them.
+
 ## 0.19.0
 
 This remains an experimental pre-release, not a supported stable release.

@@ -46,6 +46,8 @@ export const openCodeKeys = {
   sessionRequests: (connectionID: string, sessionID: string) =>
     [...openCodeKeys.requests(connectionID), sessionID] as const,
   projects: (connectionID: string) => [...openCodeKeys.all(connectionID), "projects"] as const,
+  usageLimits: (connectionID: string, directory: string) =>
+    [...openCodeKeys.all(connectionID), "usage-limits", directory] as const,
   sessions: (connectionID: string) => [...openCodeKeys.all(connectionID), "sessions"] as const,
   rootSessions: (connectionID: string) =>
     [...openCodeKeys.sessions(connectionID), "roots"] as const,

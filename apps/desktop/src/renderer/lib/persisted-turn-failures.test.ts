@@ -31,7 +31,7 @@ const toolStep = message({
   ],
 });
 
-function idle(id: string, createdAt: number, error?: Record<string, string>) {
+function idle(id: string, createdAt: number, error?: Record<string, string | number>) {
   return message({
     id,
     type: "idle",
@@ -73,6 +73,49 @@ describe("persisted turn failures", () => {
       { turn: "a1", name: "Response failed", text: "Rate limited" },
     ]);
     expect(turns.find((turn) => turn.id === "a1")?.status).toBe("failed");
+  });
+
+  it("titles usage limits and says when they reset", () => {
+    const messages = [
+      prompt,
+      toolStep,
+      idle("i1", 4, {
+        type: "provider.free-limit",
+        message: "Free usage limit reached.",
+        retryAfterMs: 8 * 86_400_000,
+      }),
+    ];
+    // An implausible wait shows the plain message.
+    expect(failureCards(projectTranscriptTurns(withPersistedTurnFailures(messages)))).toEqual([
+      { turn: "a1", name: "Free usage limit reached", text: "Free usage limit reached." },
+    ]);
+
+    const withReset = [
+      prompt,
+      toolStep,
+      idle("i1", 4, {
+        type: "provider.rate-limit",
+        message: "Too many requests.",
+        retryAfterMs: 3_600_000,
+      }),
+    ];
+    const [card] = failureCards(projectTranscriptTurns(withPersistedTurnFailures(withReset)));
+    expect(card?.name).toBe("Rate limited");
+    expect(card?.text).toMatch(
+      /^Too many requests\.\n\n(Try again after .+\.|The limit has reset; you can try again\.)$/,
+    );
+  });
+
+  it("titles a live usage-limit failure before its message records it", () => {
+    const execution: SessionExecutionState = {
+      status: "failed",
+      startedAt: 1,
+      completedAt: 4,
+      error: { type: "provider.quota", message: "Quota exceeded." },
+    };
+    expect(failureCards(projectTranscriptTurns([prompt, toolStep], execution))).toEqual([
+      { turn: "a1", name: "Usage limit reached", text: "Quota exceeded." },
+    ]);
   });
 
   it("does not duplicate the live execution error for the same turn", () => {

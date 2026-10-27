@@ -8,6 +8,8 @@ import type { JsonValue, PalotMessage } from "../../shared";
 export interface PersistedTurnFailure {
   type: string | null;
   message: string;
+  /** How long a usage or rate limit lasts, from when the failure was recorded. */
+  retryAfterMs?: number;
 }
 
 function record(value: JsonValue | undefined): Record<string, JsonValue> {
@@ -25,7 +27,12 @@ export function persistedTurnFailure(message: PalotMessage): PersistedTurnFailur
   if (data.outcome !== "failed") return null;
   const error = record(data.error);
   const detail = text(error.message);
-  return detail ? { type: text(error.type), message: detail } : null;
+  if (!detail) return null;
+  return {
+    type: text(error.type),
+    message: detail,
+    ...(typeof error.retryAfterMs === "number" ? { retryAfterMs: error.retryAfterMs } : {}),
+  };
 }
 
 // Mirrors the transcript projection's structured error check.
@@ -42,7 +49,11 @@ function failedCompaction(message: PalotMessage): boolean {
 }
 
 function errorData(failure: PersistedTurnFailure): Record<string, JsonValue> {
-  return { ...(failure.type ? { type: failure.type } : {}), message: failure.message };
+  return {
+    ...(failure.type ? { type: failure.type } : {}),
+    message: failure.message,
+    ...(failure.retryAfterMs !== undefined ? { retryAfterMs: failure.retryAfterMs } : {}),
+  };
 }
 
 const failedSteps = new WeakMap<PalotMessage, { idle: PalotMessage; message: PalotMessage }>();

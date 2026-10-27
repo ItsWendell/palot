@@ -163,6 +163,24 @@ describe("personal bindings", () => {
     delete document.documentElement.dataset.platform;
   });
 
+  it("allows rebinding and clearing the terminal quote action through the shared registry", () => {
+    setShortcutBinding("terminal.quote", ["Mod", "Shift", "J"]);
+    expect(
+      matchesShortcut(
+        key({ key: "J", ctrlKey: true, shiftKey: true }),
+        shortcutKeys("terminal.quote"),
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(
+        key({ key: "L", ctrlKey: true, shiftKey: true }),
+        shortcutKeys("terminal.quote"),
+      ),
+    ).toBe(false);
+    setShortcutBinding("terminal.quote", null);
+    expect(boundShortcutKeys("terminal.quote")).toBeUndefined();
+  });
+
   it("routes matchers and labels through the effective binding and persists it", () => {
     setShortcutBinding("palette.open", ["Mod", "P"]);
     expect(matchesShortcut(key({ key: "p", ctrlKey: true }), shortcutKeys("palette.open"))).toBe(

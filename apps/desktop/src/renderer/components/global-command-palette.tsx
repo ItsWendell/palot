@@ -1,4 +1,11 @@
-import { FileText, MessageSquareText, RotateCw, SearchIcon, TextSearch } from "lucide-react";
+import {
+  FileText,
+  MessageSquareText,
+  RotateCw,
+  SearchIcon,
+  Settings2,
+  TextSearch,
+} from "lucide-react";
 import { Autocomplete } from "@base-ui/react/autocomplete";
 import {
   keepPreviousData,
@@ -6,7 +13,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   createContext,
@@ -69,6 +76,8 @@ import {
 } from "../lib/palette-tasks";
 import { showErrorToast } from "../lib/toast-error";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
+import { SETTINGS_SEARCH_CATALOG } from "../lib/settings-search-catalog";
+import { SETTINGS_NAV_ITEMS } from "../lib/settings-navigation";
 import { formatRelativeTime, projectForSession, projectName } from "../lib/view-models";
 import { listRootSessionInfo } from "../services/opencode-catalog";
 import { mapSession } from "../services/opencode-mappers";
@@ -164,6 +173,10 @@ function overviewTasks(connections: readonly ConnectionOverview[]): PaletteTask[
 }
 
 export function GlobalCommandPalette() {
+  const navigate = useNavigate();
+  const routeProjectID = useRouterState({
+    select: (state) => (state.location.search as { projectID?: string }).projectID,
+  });
   const [open, setOpen] = useAtom(commandPaletteOpenAtom);
   const [returnFocus, setReturnFocus] = useAtom(commandPaletteReturnFocusAtom);
   const loadedSessions = useSessionCatalog();
@@ -563,6 +576,37 @@ export function GlobalCommandPalette() {
             ? { ...group, hint: formatShortcut(shortcutKeys("task.recent")) }
             : group,
         );
+  if (page === "root" && searching && (tab === "all" || tab === "settings")) {
+    const settings = rankGlobalCommands(
+      SETTINGS_SEARCH_CATALOG.map((setting): GlobalCommand => ({
+        id: `settings.row:${setting.route}:${setting.title}`,
+        title: setting.title,
+        description: SETTINGS_NAV_ITEMS.find((item) => item.id === setting.route.split("/")[2])
+          ?.label,
+        keywords: setting.keywords,
+        group: "settings",
+        kind: "setting",
+        icon: Settings2,
+        run: () =>
+          navigate({
+            to: setting.route,
+            search: {
+              projectID: routeProjectID ?? fileTask?.projectID,
+              profileID: runtime?.profileID,
+            },
+          }),
+      })),
+      deferredQuery,
+    ).slice(0, tab === "all" ? 5 : undefined);
+    const settingsGroup = groups.find((group) => group.group === "settings");
+    if (settingsGroup) settingsGroup.commands.push(...settings);
+    else if (settings.length > 0) {
+      const similar = groups.findIndex((group) => group.group === "similar-tasks");
+      const group = { group: "settings", label: "Settings", commands: settings };
+      if (similar === -1) groups.push(group);
+      else groups.splice(similar, 0, group);
+    }
+  }
   const visibleCommands = groups.flatMap((group) => group.commands);
   const commandByID = new Map(visibleCommands.map((command) => [command.id, command]));
   const paletteGroups: PaletteGroup[] = groups.map(
