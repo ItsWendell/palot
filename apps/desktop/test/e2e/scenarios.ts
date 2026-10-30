@@ -290,7 +290,10 @@ export const scenarios = {
       await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
       const commandSearch = page.getByRole("combobox", { name: "Search tasks and commands" });
       await commandSearch.fill("appearance");
-      await page.getByRole("option", { name: /Appearance/ }).waitFor();
+      await page
+        .getByRole("option", { name: /Appearance/ })
+        .first()
+        .waitFor();
       await page.keyboard.press("Enter");
       await page.getByRole("heading", { name: "Appearance", level: 1 }).waitFor();
       await assertRouteAccessibility(page, "appearance settings");
@@ -597,7 +600,10 @@ export const scenarios = {
       await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
       await page.getByRole("dialog", { name: "Commands" }).waitFor();
       await page.getByRole("combobox", { name: "Search tasks and commands" }).fill("appearance");
-      await page.getByRole("option", { name: /Appearance/ }).waitFor();
+      await page
+        .getByRole("option", { name: /Appearance/ })
+        .first()
+        .waitFor();
       await page.keyboard.press("Escape");
     },
   },
