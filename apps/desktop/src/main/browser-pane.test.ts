@@ -4,6 +4,8 @@ import { Effect, Queue, Stream } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  // macOS asks the system for microphone and camera access before a page can use them.
+  askForMediaAccess: vi.fn(async () => true),
   runtime: {
     scopedConnection: vi.fn(),
     requestConnection: vi.fn(),
@@ -47,6 +49,7 @@ vi.mock("electron", () => ({
     }
   },
   session: { fromPartition: mocks.partition },
+  systemPreferences: { askForMediaAccess: mocks.askForMediaAccess },
 }));
 vi.mock("./opencode-runtime", () => ({ openCodeRuntime: mocks.runtime }));
 vi.mock("./browser/network", () => ({ createBrowserNetwork: mocks.network }));
@@ -413,6 +416,9 @@ describe("browser attachment", () => {
     expect(callback).not.toHaveBeenCalled();
     await pane.permission(win as never, binding, decide);
     expect(callback).toHaveBeenCalledWith(true);
+    if (process.platform === "darwin")
+      expect(mocks.askForMediaAccess).toHaveBeenCalledWith("microphone");
+    else expect(mocks.askForMediaAccess).not.toHaveBeenCalled();
     await pane.dispose();
   });
 
