@@ -528,6 +528,7 @@ export function HighlightedCode({
   animationRanges = [],
   lineNumbers = false,
   highlightLines = [],
+  wrap = false,
 }: {
   code: string;
   language: string;
@@ -537,6 +538,7 @@ export function HighlightedCode({
   animationRanges?: readonly CodeAnimationRange[];
   lineNumbers?: boolean;
   highlightLines?: readonly number[];
+  wrap?: boolean;
 }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
   const { theme, foreground } = useReadyCodeTheme(appearance.codeThemePair[appearance.scheme]);
@@ -605,11 +607,12 @@ export function HighlightedCode({
     <div className={cn("code-highlight", className)} style={themeStyle}>
       <pre
         aria-label={ariaLabel}
+        style={wrap ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } : undefined}
         className={`th-code th-code--${prefix?.normalizedLanguage ?? normalizedLanguage}`}
         data-language={prefix?.normalizedLanguage ?? normalizedLanguage}
         data-line-numbers={lineNumbers ? "true" : undefined}
       >
-        <code>
+        <code style={wrap ? { whiteSpace: "pre-wrap" } : undefined}>
           {prefix ? <span dangerouslySetInnerHTML={{ __html: prefix.html }} /> : null}
           {streaming && prefixLength < code.length ? (
             <AnimatedTail code={code} start={prefixLength} animationRanges={animationRanges} />

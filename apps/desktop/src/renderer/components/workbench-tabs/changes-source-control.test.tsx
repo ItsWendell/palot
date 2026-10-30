@@ -39,7 +39,10 @@ vi.mock("../../hooks/use-location-diffs", () => ({
     reviewBase: { ref: "main", manual: null, inferred: { data: null } },
   }),
 }));
-vi.mock("../../hooks/use-vcs-info", () => ({ useVcsInfo: () => ({ data: null }) }));
+vi.mock("../../hooks/use-vcs-info", () => ({
+  useVcsInfo: () => ({ data: null }),
+  useVcsBranches: () => ({ data: [], isPending: false, isError: false }),
+}));
 vi.mock("../../hooks/use-vcs-repository", () => ({
   useVcsProvider: () => ({ isSuccess: true, data: "git" }),
   useInitializeGit: () => ({ mutate: vi.fn(), isPending: false }),
@@ -306,10 +309,14 @@ it("explains failures inline, including hook output", async () => {
   expect(screen.getByRole("alert").textContent).toContain("user.name and user.email");
 });
 
-it("shows only a note for remote connections", () => {
+it("explains which connections support Git actions", () => {
   mocks.supported = false;
   renderTab();
-  expect(screen.getByText("Commit and push are available for local connections.")).toBeTruthy();
+  expect(
+    screen.getByText(
+      "Git actions need a local connection or an OpenCode 2.2 server with the shell API.",
+    ),
+  ).toBeTruthy();
   expect(screen.queryByRole("textbox", { name: "Commit message" })).toBeNull();
   expect(screen.queryByRole("checkbox")).toBeNull();
 });

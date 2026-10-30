@@ -30,7 +30,7 @@ afterEach(() => {
 const rows = () => screen.getAllByRole("button", { name: /^#\d+ / });
 
 describe("PullRequestsPage list", () => {
-  it("shows the five sections with counts, linked tasks, empty states, and Load more", async () => {
+  it("shows the sections with counts, linked tasks, empty states, and Load more", async () => {
     const { api } = installSourceControl({
       searchPullRequests: searchPages({
         "review-requested": {
@@ -76,6 +76,30 @@ describe("PullRequestsPage list", () => {
     expect(
       api.searchPullRequests.mock.calls.filter(([input]) => input.query !== undefined),
     ).toHaveLength(5);
+  });
+
+  it("lists others' open pull requests once a repository or organization is chosen", async () => {
+    const { api } = installSourceControl({
+      searchPullRequests: searchPages({
+        others: { "": { items: [pullRequest(9, { title: "Unreviewed fix", author: "octo" })] } },
+      }),
+    });
+    const store = createStore();
+    renderPullRequestsPage({ store });
+    const others = await screen.findByRole("region", { name: "Open by others" });
+    expect(within(others).getByText(/Choose a repository or organization in Filters/)).toBeTruthy();
+    await waitFor(() => expect(api.searchPullRequests).toHaveBeenCalledTimes(5));
+    expect(api.searchPullRequests.mock.calls.some(([input]) => input.list === "others")).toBe(
+      false,
+    );
+
+    act(() =>
+      store.set(pullRequestFiltersAtom, { ...EMPTY_PULL_REQUEST_FILTERS, organizations: ["acme"] }),
+    );
+    expect(await within(others).findByRole("button", { name: /^#9 Unreviewed fix/ })).toBeTruthy();
+    expect(api.searchPullRequests).toHaveBeenCalledWith(
+      expect.objectContaining({ list: "others", query: "org:acme" }),
+    );
   });
 
   it("narrows every list with saved filters, shown as removable chips", async () => {

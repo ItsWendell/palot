@@ -100,6 +100,14 @@ export const BUILTIN_COMMANDS: readonly PalotCommand[] = [
     subtask: false,
   },
   {
+    name: "reload",
+    description:
+      "Reload OpenCode configuration and plugins; pending approvals and questions are cancelled",
+    agent: null,
+    model: null,
+    subtask: false,
+  },
+  {
     name: "open",
     description: "Search this task's files and open one",
     agent: null,

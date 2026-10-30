@@ -28,11 +28,13 @@ export function PullRequestFileList({
   activePath,
   onSelect,
   onViewedChange,
+  viewedSupported = true,
 }: {
   files: readonly PullRequestFile[];
   activePath: string | null;
   onSelect(path: string): void;
   onViewedChange(path: string, viewed: boolean): void;
+  viewedSupported?: boolean;
 }) {
   if (files.length === 0) {
     return (
@@ -55,6 +57,12 @@ export function PullRequestFileList({
           >
             <Checkbox
               aria-label={`Viewed ${file.path}`}
+              disabled={!viewedSupported}
+              title={
+                !viewedSupported
+                  ? "Viewed marks are not supported for this host in Palot yet."
+                  : undefined
+              }
               checked={viewed}
               onCheckedChange={(checked) => onViewedChange(file.path, checked)}
             />

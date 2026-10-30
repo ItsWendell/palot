@@ -14,6 +14,7 @@ import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/jetbrains-mono/wght-italic.css";
 import "@fontsource-variable/jetbrains-mono/wght.css";
 import { App } from "./app";
+import { RenderErrorBoundary } from "./components/render-error-boundary";
 import { palotBuild } from "./lib/build";
 import { batchProcessingProbe } from "./lib/batch-processing-probe";
 import { applyAppearanceToRoot } from "./lib/appearance";
@@ -106,7 +107,11 @@ async function startRenderer() {
   const appearance = rendererStore.get(resolvedAppearanceAtom);
   void prepareAppearanceFonts(appearance.preferences.uiFont, appearance.preferences.codeFont);
   applyAppearanceToRoot(appearance);
-  createRoot(root!).render(<StrictMode>{application}</StrictMode>);
+  createRoot(root!).render(
+    <StrictMode>
+      <RenderErrorBoundary>{application}</RenderErrorBoundary>
+    </StrictMode>,
+  );
   window.palotDiagnostics = { snapshot: readDiagnosticsStatus };
   startOptionalDiagnosticsOverlayHost();
 }

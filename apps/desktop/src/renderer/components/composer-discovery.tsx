@@ -80,18 +80,19 @@ function groupItems(items: ComposerDiscoveryItem[]) {
 export function ComposerDiscovery({
   id,
   items,
-  activeIndex,
+  activeKey,
   loading,
   error,
-  onActiveIndexChange,
+  onActiveChange,
   onSelect,
 }: {
   id: string;
   items: ComposerDiscoveryItem[];
-  activeIndex: number;
+  /** Key of the highlighted item: the highlight follows identity, not position. */
+  activeKey: string | null;
   loading: boolean;
   error: string | null;
-  onActiveIndexChange(index: number): void;
+  onActiveChange(item: ComposerDiscoveryItem): void;
   onSelect(item: ComposerDiscoveryItem): void;
 }) {
   const groups = groupItems(items);
@@ -112,8 +113,8 @@ export function ComposerDiscovery({
               key={item.key}
               id={`${id}-option-${index}`}
               item={item}
-              active={index === activeIndex}
-              onActive={() => onActiveIndexChange(index)}
+              active={item.key === activeKey}
+              onActive={() => onActiveChange(item)}
               onSelect={() => onSelect(item)}
             />
           ));
@@ -175,9 +176,13 @@ function DiscoveryOption({
       aria-selected={active}
       className={cn(
         "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left outline-none",
-        active ? "bg-muted text-foreground" : "hover:bg-muted/65",
+        active && "bg-muted text-foreground",
       )}
-      onMouseEnter={onActive}
+      // Only a moving pointer claims the highlight. Rows that scroll or re-render under a
+      // resting pointer get movement-free events, which must not take it from the keyboard.
+      onPointerMove={(event) => {
+        if (event.movementX || event.movementY) onActive();
+      }}
       onMouseDown={(event) => event.preventDefault()}
       onClick={onSelect}
     >

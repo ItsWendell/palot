@@ -432,9 +432,17 @@ export function useWorkspaceController(selectedSessionID: string | null) {
               setFocusedOpenCodeRuntime(runtime);
               openCodeReconciler(queryClient).setFocusedConnection(runtime.connectionID);
               if (refresh) {
-                await queryClient.cancelQueries({
-                  queryKey: openCodeKeys.all(runtime.connectionID),
-                });
+                // Restart only the catalog fetches this refresh repeats, so they return a
+                // snapshot taken after the triggering event. Cancelling the whole connection
+                // also killed unrelated first loads (a route's session lookup, transcripts,
+                // composer catalogs) and left them empty, since nothing refetches them.
+                await Promise.all(
+                  [
+                    openCodeKeys.projects(runtime.connectionID),
+                    openCodeKeys.sessionActivity(runtime.connectionID),
+                    openCodeKeys.rootSessions(runtime.connectionID),
+                  ].map((queryKey) => queryClient.cancelQueries({ queryKey, exact: true })),
+                );
                 await queryClient.invalidateQueries({
                   queryKey: openCodeKeys.all(runtime.connectionID),
                   refetchType: "none",

@@ -34,6 +34,10 @@ import {
   scheduleSummary,
   validateAutomationTrigger,
 } from "../automations/recurrence";
+import type {
+  PalotSourceControlApi,
+  SourceControlResult,
+} from "../../shared/source-control-contract";
 
 export interface PalotToolContext {
   profileID: string;
@@ -56,6 +60,10 @@ export interface PalotToolContext {
   scheduling: PalotSchedulingState;
   /** The user's "Ask before agents schedule tasks" setting; Full access tasks never ask. */
   askBeforeScheduling(): boolean;
+  sourceControl?(): Pick<
+    PalotSourceControlApi,
+    "linkPullRequest" | "listPullRequestLinks" | "watchPullRequest" | "createPullRequest"
+  >;
 }
 
 export interface PalotSchedulingState {
@@ -118,7 +126,12 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
         return ok(
           await context.withClient(async (client) => {
             if (PALOT_TOOL_APPROVALS[name] === "ask")
-              await requireApproval(client, sessionID, name, context.askBeforeScheduling());
+              await requireApproval(
+                client,
+                sessionID,
+                name,
+                name === "create_pull_request" || context.askBeforeScheduling(),
+              );
             return handler(args, sessionID, client);
           }),
         );
@@ -162,6 +175,25 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     profileID: context.profileID,
     sessionID,
     at: context.now(),
+  });
+
+  const sourceControl = () => {
+    const service = context.sourceControl?.();
+    if (!service)
+      throw new ToolFailure(
+        "unavailable",
+        "Source control is unavailable in this Palot connection.",
+      );
+    return service;
+  };
+  const unwrapSourceControl = async <T>(result: Promise<SourceControlResult<T>>): Promise<T> => {
+    const value = await result;
+    if (!value.ok) throw new ToolFailure(value.error.code, value.error.message);
+    return value.value;
+  };
+  const prTarget = async (args: Args, caller: string, client: OpenCodeClient) => ({
+    profileID: context.profileID,
+    sessionID: (await rootSession(client, text(args, "taskId", 200) ?? caller)).id,
   });
 
   /** Applies one Inbox change, if any, and returns the task as list_tasks describes it. */
@@ -235,9 +267,83 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
 
   return [
     tool(
+      "link_pull_request",
+      "Link a supported code host's pull/merge request to a task. Omit url to use its current branch. taskId defaults to this task.",
+      {
+        taskId: { type: "string" },
+        url: {
+          type: "string",
+          description: "Pull/merge request HTTPS URL; omit for current branch.",
+        },
+      },
+      [],
+      async (args, caller, client) => {
+        const target = await prTarget(args, caller, client);
+        return unwrapSourceControl(
+          sourceControl().linkPullRequest({
+            ...target,
+            ...(text(args, "url", 2048) ? { url: text(args, "url", 2048)! } : {}),
+          }),
+        );
+      },
+    ),
+    ...(["watch_pull_request", "unwatch_pull_request"] as const).map((name) =>
+      tool(
+        name,
+        `${name === "watch_pull_request" ? "Watch" : "Stop watching"} a task's linked PR. Watching wakes the task on checks, reviews, comments or conflicts. Omit url for its linked PR or current branch.`,
+        { taskId: { type: "string" }, url: { type: "string" } },
+        [],
+        async (args, caller, client) => {
+          const target = await prTarget(args, caller, client);
+          const api = sourceControl();
+          const url = text(args, "url", 2048);
+          const links = await unwrapSourceControl(api.listPullRequestLinks(target));
+          if (!url && links.length > 1)
+            throw new ToolFailure(
+              "invalid_arguments",
+              "This task has several linked PRs. Pass the PR URL.",
+            );
+          const link =
+            (url ? links.find((item) => item.pullRequest.url === url) : links[0]) ??
+            (await unwrapSourceControl(
+              api.linkPullRequest({ ...target, ...(url ? { url } : {}) }),
+            ));
+          return unwrapSourceControl(
+            api.watchPullRequest({
+              ...target,
+              key: link.key,
+              watching: name === "watch_pull_request",
+            }),
+          );
+        },
+      ),
+    ),
+    tool(
+      "create_pull_request",
+      "Create a pull/merge request on the task repository's configured code host and link it. Asks for approval under Defaults. Never pushes. Returns an existing open request if present.",
+      {
+        taskId: { type: "string" },
+        base: { type: "string" },
+        title: { type: "string", maxLength: 256 },
+        body: { type: "string", maxLength: 65536 },
+        draft: { type: "boolean" },
+      },
+      ["base", "title", "body"],
+      async (args, caller, client) =>
+        unwrapSourceControl(
+          sourceControl().createPullRequest({
+            ...(await prTarget(args, caller, client)),
+            base: text(args, "base", 512, true)!,
+            title: text(args, "title", 256, true)!,
+            body: optionalRaw(args, "body", 65536) ?? "",
+            draft: flag(args, "draft") ?? false,
+          }),
+        ),
+    ),
+    tool(
       "schedule_task",
       [
-        "Schedule a prompt to run later in Palot, once or on a recurring schedule. Depending on the user's settings, they may be asked to approve it first.",
+        "Schedule a prompt to run later in Palot, once or on a recurring schedule. Remind the user tomorrow at 9 or run a weekly report. Depending on the user's settings, they may be asked to approve it first.",
         'target "this_task" (default) sends the prompt to the calling task when due, for follow-ups such as "check CI tomorrow at 9". "new_task" starts a fresh task in this task\'s project on each run, for recurring work such as a weekly report.',
         "Write the prompt so it stands alone: the run may happen days later, without this conversation in view for new tasks.",
         "Times are the user's local time unless they include an offset. Do not schedule work you can do now, and do not create a duplicate: check list_automations first.",
@@ -396,13 +502,25 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
         if (!name && !prompt && !status && !rescheduled)
           throw new ToolFailure("invalid_arguments", "Pass at least one field to change.");
         const current = record.trigger;
+        if (rescheduled && current.type !== "once" && current.type !== "recurring")
+          throw new ToolFailure(
+            "invalid_schedule",
+            "Edit event triggers in Palot's Scheduled page. Name, prompt and status can still be changed here.",
+          );
         const zone = timezone ?? current.timezone;
         const trigger = rescheduled
           ? buildTrigger(
               {
                 at:
                   at ??
-                  automationLocalTime(current.type === "once" ? current.at : current.dtstart, zone),
+                  automationLocalTime(
+                    current.type === "once"
+                      ? current.at
+                      : current.type === "recurring"
+                        ? current.dtstart
+                        : context.now(),
+                    zone,
+                  ),
                 rrule:
                   rrule !== undefined
                     ? rrule || undefined
@@ -437,7 +555,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "delete_automation",
-      'Delete a scheduled task so it never runs again. Tasks its earlier runs started are kept. The user may be asked to approve the deletion. To stop it temporarily, use update_automation with status "paused".',
+      'Delete a scheduled task so it never runs again. Stop a scheduled task permanently. Tasks its earlier runs started are kept. The user may be asked to approve the deletion. To stop it temporarily, use update_automation with status "paused".',
       { automationId: { type: "string" } },
       ["automationId"],
       async (args) => {

@@ -27,6 +27,7 @@ import { palot } from "../services/palot";
 import { useSessionFork } from "../hooks/use-session-fork";
 import { SessionForkHistoryDialog } from "./session-history-dialog";
 import { SessionCopyDialog } from "./session-copy-dialog";
+import { useGuestSharing } from "./guest-links";
 import { useCacheSession } from "../hooks/use-session-catalog";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { removeSession as removeCatalogSession } from "../lib/session-catalog-query";
@@ -293,9 +294,11 @@ export function SessionExportMenu({
 }) {
   const connectionID = useAtomValue(runtimeAtom)?.connectionID;
   const transfer = useSessionTransfer(session);
+  const guest = useGuestSharing(session);
   return (
     <>
       {transfer.serverCopyDialog}
+      {guest.dialog}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -310,6 +313,7 @@ export function SessionExportMenu({
           <MoreHorizontal aria-hidden="true" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64 max-w-(--available-width)">
+          <DropdownMenuGroup>{guest.items}</DropdownMenuGroup>
           <DropdownMenuGroup>
             <DropdownMenuItem onClick={() => void openSessionWindow(session.id, connectionID)}>
               <PanelsTopLeft aria-hidden="true" />

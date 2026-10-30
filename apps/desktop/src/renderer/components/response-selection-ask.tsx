@@ -4,11 +4,18 @@ import { MessageCircleQuestion } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { askAboutSelection } from "../atoms/btw";
+import { workbenchStateAtom } from "../atoms/workbench";
 import { runtimeAtom } from "../atoms/workspace";
 import { btwQuoteText } from "../lib/btw";
+import {
+  captureResponseQuoteSource,
+  highlightResponseQuote,
+  sameResponseQuoteSource,
+  type ResponseQuoteSource,
+} from "../lib/response-quote-highlight";
 import { showErrorToast } from "../lib/toast-error";
 import type { TranscriptProjectionRow } from "../lib/turn-projection";
-import type { BtwQuote } from "../lib/workbench-tabs";
+import { workbenchScopeKey, type BtwQuote, type WorkbenchScope } from "../lib/workbench-tabs";
 import { Button } from "./ui/button";
 
 const RESPONSE = "data-palot-response-message";
@@ -48,7 +55,13 @@ export function responsePromptID(
 
 type Anchor = { top: number; left: number };
 export type ResponseSelection =
-  | { kind: "quote"; element: HTMLElement; quote: BtwQuote; anchor: Anchor }
+  | {
+      kind: "quote";
+      element: HTMLElement;
+      quote: BtwQuote;
+      anchor: Anchor;
+      source: ResponseQuoteSource;
+    }
   /** The selection leaves its response; asking about it would be ambiguous. */
   | { kind: "outside"; element: HTMLElement; anchor: Anchor };
 
@@ -78,6 +91,7 @@ export function readResponseSelection(
     kind: "quote",
     element,
     anchor,
+    source: captureResponseQuoteSource(element, range),
     quote: {
       text: quote.text,
       ...(quote.truncated ? { truncated: true } : {}),
@@ -117,7 +131,8 @@ function sameSelection(left: ResponseSelection | null, right: ResponseSelection 
     left.element === right.element &&
     left.anchor.top === right.anchor.top &&
     left.anchor.left === right.anchor.left &&
-    (left.kind !== "quote" || (right.kind === "quote" && left.quote.text === right.quote.text))
+    (left.kind !== "quote" ||
+      (right.kind === "quote" && sameResponseQuoteSource(left.source, right.source)))
   );
 }
 
@@ -139,9 +154,35 @@ export function ResponseSelectionAsk({
 }) {
   const store = useStore();
   const runtime = useAtomValue(runtimeAtom);
+  const workbench = useAtomValue(workbenchStateAtom);
   const [target, setTarget] = useState<ResponseSelection | null>(null);
+  const [pending, setPending] = useState<{
+    source: ResponseQuoteSource;
+    tabID: string;
+    scope: WorkbenchScope;
+  } | null>(null);
   const dragging = useRef(false);
   const frame = useRef(0);
+
+  const context = pending && workbench.scopes[workbenchScopeKey(pending.scope)];
+  const pane =
+    context &&
+    [context.right, context.bottom].find((item) =>
+      item.tabs.some((tab) => tab.id === pending?.tabID),
+    );
+  const tab = pane?.tabs.find((item) => item.id === pending?.tabID);
+  const firstComment = tab?.kind === "btw" && !tab.resource.question;
+  const editorOpen = firstComment && pane?.requestedOpen && pane.activeTabID === tab.id;
+  useEffect(() => {
+    if (!pending) return;
+    if (!firstComment || pending.scope.sessionID !== sessionID) {
+      setPending(null);
+      return;
+    }
+    const root = rootRef.current;
+    if (!editorOpen || !root) return;
+    return highlightResponseQuote(root, pending.source, () => setPending(null));
+  }, [pending, firstComment, editorOpen, rootRef, sessionID]);
 
   const read = useEffectEvent(() => {
     cancelAnimationFrame(frame.current);
@@ -203,7 +244,7 @@ export function ResponseSelectionAsk({
       target.kind !== "quote" ||
       fresh?.kind !== "quote" ||
       fresh.element !== target.element ||
-      fresh.quote.text !== target.quote.text
+      !sameResponseQuoteSource(fresh.source, target.source)
     ) {
       setTarget(fresh);
       showErrorToast(
@@ -215,7 +256,7 @@ export function ResponseSelectionAsk({
     try {
       if (!runtime?.connected) throw new Error("Connect to OpenCode to ask a side question.");
       const turnMessageID = responsePromptID(rows, fresh.quote.messageID);
-      askAboutSelection(
+      const tabID = askAboutSelection(
         store,
         {
           profileID: runtime.profileID,
@@ -225,6 +266,12 @@ export function ResponseSelectionAsk({
         },
         turnMessageID ? { ...fresh.quote, turnMessageID } : fresh.quote,
       );
+      setPending({
+        source: fresh.source,
+        tabID,
+        scope: { profileID: runtime.profileID, sessionID },
+      });
+      document.getSelection()?.removeAllRanges();
       setTarget(null);
     } catch (error) {
       showErrorToast("Could not ask about the selection", error);

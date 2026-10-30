@@ -52,6 +52,20 @@ export const automationTriggerSchema = v.variant("type", [
     timezone,
     rrule: v.pipe(v.string(), v.minLength(1), v.maxLength(4_096)),
   }),
+  v.strictObject({
+    version: v.literal(1),
+    type: v.literal("webhook"),
+    timezone,
+    token: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
+  }),
+  v.strictObject({
+    version: v.literal(1),
+    type: v.literal("pull-request"),
+    timezone,
+    event: v.picklist(["checks-failed", "checks-passed", "remarks"]),
+    repository: v.pipe(v.string(), v.maxLength(200), v.regex(/^(?:[\w.-]+\/[\w.-]+)?$/)),
+    branch: v.pipe(v.string(), v.maxLength(512)),
+  }),
 ]);
 const missedRuns = v.variant("type", [
   v.strictObject({

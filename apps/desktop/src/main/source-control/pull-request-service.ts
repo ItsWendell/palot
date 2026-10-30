@@ -1,6 +1,9 @@
 import type { ActivityWatermark, SessionDisposition } from "../../shared/session-triage-contract";
 import type {
   LinkPullRequestInput,
+  CreatePullRequestInput,
+  PreparePullRequestInput,
+  PullRequestPreparation,
   ListPullRequestLinksInput,
   PullRequestLink,
   PullRequestSearchInput,
@@ -42,6 +45,10 @@ import {
   pullRequestWatchMessage,
 } from "./pull-request-watch";
 import { SourceControlError } from "./errors";
+import type { GitRunner } from "./git";
+import { pullRequestEvents } from "./pull-request-events";
+import type { HostProviders } from "./host-providers";
+import { parseHostRemote, parseHostPullRequestUrl } from "./host-provider";
 
 /** Open links are read every sweep. */
 export const PULL_REQUEST_SWEEP_INTERVAL_MS = 60_000;
@@ -88,14 +95,20 @@ export interface SourceControlTriage {
 }
 
 export interface PullRequestServiceOptions {
+  providers?: HostProviders;
   repository: PullRequestRepository;
   github: GitHubGateway;
   sessions: SourceControlSessions;
   triage: SourceControlTriage;
-  /** Whether the profile is a local connection. Null for an unknown profile. */
+  /** Legacy option name: whether this profile has a Git execution path. Null if unknown. */
   isLocalProfile(profileID: string): boolean | null;
   /** Current branch and push remote URL of a directory. */
-  repositoryOf(directory: string): Promise<{ remote: string | null; branch: string | null }>;
+  repositoryOf(
+    directory: string,
+    profileID?: string,
+  ): Promise<{ remote: string | null; branch: string | null }>;
+  gitForProfile?(profileID: string): Promise<Pick<GitRunner, "pullRequestContext">>;
+  git: Pick<GitRunner, "pullRequestContext">;
   emit(event: SourceControlChangedEvent): void;
   now?: () => number;
   env?: () => Readonly<Record<string, string | undefined>>;
@@ -111,7 +124,7 @@ interface SweepRequest {
 }
 
 /**
- * Task ↔ GitHub pull request links: linking, a one-minute status sweep (open every sweep,
+ * Task ↔ code-host pull/merge request links: linking, a one-minute status sweep (open every sweep,
  * closed every 15 minutes, merged never) in one batched GraphQL query, settling a task when its
  * PR merges or closes, and per-task PR watches that queue a prompt to wake the agent.
  */
@@ -165,6 +178,10 @@ export class PullRequestService {
       ? this.refFromUrl(input.url)
       : await this.refFromBranch(input.profileID, input.sessionID);
     const snapshot = await this.readOne(ref, "interactive");
+    return this.storeLink(input, snapshot);
+  }
+
+  private storeLink(input: LinkPullRequestInput, snapshot: PullRequestSnapshot): PullRequestLink {
     const now = this.now();
     const stored = this.repository.upsert({
       profileID: input.profileID,
@@ -178,6 +195,220 @@ export class PullRequestService {
       this.repository.recordSettle(stored, false, now);
     this.emitPullRequests(input.profileID, [input.sessionID], "linked");
     return toPullRequestLink(this.repository.get(stored)!);
+  }
+
+  private async taskRepository(profileID: string, sessionID: string) {
+    this.assertLocal(profileID);
+    const directory = await this.options.sessions.directory(profileID, sessionID);
+    const { remote, branch } = await this.options.repositoryOf(directory, profileID);
+    if (!remote)
+      throw new SourceControlError(
+        "no-remote",
+        "Add a GitHub remote before creating a pull request.",
+      );
+    const parsed = this.options.providers ? parseHostRemote(remote) : null;
+    const parts = parsed?.repository.split("/");
+    const repo =
+      parsed && parts
+        ? { host: parsed.host, owner: parts.slice(0, -1).join("/"), name: parts.at(-1)! }
+        : parseGitHubRemote(remote);
+    if (
+      !repo ||
+      !(this.options.providers?.supports(repo.host) ?? isSupportedGitHubHost(repo.host, this.env()))
+    )
+      throw new SourceControlError(
+        "unsupported-remote",
+        "Configure the task's code host in Settings → Source control first.",
+      );
+    if (!branch) throw new SourceControlError("detached-head", "Check out a branch first.");
+    return {
+      directory,
+      branch,
+      repo,
+      path: `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`,
+    };
+  }
+
+  private async openPullRequest(repo: Awaited<ReturnType<PullRequestService["taskRepository"]>>) {
+    if (this.options.providers) {
+      const provider = this.options.providers.get(repo.repo.host);
+      const ref = await provider.find(
+        { host: repo.repo.host, repository: `${repo.repo.owner}/${repo.repo.name}` },
+        repo.branch,
+        true,
+      );
+      return ref ? (await provider.snapshot(ref)).url : null;
+    }
+    const response = await this.options.github.rest<Array<{ number: number }>>({
+      host: repo.repo.host,
+      path: `${repo.path}/pulls?head=${encodeURIComponent(`${repo.repo.owner}:${repo.branch}`)}&state=open&per_page=1`,
+      priority: "interactive",
+    });
+    const number = response.data[0]?.number;
+    return typeof number === "number"
+      ? `https://${repo.repo.host}/${repo.repo.owner}/${repo.repo.name}/pull/${number}`
+      : null;
+  }
+
+  async prepare(input: PreparePullRequestInput): Promise<PullRequestPreparation> {
+    const repo = await this.taskRepository(input.profileID, input.sessionID);
+    if (this.options.providers) {
+      const provider = this.options.providers.get(repo.repo.host);
+      const base =
+        input.base?.trim() ||
+        (await provider.defaultBranch({
+          host: repo.repo.host,
+          repository: `${repo.repo.owner}/${repo.repo.name}`,
+        }));
+      if (!base) throw new SourceControlError("invalid-input", "Choose a base branch.");
+      const context = await (
+        await this.gitFor(input.profileID)
+      ).pullRequestContext(repo.directory, base);
+      const existing = await this.openPullRequest(repo);
+      return {
+        ...context,
+        provider: provider.kind,
+        draftSupported: provider.kind === "github" || provider.kind === "gitlab",
+        existing: existing
+          ? await this.link({
+              profileID: input.profileID,
+              sessionID: input.sessionID,
+              url: existing,
+            })
+          : null,
+      };
+    }
+    const metadata = await this.options.github.rest<{ default_branch: string }>({
+      host: repo.repo.host,
+      path: repo.path,
+      priority: "interactive",
+    });
+    const base = input.base?.trim() || metadata.data.default_branch;
+    if (!base)
+      throw new SourceControlError(
+        "invalid-input",
+        "GitHub did not report a default branch. Choose a base branch.",
+      );
+    const context = await (
+      await this.gitFor(input.profileID)
+    ).pullRequestContext(repo.directory, base);
+    const existing = await this.openPullRequest(repo);
+    return {
+      ...context,
+      existing: existing
+        ? await this.link({ profileID: input.profileID, sessionID: input.sessionID, url: existing })
+        : null,
+    };
+  }
+
+  /** Creates once, or links the open PR if GitHub already has one for this branch. */
+  async create(input: CreatePullRequestInput): Promise<PullRequestLink> {
+    if (!input.title.trim() || input.title.length > 256 || input.body.length > 65_536)
+      throw new SourceControlError(
+        "invalid-input",
+        "Use a title of 1–256 characters and a description under 65,536 characters.",
+      );
+    const repo = await this.taskRepository(input.profileID, input.sessionID);
+    const link = (url: string) =>
+      this.link({ profileID: input.profileID, sessionID: input.sessionID, url });
+    const existing = await this.openPullRequest(repo);
+    if (existing) return link(existing);
+    const context = await (
+      await this.gitFor(input.profileID)
+    ).pullRequestContext(repo.directory, input.base);
+    if (context.branch !== repo.branch)
+      throw new SourceControlError(
+        "invalid-input",
+        "The branch changed while preparing the pull request. Try again.",
+      );
+    if (!context.pushed)
+      throw new SourceControlError(
+        "branch-not-pushed",
+        "Push this branch's commits before creating the pull request.",
+      );
+    if (!context.commits.trim())
+      throw new SourceControlError(
+        "invalid-input",
+        "This branch has no commits ahead of the base branch.",
+      );
+    try {
+      if (this.options.providers) {
+        const provider = this.options.providers.get(repo.repo.host);
+        const ref = await provider.create(
+          { host: repo.repo.host, repository: `${repo.repo.owner}/${repo.repo.name}` },
+          repo.branch,
+          input,
+        );
+        const snapshot = await provider.snapshot(ref);
+        return this.storeLink({ ...input, url: snapshot.url }, snapshot);
+      }
+      const created = await this.options.github.rest<{ number: number }>({
+        host: repo.repo.host,
+        path: `${repo.path}/pulls`,
+        method: "POST",
+        priority: "interactive",
+        body: {
+          head: repo.branch,
+          base: input.base,
+          title: input.title.trim(),
+          body: input.body,
+          draft: input.draft ?? false,
+        },
+      });
+      if (!Number.isSafeInteger(created.data.number) || created.data.number < 1)
+        throw new SourceControlError(
+          "github-unavailable",
+          "GitHub did not return a pull request number. Check GitHub before retrying.",
+        );
+      return await link(
+        `https://${repo.repo.host}/${repo.repo.owner}/${repo.repo.name}/pull/${created.data.number}`,
+      );
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.code === "validation") {
+        const raced = await this.openPullRequest(repo);
+        if (raced) return link(raced);
+      }
+      throw error;
+    }
+  }
+
+  /** Tool output is evidence only: GitHub must confirm both repository and current branch. */
+  async autoLink(profileID: string, sessionID: string, output: string): Promise<void> {
+    if (
+      this.options.isLocalProfile(profileID) !== true ||
+      this.list({ profileID, sessionID }).length
+    )
+      return;
+    const urls = [
+      ...new Set(
+        output
+          .slice(0, 256_000)
+          .match(/https:\/\/[^\s<>"')\]]+\/(?:pulls?|pull-requests|merge_requests)\/\d+\b/g) ?? [],
+      ),
+    ].slice(0, 5);
+    if (!urls.length) return;
+    const task = await this.taskRepository(profileID, sessionID);
+    for (const url of urls) {
+      let ref: GitHubPullRequestRef | null;
+      try {
+        ref = this.refFromUrl(url);
+      } catch {
+        continue;
+      }
+      if (
+        !ref ||
+        ref.host !== task.repo.host ||
+        ref.owner.toLowerCase() !== task.repo.owner.toLowerCase() ||
+        ref.name.toLowerCase() !== task.repo.name.toLowerCase()
+      )
+        continue;
+      const snapshot = await this.readOne(ref, "interactive");
+      if (snapshot.headBranch !== task.branch || isTerminal(snapshot)) continue;
+      // Recheck after the network read so automatic linking cannot override a manual link.
+      if (this.list({ profileID, sessionID }).length) return;
+      this.storeLink({ profileID, sessionID, url }, snapshot);
+      return;
+    }
   }
 
   unlink(input: UnlinkPullRequestInput): void {
@@ -224,6 +455,7 @@ export class PullRequestService {
   }
 
   async search(input: PullRequestSearchInput, host = "github.com"): Promise<PullRequestSearchPage> {
+    if (this.options.providers) return this.options.providers.get(input.host ?? host).search(input);
     const { query, search } = pullRequestSearchQuery(input.list, input.query);
     const data = await this.options.github.graphql<Parameters<typeof parsePullRequestSearch>[0]>({
       host,
@@ -282,6 +514,9 @@ export class PullRequestService {
   private get repository() {
     return this.options.repository;
   }
+  private gitFor(profileID: string) {
+    return this.options.gitForProfile?.(profileID) ?? Promise.resolve(this.options.git);
+  }
 
   private assertLocal(profileID: string): void {
     const local = this.options.isLocalProfile(profileID);
@@ -295,6 +530,22 @@ export class PullRequestService {
   }
 
   private refFromUrl(url: string): GitHubPullRequestRef {
+    if (this.options.providers) {
+      const ref = parseHostPullRequestUrl(url);
+      if (!ref)
+        throw new SourceControlError(
+          "invalid-input",
+          "Paste a pull request or merge request HTTPS URL.",
+        );
+      this.options.providers.get(ref.host);
+      const parts = ref.repository.split("/");
+      return {
+        host: ref.host,
+        owner: parts.slice(0, -1).join("/"),
+        name: parts.at(-1)!,
+        number: ref.number,
+      };
+    }
     const ref = parsePullRequestUrl(url);
     if (!ref)
       throw new SourceControlError(
@@ -310,6 +561,21 @@ export class PullRequestService {
   }
 
   private async refFromBranch(profileID: string, sessionID: string): Promise<GitHubPullRequestRef> {
+    if (this.options.providers) {
+      const task = await this.taskRepository(profileID, sessionID);
+      const ref = await this.options.providers
+        .get(task.repo.host)
+        .find(
+          { host: task.repo.host, repository: `${task.repo.owner}/${task.repo.name}` },
+          task.branch,
+        );
+      if (!ref)
+        throw new SourceControlError(
+          "no-pull-request",
+          `No pull request found for branch ${task.branch}.`,
+        );
+      return { ...task.repo, number: ref.number };
+    }
     const directory = await this.options.sessions.directory(profileID, sessionID);
     const { remote, branch } = await this.options.repositoryOf(directory);
     if (!remote)
@@ -340,6 +606,10 @@ export class PullRequestService {
   }
 
   private async readOne(ref: GitHubPullRequestRef, priority: GitHubPriority) {
+    if (this.options.providers)
+      return this.options.providers
+        .get(ref.host)
+        .snapshot({ host: ref.host, repository: `${ref.owner}/${ref.name}`, number: ref.number });
     const targets = [{ ref, watched: false }];
     const { query, variables } = pullRequestBatchQuery(targets);
     const data = await this.options.github.graphql<Record<string, unknown>>({
@@ -391,7 +661,7 @@ export class PullRequestService {
       const host = members[0]!.snapshot.host;
       // A persisted link can name a host the current environment no longer trusts (GH_HOST
       // changed). Never ask for, or send, a credential to it.
-      if (!isSupportedGitHubHost(host, this.env())) {
+      if (!(this.options.providers?.supports(host) ?? isSupportedGitHubHost(host, this.env()))) {
         const message = `GitHub host ${host} is not configured. Set GH_HOST=${host} to sync this pull request.`;
         for (const link of members) await this.failRead(link, message, now, touch);
         continue;
@@ -430,11 +700,50 @@ export class PullRequestService {
     touch: (link: LinkIdentity) => void,
   ): Promise<void> {
     const now = this.now();
+    const provider = this.options.providers?.get(host);
+    if (provider && provider.kind !== "github") {
+      for (const members of groups) {
+        const ref = {
+          host,
+          repository: members[0]!.snapshot.repository,
+          number: members[0]!.snapshot.number,
+        };
+        try {
+          const watched = members.some((link) => link.watch !== null);
+          const result = watched
+            ? await provider.watch(ref)
+            : { snapshot: await provider.snapshot(ref), detail: null, viewer: null };
+          for (const link of members) {
+            if (snapshotChanged(link.snapshot, result.snapshot) || link.syncError) touch(link);
+            this.repository.recordSnapshot(link, result.snapshot, now);
+            if (link.watch)
+              await this.advanceWatch(
+                link,
+                result.snapshot,
+                result.detail,
+                result.viewer,
+                now,
+                touch,
+              );
+          }
+        } catch (error) {
+          for (const link of members)
+            await this.failRead(
+              link,
+              error instanceof Error ? error.message : "Code host read failed",
+              now,
+              touch,
+            );
+          if (request.priority === "interactive") throw error;
+        }
+      }
+      return;
+    }
     const targets: PullRequestQueryTarget[] = groups.map((members) => {
       const [owner = "", name = ""] = members[0]!.snapshot.repository.split("/");
       return {
         ref: { host, owner, name, number: members[0]!.snapshot.number },
-        watched: members.some((link) => link.watch !== null),
+        watched: members.some((link) => link.watch !== null || pullRequestEvents.interested(link)),
       };
     });
     for (const members of groups) {
@@ -492,8 +801,9 @@ export class PullRequestService {
         continue;
       }
       const watched = members.filter((link) => link.watch !== null);
+      const eventLinks = members.filter((link) => pullRequestEvents.interested(link));
       let detail: PullRequestWatchDetail | null = null;
-      if (entry.watch && watched.length > 0) {
+      if (entry.watch && (watched.length > 0 || eventLinks.length > 0)) {
         detail = await completeWatchDetail({
           github: this.options.github,
           host,
@@ -501,13 +811,17 @@ export class PullRequestService {
           page: entry.watch,
           snapshot: entry.snapshot,
           // The oldest watermark among the tasks watching this PR.
-          since: Math.min(...watched.map((link) => link.watch!.remarksThrough)),
+          since: Math.min(
+            ...watched.map((link) => link.watch!.remarksThrough),
+            ...eventLinks.map((link) => link.linkedAt),
+          ),
           priority: request.priority,
         });
       }
       for (const link of members) {
         if (snapshotChanged(link.snapshot, entry.snapshot) || link.syncError) touch(link);
         this.repository.recordSnapshot(link, entry.snapshot, now);
+        if (detail) await pullRequestEvents.publish(link, entry.snapshot, detail, result.viewer);
         if (!link.watch) continue;
         if (!detail && !isTerminal(entry.snapshot)) {
           // The PR was read but its checks and remarks were not: a failed read for the watch.

@@ -130,7 +130,7 @@ export async function verifyBrowserPopups(
     sessionID: session.id,
     text: "Inspect the managed popup through the browser tool and capture it.",
   });
-  await client.session.wait({ sessionID: session.id });
+  await client.experimental.session.wait({ sessionID: session.id });
   await expect(page.getByText("Popup inspection complete.", { exact: true })).toBeVisible();
   const messages = (await client.message.list({ sessionID: session.id, order: "asc" })).data;
   const tool = messages

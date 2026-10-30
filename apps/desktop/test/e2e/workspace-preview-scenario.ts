@@ -92,7 +92,7 @@ export const workspacePreviewScenario: Scenario = {
         ],
       },
     ];
-    const source = await client.session.import({
+    const source = await client.experimental.session.import({
       info: {
         ...session,
         id: `${session.id}_workspace_preview`,

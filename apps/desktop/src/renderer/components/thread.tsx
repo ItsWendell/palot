@@ -2,7 +2,11 @@ import type { FileDiffInfo, FormValue } from "@opencode/client";
 import { isCancelledError } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
+import { terminalPasteAtom } from "../atoms/terminal-paste";
+import { useWorkbenchScope } from "../atoms/workbench";
+import { useThreadHeaderInsets } from "../hooks/use-thread-header-insets";
+import { openNewWorkbenchTerminal } from "../services/workbench-terminal";
 import {
   Brain,
   ChevronDown,
@@ -25,6 +29,8 @@ import { motion } from "motion/react";
 import { VoiceStage } from "./voice/voice-call-ui";
 import {
   createElement,
+  Fragment,
+  useContext,
   memo,
   useCallback,
   useEffect,
@@ -79,6 +85,9 @@ import {
 import { cn } from "../lib/cn";
 import { isChatSession } from "../lib/chats";
 import { BoundedScroll } from "./transcript/bounded-scroll";
+import { EditFromHereProvider, EditFromHereButton } from "./transcript/edit-from-here";
+import { firstUnseenMessage } from "../lib/transcript-unread";
+import { NewMessagesDivider, UnreadContext } from "./transcript/unread-divider";
 import { createMarkdownSessionOpener } from "../lib/markdown-session-links";
 import { writeClipboardText } from "../lib/clipboard";
 import { likelyCacheBusts, type LikelyCacheBust } from "../lib/cache-bust";
@@ -98,13 +107,16 @@ import {
 import { projectToolExecution } from "../lib/tool-executions";
 import { recordStreamingCommit } from "../lib/streaming-latency";
 import {
+  composerTranscriptPageDirection,
   readTranscriptScrollUpdate,
   normalizeTranscriptWheelDelta,
   scheduleTranscriptScrollFrame,
   transcriptKeyboardScrollDelta,
+  transcriptPageScrollTop,
   transcriptScrollTargetConsumesDelta,
   type TranscriptScrollIntent,
 } from "../lib/transcript-scroll";
+import { prefersReducedMotion } from "../hooks/use-reduced-motion";
 import { showErrorToast } from "../lib/toast-error";
 import {
   createReasoningTitle,
@@ -150,9 +162,11 @@ import { compactionHistory } from "../lib/context-usage";
 import { latestTurnThought } from "./transcript/live-thought";
 import { ParentTaskBreadcrumb } from "./transcript/parent-breadcrumb";
 import { PlanCard } from "./transcript/plan-card";
+import { GoalCard } from "./transcript/goal-card";
 import { SessionHistoryDialog } from "./session-history-dialog";
 import { PermissionPreview } from "./permission-preview";
 import { useVcsInfo } from "../hooks/use-vcs-info";
+import { CheckoutBranchPicker } from "./branch-picker";
 import { Composer } from "./composer";
 import { ConnectionDestination } from "./connection-destination";
 import { FileAttachment } from "./file-attachment";
@@ -167,6 +181,7 @@ import { OpenInSelector } from "./open-in-selector";
 import { MoveToProjectDialog } from "./move-to-project-dialog";
 import { PullRequestControl } from "./pull-requests/pull-request-control";
 import { SessionExportMenu, type SessionHistoryActions } from "./session-context-menu";
+import { GuestPendingMessages } from "./guest-links";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { AttachmentGroup } from "./ui/attachment";
 import { Badge } from "./ui/badge";
@@ -321,6 +336,9 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const transcript = useSessionTranscript(session);
   const requestsQuery = useSessionRequests(session.id);
   const messages = transcript.messages;
+  const [unreadSession] = useState(() => ({ idleAt: session.idleAt, viewedAt: session.viewedAt }));
+  const [unreadCleared, setUnreadCleared] = useState(false);
+  const unreadMessageID = unreadCleared ? null : firstUnseenMessage(unreadSession, messages);
   const requests = requestsQuery.data ?? null;
   const loading = transcript.isPending || transcript.isHydrating;
   const [animateTranscriptEntrance] = useState(transcript.isPending);
@@ -353,6 +371,8 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const scrollIntentRef = useRef<TranscriptScrollIntent>(null);
   const previousScrollTopRef = useRef<number | null>(null);
   const touchYRef = useRef<number | null>(null);
+  // Where an animating composer page scroll is heading, so repeated page keys add up.
+  const pageScrollTargetRef = useRef<number | null>(null);
   const coldTranscriptPendingRef = useRef(transcript.isPending && messages.length === 0);
   const initialTranscriptSettledRef = useRef(coldTranscriptPendingRef.current);
   const [composerDockHeight, setComposerDockHeight] = useState<number | null>(null);
@@ -371,10 +391,10 @@ const SessionThreadContents = memo(function SessionThreadContents({
     if (!loading) coldTranscriptPendingRef.current = false;
   }, [loading]);
   const forkFromPrompt = useSessionFork();
-  const handleMessageAdmitted = useCallback(
-    () => setSubmissionScrollRequest((current) => current + 1),
-    [],
-  );
+  const handleMessageAdmitted = useCallback(() => {
+    setUnreadCleared(true);
+    setSubmissionScrollRequest((current) => current + 1);
+  }, []);
   const setBottomLock = useCallback((locked: boolean) => {
     bottomLockedRef.current = locked;
     setBottomLocked((current) => (current === locked ? current : locked));
@@ -424,6 +444,42 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const workbench = useWorkbenchCommands(
     runtime ? { profileID: runtime.profileID, sessionID: session.id } : null,
   );
+  const store = useStore();
+  const workbenchState = useWorkbenchScope(
+    runtime ? { profileID: runtime.profileID, sessionID: session.id } : null,
+  );
+  const runCode = useCallback(
+    async (code: string) => {
+      if (!runtime?.connected) throw new Error("Connect to the task's server first");
+      const existing = [...workbenchState.bottom.tabs, ...workbenchState.right.tabs].find(
+        (tab) =>
+          tab.kind === "terminal" &&
+          tab.resource.sessionID === session.id &&
+          !tab.resource.readOnly,
+      );
+      const result =
+        existing && existing.kind === "terminal"
+          ? workbench.openTab({ kind: "terminal", ...existing.resource })
+          : await openNewWorkbenchTerminal(
+              session.id,
+              session.location,
+              workbench.openTab,
+              { pane: "bottom" },
+              runtime.connectionID,
+            );
+      if (!result?.ok) throw new Error("Close a workbench tab before opening a terminal");
+      store.set(terminalPasteAtom, (current) => new Map(current).set(result.tabID, code));
+    },
+    [runtime, session.id, session.location, store, workbench, workbenchState],
+  );
+  const previewHTML = useCallback(
+    (html: string) => {
+      const result = workbench.openTab({ kind: "html-preview", location: session.location, html });
+      if (!result?.ok)
+        showErrorToast("Could not open HTML preview", new Error("Close a workbench tab first"));
+    },
+    [workbench, session.location],
+  );
   const setContextMessageTarget = useSetAtom(contextMessageTargetAtom);
   const requestViews = useMemo(
     () => (requests ? pendingRequestViews(requests, messages) : []),
@@ -456,7 +512,13 @@ const SessionThreadContents = memo(function SessionThreadContents({
     ],
     [elicitations, requestViews],
   );
-  const projectedMessages = useMemo(() => withPersistedTurnFailures(messages), [messages]);
+  const projectedMessages = useMemo(() => {
+    const boundary = session.revert?.messageID;
+    const index = boundary ? messages.findIndex((message) => message.id === boundary) : -1;
+    // Retain the authoritative history for Restore and the undo dock, but do not
+    // present messages which are staged for removal as part of the current task.
+    return withPersistedTurnFailures(index < 0 ? messages : messages.slice(0, index));
+  }, [messages, session.revert?.messageID]);
   const projection = useSessionTranscriptProjection({
     connectionID: transcript.connectionID,
     sessionID: session.id,
@@ -503,6 +565,24 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [layoutOwner, layoutKey, layoutRows, layoutWidth],
   );
   const rows = projection.presentationRows;
+  const unreadRow = rows.find((row) => {
+    if (!unreadMessageID) return false;
+    if (row.kind === "user-message") return row.message.id === unreadMessageID;
+    if (row.kind === "assistant-message") return row.final.message.id === unreadMessageID;
+    if (row.kind === "shell") return row.entry.message.id === unreadMessageID;
+    if (row.kind === "boundary")
+      return row.group.entries.some((entry) => entry.message.id === unreadMessageID);
+    if (row.kind === "activity")
+      return row.turn.activity.some((group) =>
+        group.entries.some((entry) => entry.message.id === unreadMessageID),
+      );
+    return false;
+  });
+  const clearUnread = useCallback(() => setUnreadCleared(true), []);
+  const unreadContext = useMemo(
+    () => ({ rowID: unreadRow?.id ?? null, seen: clearUnread }),
+    [unreadRow?.id, clearUnread],
+  );
   const latestUserTurnIndex = turnRows.findLastIndex((row) => row.turn.user !== null);
   const activeTurnIndex = turnRows.at(-1)?.turn.status === "working" ? turnRows.length - 1 : -1;
   const isWorking = activeTurnIndex >= 0;
@@ -962,6 +1042,19 @@ const SessionThreadContents = memo(function SessionThreadContents({
       compactionAnchorSelector(messageID),
       "compaction",
     );
+  const unreadLanded = useRef(false);
+  const landOnUnread = useEffectEvent(() => {
+    if (unreadLanded.current || !unreadRow || !unreadMessageID) return;
+    unreadLanded.current = true;
+    revealTurnAnchor(
+      turnRows.findIndex((row) => row.id === unreadRow.turnID),
+      "[data-palot-unread]",
+      "response",
+    );
+  });
+  useEffect(() => {
+    if (initialTranscriptVisible && !loading) landOnUnread();
+  }, [initialTranscriptVisible, loading, unreadRow?.id]);
   const jumpToRequestedTurn = useEffectEvent(
     ({ messageID, fallbackMessageID }: { messageID: string; fallbackMessageID?: string }) => {
       if (jumpToCompaction(messageID)) return;
@@ -1194,7 +1287,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [compactionWindows, retryCompaction, retryableCompactionID],
   );
 
-  return createElement(
+  const contents = createElement(
     MarkdownWorkspaceProvider,
     {
       onOpenFile: openWorkspaceFile,
@@ -1203,6 +1296,8 @@ const SessionThreadContents = memo(function SessionThreadContents({
       workspaceDirectory: session.location.directory,
       workspaceLocation: session.location,
       allowHomePaths: localPathActions,
+      runCode,
+      previewHTML,
     },
     fileReferences.picker,
     <CompactionTranscriptContext.Provider value={compactionActions}>
@@ -1400,6 +1495,9 @@ const SessionThreadContents = memo(function SessionThreadContents({
                 previousScrollTopRef.current = update.scrollTop;
                 if (intent === "up" || intent === "anchor") scrollIntentRef.current = null;
               }}
+              onScrollEnd={() => {
+                pageScrollTargetRef.current = null;
+              }}
             >
               <div
                 ref={transcriptContentRef}
@@ -1548,6 +1646,32 @@ const SessionThreadContents = memo(function SessionThreadContents({
         inert={coldTranscriptLoading}
         aria-busy={coldTranscriptLoading || undefined}
         className="pointer-events-none absolute inset-x-0 bottom-0 z-40"
+        onKeyDown={(event) => {
+          // Page keys in the composer page the transcript without moving focus or the caret.
+          const direction = composerTranscriptPageDirection(event.nativeEvent);
+          const viewport = scrollRef.current;
+          if (direction === 0 || !viewport) return;
+          event.preventDefault();
+          const top = transcriptPageScrollTop({
+            metrics: viewport,
+            obscuredBottom: composerDockHeight ?? 0,
+            direction,
+            from: pageScrollTargetRef.current,
+          });
+          // Same intent bookkeeping as the transcript's own scroll keys: leave the live edge
+          // (and request older history at the top) going up, follow again at the bottom.
+          navigation.cancel();
+          if (direction < 0) {
+            infiniteScroll.onUpwardIntent();
+            if (top < viewport.scrollTop) scrollIntentRef.current = "up";
+          } else {
+            infiniteScroll.clearIntent();
+          }
+          const instant = prefersReducedMotion();
+          pageScrollTargetRef.current =
+            instant || Math.abs(top - viewport.scrollTop) <= 1 ? null : top;
+          viewport.scrollTo({ top, behavior: instant ? "instant" : "smooth" });
+        }}
       >
         <div className="pointer-events-auto">
           <SessionDockContents
@@ -1568,6 +1692,11 @@ const SessionThreadContents = memo(function SessionThreadContents({
       </div>
     </CompactionTranscriptContext.Provider>,
   );
+  return (
+    <EditFromHereProvider session={session} running={isWorking || Boolean(activity?.active)}>
+      <UnreadContext.Provider value={unreadContext}>{contents}</UnreadContext.Provider>
+    </EditFromHereProvider>
+  );
 });
 
 export const SessionThreadHeader = memo(function SessionThreadHeader({
@@ -1577,6 +1706,7 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
   session: PalotSession;
   historyActions?: SessionHistoryActions;
 }) {
+  const headerRef = useThreadHeaderInsets();
   const title = useSessionTitleEditor(session);
   useEffect(() => {
     const previous = document.title;
@@ -1599,7 +1729,10 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
       : session.location.directory.split("/").at(-1);
   const location = project ? projectLocation(project) : session.location.directory;
   return (
-    <header className="palot-main-surface-header window-drag thread-header @container/thread-header flex h-(--shell-header-height) min-h-(--shell-header-height) items-center gap-2 border-b bg-background/90 px-3 pr-(--window-controls-width) pl-[18px]">
+    <header
+      ref={headerRef}
+      className="palot-main-surface-header window-drag thread-header @container/thread-header flex h-(--shell-header-height) min-h-(--shell-header-height) items-center gap-2 border-b bg-background/90 px-3 pr-(--window-controls-width) pl-[18px]"
+    >
       <div className="group/title flex min-w-0 flex-1 items-center gap-1">
         <Tooltip>
           <TooltipTrigger
@@ -1699,6 +1832,14 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
           Move to project…
         </Button>
       ) : null}
+      {!chat && runtime?.capabilities?.localPathActions === true ? (
+        <CheckoutBranchPicker
+          key={`${runtime.profileID}:${session.location.directory}`}
+          directory={session.location.directory}
+          profileID={runtime.profileID}
+          disabled={movingDisabled}
+        />
+      ) : null}
       {session.parentID || chat ? null : <PullRequestControl session={session} />}
       {!chat && runtime?.capabilities?.localPathActions === true ? (
         <OpenInSelector key={runtime.connectionID} sessionID={session.id} />
@@ -1750,6 +1891,7 @@ const SessionDockContents = memo(function SessionDockContents({
     <>
       <PendingRequests sessionID={session.id} requests={floatingRequests} />
       <SessionRevertDock session={session} messages={revertMessages} />
+      <GoalCard key={`goal:${session.id}`} sessionID={session.id} location={session.location} />
       <PlanCard key={session.id} sessionID={session.id} messages={revertMessages} />
       {session.parentID ? null : <VoiceStage sessionID={session.id} />}
       {session.parentID ? (
@@ -1902,20 +2044,23 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
   );
 
   return (
-    <Composer
-      key={session.id}
-      session={session}
-      messages={messages}
-      isWorking={isWorking}
-      backgroundWork={backgroundWork}
-      requestBody={requestBody}
-      onMessageAdmitted={onMessageAdmitted}
-      onNavigateToNewTask={navigateToNewTask}
-      onModelsChange={onModelsChange}
-      pendingInputs={pendingInputs}
-      contextBarMode="compact"
-      contextBar={composerContextBar}
-    />
+    <>
+      <GuestPendingMessages sessionID={session.id} />
+      <Composer
+        key={session.id}
+        session={session}
+        messages={messages}
+        isWorking={isWorking}
+        backgroundWork={backgroundWork}
+        requestBody={requestBody}
+        onMessageAdmitted={onMessageAdmitted}
+        onNavigateToNewTask={navigateToNewTask}
+        onModelsChange={onModelsChange}
+        pendingInputs={pendingInputs}
+        contextBarMode="compact"
+        contextBar={composerContextBar}
+      />
+    </>
   );
 });
 
@@ -2069,6 +2214,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   onInteract: (turnID: string) => void;
 }) {
   const { turn } = source;
+  const unread = useContext(UnreadContext);
   // The status is the last presentation row. Its live-edge clearance must not
   // inherit different historical spacing from text/tool/subagent turn kinds.
   const activeTail = isLastTurn && rows.at(-1)?.kind === "turn-status";
@@ -2120,15 +2266,20 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
     >
       <article aria-label={articleLabel}>
         {rows.map((row) => (
-          <TranscriptPresentationRowContent
-            key={row.id}
-            row={row}
-            models={row.kind === "assistant-message" ? models : EMPTY_MODELS}
-            sessionID={sessionID}
-            cacheBust={rowReceivesCacheBust(row, turn) ? cacheBust : null}
-            onOpenCacheDiagnostic={onOpenCacheDiagnostic}
-            subagentProgress={row.kind === "activity" ? subagentProgress : EMPTY_SUBAGENT_PROGRESS}
-          />
+          <Fragment key={row.id}>
+            {row.id === unread.rowID ? <NewMessagesDivider /> : null}
+            <TranscriptPresentationRowContent
+              key={row.id}
+              row={row}
+              models={row.kind === "assistant-message" ? models : EMPTY_MODELS}
+              sessionID={sessionID}
+              cacheBust={rowReceivesCacheBust(row, turn) ? cacheBust : null}
+              onOpenCacheDiagnostic={onOpenCacheDiagnostic}
+              subagentProgress={
+                row.kind === "activity" ? subagentProgress : EMPTY_SUBAGENT_PROGRESS
+              }
+            />
+          </Fragment>
         ))}
         {reviewOffer}
       </article>
@@ -3759,6 +3910,7 @@ export const MessageRow = memo(function MessageRow({
             )}
           </BubbleContent>
         </Bubble>
+        {role === "user" ? <EditFromHereButton message={message} /> : null}
       </MessageContent>
     </Message>
   );

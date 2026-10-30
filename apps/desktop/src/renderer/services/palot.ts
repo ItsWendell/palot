@@ -381,7 +381,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "2.2.0",
+  contractVersion: "2.2.3",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -398,7 +398,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.2.0",
+  version: "2.2.3",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,
@@ -520,6 +520,16 @@ function globalFormOptions(sessionID: string, directory?: string) {
 }
 
 export const palot = {
+  guestLinks: {
+    command(command: Parameters<PalotApi["guestLinks"]["command"]>[0]) {
+      const api = getApi();
+      if (!api?.guestLinks) return Promise.resolve({ enabled: false, shares: [], pending: [] });
+      return api.guestLinks.command(command);
+    },
+    onChanged(listener: () => void) {
+      return getApi()?.guestLinks?.onChanged(listener) ?? (() => {});
+    },
+  },
   isPreview: () => !apiAvailable(),
 
   async browserRegister(input: Parameters<PalotApi["browserRegister"]>[0]) {
@@ -559,6 +569,15 @@ export const palot = {
     const api = getApi();
     if (!api?.browserClearData) throw new Error("Browser data controls are unavailable");
     await api.browserClearData(input);
+  },
+
+  async browserPermission(
+    bindingID: string,
+    control: Parameters<PalotApi["browserPermission"]>[1],
+  ): Promise<void> {
+    const api = getApi();
+    if (!api?.browserPermission) throw new Error("Browser permissions are unavailable");
+    await api.browserPermission(bindingID, control);
   },
 
   async browserClose(bindingID: string) {
@@ -1321,19 +1340,27 @@ export const palot = {
   ) {
     if (!apiAvailable()) return undefined;
     const client = openCodeClient(connectionID);
+    // OpenCode passes `text` to the command as its arguments (`$ARGUMENTS`, `/goal pause`), so
+    // it must not repeat `/name`. Mentions are measured from the `/name ` the composer showed.
+    const prefix = `/${input.command}${input.arguments ? " " : ""}`.length;
+    const shift = <T extends { mention: { start: number; end: number } }>(part: T): T => ({
+      ...part,
+      mention: {
+        ...part.mention,
+        start: Math.max(0, part.mention.start - prefix),
+        end: Math.max(0, part.mention.end - prefix),
+      },
+    });
     const mentions = promptMentionParts(input);
-    const delivery = attachmentPrompt(
-      `/${input.command}${input.arguments ? ` ${input.arguments}` : ""}`,
-      input,
-    );
+    const delivery = attachmentPrompt(input.arguments ?? "", input);
     const signal = openCodeRequestSignal();
     const location = input.fileReferences?.length
       ? (await client.session.get({ sessionID: input.sessionID }, { signal })).location
       : null;
     const files = [
       ...delivery.inlineFiles.map(({ uri, name }) => ({ uri, name })),
-      ...(location ? promptFiles(location.directory, input.fileReferences ?? []) : []),
-      ...mentions.files,
+      ...(location ? promptFiles(location.directory, input.fileReferences ?? []) : []).map(shift),
+      ...mentions.files.map(shift),
     ];
     await client.session.command(
       {
@@ -1342,12 +1369,12 @@ export const palot = {
         // The command API has no metadata/displayText field; retain fallback paths in its text.
         text: delivery.text,
         ...(files.length ? { files } : {}),
-        ...(mentions.agents.length ? { agents: mentions.agents } : {}),
+        ...(mentions.agents.length ? { agents: mentions.agents.map(shift) } : {}),
         ...(input.skillReferences?.length
           ? {
               skills: input.skillReferences.map((skill) => ({
                 id: skill.id,
-                mention: { ...skill.mention },
+                mention: shift(skill).mention,
                 ...(skill.text ? { text: skill.text } : {}),
               })),
             }
@@ -1601,7 +1628,7 @@ export const palot = {
 
   async sessionStats(input: SessionStatsInput, requestSignal?: AbortSignal, connectionID?: string) {
     if (!apiAvailable()) return null;
-    return openCodeClient(connectionID).session.stats(input, {
+    return openCodeClient(connectionID).experimental.session.stats(input, {
       signal: openCodeRequestSignal(requestSignal),
     });
   },
@@ -1620,7 +1647,7 @@ export const palot = {
     requestSignal?: AbortSignal,
   ) {
     if (!apiAvailable()) return [];
-    return openCodeClient(connectionID).session.instructions.entry.list(
+    return openCodeClient(connectionID).experimental.session.instructions.entry.list(
       { sessionID },
       { signal: openCodeRequestSignal(requestSignal) },
     );
@@ -1632,7 +1659,7 @@ export const palot = {
     connectionID?: string,
   ): Promise<void> {
     if (apiAvailable()) {
-      await openCodeClient(connectionID).session.instructions.entry.remove(
+      await openCodeClient(connectionID).experimental.session.instructions.entry.remove(
         { sessionID, key },
         { signal: openCodeRequestSignal() },
       );
@@ -1647,7 +1674,7 @@ export const palot = {
     if (!apiAvailable()) return null;
     const api = getApi();
     if (!api) throw new Error("Palot bridge is unavailable");
-    const transfer = await openCodeClient(connectionID).session.export(
+    const transfer = await openCodeClient(connectionID).experimental.session.export(
       { sessionID, sanitize: false },
       { signal: openCodeRequestSignal() },
     );
@@ -1665,7 +1692,7 @@ export const palot = {
     if (!apiAvailable()) return;
     const api = getApi();
     if (!api) throw new Error("Palot bridge is unavailable");
-    const transfer = await openCodeClient(connectionID).session.export(
+    const transfer = await openCodeClient(connectionID).experimental.session.export(
       { sessionID, sanitize: false },
       { signal: openCodeRequestSignal() },
     );
@@ -1703,7 +1730,7 @@ export const palot = {
     ) {
       throw new Error("This file is not a valid Palot task export.");
     }
-    const imported = await client.session.import(
+    const imported = await client.experimental.session.import(
       { ...transfer, info: { ...transfer.info, parentID: undefined }, location },
       { signal: openCodeRequestSignal() },
     );
@@ -1786,7 +1813,7 @@ export const palot = {
 
   async waitForSessionIdle(sessionID: string, connectionID?: string) {
     if (apiAvailable()) {
-      await openCodeClient(connectionID).session.wait(
+      await openCodeClient(connectionID).experimental.session.wait(
         { sessionID },
         { signal: openCodeRequestSignal() },
       );
@@ -1886,6 +1913,16 @@ export const palot = {
           requestID,
         ) ?? Promise.resolve({ files: [], errors: [] }))
       : Promise.resolve({ files: [], errors: [] }),
+
+  attachClipboardText: async (text: string, connectionID?: string, requestID?: string) => {
+    const api = getApi();
+    if (!apiAvailable() || !api) throw new Error("Text attachments are unavailable.");
+    return api.attachClipboardText(
+      text,
+      connectionID ?? (await palot.runtimeStatus()).connectionID,
+      requestID,
+    );
+  },
 
   attachClipboardImages: async (
     images: Array<{ mime: string; data: ArrayBuffer }>,

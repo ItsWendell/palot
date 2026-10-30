@@ -63,7 +63,7 @@ export const projectFreeChatScenario: Scenario = {
       .toBeTruthy();
     if (!chat) throw new Error("No chat session was created under .palot/chats");
     await access(join(chat.location.directory, ".palot-chat"));
-    await client.session.wait({ sessionID: chat.id });
+    await client.experimental.session.wait({ sessionID: chat.id });
 
     // A chat reads as a Chat: no project name, checkout or branch.
     await expect(page.getByRole("button", { name: /^Open .*, Chat, / }).first()).toBeVisible();

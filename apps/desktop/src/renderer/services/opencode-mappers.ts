@@ -100,6 +100,7 @@ export function mapSession(session: SessionInfo): PalotSession {
     location: { ...session.location },
     createdAt: session.time.created,
     updatedAt: session.time.updated,
+    ...(session.time.busy === undefined ? {} : { busyAt: session.time.busy }),
     ...(session.time.idle === undefined ? {} : { idleAt: session.time.idle }),
     ...(session.time.viewed === undefined ? {} : { viewedAt: session.time.viewed }),
     ...(session.outcome ? { outcome: session.outcome } : {}),

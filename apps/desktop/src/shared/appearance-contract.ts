@@ -1,5 +1,11 @@
 /** Serializable appearance preferences and built-in theme catalog shared by main and renderer. */
 import { normalizeOmarchyTheme, omarchyThemeVariant, type OmarchyTheme } from "./omarchy-theme";
+import {
+  customCodeThemeName,
+  normalizeCustomTheme,
+  MAX_CUSTOM_THEMES,
+  type CustomTheme,
+} from "./custom-theme";
 
 export const APPEARANCE_MODES = ["system", "light", "dark"] as const;
 export type AppearanceMode = (typeof APPEARANCE_MODES)[number];
@@ -42,7 +48,8 @@ export const APPEARANCE_THEME_IDS = [
   "vscode-plus",
   "xcode",
 ] as const;
-export type AppearanceThemeID = (typeof APPEARANCE_THEME_IDS)[number];
+export type BuiltinAppearanceThemeID = (typeof APPEARANCE_THEME_IDS)[number];
+export type AppearanceThemeID = BuiltinAppearanceThemeID | CustomTheme["id"];
 
 export const CODE_THEME_IDS = ["follow", "pierre", "github", "min"] as const;
 export type CodeThemeID = (typeof CODE_THEME_IDS)[number];
@@ -122,6 +129,7 @@ export interface AppearancePreferences {
   mode: AppearanceMode;
   lightTheme: AppearanceThemeID;
   darkTheme: AppearanceThemeID;
+  customThemes: CustomTheme[];
   lightCodeTheme: CodeThemeID;
   darkCodeTheme: CodeThemeID;
   uiFont: UIFontID;
@@ -150,6 +158,7 @@ export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = Object.free
   mode: "system",
   lightTheme: "palot",
   darkTheme: "palot",
+  customThemes: [],
   lightCodeTheme: "follow",
   darkCodeTheme: "follow",
   uiFont: "system",
@@ -913,7 +922,9 @@ function macOSVariant(scheme: AppearanceColorScheme): AppearanceThemeVariant {
   };
 }
 
-export const APPEARANCE_THEMES: Readonly<Record<AppearanceThemeID, AppearanceThemeDefinition>> = {
+export const APPEARANCE_THEMES: Readonly<
+  Record<BuiltinAppearanceThemeID, AppearanceThemeDefinition>
+> = {
   palot: {
     id: "palot",
     name: "Palot",
@@ -1924,7 +1935,7 @@ export const APPEARANCE_THEMES: Readonly<Record<AppearanceThemeID, AppearanceThe
 export const CODE_THEME_OPTIONS: Readonly<
   Record<
     Exclude<CodeThemeID, "follow">,
-    { name: string; light: string; dark: string; source: AppearanceThemeID }
+    { name: string; light: string; dark: string; source: BuiltinAppearanceThemeID }
   >
 > = {
   pierre: {
@@ -2069,9 +2080,36 @@ export function appearanceTheme(
   if (preferences.source === "system" && preferences.omarchyTheme?.mode === scheme) {
     return omarchyThemeVariant(preferences.omarchyTheme);
   }
-  const selected =
-    APPEARANCE_THEMES[scheme === "light" ? preferences.lightTheme : preferences.darkTheme][scheme];
+  const id = scheme === "light" ? preferences.lightTheme : preferences.darkTheme;
+  const custom = preferences.customThemes.find(
+    (theme) => theme.id === id && theme.scheme === scheme,
+  );
+  if (custom) return customThemeVariant(custom);
+  const selected = APPEARANCE_THEMES[id as BuiltinAppearanceThemeID]?.[scheme];
   return selected ?? APPEARANCE_THEMES.palot[scheme]!;
+}
+
+export function customThemeVariant(custom: CustomTheme): AppearanceThemeVariant {
+  const base =
+    APPEARANCE_THEMES[custom.base][custom.scheme] ?? APPEARANCE_THEMES.palot[custom.scheme]!;
+  const palette = { ...base.palette, ...custom.colors };
+  return {
+    ...base,
+    palette,
+    nativeBackground: palette.background,
+    // Base-specific color treatments would mask the edited semantic palette.
+    treatment: { shape: base.treatment?.shape, native: base.treatment?.native },
+    codeTheme: custom.tokenColors ? customCodeThemeName(custom) : base.codeTheme,
+    terminal: {
+      ...base.terminal,
+      background: palette.codeBackground,
+      foreground: palette.codeForeground,
+      red: palette.destructive,
+      green: palette.success,
+      yellow: palette.warning,
+      blue: palette.info,
+    },
+  };
 }
 
 export function effectiveAppearanceTreatment(
@@ -2234,14 +2272,29 @@ export function normalizeAppearancePreferences(value: unknown): AppearancePrefer
     const normalized = Math.min(max, Math.max(min, Math.round(candidate)));
     return legacy && normalized === legacyDefault ? "theme" : normalized;
   };
+  const customThemes = Array.isArray(input.customThemes)
+    ? input.customThemes
+        .slice(0, MAX_CUSTOM_THEMES)
+        .map((theme) => normalizeCustomTheme(theme, APPEARANCE_THEME_IDS))
+        .filter((theme): theme is CustomTheme => theme !== null)
+        .filter(
+          (theme, index, themes) => themes.findIndex((item) => item.id === theme.id) === index,
+        )
+    : [];
   const lightTheme = pick(
     input.lightTheme,
-    APPEARANCE_THEME_IDS,
+    [
+      ...APPEARANCE_THEME_IDS,
+      ...customThemes.filter((theme) => theme.scheme === "light").map((theme) => theme.id),
+    ],
     DEFAULT_APPEARANCE_PREFERENCES.lightTheme,
   );
   const darkTheme = pick(
     input.darkTheme,
-    APPEARANCE_THEME_IDS,
+    [
+      ...APPEARANCE_THEME_IDS,
+      ...customThemes.filter((theme) => theme.scheme === "dark").map((theme) => theme.id),
+    ],
     DEFAULT_APPEARANCE_PREFERENCES.darkTheme,
   );
   return {
@@ -2260,12 +2313,17 @@ export function normalizeAppearancePreferences(value: unknown): AppearancePrefer
         : 100,
     omarchyTheme: normalizeOmarchyTheme(input.omarchyTheme),
     mode: pick(input.mode, APPEARANCE_MODES, DEFAULT_APPEARANCE_PREFERENCES.mode),
-    lightTheme: APPEARANCE_THEMES[lightTheme].light
-      ? lightTheme
-      : DEFAULT_APPEARANCE_PREFERENCES.lightTheme,
-    darkTheme: APPEARANCE_THEMES[darkTheme].dark
-      ? darkTheme
-      : DEFAULT_APPEARANCE_PREFERENCES.darkTheme,
+    lightTheme:
+      customThemes.some((theme) => theme.id === lightTheme) ||
+      APPEARANCE_THEMES[lightTheme as BuiltinAppearanceThemeID]?.light
+        ? lightTheme
+        : DEFAULT_APPEARANCE_PREFERENCES.lightTheme,
+    darkTheme:
+      customThemes.some((theme) => theme.id === darkTheme) ||
+      APPEARANCE_THEMES[darkTheme as BuiltinAppearanceThemeID]?.dark
+        ? darkTheme
+        : DEFAULT_APPEARANCE_PREFERENCES.darkTheme,
+    customThemes,
     lightCodeTheme: pick(
       input.lightCodeTheme,
       CODE_THEME_IDS,
@@ -2340,7 +2398,14 @@ export const APPEARANCE_STORED_ARGUMENT = "--palot-appearance-stored";
 export const REDUCED_TRANSPARENCY_ARGUMENT = "--palot-reduced-transparency";
 
 export function serializeAppearancePreferences(preferences: AppearancePreferences): string {
-  return `${APPEARANCE_ARGUMENT_PREFIX}${encodeURIComponent(JSON.stringify(preferences))}`;
+  // Renderer hydrates the full authoritative preferences over IPC before mounting.
+  // TextMate rules can exceed the OS's per-argument limit; never put them on argv.
+  const startup = {
+    ...preferences,
+    customThemes: preferences.customThemes.map(({ tokenColors: _tokens, ...theme }) => theme),
+  };
+  const encoded = encodeURIComponent(JSON.stringify(startup));
+  return `${APPEARANCE_ARGUMENT_PREFIX}${encoded.length <= 64 * 1024 ? encoded : encodeURIComponent(JSON.stringify({ ...startup, customThemes: [] }))}`;
 }
 
 export function parseAppearancePreferencesArgument(args: readonly string[]): AppearancePreferences {

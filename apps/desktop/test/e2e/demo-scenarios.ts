@@ -185,7 +185,7 @@ export const demoScenarios: Record<
         sessionID: session.id,
         text: prompts.architecture,
       });
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       const openCodeDirectory = join(runRoot, "opencode");
       for (const [directory, title, text] of [
         [projectDirectory, cleanupTitle, prompts.cleanup],
@@ -193,7 +193,7 @@ export const demoScenarios: Record<
       ] as const) {
         const completed = await createTask(client, directory, title);
         await client.session.prompt({ sessionID: completed.id, text });
-        await client.session.wait({ sessionID: completed.id });
+        await client.experimental.session.wait({ sessionID: completed.id });
         // Do not acknowledge these: they should appear as unread completed work.
       }
 
@@ -204,7 +204,7 @@ export const demoScenarios: Record<
       await expect(panel.getByText(question, { exact: true })).toBeVisible();
       await panel.locator('input[value="Explicit filter"]').check();
       await panel.getByRole("button", { name: "Send", exact: true }).click();
-      await client.session.wait({ sessionID: decision.id });
+      await client.experimental.session.wait({ sessionID: decision.id });
       await expect(page.getByText(answer, { exact: true })).toBeVisible();
       await client.session.prompt({
         sessionID: decision.id,

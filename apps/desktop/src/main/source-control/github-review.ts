@@ -87,7 +87,7 @@ export function detailQuery(number: number): string {
   return `query PalotPullRequestDetail($owner: String!, $name: String!, $number: Int!) {
     viewer { login }
     repository(owner: $owner, name: $name) {
-      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
+      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed
       viewerDefaultMergeMethod viewerPermission
       pullRequest(number: $number) {
         id number title url state isDraft body createdAt updatedAt mergedAt closedAt
@@ -189,6 +189,7 @@ export interface RawDetailPullRequest extends RawSnapshot {
 export interface RawDetail {
   viewer?: { login?: string | null } | null;
   repository?: {
+    autoMergeAllowed?: boolean;
     mergeCommitAllowed?: boolean;
     squashMergeAllowed?: boolean;
     rebaseMergeAllowed?: boolean;
@@ -399,6 +400,7 @@ export function parseDetail(
       mergeState: MERGE_STATES[raw.mergeStateStatus ?? ""] ?? "unknown",
       mergeMethods,
       autoMerge: autoMethod ? { method: autoMethod } : null,
+      autoMergeAllowed: repository?.autoMergeAllowed === true,
       viewer: {
         login: data.viewer?.login ?? null,
         canMerge:
@@ -844,6 +846,10 @@ export const threadOwnerQuery = `query PalotReviewThreadOwner($id: ID!) {
 }`;
 
 export const mutations = {
+  enableAutoMerge: `mutation PalotEnableAutoMerge($id: ID!, $method: PullRequestMergeMethod!) {
+    enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: $method }) { clientMutationId } }`,
+  disableAutoMerge: `mutation PalotDisableAutoMerge($id: ID!) {
+    disablePullRequestAutoMerge(input: { pullRequestId: $id }) { clientMutationId } }`,
   markViewed: `mutation PalotMarkViewed($id: ID!, $path: String!) {
     markFileAsViewed(input: { pullRequestId: $id, path: $path }) { clientMutationId } }`,
   unmarkViewed: `mutation PalotUnmarkViewed($id: ID!, $path: String!) {

@@ -367,7 +367,7 @@ function PullRequestCodeReview({
     setSelection(null);
   };
 
-  const filesUrl = `${pullRequest.url}/files`;
+  const filesUrl = pullRequest.capabilities ? pullRequest.url : `${pullRequest.url}/files`;
 
   return (
     <div
@@ -455,6 +455,7 @@ function PullRequestCodeReview({
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
             <PullRequestFileList
+              viewedSupported={pullRequest.capabilities?.fileViewed !== false}
               files={hideViewed ? ordered.filter((file) => file.viewed !== "viewed") : ordered}
               activePath={activePath}
               onSelect={revealFile}
@@ -485,6 +486,7 @@ function PullRequestCodeReview({
               onSelectedLinesChange={(next) =>
                 setSelection(
                   next &&
+                    pullRequest.capabilities?.inlineReview !== false &&
                     canCommentOnRange(next.range) &&
                     items.some((item) => item.id === next.id && item.type === "diff")
                     ? next
@@ -542,6 +544,7 @@ function PullRequestCodeReview({
                 if (!entry) return null;
                 return (
                   <FileHeader
+                    viewedSupported={pullRequest.capabilities?.fileViewed !== false}
                     entry={entry}
                     collapsed={item.collapsed === true}
                     filesUrl={filesUrl}
@@ -572,12 +575,14 @@ function annotationKey(path: string, side: string, line: number): string {
 }
 
 function FileHeader({
+  viewedSupported = true,
   entry,
   collapsed,
   filesUrl,
   onToggle,
   onViewedChange,
 }: {
+  viewedSupported?: boolean;
   entry: PresentedPullRequestFile;
   collapsed: boolean;
   filesUrl: string;
@@ -656,6 +661,12 @@ function FileHeader({
       >
         <Checkbox
           aria-label={`Mark ${file.path} as viewed`}
+          disabled={!viewedSupported}
+          title={
+            !viewedSupported
+              ? "Viewed marks are not supported for this host in Palot yet."
+              : undefined
+          }
           checked={file.viewed === "viewed"}
           onCheckedChange={(checked) => onViewedChange(file.path, checked)}
         />

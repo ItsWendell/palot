@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const text = vi.fn();
 const connectionFetch = vi.fn();
 vi.mock("./opencode-client", () => ({
-  openCodeClient: () => ({ generate: { text } }),
+  openCodeClient: () => ({ experimental: { generate: { text } } }),
   openCodeConnectionFetch: (...args: unknown[]) => connectionFetch(...args),
 }));
 

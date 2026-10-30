@@ -294,7 +294,7 @@ export const btwScenario: Scenario = {
     } finally {
       page.off("console", observe);
       await client.session.interrupt({ sessionID: session.id });
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
     }
   },
   async assert(page, { client, session, llm }) {

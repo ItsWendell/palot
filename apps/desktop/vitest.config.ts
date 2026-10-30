@@ -22,6 +22,7 @@ export default defineConfig({
     __PALOT_REACT_COMPILER_MODE__: JSON.stringify(null),
     __PALOT_REACT_SCAN_DEFAULT__: JSON.stringify(false),
     __PALOT_PERFORMANCE_HARNESS__: JSON.stringify(false),
+    __PALOT_E2E__: JSON.stringify(false),
   },
   resolve: {
     alias: {

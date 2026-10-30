@@ -97,7 +97,7 @@ export async function loadSessionLog(
   connectionID?: string,
 ): Promise<SessionLogOutput[]> {
   const events: SessionLogOutput[] = [];
-  for await (const event of openCodeClient(connectionID).session.log(
+  for await (const event of openCodeClient(connectionID).experimental.session.log(
     { sessionID, ...(after === undefined ? {} : { after }), follow: false },
     { signal: openCodeRequestSignal(requestSignal) },
   )) {

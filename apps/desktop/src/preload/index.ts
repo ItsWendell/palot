@@ -11,6 +11,7 @@ import type { SourceControlChangedEvent } from "../shared/source-control-contrac
 import type { ProjectScriptRun } from "../shared/project-scripts-contract";
 import { VOICE_IPC_CHANNELS, type VoiceHostCommand } from "../shared/voice-contract";
 import { IPC_CHANNELS } from "../shared/opencode-contract";
+import { GUEST_LINKS_IPC_CHANNELS } from "../shared/guest-links-contract";
 import {
   hasStoredAppearancePreferencesArgument,
   parseAppearancePreferencesArgument,
@@ -37,6 +38,14 @@ function initialChromeTier(): WindowChromeTier {
 }
 
 const api: PalotApi = {
+  guestLinks: {
+    command: (command) => ipcRenderer.invoke(GUEST_LINKS_IPC_CHANNELS.guestLinksCommand, command),
+    onChanged: (listener) => {
+      const handler = () => listener();
+      ipcRenderer.on(GUEST_LINKS_IPC_CHANNELS.guestLinksChanged, handler);
+      return () => ipcRenderer.removeListener(GUEST_LINKS_IPC_CHANNELS.guestLinksChanged, handler);
+    },
+  },
   platform: process.platform,
   appearancePreferences: parseAppearancePreferencesArgument(process.argv),
   hasStoredAppearancePreferences: hasStoredAppearancePreferencesArgument(process.argv),
@@ -51,6 +60,8 @@ const api: PalotApi = {
     ipcRenderer.invoke(IPC_CHANNELS.browserPageControl, bindingID, tabID, control),
   browserClearData: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserClearData, input),
   browserClose: (bindingID) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, bindingID),
+  browserPermission: (bindingID, control) =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserPermission, bindingID, control),
   onBrowserEvent: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) =>
       listener(value);
@@ -196,6 +207,8 @@ const api: PalotApi = {
   writeClipboardText: (value) => ipcRenderer.invoke(IPC_CHANNELS.writeClipboardText, value),
   attachClipboardImages: (images, connectionID, requestID) =>
     ipcRenderer.invoke(IPC_CHANNELS.attachClipboardImages, { images, requestID }, connectionID),
+  attachClipboardText: (text, connectionID, requestID) =>
+    ipcRenderer.invoke(IPC_CHANNELS.attachClipboardText, { text, requestID }, connectionID),
   cancelAttachmentUpload: (requestID) =>
     ipcRenderer.invoke(IPC_CHANNELS.cancelAttachmentUpload, requestID),
   onAttachmentProgress: (listener) => {
@@ -248,9 +261,22 @@ const api: PalotApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.events, handler);
   },
   sourceControl: {
+    codeHosts: () => ipcRenderer.invoke(IPC_CHANNELS.codeHosts),
+    saveCodeHost: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveCodeHost, input),
+    removeCodeHost: (host) => ipcRenderer.invoke(IPC_CHANNELS.removeCodeHost, host),
+    gitBranch: (input) => ipcRenderer.invoke(IPC_CHANNELS.gitBranch, input),
+    editPullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestEdit, input),
+    pullRequestLabels: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestLabels, input),
+    setPullRequestLabel: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestLabel, input),
+    setPullRequestAutoMerge: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pullRequestAutoMerge, input),
+    updatePullRequestBranch: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pullRequestUpdateBranch, input),
     status: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.sourceControlStatus, profileID),
     listPullRequestLinks: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestLinks, input),
     linkPullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestLink, input),
+    preparePullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestPrepare, input),
+    createPullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestCreate, input),
     unlinkPullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestUnlink, input),
     refreshPullRequests: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestRefresh, input),
     watchPullRequest: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestWatch, input),
@@ -276,6 +302,9 @@ const api: PalotApi = {
     gitUnstage: (input) => ipcRenderer.invoke(IPC_CHANNELS.gitUnstage, input),
     gitCommit: (input) => ipcRenderer.invoke(IPC_CHANNELS.gitCommit, input),
     gitPush: (target) => ipcRenderer.invoke(IPC_CHANNELS.gitPush, target),
+    gitFetch: (target) => ipcRenderer.invoke(IPC_CHANNELS.gitFetch, target),
+    gitPull: (input) => ipcRenderer.invoke(IPC_CHANNELS.gitPull, input),
+    gitSync: (input) => ipcRenderer.invoke(IPC_CHANNELS.gitSync, input),
     onChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, event: SourceControlChangedEvent) =>
         listener(event);
@@ -293,6 +322,10 @@ const api: PalotApi = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.projectScriptRunFinished, handler);
     },
   },
+  spellcheck: {
+    load: () => ipcRenderer.invoke(IPC_CHANNELS.spellcheckLoad),
+    update: (update) => ipcRenderer.invoke(IPC_CHANNELS.spellcheckUpdate, update),
+  },
   voice: {
     claim: () => ipcRenderer.invoke(VOICE_IPC_CHANNELS.hostClaim),
     publishState: (snapshot) => ipcRenderer.invoke(VOICE_IPC_CHANNELS.hostState, snapshot),
@@ -307,6 +340,7 @@ const api: PalotApi = {
       return () => ipcRenderer.removeListener(VOICE_IPC_CHANNELS.hostCommand, handler);
     },
   },
+  writeClipboardImage: (png) => ipcRenderer.invoke(IPC_CHANNELS.writeClipboardImage, png),
 };
 
 const reportStartupError = (event: ErrorEvent) => {

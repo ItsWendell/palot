@@ -4,7 +4,12 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
 import { afterEach, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus } from "../../shared";
-import { phaseAtom, runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
+import {
+  phaseAtom,
+  runtimeAtom,
+  selectedSessionIDAtom,
+  workspaceRecoveryAtom,
+} from "../atoms/workspace";
 import { useSessionInfo } from "../hooks/use-session-info";
 import { useWorkspaceController } from "../hooks/use-workspace";
 import { openCodeKeys } from "../lib/opencode-query";
@@ -146,4 +151,95 @@ it("still reports a real session lookup failure on a connected route", async () 
       abortController: new AbortController(),
     } as Parameters<typeof loader>[0]),
   ).rejects.toBe(failure);
+});
+
+function connectedWorkspace() {
+  const store = createStore();
+  store.set(runtimeAtom, connected);
+  const queryClient = createRendererQueryClient();
+  vi.spyOn(palot, "isPreview").mockReturnValue(false);
+  vi.spyOn(palot, "runtimeStatus").mockResolvedValue(connected);
+  const roots = vi
+    .spyOn(catalog, "listRootSessionInfo")
+    .mockResolvedValue({ data: [], cursor: {} });
+  vi.spyOn(catalog, "listProjectInfo").mockResolvedValue([]);
+  vi.spyOn(catalog, "listActiveSessionIDs").mockResolvedValue([]);
+  vi.spyOn(palot, "loadAttentionSnapshot").mockResolvedValue({
+    sessions: [],
+    requests: [],
+    complete: true,
+  });
+  return { store, queryClient, roots };
+}
+
+function renderWorkspace(
+  store: ReturnType<typeof createStore>,
+  queryClient: ReturnType<typeof createRendererQueryClient>,
+  sessionID: string | null,
+) {
+  return renderHook(
+    () => {
+      useWorkspaceController(sessionID);
+      return useSessionInfo(sessionID);
+    },
+    {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          <Provider store={store}>{children}</Provider>
+        </QueryClientProvider>
+      ),
+    },
+  );
+}
+
+it("keeps unrelated first loads running through a workspace refresh", async () => {
+  // A session.created event schedules a refresh while a newly opened task is still loading.
+  const { store, queryClient, roots } = connectedWorkspace();
+  renderWorkspace(store, queryClient, null);
+  await waitFor(() => expect(store.get(phaseAtom)).toBe("ready"));
+  const transcript = Promise.withResolvers<string>();
+  let signal!: AbortSignal;
+  const queryKey = openCodeKeys.transcript(connected.connectionID, selected.id);
+  const pending = queryClient.fetchQuery({
+    queryKey,
+    queryFn: (context) => {
+      signal = context.signal;
+      return transcript.promise;
+    },
+  });
+  const rootCalls = roots.mock.calls.length;
+  await act(async () => store.get(workspaceRecoveryAtom)?.run());
+  expect(roots.mock.calls.length).toBeGreaterThan(rootCalls);
+  expect(signal.aborted).toBe(false);
+  transcript.resolve("loaded");
+  await expect(pending).resolves.toBe("loaded");
+  queryClient.clear();
+});
+
+it("mounts the task route when its session lookup is cancelled, then loads the task", async () => {
+  const { store, queryClient } = connectedWorkspace();
+  const lookup = Promise.withResolvers<SessionInfo>();
+  const getSession = vi
+    .spyOn(catalog, "getSessionInfo")
+    .mockReturnValueOnce(lookup.promise)
+    .mockResolvedValue(selected);
+  const loader = Route.options.loader;
+  if (typeof loader !== "function") throw new Error("Session route loader is required");
+  const loading = loader({
+    context: { store, queryClient },
+    params: { sessionID: selected.id },
+    deps: {},
+    preload: false,
+    cause: "enter",
+    abortController: new AbortController(),
+  } as Parameters<typeof loader>[0]);
+  await waitFor(() => expect(getSession).toHaveBeenCalledOnce());
+  // Disconnects still cancel every query on the connection.
+  await queryClient.cancelQueries({ queryKey: openCodeKeys.all(connected.connectionID) });
+  await expect(loading).resolves.toBeUndefined();
+
+  const hook = renderWorkspace(store, queryClient, selected.id);
+  await waitFor(() => expect(hook.result.current.data?.title).toBe("Current task"));
+  expect(hook.result.current.error).toBeNull();
+  queryClient.clear();
 });

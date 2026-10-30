@@ -41,10 +41,10 @@ describe("ComposerDiscovery", () => {
       <ComposerDiscovery
         id="tasks"
         items={[items[2]!, task]}
-        activeIndex={1}
+        activeKey={task.key}
         loading={false}
         error={null}
-        onActiveIndexChange={vi.fn()}
+        onActiveChange={vi.fn()}
         onSelect={onSelect}
       />,
     );
@@ -59,10 +59,10 @@ describe("ComposerDiscovery", () => {
       <ComposerDiscovery
         id="composer-suggestions"
         items={items}
-        activeIndex={1}
+        activeKey="skill:code-review"
         loading={false}
         error={null}
-        onActiveIndexChange={() => undefined}
+        onActiveChange={() => undefined}
         onSelect={() => undefined}
       />,
     );
@@ -82,10 +82,10 @@ describe("ComposerDiscovery", () => {
       <ComposerDiscovery
         id="composer-suggestions"
         items={items}
-        activeIndex={0}
+        activeKey="command:review"
         loading={false}
         error={null}
-        onActiveIndexChange={() => undefined}
+        onActiveChange={() => undefined}
         onSelect={onSelect}
       />,
     );
@@ -97,5 +97,29 @@ describe("ComposerDiscovery", () => {
 
     expect(pointerDown.defaultPrevented).toBe(true);
     expect(onSelect).toHaveBeenCalledWith(items[0]);
+  });
+
+  it("lets only a moving pointer claim the highlight", () => {
+    const onActiveChange = vi.fn();
+    render(
+      <ComposerDiscovery
+        id="composer-suggestions"
+        items={items}
+        activeKey="command:review"
+        loading={false}
+        error={null}
+        onActiveChange={onActiveChange}
+        onSelect={() => undefined}
+      />,
+    );
+
+    const file = screen.getByRole("option", { name: /@composer\.tsx/i });
+    // Rows scrolling or re-rendering under a resting pointer get movement-free events.
+    fireEvent.pointerMove(file, { movementX: 0, movementY: 0 });
+    fireEvent.mouseEnter(file);
+    expect(onActiveChange).not.toHaveBeenCalled();
+
+    fireEvent.pointerMove(file, { movementX: 0, movementY: 3 });
+    expect(onActiveChange).toHaveBeenCalledExactlyOnceWith(items[2]);
   });
 });

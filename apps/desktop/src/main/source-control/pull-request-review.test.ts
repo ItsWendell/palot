@@ -160,6 +160,63 @@ function detailAnswer(
 }
 
 describe("pull request detail", () => {
+  it("edits only title/body, toggles one label, and guards branch updates with the head", async () => {
+    const github = fakeGitHub({ PalotPullRequestDetail: detailAnswer() });
+    github.restAnswers.push((path) =>
+      path.includes("/labels?") ? [{ name: "bug", color: "ff0000" }] : undefined,
+    );
+    const { review, syncLinks } = service(github);
+    await review.edit({ ...REF, title: " Revised ", body: "New body" });
+    expect(await review.labels(REF)).toEqual([{ name: "bug", color: "ff0000" }]);
+    await review.setLabel({ ...REF, name: "help/wanted", add: true });
+    await review.setLabel({ ...REF, name: "help/wanted", add: false });
+    await review.updateBranch({ ...REF, expectedHeadOid: HEAD });
+    expect(github.restCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "PATCH",
+          path: "repos/acme/web/pulls/7",
+          body: { title: "Revised", body: "New body" },
+        }),
+        expect.objectContaining({
+          method: "POST",
+          path: "repos/acme/web/issues/7/labels",
+          body: { labels: ["help/wanted"] },
+        }),
+        expect.objectContaining({
+          method: "DELETE",
+          path: "repos/acme/web/issues/7/labels/help%2Fwanted",
+        }),
+        expect.objectContaining({
+          method: "PUT",
+          path: "repos/acme/web/pulls/7/update-branch",
+          body: { expected_head_sha: HEAD },
+        }),
+      ]),
+    );
+    expect(syncLinks).toHaveBeenCalledWith(KEY);
+  });
+
+  it("uses GitHub auto-merge mutations and refuses enabling when the repository disallows it", async () => {
+    const answer = detailAnswer();
+    const github = fakeGitHub({ PalotPullRequestDetail: answer });
+    const { review } = service(github);
+    await expect(
+      review.setAutoMerge({ ...REF, enabled: true, method: "squash" }),
+    ).rejects.toMatchObject({ code: "merge-blocked" });
+    Object.assign(answer.repository, { autoMergeAllowed: true });
+    await review.setAutoMerge({ ...REF, enabled: true, method: "squash" });
+    await review.setAutoMerge({ ...REF, enabled: false, method: "squash" });
+    expect(github.graphqlCalls.filter((call) => call.operation.includes("AutoMerge"))).toEqual([
+      {
+        operation: "PalotEnableAutoMerge",
+        variables: { id: "PR_7", method: "SQUASH" },
+        priority: "interactive",
+      },
+      { operation: "PalotDisableAutoMerge", variables: { id: "PR_7" }, priority: "interactive" },
+    ]);
+  });
+
   it("maps GitHub's answer to the contract at interactive priority", async () => {
     const github = fakeGitHub({ PalotPullRequestDetail: detailAnswer() });
     const detail = await service(github).review.detail(REF);
@@ -830,6 +887,17 @@ describe("pull request search", () => {
   it("adds the assigned and mentioned lists", () => {
     expect(pullRequestSearchQuery("assigned").search).toContain("assignee:@me");
     expect(pullRequestSearchQuery("mentioned").search).toContain("mentions:@me");
+  });
+
+  it("lists others' open pull requests only within a repository, organization or user", () => {
+    expect(pullRequestSearchQuery("others", "org:acme no:assignee").search).toBe(
+      "is:pr is:open archived:false -author:@me sort:updated-desc org:acme no:assignee",
+    );
+    expect(pullRequestSearchQuery("others", "repo:acme/web").search).toContain("repo:acme/web");
+    for (const unscoped of [undefined, "", "label:bug", "notorg:acme"])
+      expect(() => pullRequestSearchQuery("others", unscoped)).toThrow(
+        "Choose a repository or organization",
+      );
   });
 
   it("appends sanitized user text to every list", () => {

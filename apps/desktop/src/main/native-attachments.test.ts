@@ -43,7 +43,10 @@ function harness(temporary = "/server/tmp") {
     }),
   );
   const info = vi.fn(async () => ({ paths: { tmp: temporary } }));
-  const client = { server: { info }, file: { write } } as unknown as OpenCodeClient;
+  const client = {
+    server: { info },
+    experimental: { file: { write } },
+  } as unknown as OpenCodeClient;
   const withClient = vi.fn(
     async (operation: (client: OpenCodeClient) => Promise<PalotFilePickerResult>) =>
       operation(client),

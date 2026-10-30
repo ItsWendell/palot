@@ -1,6 +1,6 @@
 {
-  "contractFingerprint": "072d215c5190b6df2bcd4789ae734fcb86b517ae295e34352b9f436ca133d8f0",
-  "contractVersion": "2.2.0",
+  "contractFingerprint": "f00a1b17862cc1a045cb84559d9758ee26b0cded709cd44598a967274b4cc121",
+  "contractVersion": "2.2.3",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
@@ -32,7 +32,7 @@
     },
     "form.created": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "afad1f1cc4ad03b1eed63714e00b12f30d324284535f1dece1f58138d162310c"
+      "payloadFingerprint": "3737787e233b25b3612624f1fa1812086d9f407dae382cf4cc906b3a08e93700"
     },
     "form.replied": {
       "expectedProductionMention": true,
@@ -471,8 +471,8 @@
       "expectedProductionReference": false
     },
     "experimental.fs.watch": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "experimental.fs.write": {
       "disposition": "integrated",
@@ -532,6 +532,78 @@
       "expectedProductionReference": false,
       "note": "Legacy V1 migration status is not part of Palot 2 workflows."
     },
+    "experimental.persistentPty.connect": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.persistentPty.connectToken": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.persistentPty.create": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.persistentPty.get": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.persistentPty.handoff": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Experimental terminal handoff is not exposed by Palot's current terminal controls."
+    },
+    "experimental.persistentPty.list": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": true,
+      "note": "Workbench tabs persist the exact session-owned PTY identity and reconcile lifecycle through targeted get calls and events; production does not need to enumerate terminals."
+    },
+    "experimental.persistentPty.read": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Palot renders the connected PTY stream; reading the agent-selected terminal's retained rows is a separate product capability."
+    },
+    "experimental.persistentPty.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.persistentPty.shutdown": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "The OpenCode service owns its shared persistent PTY daemon lifecycle; Palot removes individual terminals and must not shut down terminals owned by other clients."
+    },
+    "experimental.persistentPty.snapshot": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.persistentPty.update": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.schedule.create": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.schedule.delete": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.schedule.get": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.schedule.list": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.schedule.pause": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.schedule.resume": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
     "experimental.session.export": {
       "disposition": "integrated",
       "expectedProductionReference": true
@@ -552,6 +624,10 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
+    "experimental.session.log": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
     "experimental.session.skill": {
       "disposition": "intentional-omit",
       "expectedProductionReference": false,
@@ -566,8 +642,8 @@
       "expectedProductionReference": true
     },
     "experimental.usage.limits": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "experimental.voice.models": {
       "disposition": "not-integrated",
@@ -679,10 +755,6 @@
       "disposition": "not-integrated",
       "expectedProductionReference": false
     },
-    "persistentPty.connect": {
-      "disposition": "integrated",
-      "expectedProductionReference": true
-    },
     "plugin.check": {
       "disposition": "integrated",
       "expectedProductionReference": true
@@ -750,55 +822,11 @@
       "expectedProductionReference": true
     },
     "rpc.call": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false,
-      "note": "The opt-in browser consumes the plugin-defined Browser RPC through scoped OpenCode.rpc(Browser.RPC), not the generic rpc.call Promise-client operation. Generic arbitrary-plugin RPC has no product UI."
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "The goal card reads the built-in /goal plugin's state through rpc.call (opencode.goal get) and follows rpc.opencode.goal.changed. The opt-in browser consumes its plugin RPC through scoped OpenCode.rpc(Browser.Definition) instead."
     },
     "server.connect": {
-      "disposition": "integrated",
-      "expectedProductionReference": true
-    },
-    "server.experimental.persistentPty.connectToken": {
-      "disposition": "integrated",
-      "expectedProductionReference": true
-    },
-    "server.experimental.persistentPty.create": {
-      "disposition": "integrated",
-      "expectedProductionReference": true
-    },
-    "server.experimental.persistentPty.get": {
-      "disposition": "integrated",
-      "expectedProductionReference": true
-    },
-    "server.experimental.persistentPty.handoff": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false,
-      "note": "Experimental terminal handoff is not exposed by Palot's current terminal controls."
-    },
-    "server.experimental.persistentPty.list": {
-      "disposition": "intentional-omit",
-      "expectedProductionReference": true,
-      "note": "Workbench tabs persist the exact session-owned PTY identity and reconcile lifecycle through targeted get calls and events; production does not need to enumerate terminals."
-    },
-    "server.experimental.persistentPty.read": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false,
-      "note": "Palot renders the connected PTY stream; reading the agent-selected terminal's retained rows is a separate product capability."
-    },
-    "server.experimental.persistentPty.remove": {
-      "disposition": "integrated",
-      "expectedProductionReference": true
-    },
-    "server.experimental.persistentPty.shutdown": {
-      "disposition": "intentional-omit",
-      "expectedProductionReference": false,
-      "note": "The OpenCode service owns its shared persistent PTY daemon lifecycle; Palot removes individual terminals and must not shut down terminals owned by other clients."
-    },
-    "server.experimental.persistentPty.snapshot": {
-      "disposition": "integrated",
-      "expectedProductionReference": true
-    },
-    "server.experimental.persistentPty.update": {
       "disposition": "integrated",
       "expectedProductionReference": true
     },
@@ -897,10 +925,6 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
-    "session.log": {
-      "disposition": "integrated",
-      "expectedProductionReference": true
-    },
     "session.message.get": {
       "disposition": "intentional-omit",
       "expectedProductionReference": false,
@@ -978,9 +1002,9 @@
       "expectedProductionReference": true
     },
     "shell.create": {
-      "disposition": "intentional-omit",
-      "expectedProductionReference": false,
-      "note": "Raw shell lifecycle is intentionally excluded; PTY and agent tools own terminal execution."
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Remote Git runs git through shell.create on remote and SSH connections (main/source-control/remote-git.ts), never in a task transcript. PTY and agent tools still own interactive terminal execution."
     },
     "shell.get": {
       "disposition": "intentional-omit",

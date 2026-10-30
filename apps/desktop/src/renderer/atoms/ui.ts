@@ -63,6 +63,11 @@ export const experimentalBrowserAtom = persistedAtom({
   initialValue: false,
   validate: (value): value is boolean => typeof value === "boolean",
 });
+export const richComposerAtom = persistedAtom({
+  key: "composer.rich-beta",
+  initialValue: false,
+  validate: (value): value is boolean => typeof value === "boolean",
+});
 export const browserSearchEngineAtom = persistedAtom({
   key: "browser.search-engine",
   initialValue: "google" as BrowserSearchEngine,
@@ -394,7 +399,11 @@ export function isComposerDraft(value: unknown): value is ComposerDraft {
         mention &&
         typeof mention === "object" &&
         typeof mention.localID === "string" &&
-        (mention.kind === "file" || mention.kind === "skill" || mention.kind === "task") &&
+        (mention.kind === "file" ||
+          mention.kind === "skill" ||
+          mention.kind === "task" ||
+          mention.kind === "agent" ||
+          mention.kind === "reference") &&
         (mention.title === undefined || typeof mention.title === "string") &&
         typeof mention.value === "string" &&
         typeof mention.text === "string" &&

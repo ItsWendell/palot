@@ -19,7 +19,7 @@ export const shortTranscriptScenario: Scenario = {
     for (const [index, prompt] of prompts.entries()) {
       await page.getByLabel("Message Palot").fill(prompt);
       await page.getByRole("button", { name: "Send message" }).click();
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       const transcript = page.getByLabel("Task transcript", { exact: true });
       await expect(transcript.getByText(answers[index]!, { exact: true })).toBeVisible();
       const expected = prompts

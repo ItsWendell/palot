@@ -17,6 +17,7 @@ import {
   projectWorkspaceModesAtom,
 } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
+import { worktreeBranchPrefixAtom } from "../atoms/worktree-preferences";
 import { discoveredProfileIDsAtom, includedProfileIDsAtom } from "../atoms/connections";
 import type { OpenCodeRuntimeStatus } from "../../shared";
 import { approvalPresetRules } from "../lib/session-permissions";
@@ -43,6 +44,7 @@ const services = vi.hoisted(() => ({
   }),
   listProjects: vi.fn().mockResolvedValue([{ id: "home", canonical: "/home/remote" }]),
   createProjectCopy: vi.fn().mockResolvedValue({ directory: "/worktrees/new" }),
+  gitBranch: vi.fn().mockResolvedValue(undefined),
   createSession: vi.fn().mockResolvedValue({
     id: "session-1",
     parentID: null,
@@ -59,6 +61,7 @@ const services = vi.hoisted(() => ({
   }),
   switchModel: vi.fn(),
   switchAgent: vi.fn(),
+  renameSession: vi.fn(),
   cacheSession: vi.fn(),
 }));
 const creation = vi.hoisted(() => ({
@@ -93,6 +96,9 @@ vi.mock("../hooks/use-vcs-info", () => ({
 }));
 
 vi.mock("../services/palot", () => ({ palot: services }));
+vi.mock("../hooks/use-source-control", () => ({
+  sourceControl: { gitBranch: services.gitBranch },
+}));
 vi.mock("../services/opencode-chats", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/opencode-chats")>()),
   createChatSession: services.createChatSession,
@@ -165,6 +171,84 @@ afterEach(() => {
 });
 
 describe("NewTask", () => {
+  it("names a new local worktree branch before creating its task", async () => {
+    const store = createDraftStore();
+    store.set(runtimeAtom, {
+      ...owner,
+      capabilities: { localPathActions: true },
+    } as OpenCodeRuntimeStatus);
+    store.set(worktreeBranchPrefixAtom, "tasks/");
+    render(
+      <Provider store={store}>
+        <NewTask projectID="project-1" />
+      </Provider>,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "New worktree branch name" }), {
+      target: { value: " feature " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(creation.result).toMatchObject({ id: "session-1" }));
+    expect(services.gitBranch).toHaveBeenCalledWith({
+      profileID: "remote",
+      directory: "/worktrees/new",
+      action: "create",
+      name: "tasks/feature",
+    });
+    expect(services.gitBranch.mock.invocationCallOrder[0]).toBeLessThan(
+      services.createSession.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("retains the worktree and draft and explains recovery if branch creation fails", async () => {
+    const store = createDraftStore();
+    store.set(runtimeAtom, {
+      ...owner,
+      capabilities: { localPathActions: true },
+    } as OpenCodeRuntimeStatus);
+    services.gitBranch.mockRejectedValueOnce(new Error("Branch already exists"));
+    render(
+      <Provider store={store}>
+        <NewTask projectID="project-1" />
+      </Provider>,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "New worktree branch name" }), {
+      target: { value: "feature" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(creation.error).toBeInstanceOf(Error));
+    expect(screen.getByRole("alert").textContent).toContain("kept at /worktrees/new");
+    expect(screen.getByRole("alert").textContent).toContain("Branch already exists");
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Draft" }).value).toBe("keep me");
+    expect(services.createSession).not.toHaveBeenCalled();
+  });
+
+  it("applies sibling titles, model and approvals without navigating before a batch finishes", async () => {
+    const onSessionCreated = vi.fn();
+    creation.options = {
+      approvalMode: "full",
+      agent: "build",
+      model: { providerID: "test", id: "alpha" },
+      title: "Compare abc123 · prompt · Alpha",
+      deferNavigation: true,
+    };
+    render(
+      <Provider store={createDraftStore()}>
+        <NewTask profileID="remote" onSessionCreated={onSessionCreated} />
+      </Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() =>
+      expect(creation.result).toMatchObject({
+        id: "session-1",
+        title: creation.options.title,
+        agent: "build",
+        model: creation.options.model,
+      }),
+    );
+    expect(services.renameSession).toHaveBeenCalledWith("session-1", creation.options.title);
+    expect(services.createSession.mock.calls[0]?.[3]).toEqual(approvalPresetRules("full"));
+    expect(onSessionCreated).not.toHaveBeenCalled();
+  });
   it("starts a chat without any project or workspace pickers and applies selections before navigation", async () => {
     catalog.projects.splice(0);
     const session = {

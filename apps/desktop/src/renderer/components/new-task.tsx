@@ -35,6 +35,9 @@ import { Composer, type NewSessionComposerOptions } from "./composer";
 import { DestinationPicker } from "./destination-picker";
 import { PalotBeacon } from "./palot-beacon";
 import { ComposerPicker, type ComposerPickerSection } from "./ui/composer-picker";
+import { Input } from "./ui/input";
+import { worktreeBranchPrefixAtom } from "../atoms/worktree-preferences";
+import { sourceControl } from "../hooks/use-source-control";
 
 const EMPTY_TOKENS = {
   input: 0,
@@ -234,6 +237,8 @@ export function NewTask({
     creationErrorState?.identity === workspaceIdentity ? creationErrorState.message : null;
   const [draftCreatedAt] = useState(() => Date.now());
   const [branchSearch, setBranchSearch] = useState("");
+  const prefix = useAtomValue(worktreeBranchPrefixAtom);
+  const [newBranchName, setNewBranchName] = useState("");
   const sourceBranchQuery = useVcsInfo(
     selectedProject ? { directory: selectedProject.canonical } : null,
   );
@@ -291,7 +296,7 @@ export function NewTask({
   }, [chat, chatLocation.data?.directory, draftCreatedAt, selectedProject, runtime?.profileID]);
 
   const createSession = useCallback(
-    async ({ approvalMode, agent, model }: NewSessionComposerOptions) => {
+    async ({ approvalMode, agent, model, title, deferNavigation }: NewSessionComposerOptions) => {
       if ((!chat && !selectedProject) || !draftSession) return null;
       const assertConnection = () => {
         const current = store.get(runtimeAtom);
@@ -313,14 +318,30 @@ export function NewTask({
                   workspaceSelection.type === "create" && selectedSourceBranch
                     ? { type: "create", branch: selectedSourceBranch }
                     : workspaceSelection,
-                createCopy: (projectID, directory, branch) => {
+                createCopy: async (projectID, directory, branch) => {
                   assertConnection();
-                  return palot.createProjectCopy(
+                  const copy = await palot.createProjectCopy(
                     projectID,
                     directory,
                     branch,
                     runtime?.connectionID,
                   );
+                  if (newBranchName.trim() && runtime?.capabilities?.localPathActions === true) {
+                    try {
+                      assertConnection();
+                      await sourceControl.gitBranch({
+                        profileID: runtime.profileID,
+                        directory: copy.directory,
+                        action: "create",
+                        name: `${prefix}${newBranchName.trim()}`,
+                      });
+                    } catch (error) {
+                      throw new Error(
+                        `Couldn't name the branch. The new worktree was kept at ${copy.directory}; open it from Worktrees to recover. ${error instanceof Error ? error.message : ""}`,
+                      );
+                    }
+                  }
+                  return copy;
                 },
                 createSession: (directory) => {
                   assertConnection();
@@ -344,6 +365,12 @@ export function NewTask({
       assertConnection();
       cacheSession(created);
       try {
+        if (title) {
+          await palot.renameSession(created.id, title);
+          created = { ...created, title };
+          cacheSession(created);
+          assertConnection();
+        }
         if (agent) {
           await palot.switchAgent({ sessionID: created.id, agent });
           created = { ...created, agent };
@@ -365,7 +392,7 @@ export function NewTask({
         // Keep the draft intact. Returning a session here would submit with the wrong selection.
         throw error;
       }
-      onSessionCreated?.(created.id);
+      if (!deferNavigation) onSessionCreated?.(created.id);
       return created;
     },
     [
@@ -381,6 +408,9 @@ export function NewTask({
       selectedSourceBranch,
       workspaceSelection,
       workspaceIdentity,
+      newBranchName,
+      prefix,
+      runtime?.capabilities?.localPathActions,
     ],
   );
 
@@ -473,6 +503,7 @@ export function NewTask({
               messages={[]}
               isWorking={false}
               onCreateSession={createSession}
+              onOpenCreatedSession={onSessionCreated}
               onCreateSessionError={(error) =>
                 setCreationErrorState({
                   identity: workspaceIdentity,
@@ -513,6 +544,16 @@ export function NewTask({
                         }));
                       }}
                     />
+                    {workspaceSelection.type === "create" &&
+                    runtime?.capabilities?.localPathActions === true ? (
+                      <Input
+                        className="h-7 w-48 text-meta"
+                        aria-label="New worktree branch name"
+                        placeholder={`${prefix}branch (optional)`}
+                        value={newBranchName}
+                        onChange={(event) => setNewBranchName(event.target.value)}
+                      />
+                    ) : null}
                     {workspaceSelection.type === "create" && branchOptions.length > 0 ? (
                       <BranchPicker
                         branches={branchOptions}

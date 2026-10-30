@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   cancelTranscriptScrollFrame,
+  composerTranscriptPageDirection,
+  transcriptPageScrollTop,
   nextTranscriptBottomLock,
   normalizeTranscriptWheelDelta,
   readTranscriptScrollUpdate,
@@ -39,6 +41,72 @@ describe("transcript keyboard intent", () => {
         defaultPrevented: true,
       }),
     ).toBe(0);
+  });
+});
+
+describe("composer page keys", () => {
+  const event = {
+    key: "PageUp",
+    defaultPrevented: false,
+    isComposing: false,
+    shiftKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+  };
+  function composerInput(tag: "textarea" | "div") {
+    const input = document.createElement(tag);
+    input.setAttribute("data-palot-composer-input", "");
+    input.setAttribute("aria-expanded", "false");
+    if (tag === "div") input.contentEditable = "true";
+    return input;
+  }
+
+  it("pages from the plain and rich composer inputs", () => {
+    expect(composerTranscriptPageDirection({ ...event, target: composerInput("textarea") })).toBe(
+      -1,
+    );
+    const rich = composerInput("div");
+    const text = document.createElement("p");
+    rich.append(text);
+    expect(composerTranscriptPageDirection({ ...event, key: "PageDown", target: text })).toBe(1);
+  });
+
+  it("keeps native page keys elsewhere, with modifiers, while composing, or with a popup open", () => {
+    const input = composerInput("textarea");
+    expect(
+      composerTranscriptPageDirection({ ...event, target: document.createElement("textarea") }),
+    ).toBe(0);
+    for (const modifier of ["shiftKey", "metaKey", "ctrlKey", "altKey", "isComposing"] as const) {
+      expect(composerTranscriptPageDirection({ ...event, [modifier]: true, target: input })).toBe(
+        0,
+      );
+    }
+    expect(composerTranscriptPageDirection({ ...event, key: "ArrowUp", target: input })).toBe(0);
+    input.setAttribute("aria-expanded", "true");
+    expect(composerTranscriptPageDirection({ ...event, target: input })).toBe(0);
+  });
+
+  it("pages 80% of the area above the composer and clamps to the scroll range", () => {
+    const metrics = { scrollTop: 1_000, scrollHeight: 3_000, clientHeight: 700 };
+    expect(transcriptPageScrollTop({ metrics, obscuredBottom: 200, direction: -1 })).toBe(600);
+    expect(
+      transcriptPageScrollTop({ metrics, obscuredBottom: 200, direction: 1, from: 1_400 }),
+    ).toBe(1_800);
+    expect(
+      transcriptPageScrollTop({
+        metrics: { ...metrics, scrollTop: 100 },
+        obscuredBottom: 0,
+        direction: -1,
+      }),
+    ).toBe(0);
+    expect(
+      transcriptPageScrollTop({
+        metrics: { ...metrics, scrollTop: 2_200 },
+        obscuredBottom: 0,
+        direction: 1,
+      }),
+    ).toBe(2_300);
   });
 });
 

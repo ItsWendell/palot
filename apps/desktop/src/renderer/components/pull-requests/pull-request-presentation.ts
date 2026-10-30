@@ -263,6 +263,8 @@ export interface MergeAvailability {
 export function mergeAvailability(detail: PullRequestDetail): MergeAvailability {
   const none = { blocked: null, warning: null };
   if (detail.state === "merged" || detail.state === "closed") return none;
+  if (detail.capabilities?.mergeDisabledReason)
+    return { blocked: detail.capabilities.mergeDisabledReason, warning: null };
   if (detail.state === "draft" || detail.mergeState === "draft")
     return {
       blocked: "This pull request is still a draft. Mark it ready for review before merging.",
@@ -290,7 +292,7 @@ export function mergeAvailability(detail: PullRequestDetail): MergeAvailability 
     };
   if (detail.mergeState === "unknown")
     return {
-      blocked: "GitHub is still checking whether this can merge. Refresh in a moment.",
+      blocked: `${detail.capabilities ? "The host" : "GitHub"} is still checking whether this can merge. Refresh in a moment.`,
       warning: null,
     };
   if (detail.mergeMethods.length === 0)

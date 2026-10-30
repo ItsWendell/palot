@@ -27,6 +27,7 @@ import type {
 } from "../../../shared/source-control-contract";
 import { pullRequestKey } from "../../../shared/source-control-contract";
 import { useClipboardCopy } from "../../hooks/use-clipboard-copy";
+import { useThreadHeaderInsets } from "../../hooks/use-thread-header-insets";
 import { usePalotNavigation } from "../../hooks/use-navigation";
 import { useSelectedSession } from "../../hooks/use-session-catalog";
 import {
@@ -61,6 +62,7 @@ import {
 import { PullRequestSummaryTab } from "./pull-request-summary-tab";
 import { PullRequestTimelineTab } from "./pull-request-timeline-tab";
 import { useArmedConfirm } from "./use-armed-confirm";
+import { PullRequestEdit } from "./pull-request-edit";
 import { useReviewGuide, type ReviewGuideController } from "./guide/use-review-guide";
 
 // Loaded on first use so the diff renderer stays out of the list's first paint.
@@ -230,7 +232,15 @@ function LoadedDetail({
                 </span>
               ) : null}
             </TabsTrigger>
-            <TabsTrigger value="guide">
+            <TabsTrigger
+              value="guide"
+              disabled={data.capabilities?.inlineReview === false}
+              title={
+                data.capabilities?.inlineReview === false
+                  ? "Review guides currently require GitHub's inline review API."
+                  : undefined
+              }
+            >
               Guide
               <Badge variant="info" size="sm">
                 Beta
@@ -286,9 +296,13 @@ function DetailTopBar({
   onBack(): void;
   actions?: ReactNode;
 }) {
+  const headerRef = useThreadHeaderInsets();
   return (
     // Stacked under a narrow container, the bar starts at the window's leading controls.
-    <div className="window-drag flex h-(--shell-header-height) shrink-0 items-center gap-1.5 border-b border-border/60 px-3 pr-(--window-controls-width) @max-[44rem]/pull-requests:pl-(--thread-header-leading-inset,18px)">
+    <div
+      ref={headerRef}
+      className="window-drag flex h-(--shell-header-height) shrink-0 items-center gap-1.5 border-b border-border/60 px-3 pr-(--window-controls-width) @max-[44rem]/pull-requests:pl-(--thread-header-leading-inset,18px)"
+    >
       <Button
         type="button"
         variant="ghost"
@@ -384,6 +398,7 @@ function DetailHeader({
         </span>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-1">
+        <PullRequestEdit key={pullRequestKey(detail)} detail={detail} />
         <Button
           type="button"
           variant="outline"
@@ -391,7 +406,7 @@ function DetailHeader({
           onClick={() => void palot.openExternalUrl(detail.url)}
         >
           <ExternalLink data-icon="inline-start" aria-hidden="true" />
-          Open on GitHub
+          {detail.capabilities ? `Open on ${detail.host}` : "Open on GitHub"}
         </Button>
         <Button
           type="button"
@@ -578,7 +593,12 @@ function DetailMenu({
           <DropdownMenuGroup>
             {detail.state === "open" ? (
               <DropdownMenuItem
-                disabled={!canUpdate}
+                disabled={!canUpdate || detail.capabilities?.draft === false}
+                title={
+                  detail.capabilities?.draft === false
+                    ? "Draft requests are not supported for this host in Palot yet."
+                    : undefined
+                }
                 onClick={() => run(() => setDraft.mutateAsync({ ...ref, draft: true }))}
               >
                 <GitPullRequestDraft aria-hidden="true" />
@@ -587,7 +607,12 @@ function DetailMenu({
             ) : null}
             {detail.state === "draft" ? (
               <DropdownMenuItem
-                disabled={!canUpdate}
+                disabled={!canUpdate || detail.capabilities?.draft === false}
+                title={
+                  detail.capabilities?.draft === false
+                    ? "Draft requests are not supported for this host in Palot yet."
+                    : undefined
+                }
                 onClick={() => run(() => setDraft.mutateAsync({ ...ref, draft: false }))}
               >
                 <GitPullRequest aria-hidden="true" />
@@ -598,7 +623,12 @@ function DetailMenu({
               <DropdownMenuItem
                 variant="destructive"
                 closeOnClick={false}
-                disabled={!canUpdate}
+                disabled={!canUpdate || detail.capabilities?.state === false}
+                title={
+                  detail.capabilities?.state === false
+                    ? "Closing requests is not supported for this host in Palot yet."
+                    : undefined
+                }
                 {...close.buttonProps}
               >
                 <GitPullRequestClosed aria-hidden="true" />
@@ -607,7 +637,12 @@ function DetailMenu({
             ) : null}
             {detail.state === "closed" ? (
               <DropdownMenuItem
-                disabled={!canUpdate}
+                disabled={!canUpdate || detail.capabilities?.state === false}
+                title={
+                  detail.capabilities?.state === false
+                    ? "Reopening requests is not supported for this host in Palot yet."
+                    : undefined
+                }
                 onClick={() => run(() => setState.mutateAsync({ ...ref, state: "open" }))}
               >
                 <GitPullRequest aria-hidden="true" />
@@ -629,8 +664,16 @@ function DetailMenu({
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
             <DropdownMenuItem
-              disabled={guide.running || guide.disabledReason !== null}
-              title={guide.disabledReason ?? undefined}
+              disabled={
+                guide.running ||
+                guide.disabledReason !== null ||
+                detail.capabilities?.inlineReview === false
+              }
+              title={
+                detail.capabilities?.inlineReview === false
+                  ? "Review guides currently require GitHub's inline review API."
+                  : (guide.disabledReason ?? undefined)
+              }
               onClick={onWriteGuide}
             >
               <Sparkles aria-hidden="true" />

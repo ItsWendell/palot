@@ -1,4 +1,6 @@
 import type { OpenCodeClient, SessionInfo } from "@opencode/client";
+import { inboxPolishScenario } from "./inbox-polish-scenario.ts";
+import { goalScenario } from "./goal-scenario.ts";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -6,6 +8,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { compactQuestionScenario } from "./compact-question-scenario.ts";
 import { projectFreeChatScenario } from "./project-free-chat-scenario.ts";
+import { fileViewerScenario } from "./file-viewer-scenario.ts";
+import { createBrowserPermissionsScenario } from "./browser-permissions-scenario.ts";
 import { subagentRequestsScenario } from "./subagent-requests-scenario.ts";
 import { beaconMotionScenario } from "./beacon-motion-scenario.ts";
 import { checkSourceUpdateInstructions, sourceUpdatesScenario } from "./source-updates-scenario.ts";
@@ -22,10 +26,13 @@ import { processPickerScenario } from "./process-picker-scenario.ts";
 import { reviewBaseScenario } from "./review-base-scenario.ts";
 import { reviewCommentsScenario } from "./review-comments-scenario.ts";
 import { browserNativeHttpScenario, browserNativeScenario } from "./browser-native-scenario.ts";
+import { themeEditorScenario } from "./theme-editor-scenario.ts";
 import { btwScenario } from "./btw-scenario.ts";
+import { quoteSourceScenario } from "./quote-source-scenario.ts";
 import { destinationRecoveryScenario } from "./destination-recovery-scenario.ts";
 import { projectSettingsScenario } from "./project-settings-scenario.ts";
 import { projectScriptsScenario } from "./project-scripts-scenario.ts";
+import { guestLinksScenario } from "./guest-links-scenario.ts";
 import { streamingPatchScenario } from "./streaming-patch-scenario.ts";
 import type { TestLLMServer } from "./test-llm-server";
 import { workflowScenarios } from "./workflow-scenarios.ts";
@@ -33,14 +40,26 @@ import { pairingAddressScenario } from "./pairing-address-scenario.ts";
 import { composerSelectionMemoryScenario } from "./composer-selection-memory-scenario.ts";
 import { composerPermissionsScenario } from "./composer-permissions-scenario.ts";
 import { palotToolsScenario } from "./palot-tools-scenario.ts";
+import { eventAutomationsScenario } from "./event-automations-scenario.ts";
+import { gitPrScenario } from "./git-pr-scenario.ts";
+import { hostsScenario } from "./hosts-scenario.ts";
+import { gitBranchesScenario } from "./git-branches-scenario.ts";
 import { composerContextScenario } from "./composer-context-scenario.ts";
+import { composerRichScenario } from "./composer-rich-scenario.ts";
+import { composerKeysScenario } from "./composer-keys-scenario.ts";
 import { themePresetsScenario } from "./theme-presets-scenario.ts";
 import { markdownRichScenario } from "./markdown-rich-scenario.ts";
+import { transcriptFeaturesScenario } from "./transcript-features-scenario.ts";
 import { workspacePreviewScenario } from "./workspace-preview-scenario.ts";
+import { fileViewer2Scenario } from "./file-viewer-2-scenario.ts";
 import { assertCommandPaletteMaterial } from "./appearance-accessibility.ts";
 import { linuxDesktopScenario } from "./linux-desktop-scenario.ts";
 import { compactWindowsScenario } from "./compact-windows-scenario.ts";
 import { workbenchResizeScenario } from "./workbench-resize-scenario.ts";
+import {
+  workspaceDragPerformanceScenario,
+  workspacePanelPerformanceScenario,
+} from "./workspace-panel-performance.ts";
 import { sessionWindowDragScenario } from "./session-window-drag-scenario.ts";
 import { sshConnectionScenario } from "./ssh-connection-scenario.ts";
 import { remoteAttachmentsScenario } from "./remote-attachments-scenario.ts";
@@ -145,6 +164,8 @@ const PARALLEL_PERFORMANCE_CHUNK_DELAY_MS =
 
 export interface Scenario {
   description: string;
+  /** Native element picking requires a focusable, focused host window. */
+  requiresFocus?: boolean;
   prompt: string;
   expectedModelCalls: number;
   onboarding?: boolean;
@@ -178,11 +199,19 @@ interface ScenarioContext {
 }
 
 export const scenarios = {
+  "git-pr": gitPrScenario,
+  hosts: hostsScenario,
+  "inbox-polish": inboxPolishScenario,
+  goal: goalScenario,
+  "git-branches": gitBranchesScenario,
   "settings-source-updates": sourceUpdatesScenario,
   "theme-presets": themePresetsScenario,
   "markdown-rich": markdownRichScenario,
   "workspace-preview": workspacePreviewScenario,
+  "file-viewer-2": fileViewer2Scenario,
   "composer-context": composerContextScenario,
+  "composer-rich": composerRichScenario,
+  "composer-keys": composerKeysScenario,
   "beacon-motion": beaconMotionScenario,
   "startup-attention": startupAttentionScenario,
   "multi-connection": multiConnectionScenario,
@@ -197,6 +226,8 @@ export const scenarios = {
   "linux-desktop": linuxDesktopScenario,
   "compact-windows": compactWindowsScenario,
   "workbench-resize": workbenchResizeScenario,
+  "workspace-panel-performance": workspacePanelPerformanceScenario,
+  "workspace-drag-performance": workspaceDragPerformanceScenario,
   "session-window-drag": sessionWindowDragScenario,
   ...workflowScenarios,
   "pairing-address": pairingAddressScenario,
@@ -216,12 +247,17 @@ export const scenarios = {
   "review-base": reviewBaseScenario,
   "review-comments": reviewCommentsScenario,
   "browser-native": browserNativeScenario,
+  "theme-editor": themeEditorScenario,
   btw: btwScenario,
+  "quote-source": quoteSourceScenario,
   "destination-recovery": destinationRecoveryScenario,
   "project-free-chat": projectFreeChatScenario,
+  "file-viewer": fileViewerScenario,
+  "browser-permissions": createBrowserPermissionsScenario(),
   "browser-native-http": browserNativeHttpScenario,
   "project-settings": projectSettingsScenario,
   "project-scripts": projectScriptsScenario,
+  "guest-links": guestLinksScenario,
   "streaming-patch": streamingPatchScenario,
   "accessibility-keyboard": {
     description: "use major routes and dialogs by keyboard with compact accessibility checks",
@@ -685,7 +721,7 @@ export const scenarios = {
             sessionID: session.id,
             text: `Run deterministic stream continuity cycle ${cycle}.`,
           });
-          await client.session.wait({ sessionID: session.id });
+          await client.experimental.session.wait({ sessionID: session.id });
           await page
             .getByText(new RegExp(`${postPrefix}-${STREAM_CONTINUITY_TEXT_MARKERS}`))
             .waitFor();
@@ -782,7 +818,7 @@ export const scenarios = {
         sessionID: session.id,
         text: "Inspect the status fixture, then return the deterministic final response.",
       });
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       await page.getByText(/STATUS-FINAL-12/).waitFor();
       await writeFile(
         join(runRoot, "status-continuity.json"),
@@ -812,7 +848,7 @@ export const scenarios = {
       llm.text("Palot E2E usage complete");
     },
     async assert(page, { client, runRoot, session }) {
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       await page.getByText("Palot E2E usage complete", { exact: true }).waitFor();
 
       await page.getByRole("button", { name: "Open Palot menu" }).click();
@@ -921,7 +957,7 @@ export const scenarios = {
         sessionID: session.id,
         text: "Return the scripted reload recovery response.",
       });
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       await page.getByText("Palot E2E reload recovery complete", { exact: true }).waitFor();
       await page.addInitScript(() => {
         const browser = globalThis as unknown as {
@@ -1006,7 +1042,7 @@ export const scenarios = {
         sessionID: session.id,
         text: "Return the scripted fork lifecycle response.",
       });
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       await page.getByText("Palot E2E fork lifecycle complete", { exact: true }).waitFor();
     },
     async assert(page, { client, session }) {
@@ -1400,7 +1436,7 @@ export const scenarios = {
         sessionID: session.id,
         text: "Reference the workbench fixture.",
       });
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       await page.getByRole("button", { name: "Show changes" }).click();
     },
     async assert(page, { client, session, projectDirectory, runRoot }) {
@@ -1552,7 +1588,7 @@ export const scenarios = {
     async run(page, { client, session, projectDirectory }) {
       for (let turn = 0; turn < 12; turn += 1) {
         await client.session.prompt({ sessionID: session.id, text: `Populate alpha ${turn}.` });
-        await client.session.wait({ sessionID: session.id });
+        await client.experimental.session.wait({ sessionID: session.id });
       }
       const secondSession = await client.session.create({
         location: { directory: projectDirectory },
@@ -1566,7 +1602,7 @@ export const scenarios = {
           sessionID: secondSession.id,
           text: `Populate beta ${turn}.`,
         });
-        await client.session.wait({ sessionID: secondSession.id });
+        await client.experimental.session.wait({ sessionID: secondSession.id });
       }
 
       await page.evaluate((sessionID) => {
@@ -1866,7 +1902,7 @@ export const scenarios = {
           sessionID: session.id,
           text: `Populate prepend history ${turn}.`,
         });
-        await client.session.wait({ sessionID: session.id });
+        await client.experimental.session.wait({ sessionID: session.id });
       }
       await writeFile(join(runRoot, "prepend-session-id.txt"), session.id, { mode: 0o600 });
     },
@@ -1951,7 +1987,7 @@ export const scenarios = {
     async run(page, { client, session }) {
       for (let turn = 0; turn < 8; turn += 1) {
         await client.session.prompt({ sessionID: session.id, text: `Populate history ${turn}.` });
-        await client.session.wait({ sessionID: session.id });
+        await client.experimental.session.wait({ sessionID: session.id });
       }
 
       await page.getByText("HISTORY turn 7 complete", { exact: true }).waitFor();
@@ -2150,7 +2186,7 @@ export const scenarios = {
       await resetReactScanPhase(page, "switch-to-beta-mid-subagent");
       await switchRenderSession(page, betaTitle, null, "ALPHA SUBAGENT COMPLETE");
       await betaSubagent;
-      await client.session.wait({ sessionID: beta.id });
+      await client.experimental.session.wait({ sessionID: beta.id });
       await page.getByText("BETA SUBAGENT COMPLETE", { exact: true }).waitFor();
       await finishReactScanPhase(page, "switch-to-beta-mid-subagent", {
         visibleSession: "beta",
@@ -2172,7 +2208,7 @@ export const scenarios = {
       await resetReactScanPhase(page, "alpha-manual-compaction");
       const callsBeforeCompaction = llm.scriptedCalls();
       const compact = await client.session.compact({ sessionID: session.id });
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       // Check the protocol result before waiting on presentation: a rejected summary
       // can consume the continuation fixture on retry and leave a failed boundary.
       const compactionMessages = await client.message.list({
@@ -2198,7 +2234,7 @@ export const scenarios = {
         sessionID: session.id,
         text: "Continue after compaction and verify the render workload remains healthy.",
       });
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       await page.getByText("ALPHA POST COMPACTION COMPLETE", { exact: true }).waitFor();
       await finishReactScanPhase(page, "alpha-post-compaction", {
         visibleSession: "alpha",
@@ -2342,6 +2378,7 @@ export const scenarios = {
       }
     },
   },
+  "event-automations": eventAutomationsScenario,
   "scheduled-run": {
     description: "create a local schedule and dispatch it through OpenCode",
     prompt: "Return the scripted setup response.",
@@ -2407,8 +2444,9 @@ export const scenarios = {
     },
     async assert(page) {
       await page.getByText("Scheduled continuation setup ready", { exact: true }).waitFor();
+      // The Inbox row's own button covers its text; right-click the row, as a person would.
       await page
-        .getByText("Palot E2E: scheduled-continuation", { exact: true })
+        .getByRole("button", { name: /^Open Palot E2E: scheduled-continuation,/ })
         .first()
         .click({ button: "right" });
       await page.getByRole("menuitem", { name: "Schedule follow-up" }).click();
@@ -2697,6 +2735,7 @@ export const scenarios = {
       }
     },
   },
+  "transcript-features": transcriptFeaturesScenario,
 } satisfies Record<string, Scenario>;
 
 async function tabTo(page: Page, target: Locator, attempts = 30): Promise<void> {
@@ -2921,7 +2960,7 @@ function parallelSessionPerformanceScenario(
                     sessionID: id,
                     text: `${parallelPerformanceMarker(label)} Run deterministic concurrent workload ${run + 1} for ${label}.`,
                   });
-                  await client.session.wait({ sessionID: id });
+                  await client.experimental.session.wait({ sessionID: id });
                 }),
               );
             };
@@ -3723,7 +3762,7 @@ async function populateRenderHistory(
 ): Promise<void> {
   for (let turn = 0; turn < RENDER_HISTORY_TURNS; turn += 1) {
     await client.session.prompt({ sessionID, text: `Populate ${label} history turn ${turn}.` });
-    await client.session.wait({ sessionID });
+    await client.experimental.session.wait({ sessionID });
   }
 }
 
@@ -3746,7 +3785,7 @@ async function runRenderProjectionFlow(
   await choice.check({ force: true });
   await page.getByRole("button", { name: "Send", exact: true }).click({ force: true });
   await prompt;
-  await client.session.wait({ sessionID });
+  await client.experimental.session.wait({ sessionID });
   await page.getByText(`${label} TOOL PROJECTIONS COMPLETE`, { exact: true }).waitFor();
 }
 
@@ -3759,7 +3798,7 @@ async function runRenderSubagentFlow(
     sessionID,
     text: `Run the deterministic subagent workload for ${label}.`,
   });
-  await client.session.wait({ sessionID });
+  await client.experimental.session.wait({ sessionID });
 }
 
 async function switchRenderSession(

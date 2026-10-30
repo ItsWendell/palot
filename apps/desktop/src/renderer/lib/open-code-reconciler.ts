@@ -185,6 +185,7 @@ export function sessionInfoFromPalot(
       ...previous?.time,
       created: session.createdAt,
       updated: session.updatedAt,
+      ...(session.busyAt === undefined ? {} : { busy: session.busyAt }),
       ...(session.idleAt === undefined ? {} : { idle: session.idleAt }),
       ...(session.viewedAt === undefined ? {} : { viewed: session.viewedAt }),
       ...(session.archivedAt === null ? { archived: undefined } : { archived: session.archivedAt }),

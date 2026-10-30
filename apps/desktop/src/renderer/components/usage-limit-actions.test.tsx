@@ -6,7 +6,8 @@ import type { PalotMessage } from "../../shared";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { projectTranscriptTurns } from "../lib/turn-projection";
 import { palot } from "../services/palot";
-import { renderWithRouter } from "../test-utils/render-with-router";
+import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router";
+import { createRendererQueryClient } from "../lib/query-client";
 import { TimelineBoundary } from "./thread";
 import { UsageLimitActions } from "./usage-limit-actions";
 import { toast } from "./ui/toast";
@@ -60,6 +61,61 @@ afterEach(() => {
 });
 
 describe("UsageLimitActions", () => {
+  it("snoozes through the reset watermark after saving one continuation, and retries snoozing without scheduling twice", async () => {
+    const source = message();
+    const queryClient = createRendererQueryClient();
+    seedCatalog(
+      queryClient,
+      {
+        sessions: [
+          {
+            id: "task-one",
+            parentID: null,
+            projectID: "project",
+            title: "Quota task",
+            agent: null,
+            model: null,
+            location: { directory: "/repo" },
+            createdAt: 1,
+            updatedAt: 10,
+            idleAt: 10,
+            archivedAt: null,
+            cost: null,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          },
+        ],
+      },
+      "one",
+    );
+    const schedule = vi
+      .spyOn(palot, "dispatchAutomation")
+      .mockResolvedValue({ profileID: "profile-one", automations: [], runs: [] });
+    const triage = vi
+      .spyOn(palot, "dispatchSessionTriage")
+      .mockRejectedValueOnce(new Error("Offline"))
+      .mockResolvedValue({ profileID: "profile-one", bootstrapThrough: null, sessions: [] });
+    const notify = vi.spyOn(toast, "add");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    renderWithRouter(<UsageLimitActions message={source} />, store(), "/new", queryClient);
+    await userEvent.click(screen.getByRole("button", { name: "Snooze until reset" }));
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Continuation scheduled, but could not snooze task" }),
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Snooze until reset" }));
+    await waitFor(() => expect(triage).toHaveBeenCalledTimes(2));
+    expect(schedule).toHaveBeenCalledTimes(1);
+    expect(triage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: "snooze",
+        profileID: "profile-one",
+        sessionID: "task-one",
+        until: source.completedAt! + 3_600_000,
+        through: { sessionID: "task-one", updatedAt: 10 },
+      }),
+    );
+  });
   it("schedules the failed task once, a minute after reset, through the existing dispatch", async () => {
     const source = message();
     const group = projectTranscriptTurns([source])[0]!.activity.find(

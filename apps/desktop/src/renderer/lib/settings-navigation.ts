@@ -17,6 +17,7 @@ import {
 import type { ComponentType } from "react";
 
 export type SettingsCategory =
+  | "source-control"
   | "project"
   | "general"
   | "browser"
@@ -44,6 +45,15 @@ export interface SettingsNavItem {
 }
 
 export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
+  {
+    id: "source-control",
+    label: "Source control",
+    description: "Code hosts and encrypted access tokens",
+    icon: Cable,
+    keywords:
+      "git github gitlab forgejo gitea bitbucket token credential merge pull request remote ssh",
+    group: "Palot",
+  },
   {
     id: "project",
     label: "Project",
@@ -181,6 +191,7 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
 
 /** Settings pages the settings route renders; every navigation entry needs one. */
 export const SETTINGS_CATEGORIES = [
+  "source-control",
   "project",
   "general",
   "browser",

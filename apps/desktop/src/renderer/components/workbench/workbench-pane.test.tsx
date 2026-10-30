@@ -13,9 +13,12 @@ import { showErrorToast } from "../../lib/toast-error";
 import { palot } from "../../services/palot";
 import { WorkbenchPane } from "./workbench-pane";
 
+const permissions = vi.hoisted(() => ({ requests: [] as { tabID: string }[], grants: [] }));
+
 vi.mock("../../atoms/workspace", async () => ({ runtimeAtom: (await import("jotai")).atom(null) }));
 vi.mock("../../hooks/use-browser-session", () => ({
   useBrowserSession: () => ({
+    permissions,
     bindingID: "binding",
     state: {
       focusedTabID: "page-1",
@@ -71,9 +74,24 @@ const pages: WorkbenchTab[] = [
 ];
 
 afterEach(() => {
+  permissions.requests = [];
   cleanup();
   vi.clearAllMocks();
   delete document.documentElement.dataset.platform;
+});
+
+it("flags a hidden page's permission request, then clears the flag when that page is visible", async () => {
+  permissions.requests = [{ tabID: "page-2" }];
+  vi.mocked(palot.browserCommand).mockResolvedValue(undefined);
+  mount();
+  const hidden = screen.getByRole("tab", {
+    name: "https://other.example, microphone or camera permission needed",
+  });
+  fireEvent.click(hidden);
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "https://other.example" })).toBeTruthy(),
+  );
+  expect(screen.queryByRole("tab", { name: /permission needed/ })).toBeNull();
 });
 
 function ScopePane() {

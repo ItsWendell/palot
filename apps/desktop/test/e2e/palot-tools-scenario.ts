@@ -30,7 +30,7 @@ export const palotToolsScenario: Scenario = {
     }, session.id);
     await page.getByLabel("Current task").waitFor();
     await client.session.prompt({ sessionID: session.id, text: "Inspect the available tools." });
-    await client.session.wait({ sessionID: session.id });
+    await client.experimental.session.wait({ sessionID: session.id });
     await expect(page.getByText(READY, { exact: true })).toBeVisible();
     // The API-created fixture has no preset rules. Change presets through the UI:
     // reselecting the already-selected Defaults option would be a no-op.
@@ -106,7 +106,7 @@ export const palotToolsScenario: Scenario = {
 
     // No further replies: if the read tool asks for approval, continuation never reaches FINAL.
     await expect(page.getByText(FINAL, { exact: true })).toBeVisible({ timeout: 30_000 });
-    await client.session.wait({ sessionID: session.id });
+    await client.experimental.session.wait({ sessionID: session.id });
     expect(await client.permission.list({ sessionID: session.id })).toHaveLength(0);
     await expect(page.locator('[data-palot-request-type="permission"]')).toHaveCount(0);
     const calls = llm.requests.filter((request) => !isTitleRequest(request.body));
@@ -146,7 +146,7 @@ export const palotToolsScenario: Scenario = {
     llm.text(SETTLED);
     await client.session.prompt({ sessionID: session.id, text: "That's all, settle this task." });
     await expect(page.getByText(SETTLED, { exact: true })).toBeVisible({ timeout: 30_000 });
-    await client.session.wait({ sessionID: session.id });
+    await client.experimental.session.wait({ sessionID: session.id });
     const settleResult = llm.requests.filter((request) => !isTitleRequest(request.body)).at(-1)!
       .body.messages as Array<{ role: string; content: unknown }>;
     expect(

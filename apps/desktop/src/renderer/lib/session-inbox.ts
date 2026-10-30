@@ -173,6 +173,12 @@ function catalogViewIsUnread(item: InboxSessionView): boolean {
   );
 }
 
+/** OpenCode's start of the current run: `time.busy`, while it is newer than the last idle. */
+export function serverRunStart(session: Pick<PalotSession, "busyAt" | "idleAt">): number | null {
+  const { busyAt, idleAt } = session;
+  return busyAt !== undefined && (idleAt === undefined || busyAt > idleAt) ? busyAt : null;
+}
+
 export function projectSessionInbox(input: {
   sessions: PalotSession[];
   projects: PalotProject[];
@@ -215,7 +221,9 @@ export function projectSessionInbox(input: {
     const runningSessions = family.filter((candidate) => input.activeIDs.has(candidate.id));
     const running = runningSessions.length > 0;
     const runningSince = runningSessions.reduce<number | null>((earliest, candidate) => {
-      const startedAt = input.runningSinceBySession.get(candidate.id);
+      // The server's run start survives reloads and needs no transcript; Palot's own estimate
+      // (an observed start event, or the transcript) is the fallback for older servers.
+      const startedAt = serverRunStart(candidate) ?? input.runningSinceBySession.get(candidate.id);
       return startedAt === null || startedAt === undefined
         ? earliest
         : earliest === null

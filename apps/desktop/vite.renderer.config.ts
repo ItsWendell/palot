@@ -58,6 +58,7 @@ export default defineConfig({
     tailwindcss(),
   ),
   define: {
+    __PALOT_E2E__: JSON.stringify(process.env.PALOT_E2E_SCENARIO === "inbox-polish"),
     __PALOT_BUILD_CHANNEL__: JSON.stringify(process.env.PALOT_BUILD_CHANNEL ?? "stable"),
     __PALOT_RELEASE_BUILD_INFO__: buildInfoDefine(),
     __PALOT_REACT_PROFILING__: JSON.stringify(useReactProfilingBuild),

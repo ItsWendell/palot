@@ -3,6 +3,7 @@
 import type { PalotApi } from "../shared";
 
 declare global {
+  const __PALOT_E2E__: boolean;
   const __PALOT_BUILD_CHANNEL__: string;
   const __PALOT_RELEASE_BUILD_INFO__: import("../shared/release-build-info").PalotReleaseBuildInfo;
   const __PALOT_REACT_PROFILING__: boolean;

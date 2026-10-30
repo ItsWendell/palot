@@ -3,9 +3,11 @@ import { access, constants, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type {
   GitBranchStatus,
+  GitBranchInput,
   GitCommitResult,
   GitFileStatus,
   GitPushResult,
+  GitPullStrategy,
   GitStatusCode,
   GitWorkingTreeStatus,
   SourceControlErrorCode,
@@ -41,6 +43,11 @@ export type GitExec = (
   args: string[],
   options: { cwd: string; timeout: number; input?: string },
 ) => Promise<RunResult>;
+interface GitFilesystem {
+  directory(directory: string): Promise<string>;
+  realpath(directory: string): Promise<string>;
+  executable(candidate: string): Promise<boolean>;
+}
 
 /** Runs git without a shell, prompts, pager, or locale-dependent messages. */
 export const execGit: GitExec = (args, options) =>
@@ -94,21 +101,40 @@ export const execGit: GitExec = (args, options) =>
   });
 
 /**
- * Local Git writes for a task directory. Every command runs at the repository root with
+ * Git writes for a task directory. Every command runs at the repository root with
  * explicit arguments, literal pathspecs and a timeout; paths from the renderer must stay inside
  * the repository and outside `.git`.
  */
 export class GitRunner {
-  constructor(private readonly exec: GitExec = execGit) {}
+  constructor(
+    private readonly exec: GitExec = execGit,
+    private readonly filesystem: GitFilesystem = {
+      directory: async (directory: string) => {
+        const resolved = await realpath(directory);
+        if (!(await stat(resolved)).isDirectory()) throw new Error("not a directory");
+        return resolved;
+      },
+      realpath,
+      executable: async (candidate: string) => {
+        try {
+          await access(candidate, constants.X_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    },
+    private readonly paths: typeof path = path,
+  ) {}
 
   async root(directory: string): Promise<string> {
-    if (!path.isAbsolute(directory))
+    if (!this.paths.isAbsolute(directory))
       throw new GitCommandError("invalid-input", "The directory must be an absolute path.");
     let resolved: string;
     try {
-      resolved = await realpath(directory);
-      if (!(await stat(resolved)).isDirectory()) throw new Error("not a directory");
-    } catch {
+      resolved = await this.filesystem.directory(directory);
+    } catch (error) {
+      if (error instanceof GitCommandError) throw error;
       throw new GitCommandError("not-a-repository", "The task directory does not exist.");
     }
     const result = await this.exec(["rev-parse", "--show-toplevel"], {
@@ -122,7 +148,7 @@ export class GitRunner {
         "The task directory is not inside a Git repository.",
         trimDetail(result.stderr),
       );
-    return realpath(top);
+    return this.filesystem.realpath(top);
   }
 
   async status(directory: string): Promise<GitWorkingTreeStatus> {
@@ -146,15 +172,91 @@ export class GitRunner {
 
   async stage(directory: string, paths: string[]): Promise<GitWorkingTreeStatus> {
     const root = await this.root(directory);
-    const safe = validatePaths(root, paths);
+    const safe = validatePaths(root, paths, this.paths);
     // `--all` stages deletions of the named paths too.
     await this.git(root, ["--literal-pathspecs", "add", "--all", "--", ...safe], WRITE_TIMEOUT_MS);
     return this.statusAt(root);
   }
 
+  async changeBranch(
+    input: Pick<GitBranchInput, "directory" | "action" | "name" | "base">,
+  ): Promise<GitWorkingTreeStatus> {
+    const root = await this.root(input.directory);
+    const validate = async (name: string) => {
+      const checked = await this.exec(["check-ref-format", "--branch", name], {
+        cwd: root,
+        timeout: READ_TIMEOUT_MS,
+      });
+      // Reject checkout shorthand such as @{-1}, even though Git resolves it to a valid name.
+      if (checked.exitCode !== 0 || checked.stdout.trim() !== name || name.startsWith("-"))
+        throw new GitCommandError("invalid-input", "Choose a valid branch name.");
+    };
+    await validate(input.name);
+    if (input.base) await validate(input.base);
+    const status = await this.statusAt(root);
+    if (status.files.length || status.truncated)
+      throw new GitCommandError(
+        "dirty-worktree",
+        "Commit or move your uncommitted changes before changing branches. Palot never discards or stashes them.",
+      );
+    if (input.action === "rename") {
+      if (!status.branch.name)
+        throw new GitCommandError("detached-head", "Create a branch before renaming it.");
+      await this.git(root, ["branch", "-m", "--", input.name], WRITE_TIMEOUT_MS);
+    } else if (input.action === "create") {
+      let base = "HEAD";
+      if (input.base) base = await this.branchRef(root, input.base);
+      await this.git(
+        root,
+        ["switch", "--no-overwrite-ignore", "-c", input.name, base],
+        WRITE_TIMEOUT_MS,
+      );
+    } else {
+      const ref = await this.branchRef(root, input.name);
+      if (ref.startsWith("refs/heads/"))
+        await this.git(
+          root,
+          ["switch", "--no-overwrite-ignore", "--", input.name],
+          WRITE_TIMEOUT_MS,
+        );
+      else {
+        // Resolve the actual remote name (which may contain slashes) rather than guessing it.
+        const remotes = (await this.git(root, ["remote"])).stdout
+          .trim()
+          .split("\n")
+          .sort((a, b) => b.length - a.length);
+        const remote = remotes.find((value) => input.name.startsWith(`${value}/`));
+        if (!remote)
+          throw new GitCommandError("invalid-input", "Choose an existing remote branch.");
+        const local = input.name.slice(remote.length + 1);
+        await validate(local);
+        await this.git(
+          root,
+          ["switch", "--no-overwrite-ignore", "--track", "-c", local, ref],
+          WRITE_TIMEOUT_MS,
+        );
+      }
+    }
+    return this.statusAt(root);
+  }
+
+  private async branchRef(root: string, name: string): Promise<string> {
+    for (const ref of [`refs/heads/${name}`, `refs/remotes/${name}`]) {
+      const result = await this.exec(["show-ref", "--verify", "--quiet", ref], {
+        cwd: root,
+        timeout: READ_TIMEOUT_MS,
+      });
+      if (result.exitCode === 0) return ref;
+    }
+    throw new GitCommandError(
+      "invalid-input",
+      "That branch no longer exists. Refresh the branch list.",
+    );
+  }
+
   async unstage(directory: string, paths: string[]): Promise<GitWorkingTreeStatus> {
     const root = await this.root(directory);
-    const safe = validatePaths(root, paths);
+    const safe = validatePaths(root, paths, this.paths);
     if (await this.hasHead(root))
       await this.git(
         root,
@@ -200,7 +302,7 @@ export class GitRunner {
     return { oid, summary, branch: (await this.statusAt(root)).branch };
   }
 
-  async push(directory: string): Promise<GitPushResult> {
+  async push(directory: string, confirmDefaultBranch = false): Promise<GitPushResult> {
     const root = await this.root(directory);
     const branch = (await this.statusAt(root)).branch;
     if (!branch.name)
@@ -211,10 +313,23 @@ export class GitRunner {
     let args: string[];
     if (branch.upstream) {
       remote =
-        (await this.config(root, `branch.${branch.name}.remote`)) ?? branch.upstream.split("/")[0]!;
+        (await this.config(root, `branch.${branch.name}.pushRemote`)) ??
+        (await this.config(root, "remote.pushDefault")) ??
+        (await this.config(root, `branch.${branch.name}.remote`)) ??
+        branch.upstream.split("/")[0]!;
+      const destination =
+        (await this.config(root, `branch.${branch.name}.merge`)) ?? `refs/heads/${branch.name}`;
+      await this.confirmPush(
+        root,
+        remote,
+        [branch.name, destination.replace(/^refs\/heads\//, "")],
+        confirmDefaultBranch,
+      );
+      // Preserve Git's pushRemote, push.default and configured refspec semantics.
       args = ["push", "--porcelain"];
     } else {
       remote = await this.defaultRemote(root, branch.name);
+      await this.confirmPush(root, remote, [branch.name], confirmDefaultBranch);
       setUpstream = true;
       args = ["push", "--porcelain", "--set-upstream", remote, `HEAD:refs/heads/${branch.name}`];
     }
@@ -225,6 +340,146 @@ export class GitRunner {
       branch: branch.name,
       setUpstream,
       branchStatus: (await this.statusAt(root)).branch,
+    };
+  }
+
+  private async confirmPush(root: string, remote: string, branches: string[], confirmed: boolean) {
+    if (confirmed) return;
+    const defaultBranch = await this.defaultBranch(root, remote);
+    const broadPush =
+      Boolean(await this.config(root, `remote.${remote}.push`)) ||
+      (await this.config(root, "push.default")) === "matching" ||
+      (await this.config(root, `remote.${remote}.mirror`)) === "true";
+    if (!defaultBranch || branches.includes(defaultBranch) || broadPush)
+      throw new GitCommandError(
+        "default-branch-confirmation",
+        defaultBranch
+          ? `This push may update default branch ${defaultBranch}. Confirm before publishing changes to it.`
+          : "The remote's default branch is unknown. Confirm before pushing.",
+      );
+  }
+
+  private async defaultBranch(root: string, remote: string): Promise<string | null> {
+    // Inspect the actual push destination. Cached origin/HEAD can be stale, and
+    // the push URL can name a different repository from the fetch URL.
+    const destination = await this.git(root, ["remote", "get-url", "--push", remote]);
+    const head = await this.exec(
+      ["ls-remote", "--symref", "--", destination.stdout.trim(), "HEAD"],
+      {
+        cwd: root,
+        timeout: HOOK_TIMEOUT_MS,
+      },
+    );
+    return /^ref: refs\/heads\/(.+)\tHEAD$/m.exec(head.stdout)?.[1] ?? null;
+  }
+
+  async fetch(directory: string): Promise<GitWorkingTreeStatus> {
+    const root = await this.root(directory);
+    const branch = (await this.statusAt(root)).branch;
+    const remote = branch.name
+      ? ((await this.config(root, `branch.${branch.name}.remote`)) ??
+        (await this.defaultRemote(root, branch.name)))
+      : await this.defaultRemote(root, "");
+    await this.git(root, ["fetch", remote], HOOK_TIMEOUT_MS);
+    return this.statusAt(root);
+  }
+
+  async pull(
+    directory: string,
+    strategy: GitPullStrategy = "ff-only",
+  ): Promise<GitWorkingTreeStatus> {
+    const root = await this.root(directory);
+    const branch = (await this.statusAt(root)).branch;
+    if (!branch.name)
+      throw new GitCommandError("detached-head", "Check out a branch before pulling.");
+    if (!branch.upstream)
+      throw new GitCommandError(
+        "no-upstream",
+        "Publish this branch or configure its upstream before pulling.",
+      );
+    // Explicit flags override pull.rebase and pull.ff in the user's Git config.
+    const args =
+      strategy === "ff-only"
+        ? ["--ff-only", "--no-rebase"]
+        : strategy === "rebase"
+          ? ["--rebase", "--ff"]
+          : ["--no-rebase", "--ff"];
+    const result = await this.exec(["pull", ...args], { cwd: root, timeout: HOOK_TIMEOUT_MS });
+    if (result.exitCode !== 0) {
+      const detail = trimDetail(`${result.stdout}\n${result.stderr}`);
+      if (
+        strategy === "ff-only" &&
+        /Not possible to fast-forward|Diverging branches|divergent branches/i.test(detail ?? "")
+      )
+        throw new GitCommandError(
+          "branch-diverged",
+          "The branches have diverged. Choose Rebase or Merge explicitly to pull; conflicts may need resolving in the terminal.",
+          detail,
+        );
+      throw new GitCommandError(
+        "git-failed",
+        "Git could not pull. If a rebase or merge stopped on conflicts, resolve or abort it in the terminal before retrying.",
+        detail,
+      );
+    }
+    return this.statusAt(root);
+  }
+
+  /** Context for a PR draft, resolved against local refs without fetching or publishing. */
+  async pullRequestContext(directory: string, requestedBase: string) {
+    const root = await this.root(directory);
+    const branch = (await this.statusAt(root)).branch;
+    if (!branch.name || !branch.oid)
+      throw new GitCommandError(
+        "detached-head",
+        "Commit on a branch before creating a pull request.",
+      );
+    const remote =
+      (await this.config(root, `branch.${branch.name}.remote`)) ??
+      (await this.defaultRemote(root, branch.name));
+    const checked = await this.exec(["check-ref-format", "--branch", requestedBase], {
+      cwd: root,
+      timeout: READ_TIMEOUT_MS,
+    });
+    if (checked.exitCode !== 0 || requestedBase.startsWith("-"))
+      throw new GitCommandError("invalid-input", "Choose a valid base branch.");
+    const refs = (
+      await this.git(root, [
+        "for-each-ref",
+        "--format=%(refname:strip=3)",
+        `refs/remotes/${remote}/`,
+      ])
+    ).stdout
+      .trim()
+      .split("\n")
+      .filter((name) => name && name !== "HEAD");
+    const remoteBase = `refs/remotes/${remote}/${requestedBase}`;
+    const hasRemoteBase = await this.exec(["rev-parse", "--verify", "--quiet", remoteBase], {
+      cwd: root,
+      timeout: READ_TIMEOUT_MS,
+    });
+    const base = hasRemoteBase.exitCode === 0 ? remoteBase : `refs/heads/${requestedBase}`;
+    const range = `${base}...HEAD`;
+    const diff = await this.git(root, [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      range,
+      "--",
+    ]);
+    const commits = await this.git(root, ["log", "--format=%s", `${base}..HEAD`, "--"]);
+    const published = await this.exec(
+      ["rev-parse", "--verify", "--quiet", `refs/remotes/${remote}/${branch.name}`],
+      { cwd: root, timeout: READ_TIMEOUT_MS },
+    );
+    return {
+      branch: branch.name,
+      base: requestedBase,
+      branches: [...new Set([requestedBase, ...refs])],
+      diff: diff.stdout.slice(0, 80_000),
+      commits: commits.stdout.slice(0, 12_000),
+      pushed: published.exitCode === 0 && published.stdout.trim() === branch.oid,
     };
   }
 
@@ -327,14 +582,9 @@ export class GitRunner {
             timeout: READ_TIMEOUT_MS,
           });
       const candidate = hooksPath
-        ? path.resolve(root, hooksPath, hook)
-        : path.resolve(root, result!.stdout.trim());
-      try {
-        await access(candidate, constants.X_OK);
-        return true;
-      } catch {
-        // Not present or not executable.
-      }
+        ? this.paths.resolve(root, hooksPath, hook)
+        : this.paths.resolve(root, result!.stdout.trim());
+      if (await this.filesystem.executable(candidate)) return true;
     }
     return false;
   }
@@ -384,22 +634,26 @@ function pushError(result: RunResult): GitCommandError {
 }
 
 /** Keeps paths relative, inside the repository, and outside `.git`. */
-export function validatePaths(root: string, paths: string[]): string[] {
+export function validatePaths(
+  root: string,
+  paths: string[],
+  pathApi: typeof path = path,
+): string[] {
   if (!Array.isArray(paths) || paths.length === 0)
     throw new GitCommandError("invalid-input", "Choose at least one file.");
   if (paths.length > MAX_PATHS)
     throw new GitCommandError("invalid-input", `Choose at most ${MAX_PATHS} files at once.`);
   return paths.map((value) => {
-    if (typeof value !== "string" || !value || value.includes("\0") || path.isAbsolute(value))
+    if (typeof value !== "string" || !value || value.includes("\0") || pathApi.isAbsolute(value))
       throw new GitCommandError("path-outside-repository", "A file path is invalid.");
-    const resolved = path.resolve(root, value);
-    const relative = path.relative(root, resolved);
-    if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
+    const resolved = pathApi.resolve(root, value);
+    const relative = pathApi.relative(root, resolved);
+    if (!relative || relative.startsWith("..") || pathApi.isAbsolute(relative))
       throw new GitCommandError("path-outside-repository", `${value} is outside the repository.`);
-    const first = relative.split(path.sep)[0]!;
+    const first = relative.split(pathApi.sep)[0]!;
     if (first.toLowerCase() === ".git")
       throw new GitCommandError("path-outside-repository", "Paths inside .git are not allowed.");
-    return relative.split(path.sep).join("/");
+    return relative.split(pathApi.sep).join("/");
   });
 }
 

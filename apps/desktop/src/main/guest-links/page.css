@@ -1,0 +1,85 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  background: light-dark(#fafafa, #151515);
+  color: light-dark(#202020, #e8e8e8);
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 48rem;
+  margin: auto;
+  padding: 2rem 1rem;
+}
+header {
+  border-bottom: 1px solid light-dark(#ddd, #383838);
+}
+header > span,
+#status,
+.notice,
+.role {
+  color: light-dark(#595959, #aaa);
+  font-size: 0.875rem;
+}
+h1 {
+  font-size: 1.4rem;
+  overflow-wrap: anywhere;
+}
+.notice {
+  line-height: 1.5;
+}
+article {
+  margin-block: 1.5rem;
+}
+.role {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  margin-top: 0.4rem;
+}
+article.tool {
+  border-left: 2px solid light-dark(#ddd, #444);
+  padding-left: 0.75rem;
+  font-size: 0.875rem;
+}
+form {
+  border-top: 1px solid light-dark(#ddd, #383838);
+  padding-top: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+label {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+}
+input,
+textarea,
+button {
+  font: inherit;
+  padding: 0.7rem;
+  border: 1px solid light-dark(#bbb, #555);
+  border-radius: 0.4rem;
+  background: light-dark(white, #242424);
+  color: inherit;
+}
+textarea {
+  resize: vertical;
+}
+button {
+  cursor: pointer;
+  justify-self: start;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+:focus-visible {
+  outline: 2px solid light-dark(#2459bd, #8bb5ff);
+  outline-offset: 3px;
+}

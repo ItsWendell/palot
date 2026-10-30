@@ -55,6 +55,7 @@ import {
   effectiveAppearanceTreatment,
   appearanceTheme,
   effectiveNativeGlass,
+  actionableErrorMessage,
 } from "../../shared";
 import type {
   AppearanceMode,
@@ -82,6 +83,7 @@ import {
   compactBeforeSendSuggestionAtom,
   contextMeterVisibleAtom,
   defaultDeliveryAtom,
+  richComposerAtom,
   remoteMarkdownFaviconsAtom,
   showTimelineCacheBustsAtom,
   defaultSidebarModeAtom,
@@ -101,6 +103,7 @@ import {
   resolvedAppearanceAtom,
 } from "../atoms/appearance";
 import { MarkdownCodeBlock } from "./markdown-code-block";
+import { GuestLinksSettings } from "./guest-links";
 import { runtimeAtom } from "../atoms/workspace";
 import { desktopNotificationSettingsAtom } from "../atoms/notification-sounds";
 import { cn } from "../lib/cn";
@@ -158,16 +161,23 @@ import { sidebarItemVariants, sidebarSectionLabelVariants } from "./ui/sidebar-s
 import { Switch } from "./ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
+import { ThemeEditor } from "./theme-editor";
 import { toast } from "./ui/toast";
 import { NavigationRail } from "./navigation-rail";
 import { SettingsEmpty, SettingsGroup, SettingsRow, SettingsSection } from "./settings-layout";
+import { SpellcheckSettings } from "./spellcheck-settings";
 import { ModelSettings } from "./settings/models-settings";
 import { ProviderSettings } from "./settings/providers-settings";
 import { KeyboardShortcutsSettings } from "./keyboard-shortcuts-settings";
 import { NotificationSoundSettings } from "./notification-sound-settings";
 import { DefaultShellSetting } from "./default-shell-setting";
+import { SourceControlSettings } from "./settings/source-control-settings";
 
 const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: string }> = {
+  "source-control": {
+    title: "Source control",
+    description: "Connect code hosts on this device. Git runs where the task lives.",
+  },
   general: {
     title: "General",
     description: "Choose how new tasks start and how much activity Palot shows.",
@@ -237,6 +247,7 @@ const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: stri
 };
 
 const SETTINGS_APP_ICONS: Record<SettingsCategory, AppIconName> = {
+  "source-control": "servers",
   project: "config",
   general: "settings",
   browser: "browser",
@@ -713,6 +724,7 @@ function SettingsContent({
 }) {
   if (loading && !snapshot && category !== "tools") return <SettingsSkeleton />;
   if (category === "general") return <GeneralSettings />;
+  if (category === "source-control") return <SourceControlSettings />;
   if (category === "browser") return <BrowserSettings />;
   if (category === "appearance") return <AppearanceSettings />;
   if (category === "notifications") return <NotificationSettings />;
@@ -1030,6 +1042,7 @@ function GeneralSettings() {
   const [projection, setProjection] = useAtom(sessionProjectionPreferenceAtom);
   const [customizeProjection, setCustomizeProjection] = useState(false);
   const [delivery, setDelivery] = useAtom(defaultDeliveryAtom);
+  const [richComposer, setRichComposer] = useAtom(richComposerAtom);
   const [autoBackgroundOnSteer, setAutoBackgroundOnSteer] = useAtom(autoBackgroundOnSteerAtom);
   const [contextMeterVisible, setContextMeterVisible] = useAtom(contextMeterVisibleAtom);
   const [compactBeforeSend, setCompactBeforeSend] = useAtom(compactBeforeSendSuggestionAtom);
@@ -1099,6 +1112,7 @@ function GeneralSettings() {
   };
   return (
     <div className="space-y-8">
+      <GuestLinksSettings />
       <SettingsSection
         title="Task defaults"
         description="Starting choices for new tasks and messages sent while work is running."
@@ -1188,6 +1202,17 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
+            title="Rich composer (beta)"
+            description="Style Markdown as you type and edit context as inline chips. Turn off to use the plain-text composer."
+            control={
+              <Switch
+                checked={richComposer}
+                aria-label="Rich composer (beta)"
+                onCheckedChange={(checked) => setRichComposer(Boolean(checked))}
+              />
+            }
+          />
+          <SettingsRow
             title="Automatically send blocking work to background"
             description="If a steer stays blocked for five seconds, let supported foreground work continue in the background."
             control={
@@ -1223,6 +1248,7 @@ function GeneralSettings() {
           <DefaultShellSetting />
         </SettingsGroup>
       </SettingsSection>
+      <SpellcheckSettings />
       <SettingsSection
         title="Desktop behavior"
         description="Startup, local schedules, and website icons."
@@ -1997,6 +2023,9 @@ function AppearanceSettings() {
                     ]
                   : [];
               }),
+              ...preferences.customThemes
+                .filter((theme) => theme.scheme === resolved.scheme)
+                .map((theme) => ({ value: theme.id, label: theme.name })),
             ]}
             onChange={(theme) =>
               update(
@@ -2049,6 +2078,7 @@ function AppearanceSettings() {
         </SettingsGroup>
       </SettingsSection>
 
+      <ThemeEditor />
       {preferences.source === "palot" ? (
         <SettingsSection
           title="Color mode"
@@ -3658,7 +3688,7 @@ function ConfigSettings({
       await queryClient.invalidateQueries({ queryKey: openCodeKeys.all(owner.connectionID) });
       await refresh();
     } catch (cause) {
-      setReloadError(cause instanceof Error ? cause.message : "Could not reload configuration.");
+      setReloadError(actionableErrorMessage(cause, "Could not reload configuration."));
     } finally {
       setReloading(false);
     }

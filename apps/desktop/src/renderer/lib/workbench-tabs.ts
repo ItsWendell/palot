@@ -23,6 +23,10 @@ export type BtwFollowUp = { id: string; question: string; answer?: string; error
 
 export type WorkbenchTab =
   | (TabBase & {
+      kind: "html-preview";
+      resource: { profileID: string; sessionID: string; location: LocationRef; html: string };
+    })
+  | (TabBase & {
       kind: "btw";
       resource: {
         profileID: string;
@@ -131,6 +135,7 @@ export type WorkbenchTab =
     });
 
 export type OpenWorkbenchTabInput =
+  | { kind: "html-preview"; location: LocationRef; html: string }
   | { kind: "btw"; location: LocationRef; questionID: string; question: string; quote?: BtwQuote }
   | { kind: "browser"; location: LocationRef; browserTabID: string }
   | { kind: "new-tab"; location: LocationRef }
@@ -199,7 +204,7 @@ export interface OpenWorkbenchTabOptions {
 
 export type OpenWorkbenchTabResult =
   | { ok: true; tabID: string; pane: WorkbenchPaneID; created: boolean; moved: boolean }
-  | { ok: false; reason: "tab-limit" };
+  | { ok: false; reason: "tab-limit" | "cancelled" };
 
 export const MAX_WORKBENCH_SCOPES = 20;
 export const MAX_WORKBENCH_TABS = 24;
@@ -220,6 +225,8 @@ export function workbenchScopeKey(scope: WorkbenchScope): string {
 
 export function workbenchTabResourceKey(tab: WorkbenchTab): string {
   const location = `${tab.resource.profileID}\u0000${locationKey(tab.resource.location)}`;
+  if (tab.kind === "html-preview")
+    return `html-preview\u0000${tab.resource.profileID}\u0000${tab.resource.sessionID}\u0000${tab.resource.html}`;
   if (tab.kind === "btw")
     return `btw\u0000${tab.resource.profileID}\u0000${tab.resource.sessionID}\u0000${tab.resource.questionID}`;
   if (tab.kind === "context") {
@@ -240,6 +247,7 @@ export function workbenchTabResourceKey(tab: WorkbenchTab): string {
 }
 
 export function workbenchTabTitle(tab: WorkbenchTab): string {
+  if (tab.kind === "html-preview") return "HTML preview";
   if (tab.kind === "btw") return `BTW: ${tab.resource.question || "Ask about selection"}`;
   if (tab.kind === "browser") return "Browser";
   if (tab.kind === "new-tab") return "New tab";
@@ -679,6 +687,14 @@ function tabFromInput(
   input: OpenWorkbenchTabInput,
   id: string,
 ): WorkbenchTab {
+  if (input.kind === "html-preview") {
+    return {
+      id,
+      kind: input.kind,
+      pinned: false,
+      resource: { ...scope, location: input.location, html: input.html },
+    };
+  }
   if (input.kind === "btw") {
     return {
       id,

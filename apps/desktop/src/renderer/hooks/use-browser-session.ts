@@ -1,5 +1,10 @@
 import type { Browser } from "@opencode/plugin-browser/rpc";
-import type { PalotBrowserEvent, PalotBrowserHost } from "../../shared/browser-contract";
+import type {
+  PalotBrowserEvent,
+  PalotBrowserHost,
+  PalotBrowserPermissionGrant,
+  PalotBrowserPermissionRequest,
+} from "../../shared/browser-contract";
 import { atom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { createElement, useEffect, useLayoutEffect, useRef } from "react";
 import { experimentalBrowserAtom } from "../atoms/ui";
@@ -20,6 +25,11 @@ export interface BrowserSession {
   popupTabIDs: Browser.TabID[];
   /** An empty list means embedded webview hosts are pending. */
   hosts?: PalotBrowserHost[];
+  /** Sites waiting for the person to allow devices, and remembered answers. */
+  permissions?: {
+    requests: PalotBrowserPermissionRequest[];
+    grants: PalotBrowserPermissionGrant[];
+  };
 }
 
 const emptyState: Browser.State = { tabs: [], focusedTabID: null };
@@ -209,6 +219,14 @@ export function BrowserSessionAttachment({
         if (!previous) return current;
         if (event.type === "hosts")
           return { ...current, [key]: { ...previous, hosts: event.hosts } };
+        if (event.type === "permissions")
+          return {
+            ...current,
+            [key]: {
+              ...previous,
+              permissions: { requests: event.requests, grants: event.grants },
+            },
+          };
         if (event.type === "state")
           return {
             ...current,
@@ -219,6 +237,7 @@ export function BrowserSessionAttachment({
               error: event.error ?? null,
               popupTabIDs: event.state === null ? [] : (event.popupTabIDs ?? []),
               hosts: event.state === null ? undefined : previous.hosts,
+              permissions: event.state === null ? undefined : previous.permissions,
             },
           };
         if (event.type === "focus")

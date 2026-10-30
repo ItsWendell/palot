@@ -33,11 +33,27 @@ export const sourceControlSchemas = {
     ...session,
     url: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(2_048))),
   }),
+  prepare: v.strictObject({ ...session, base: v.optional(identifier) }),
+  create: v.strictObject({
+    ...session,
+    base: identifier,
+    title: v.pipe(v.string(), v.minLength(1), v.maxLength(256)),
+    body: text,
+    draft: v.optional(v.boolean()),
+  }),
   unlink: v.strictObject({ ...session, key: pullRequestKey }),
   refresh: v.strictObject({ profileID: identifier, sessionID: v.optional(identifier) }),
   watch: v.strictObject({ ...session, key: pullRequestKey, watching: v.boolean() }),
   search: v.strictObject({
-    list: v.picklist(["review-requested", "authored", "assigned", "mentioned", "recently-merged"]),
+    host: v.optional(identifier),
+    list: v.picklist([
+      "review-requested",
+      "authored",
+      "assigned",
+      "mentioned",
+      "recently-merged",
+      "others",
+    ]),
     cursor: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(1_024)))),
     limit: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50))),
     // Sanitized and capped in main; this bound only rejects absurd payloads.
@@ -89,6 +105,41 @@ export const sourceControlSchemas = {
     ),
   }),
   gitTarget: v.strictObject(gitTarget),
+  gitBranch: v.strictObject({
+    ...gitTarget,
+    action: v.picklist(["switch", "create", "rename"]),
+    name: identifier,
+    base: v.optional(identifier),
+  }),
+  edit: v.strictObject({
+    ...ref,
+    title: v.pipe(v.string(), v.minLength(1), v.maxLength(256)),
+    body: text,
+  }),
+  label: v.strictObject({
+    ...ref,
+    name: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
+    add: v.boolean(),
+  }),
+  autoMerge: v.strictObject({
+    ...ref,
+    enabled: v.boolean(),
+    method: v.picklist(["merge", "squash", "rebase"]),
+  }),
+  updateBranch: v.strictObject({
+    ...ref,
+    expectedHeadOid: v.pipe(v.string(), v.regex(/^[0-9a-f]{40}$/i)),
+  }),
+  gitPush: v.strictObject({ ...gitTarget, confirmDefaultBranch: v.optional(v.boolean()) }),
+  gitPull: v.strictObject({
+    ...gitTarget,
+    strategy: v.optional(v.picklist(["ff-only", "rebase", "merge"])),
+  }),
+  gitSync: v.strictObject({
+    ...gitTarget,
+    strategy: v.optional(v.picklist(["ff-only", "rebase", "merge"])),
+    confirmDefaultBranch: v.optional(v.boolean()),
+  }),
   gitPaths: v.strictObject({
     ...gitTarget,
     paths: v.pipe(
@@ -113,6 +164,40 @@ export function registerSourceControlIpc(
 ): void {
   const channels = SOURCE_CONTROL_IPC_CHANNELS;
   const schemas = sourceControlSchemas;
+  register(channels.codeHosts, () => service().codeHosts());
+  register(channels.saveCodeHost, (_event, input) =>
+    service().saveCodeHost(
+      v.parse(
+        v.strictObject({
+          url: v.pipe(v.string(), v.maxLength(2_048)),
+          kind: v.picklist(["gitlab", "forgejo", "bitbucket"]),
+          token: v.pipe(v.string(), v.minLength(1), v.maxLength(16_384)),
+        }),
+        input,
+      ),
+    ),
+  );
+  register(channels.removeCodeHost, (_event, input) =>
+    service().removeCodeHost(v.parse(identifier, input)),
+  );
+  register(channels.gitBranch, (_event, input) =>
+    service().gitBranch(v.parse(schemas.gitBranch, input)),
+  );
+  register(channels.pullRequestEdit, (_event, input) =>
+    service().editPullRequest(v.parse(schemas.edit, input)),
+  );
+  register(channels.pullRequestLabels, (_event, input) =>
+    service().pullRequestLabels(v.parse(schemas.pullRequest, input)),
+  );
+  register(channels.pullRequestLabel, (_event, input) =>
+    service().setPullRequestLabel(v.parse(schemas.label, input)),
+  );
+  register(channels.pullRequestAutoMerge, (_event, input) =>
+    service().setPullRequestAutoMerge(v.parse(schemas.autoMerge, input)),
+  );
+  register(channels.pullRequestUpdateBranch, (_event, input) =>
+    service().updatePullRequestBranch(v.parse(schemas.updateBranch, input)),
+  );
   register(channels.sourceControlStatus, (_event, input) =>
     service().status(v.parse(schemas.status, input)),
   );
@@ -121,6 +206,12 @@ export function registerSourceControlIpc(
   );
   register(channels.pullRequestLink, (_event, input) =>
     service().linkPullRequest(v.parse(schemas.link, input)),
+  );
+  register(channels.pullRequestPrepare, (_event, input) =>
+    service().preparePullRequest(v.parse(schemas.prepare, input)),
+  );
+  register(channels.pullRequestCreate, (_event, input) =>
+    service().createPullRequest(v.parse(schemas.create, input)),
   );
   register(channels.pullRequestUnlink, (_event, input) =>
     service().unlinkPullRequest(v.parse(schemas.unlink, input)),
@@ -182,7 +273,10 @@ export function registerSourceControlIpc(
   register(channels.gitCommit, (_event, input) =>
     service().gitCommit(v.parse(schemas.gitCommit, input)),
   );
-  register(channels.gitPush, (_event, input) =>
-    service().gitPush(v.parse(schemas.gitTarget, input)),
+  register(channels.gitPush, (_event, input) => service().gitPush(v.parse(schemas.gitPush, input)));
+  register(channels.gitFetch, (_event, input) =>
+    service().gitFetch(v.parse(schemas.gitTarget, input)),
   );
+  register(channels.gitPull, (_event, input) => service().gitPull(v.parse(schemas.gitPull, input)));
+  register(channels.gitSync, (_event, input) => service().gitSync(v.parse(schemas.gitSync, input)));
 }

@@ -31,20 +31,24 @@ describe("copy task to another server", () => {
   it("captures both owners before exporting, imports a standalone transcript, and verifies the destination", async () => {
     let resolve!: (value: unknown) => void;
     const source = {
-      session: {
-        export: vi.fn(
-          () =>
-            new Promise((done) => {
-              resolve = done;
-            }),
-        ),
-        remove: vi.fn(),
+      experimental: {
+        session: {
+          export: vi.fn(
+            () =>
+              new Promise((done) => {
+                resolve = done;
+              }),
+          ),
+          remove: vi.fn(),
+        },
       },
     };
     const destination = {
-      session: {
-        import: vi.fn().mockResolvedValue(transfer.info),
-        export: vi.fn().mockResolvedValue(transfer),
+      experimental: {
+        session: {
+          import: vi.fn().mockResolvedValue(transfer.info),
+          export: vi.fn().mockResolvedValue(transfer),
+        },
       },
     };
     mocks.client.mockImplementation((id) => (id === "source" ? source : destination));
@@ -55,43 +59,49 @@ describe("copy task to another server", () => {
     });
     resolve(transfer);
     await expect(copying).resolves.toEqual(transfer.info);
-    expect(source.session.export).toHaveBeenCalledWith(
+    expect(source.experimental.session.export).toHaveBeenCalledWith(
       { sessionID: "ses_source", sanitize: false },
       { signal: undefined },
     );
-    expect(destination.session.import).toHaveBeenCalledWith(
+    expect(destination.experimental.session.import).toHaveBeenCalledWith(
       { ...transfer, info: { ...transfer.info, parentID: undefined }, location: input.location },
       { signal: undefined },
     );
-    expect(destination.session.export).toHaveBeenCalledWith(
+    expect(destination.experimental.session.export).toHaveBeenCalledWith(
       { sessionID: "ses_source", sanitize: false },
       { signal: undefined },
     );
-    expect(source.session.remove).not.toHaveBeenCalled();
+    expect(source.experimental.session.remove).not.toHaveBeenCalled();
   });
 
   it("does not retry or overwrite when the destination rejects a collision", async () => {
     const conflict = new Error("Task already exists on destination");
     const destination = {
-      session: { import: vi.fn().mockRejectedValue(conflict), export: vi.fn() },
+      experimental: { session: { import: vi.fn().mockRejectedValue(conflict), export: vi.fn() } },
     };
     mocks.client.mockImplementation((id) =>
-      id === "source" ? { session: { export: vi.fn().mockResolvedValue(transfer) } } : destination,
+      id === "source"
+        ? { experimental: { session: { export: vi.fn().mockResolvedValue(transfer) } } }
+        : destination,
     );
     await expect(copySessionToServer(input)).rejects.toBe(conflict);
-    expect(destination.session.import).toHaveBeenCalledTimes(1);
-    expect(destination.session.export).not.toHaveBeenCalled();
+    expect(destination.experimental.session.import).toHaveBeenCalledTimes(1);
+    expect(destination.experimental.session.export).not.toHaveBeenCalled();
   });
 
   it("reports an unverifiable copy without deleting either side", async () => {
     const destination = {
-      session: {
-        import: vi.fn().mockResolvedValue(transfer.info),
-        export: vi.fn().mockResolvedValue({ ...transfer, messages: [] }),
+      experimental: {
+        session: {
+          import: vi.fn().mockResolvedValue(transfer.info),
+          export: vi.fn().mockResolvedValue({ ...transfer, messages: [] }),
+        },
       },
     };
     mocks.client.mockImplementation((id) =>
-      id === "source" ? { session: { export: vi.fn().mockResolvedValue(transfer) } } : destination,
+      id === "source"
+        ? { experimental: { session: { export: vi.fn().mockResolvedValue(transfer) } } }
+        : destination,
     );
     await expect(copySessionToServer(input)).rejects.toThrow("original is unchanged");
   });
@@ -105,58 +115,70 @@ describe("copy task to another server", () => {
 
   it("rejects corrupted text even when destination message IDs and count match", async () => {
     const destination = {
-      session: {
-        import: vi.fn().mockResolvedValue(transfer.info),
-        export: vi.fn().mockResolvedValue({
-          ...transfer,
-          messages: transfer.messages.map((message) =>
-            message.id === "msg_one" ? { ...message, text: "[redacted:text:msg_one]" } : message,
-          ),
-        }),
-        remove: vi.fn(),
+      experimental: {
+        session: {
+          import: vi.fn().mockResolvedValue(transfer.info),
+          export: vi.fn().mockResolvedValue({
+            ...transfer,
+            messages: transfer.messages.map((message) =>
+              message.id === "msg_one" ? { ...message, text: "[redacted:text:msg_one]" } : message,
+            ),
+          }),
+          remove: vi.fn(),
+        },
       },
     };
     mocks.client.mockImplementation((id) =>
-      id === "source" ? { session: { export: vi.fn().mockResolvedValue(transfer) } } : destination,
+      id === "source"
+        ? { experimental: { session: { export: vi.fn().mockResolvedValue(transfer) } } }
+        : destination,
     );
     await expect(copySessionToServer(input)).rejects.toThrow("destination accepted the copy");
-    expect(destination.session.import).toHaveBeenCalledOnce();
-    expect(destination.session.remove).not.toHaveBeenCalled();
+    expect(destination.experimental.session.import).toHaveBeenCalledOnce();
+    expect(destination.experimental.session.remove).not.toHaveBeenCalled();
   });
 
   it("warns that a copy exists when post-import verification times out, without retrying", async () => {
     const destination = {
-      session: {
-        import: vi.fn().mockResolvedValue(transfer.info),
-        export: vi.fn().mockRejectedValue(new Error("Verification timed out")),
-        remove: vi.fn(),
+      experimental: {
+        session: {
+          import: vi.fn().mockResolvedValue(transfer.info),
+          export: vi.fn().mockRejectedValue(new Error("Verification timed out")),
+          remove: vi.fn(),
+        },
       },
     };
     mocks.client.mockImplementation((id) =>
-      id === "source" ? { session: { export: vi.fn().mockResolvedValue(transfer) } } : destination,
+      id === "source"
+        ? { experimental: { session: { export: vi.fn().mockResolvedValue(transfer) } } }
+        : destination,
     );
     await expect(copySessionToServer(input)).rejects.toThrow(
       "Check the destination before retrying",
     );
-    expect(destination.session.import).toHaveBeenCalledOnce();
-    expect(destination.session.export).toHaveBeenCalledOnce();
-    expect(destination.session.remove).not.toHaveBeenCalled();
+    expect(destination.experimental.session.import).toHaveBeenCalledOnce();
+    expect(destination.experimental.session.export).toHaveBeenCalledOnce();
+    expect(destination.experimental.session.remove).not.toHaveBeenCalled();
   });
 
   it("accepts identical content with reordered object keys", async () => {
     const destination = {
-      session: {
-        import: vi.fn().mockResolvedValue(transfer.info),
-        export: vi.fn().mockResolvedValue({
-          ...transfer,
-          messages: transfer.messages.map((message) =>
-            Object.fromEntries(Object.entries(message).reverse()),
-          ),
-        }),
+      experimental: {
+        session: {
+          import: vi.fn().mockResolvedValue(transfer.info),
+          export: vi.fn().mockResolvedValue({
+            ...transfer,
+            messages: transfer.messages.map((message) =>
+              Object.fromEntries(Object.entries(message).reverse()),
+            ),
+          }),
+        },
       },
     };
     mocks.client.mockImplementation((id) =>
-      id === "source" ? { session: { export: vi.fn().mockResolvedValue(transfer) } } : destination,
+      id === "source"
+        ? { experimental: { session: { export: vi.fn().mockResolvedValue(transfer) } } }
+        : destination,
     );
     await expect(copySessionToServer(input)).resolves.toEqual(transfer.info);
   });

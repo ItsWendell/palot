@@ -83,4 +83,44 @@ describe("useOpenCodeRecords", () => {
     unmount();
     queryClient.clear();
   });
+
+  it("keeps committed value references so unchanged transcript rows can skip rendering", async () => {
+    const queryClient = createRendererQueryClient();
+    const graph = openCodeReconciler(queryClient).graph;
+    const runtime = (sessionID: string, active: boolean): OpenCodeSessionRuntimeRecord => ({
+      connectionID: "connection",
+      kind: "session-runtime",
+      entityID: sessionID,
+      sessionID,
+      value: { active, execution: null, status: { type: active ? "busy" : "idle" } },
+    });
+    const first = runtime("session-one", true);
+    const second = runtime("session-two", true);
+    graph.commit((writer) => {
+      writer.upsert(first);
+      writer.upsert(second);
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result, unmount } = renderHook(
+      () => useOpenCodeRecords("connection", "session-runtime"),
+      { wrapper },
+    );
+    const valueOf = (sessionID: string) =>
+      result.current.find((record) => record.sessionID === sessionID)?.value;
+
+    await waitFor(() => expect(result.current).toHaveLength(2));
+    expect(valueOf("session-one")).toBe(first.value);
+    expect(valueOf("session-two")).toBe(second.value);
+
+    const updated = runtime("session-one", false);
+    act(() => {
+      graph.commit((writer) => writer.upsert(updated));
+    });
+    await waitFor(() => expect(valueOf("session-one")).toBe(updated.value));
+    expect(valueOf("session-two")).toBe(second.value);
+    unmount();
+    queryClient.clear();
+  });
 });

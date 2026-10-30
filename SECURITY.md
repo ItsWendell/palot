@@ -1,6 +1,6 @@
 # Security policy
 
-Palot 0.21.0 is pre-release software. Public packages are experimental, not
+Palot 0.22.0 is pre-release software. Public packages are experimental, not
 supported stable releases. Security fixes target the current `main` branch.
 Older commits and locally built packages may not receive fixes.
 
@@ -55,6 +55,38 @@ browser data** in Browser settings to close its pages, remove saved inventory an
 temporary files, and clear site storage and cache. This does not revoke server
 credentials or delete files already exported to the server. See
 [browser privacy and retention](PRIVACY.md#experimental-browser).
+
+### Guest links (beta)
+
+Guest sharing is off by default. Only an active share starts the main-owned
+HTTP listener, bound to `127.0.0.1` on a random port. Every page, asset, SSE stream,
+and message endpoint requires a random 192-bit path token scoped to one session
+on one retained OpenCode connection. Expiry and revocation close existing streams;
+all shares end on quit. No general OpenCode proxy, filesystem endpoint, attachment
+endpoint, renderer preload, or credentials are exposed.
+
+The guest page renders plain text with DOM text setters, uses a strict CSP with
+external scripts and styles, refuses framing, sends no referrer, and disables
+caching. Request rates, body sizes, transcript sizes, active shares, streams,
+buffered output, and pending messages are bounded. Proxy headers and loopback
+peers do not establish trust. Mutation requests require JSON, with no CORS grants.
+Each submission has a separate random receipt; guests cannot list pending messages
+or inspect other guests' submission status.
+
+Guest text and display names are untrusted. Approval is enforced in the main
+process through trusted Palot IPC, not through the guest web server. **Send**
+submits a normal prompt under the task's current permissions. Review it as you
+would pasted text, especially for tasks with Full access. Display names do not
+prove identity, and a shared link does not authenticate a particular person.
+
+Publishing requires a separate user action and warning acknowledgement. Tailscale
+uses HTTPS port 8443 without replacing an existing handler or enabling Funnel.
+OpenTunnel uses an empty dedicated `palot-guests` profile and a random route name,
+never the default profile. Stopping sharing removes only a route whose target
+still matches Palot's owned listener. Cleanup failures or crashes can leave
+external proxy configuration and CLI services behind, although expired process-local
+tokens cannot reopen a task. Review provider configuration after interrupted cleanup.
+Neither transport prevents a guest from copying or forwarding the transcript.
 
 ## Current distribution status
 

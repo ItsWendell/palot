@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import type { PalotProject } from "../../shared";
 import { projectLocation, projectName } from "../lib/view-models";
+import { FittedPath } from "./fitted-path";
 import {
   Command,
   CommandEmpty,
@@ -62,13 +63,10 @@ export function ProjectPickerContent({
             >
               <ProjectPickerCheckbox checked={value === project.id} />
               <span className="min-w-0 max-w-[55%] shrink truncate">{projectName(project)}</span>
-              <span
-                dir="rtl"
-                className="min-w-0 flex-1 truncate text-left text-meta text-muted-foreground"
-                title={projectLocation(project)}
-              >
-                {projectLocation(project)}
-              </span>
+              <FittedPath
+                path={projectLocation(project)}
+                className="flex-1 text-left text-meta text-muted-foreground"
+              />
             </CommandItem>
           ))}
         </CommandGroup>

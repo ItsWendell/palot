@@ -24,6 +24,8 @@ import {
   useMemo,
   useRef,
   useState,
+  lazy,
+  Suspense,
   type ReactNode,
 } from "react";
 import type {
@@ -46,6 +48,7 @@ import {
   contextMeterVisibleAtom,
   flushComposerDrafts,
   defaultDeliveryAtom,
+  richComposerAtom,
   defaultModelsAtom,
   modelPickerPreferencesAtom,
 } from "../atoms/ui";
@@ -119,7 +122,12 @@ import {
 import { detectComposerQuery } from "../lib/composer-query";
 import { composerDraftFromMessage } from "../lib/composer-restoration";
 import { COMPOSER_SHORTCUT_KEYS, matchComposerShortcut } from "../lib/composer-shortcuts";
-import { formatShortcut } from "../lib/keyboard-shortcuts";
+import { formatShortcut, matchesShortcut, shortcutKeys } from "../lib/keyboard-shortcuts";
+import { ComposerStashMenu } from "./composer-stash-menu";
+import { ComposerInput, type ComposerInputHandle } from "./composer-input";
+import { sendToSeveralModels } from "../lib/composer-multi-model";
+import { WORKSPACE_FILE_DRAG_TYPE, parseWorkspaceFileDrop } from "../lib/workspace-file-drag";
+import { restorePromptStash, stashPrompt, type StashedPrompt } from "../lib/prompt-stash";
 import { supportsOpenCodeVoice } from "../lib/voice/voice-support";
 import { VoiceCallButton } from "./voice/voice-call-ui";
 import { primaryAgents } from "../lib/selection-memory";
@@ -134,6 +142,8 @@ import { useSessionLocationMissing } from "../hooks/use-session-location-missing
 import { SessionLocationMissingView } from "./session-location-missing";
 import { formatCommandShortcut } from "../lib/global-commands";
 import { BUILTIN_COMMANDS } from "../lib/builtin-commands";
+import { replacesGoal } from "../lib/session-goal";
+import { useSessionGoal } from "../hooks/use-session-goal";
 import { convergeMessageReceipt } from "../lib/message-reconcile";
 import { resolveModelSelection } from "../lib/model-selection";
 import {
@@ -163,17 +173,13 @@ import { AttachmentGroup } from "./ui/attachment";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupTextarea,
-} from "./ui/input-group";
+import { InputGroup, InputGroupAddon, InputGroupButton } from "./ui/input-group";
 import { Spinner } from "./ui/spinner";
 import { toast } from "./ui/toast";
 import { SurfaceBackdrop } from "./ui/surface-backdrop";
@@ -185,6 +191,11 @@ const EMPTY_MODEL_CATALOG: PalotModelCatalog = {
   providers: [],
   errors: [],
 };
+const ComposerMultiModelDialog = lazy(() =>
+  import("./composer-multi-model-dialog").then((module) => ({
+    default: module.ComposerMultiModelDialog,
+  })),
+);
 const STEER_BACKGROUND_DELAY_MS = 5_000;
 const EMPTY_AGENTS: PalotAgent[] = [];
 const EMPTY_REFERENCES: PalotReference[] = [];
@@ -195,6 +206,7 @@ const SLASH_GLOBAL_COMMANDS: Readonly<Record<string, { id: string; task: boolean
   export: { id: "task.export", task: true },
   open: { id: "task.files.open", task: true },
   mcp: { id: "settings.open:tools", task: false },
+  reload: { id: "server.reloadConfiguration", task: false },
 };
 const COMPOSER_ACTION_TTL_MS = 5_000;
 
@@ -232,6 +244,8 @@ export interface NewSessionComposerOptions {
   approvalMode: ApprovalPreset;
   agent: string | null;
   model: ModelRef | null;
+  title?: string;
+  deferNavigation?: boolean;
 }
 
 interface ComposerProps {
@@ -241,6 +255,7 @@ interface ComposerProps {
   onMessageAdmitted?(): void;
   onModelsChange?(models: PalotModel[]): void;
   onCreateSession?(options: NewSessionComposerOptions): Promise<PalotSession | null>;
+  onOpenCreatedSession?(sessionID: string): void;
   onCreateSessionError?(error: unknown): void;
   contextBar?: ReactNode;
   contextBarMode?: "compact" | "new-task";
@@ -257,6 +272,7 @@ function ComposerView({
   onMessageAdmitted,
   onModelsChange,
   onCreateSession,
+  onOpenCreatedSession,
   onCreateSessionError,
   contextBar,
   contextBarMode = "new-task",
@@ -266,6 +282,8 @@ function ComposerView({
   onNavigateToNewTask,
 }: ComposerProps) {
   const runtime = useAtomValue(runtimeAtom);
+  // A new task has no goal yet; only an existing task can be replacing one.
+  const goal = useSessionGoal(session.id, session.location, { enabled: !onCreateSession });
   const draftScope = composerScope(
     runtime?.profileID,
     onCreateSession
@@ -377,6 +395,7 @@ function ComposerView({
   }
   const permissionSelection = useComposerPermissions(session, Boolean(onCreateSession), draftScope);
   const [delivery, setDelivery] = useAtom(defaultDeliveryAtom);
+  const richComposer = useAtomValue(richComposerAtom);
   const autoBackgroundOnSteer = useAtomValue(autoBackgroundOnSteerAtom);
   const defaultModels = useAtomValue(defaultModelsAtom);
   const modelPickerPreferences = useAtomValue(modelPickerPreferencesAtom);
@@ -432,7 +451,15 @@ function ComposerView({
   }, [attachmentScope, cancelAttachmentUpload]);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [isComposing, setIsComposing] = useState(false);
-  const [discoverySelection, setDiscoverySelection] = useState({ key: "", index: 0 });
+  const [multiModelOpen, setMultiModelOpen] = useState(false);
+  // The suggestion the user moved to, scoped to the query it was chosen for. A null key
+  // follows the first row as results arrive and reorder.
+  const [discoveryHighlight, setDiscoveryHighlight] = useState<{
+    scope: string;
+    key: string | null;
+  }>({ scope: "", key: null });
+  // Enter or Tab pressed before the list caught up with the typed query.
+  const pendingDiscoveryAcceptRef = useRef<string | null>(null);
   const [pendingBackgroundSteer, setPendingBackgroundSteer] =
     useState<PendingBackgroundSteer | null>(null);
   const [backgroundSteerPrompt, setBackgroundSteerPrompt] =
@@ -465,7 +492,7 @@ function ComposerView({
     commands: [],
   });
   const composerShellRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<ComposerInputHandle>(null);
   const messagesRef = useRef(messages);
   const backgroundWorkRef = useRef(backgroundWork);
   const pendingInputsRef = useRef(pendingInputs);
@@ -501,6 +528,37 @@ function ComposerView({
   );
   // Recent prompts and outputs are shared by the project's tasks on this connection only.
   const outputProjectID = preferenceProject?.id ?? session.projectID;
+  const stashScope = JSON.stringify([runtime?.profileID, outputProjectID]);
+  const canStash =
+    Boolean(runtime?.profileID) &&
+    mode === "normal" &&
+    !activePendingInputEdit &&
+    !sending &&
+    !attachmentUpload &&
+    !requestBody &&
+    (Boolean(draft.text.trim()) || files.length > 0);
+  function stashCurrentPrompt() {
+    if (!canStash) return;
+    try {
+      stashPrompt(stashScope, draft, files);
+      setDraft(emptyComposerDraft());
+      setFiles([]);
+      toast.add({ type: "success", title: "Prompt stashed" });
+    } catch (error) {
+      showErrorToast("Could not stash prompt", error);
+    }
+  }
+  function restoreStashedPrompt(entry: StashedPrompt) {
+    try {
+      // Swap a nonempty draft into the stash instead of overwriting it.
+      const restored = restorePromptStash(stashScope, entry.id, draft, files);
+      setDraft(restored.draft);
+      setFiles(restored.files);
+      focusComposer();
+    } catch (error) {
+      showErrorToast("Could not restore prompt", error);
+    }
+  }
   const recentScope = recentPromptScope(runtime?.profileID, outputProjectID);
   const projectOf = useCallback(
     (candidate: PalotSession) => projectForSession(projects, candidate)?.id ?? candidate.projectID,
@@ -718,26 +776,35 @@ function ComposerView({
     projects,
     session.id,
   ]);
-  const discoveryKey = activeQuery ? `${activeQuery.kind}\0${activeQuery.query}` : "";
-  const requestedDiscoveryIndex =
-    discoverySelection.key === discoveryKey ? discoverySelection.index : 0;
-  const activeDiscoveryIndex = Math.min(
-    requestedDiscoveryIndex,
-    Math.max(0, discoveryItems.length - 1),
-  );
+  const discoveryScope = activeQuery ? `${activeQuery.kind}\0${activeQuery.query}` : "";
+  // Items are filtered with the deferred query; until it catches up they belong to an older
+  // query, so the keyboard must not accept one of them.
+  const discoveryCurrent = !activeQuery || activeQuery.query === deferredQuery;
+  // A chosen item keeps the highlight while it is still listed; otherwise the first row has it.
+  const activeDiscoveryItem =
+    (discoveryHighlight.scope === discoveryScope && discoveryHighlight.key !== null
+      ? discoveryItems.find((item) => item.key === discoveryHighlight.key)
+      : undefined) ?? discoveryItems[0];
+  const activeDiscoveryIndex = activeDiscoveryItem
+    ? discoveryItems.indexOf(activeDiscoveryItem)
+    : -1;
 
-  function setActiveDiscoveryIndex(index: number | ((current: number) => number)) {
-    setDiscoverySelection((current) => {
-      const currentIndex = Math.min(
-        current.key === discoveryKey ? current.index : 0,
-        Math.max(0, discoveryItems.length - 1),
-      );
-      return {
-        key: discoveryKey,
-        index: typeof index === "function" ? index(currentIndex) : index,
-      };
-    });
+  function chooseDiscoveryItem(item: ComposerDiscoveryItem) {
+    setDiscoveryHighlight((current) =>
+      current.scope === discoveryScope && current.key === item.key
+        ? current
+        : { scope: discoveryScope, key: item.key },
+    );
   }
+
+  const acceptPendingDiscovery = useEffectEvent(() => {
+    const pending = pendingDiscoveryAcceptRef.current;
+    pendingDiscoveryAcceptRef.current = null;
+    if (pending === discoveryScope && activeDiscoveryItem) selectDiscoveryItem(activeDiscoveryItem);
+  });
+  useEffect(() => {
+    if (discoveryCurrent && pendingDiscoveryAcceptRef.current !== null) acceptPendingDiscovery();
+  }, [discoveryCurrent, discoveryScope]);
 
   const context = useMemo(
     () => getContextUsage(messages, catalog.models),
@@ -920,6 +987,80 @@ function ComposerView({
     setDelivery(next);
   }
 
+  async function submitToModels(models: PalotModel[]) {
+    const submission = projectComposerSubmission(draft);
+    if (
+      !onCreateSession ||
+      submission.kind !== "prompt" ||
+      mode !== "normal" ||
+      parseBtwQuestion(draft.text) !== null
+    )
+      throw new Error("Use an ordinary prompt in a new task to compare models.");
+    if (!canSubmit || store.get(stateAtom).sending)
+      throw new Error("Wait for the composer to be ready.");
+    composerSelection.assertConnection();
+    permissionSelection.assertReady();
+    const options = {
+      approvalMode: permissionSelection.draftMode,
+      agent: displayedSession.agent,
+      deferNavigation: true,
+    };
+    const submittedBrowserComments = liveBrowserComments(
+      browserComments,
+      browser?.bindingID ?? null,
+      browser?.state.tabs ?? [],
+    );
+    setSending(true);
+    try {
+      const results = await sendToSeveralModels({
+        models,
+        text: submission.text,
+        create: (model, title) => {
+          composerSelection.assertConnection();
+          return onCreateSession({
+            ...options,
+            model: { providerID: model.providerID, id: model.id },
+            title,
+          });
+        },
+        send: (target, model) => {
+          composerSelection.assertConnection();
+          return palot.sendComposerPrompt({
+            sessionID: target.id,
+            text: submission.text,
+            files,
+            fileReferences: submission.files,
+            skillReferences: submission.skills,
+            agentReferences: submission.agents,
+            directoryReferences: submission.references,
+            browserComments: submittedBrowserComments,
+            comments: comments.map(({ path, comment, selection }) => ({
+              path,
+              comment,
+              selection,
+              origin: "review" as const,
+            })),
+            modelInput: model.capabilities.input,
+            delivery: "steer",
+          });
+        },
+      });
+      if (results.every((result) => result.sent)) {
+        clearSubmittedContents();
+        setHistoryState(null);
+        saveRecentPrompt(
+          recentScope,
+          recentPromptFromSubmission({ draft, files, comments, createdAt: Date.now() }),
+        );
+        composerSelection.rememberCreated();
+        permissionSelection.resetDraft();
+      }
+      return results;
+    } finally {
+      setSending(false);
+    }
+  }
+
   const backgroundPendingSteer = useCallback(
     async (record: PendingBackgroundSteer) => {
       if (
@@ -1010,7 +1151,7 @@ function ComposerView({
   }
 
   /** Returns true when the key recalled history and the default action must be suppressed. */
-  function recallHistory(direction: "up" | "down", element: HTMLTextAreaElement): boolean {
+  function recallHistory(direction: "up" | "down", element: ComposerInputHandle): boolean {
     const normal = mode === "normal";
     const entries = normal
       ? mergeComposerHistory(
@@ -1547,6 +1688,16 @@ function ComposerView({
 
     if (
       submission.kind === "command" &&
+      submission.command.toLowerCase() === "goal" &&
+      replacesGoal(goal, submission.arguments) &&
+      !window.confirm(
+        "Replace the current goal? The task keeps its history, and the new objective starts from round 1.",
+      )
+    )
+      return;
+
+    if (
+      submission.kind === "command" &&
       (await runBuiltinCommand(submission.command.toLowerCase(), submission.arguments, "draft"))
     )
       return;
@@ -1739,10 +1890,6 @@ function ComposerView({
         },
       },
     });
-  }
-
-  function updateSelection(element: HTMLTextAreaElement) {
-    setSelection({ start: element.selectionStart, end: element.selectionEnd });
   }
 
   function selectDiscoveryItem(item: ComposerDiscoveryItem) {
@@ -1951,19 +2098,61 @@ function ComposerView({
     <div
       ref={composerShellRef}
       data-palot-composer-mode={mode}
+      onDragOver={(event) => {
+        if (
+          mode !== "normal" ||
+          sending ||
+          requestBody ||
+          !event.dataTransfer.types.includes(WORKSPACE_FILE_DRAG_TYPE)
+        )
+          return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.types.includes(WORKSPACE_FILE_DRAG_TYPE)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (mode !== "normal" || sending || requestBody) return;
+        const path = parseWorkspaceFileDrop(
+          event.dataTransfer.getData(WORKSPACE_FILE_DRAG_TYPE),
+          runtime?.profileID,
+          displayedSession.location.directory,
+          displayedSession.location.workspaceID,
+        );
+        if (path) attachOutput(path);
+      }}
       className={cn(
         "palot-composer-shell relative mx-auto w-[calc(100%-32px)] shrink-0 pb-2 max-[720px]:w-[calc(100%-20px)]",
         contextBar ? "max-w-[860px]" : "max-w-[760px]",
       )}
     >
+      {multiModelOpen && runtime && onCreateSession ? (
+        <Suspense fallback={null}>
+          <ComposerMultiModelDialog
+            models={pickerModels}
+            connectionID={runtime.connectionID}
+            busy={sending}
+            onSend={submitToModels}
+            onClose={() => {
+              setMultiModelOpen(false);
+              focusComposer();
+            }}
+            onOpenTask={(id) => {
+              setMultiModelOpen(false);
+              onOpenCreatedSession?.(id);
+            }}
+          />
+        </Suspense>
+      ) : null}
       {discoveryOpen ? (
         <ComposerDiscovery
           id={`composer-discovery-${session.id.replaceAll(/[^A-Za-z0-9_-]/g, "-")}`}
           items={discoveryItems}
-          activeIndex={activeDiscoveryIndex}
+          activeKey={activeDiscoveryItem?.key ?? null}
           loading={activeQuery?.kind === "file" && fileSearchQuery.isFetching}
           error={discoveryError}
-          onActiveIndexChange={setActiveDiscoveryIndex}
+          onActiveChange={chooseDiscoveryItem}
           onSelect={selectDiscoveryItem}
         />
       ) : null}
@@ -2149,8 +2338,19 @@ function ComposerView({
               {requestBody}
             </div>
           ) : (
-            <InputGroupTextarea
+            <ComposerInput
+              key={draftScope}
               ref={composerRef}
+              rich={richComposer && mode === "normal"}
+              draft={draft}
+              comments={comments}
+              onCommentsChange={(next) => setComments(() => next)}
+              onDraftChange={(next) => {
+                if (!draft.text && next.text === "!" && !activePendingInputEdit)
+                  setComposerMode("shell");
+                else setDraft(next);
+              }}
+              onSelectionChange={setSelection}
               data-palot-composer-input
               aria-label={mode === "shell" ? "Shell command" : "Message Palot"}
               aria-controls={
@@ -2160,11 +2360,10 @@ function ComposerView({
               }
               aria-expanded={discoveryOpen}
               aria-activedescendant={
-                discoveryOpen && discoveryItems.length > 0
+                discoveryOpen && activeDiscoveryIndex >= 0
                   ? `composer-discovery-${session.id.replaceAll(/[^A-Za-z0-9_-]/g, "-")}-option-${activeDiscoveryIndex}`
                   : undefined
               }
-              value={draft.text}
               rows={2}
               className={cn(
                 "palot-native-scrollbar max-h-[clamp(3rem,25cqh,11rem)] min-h-[calc(2lh+--spacing(4))] flex-none resize-none overflow-y-auto overscroll-contain px-5 pt-3 pb-1",
@@ -2172,30 +2371,36 @@ function ComposerView({
               )}
               placeholder={mode === "shell" ? "Run a shell command" : "Do anything"}
               disabled={locationRecovery.missing}
-              onChange={(event) => {
-                if (
-                  mode === "normal" &&
-                  !draft.text &&
-                  event.target.value === "!" &&
-                  !activePendingInputEdit
-                ) {
+              onValueChange={(text) => {
+                if (mode === "normal" && !draft.text && text === "!" && !activePendingInputEdit) {
                   setComposerMode("shell");
                   return;
                 }
-                setDraft((current) => applyComposerTextChange(current, event.target.value));
-                updateSelection(event.target);
+                setDraft((current) => applyComposerTextChange(current, text));
               }}
-              onClick={(event) => updateSelection(event.currentTarget)}
-              onSelect={(event) => updateSelection(event.currentTarget)}
               onCompositionStart={() => setIsComposing(true)}
-              onCompositionEnd={(event) => {
+              onCompositionEnd={() => {
                 setIsComposing(false);
-                updateSelection(event.currentTarget);
               }}
               onPaste={(event) => {
+                const pastedText = event.clipboardData.getData("text/plain");
                 const hasImages = Array.from(event.clipboardData.items).some(
                   (item) => item.kind === "file" && item.type.startsWith("image/"),
                 );
+                if (
+                  !hasImages &&
+                  richComposer &&
+                  mode === "normal" &&
+                  localAttachments &&
+                  new TextEncoder().encode(pastedText).byteLength > 32 * 1024
+                ) {
+                  event.preventDefault();
+                  const connectionID = runtime?.connectionID;
+                  void attachFiles((requestID) =>
+                    palot.attachClipboardText(pastedText, connectionID, requestID),
+                  );
+                  return;
+                }
                 if (!hasImages && event.clipboardData.getData("text/plain")) return;
                 if (!localAttachments) {
                   if (hasImages) {
@@ -2211,6 +2416,22 @@ function ComposerView({
               }}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                if (matchesShortcut(event.nativeEvent, shortcutKeys("composer.stash"))) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  stashCurrentPrompt();
+                  return;
+                }
+                if (
+                  discoveryOpen &&
+                  !discoveryCurrent &&
+                  (event.key === "Enter" || event.key === "Tab")
+                ) {
+                  // The rows still belong to an older query: accept once they catch up.
+                  event.preventDefault();
+                  pendingDiscoveryAcceptRef.current = discoveryScope;
+                  return;
+                }
                 if (discoveryOpen && discoveryItems.length > 0) {
                   const navigationKey =
                     event.key === "ArrowDown" || (event.ctrlKey && event.key.toLowerCase() === "n")
@@ -2222,16 +2443,19 @@ function ComposerView({
                   if (navigationKey) {
                     event.preventDefault();
                     const direction = navigationKey === "ArrowDown" ? 1 : -1;
-                    setActiveDiscoveryIndex(
-                      (current) =>
-                        (current + direction + discoveryItems.length) % discoveryItems.length,
-                    );
+                    const next =
+                      activeDiscoveryIndex < 0
+                        ? direction > 0
+                          ? 0
+                          : discoveryItems.length - 1
+                        : (activeDiscoveryIndex + direction + discoveryItems.length) %
+                          discoveryItems.length;
+                    chooseDiscoveryItem(discoveryItems[next]!);
                     return;
                   }
                   if (event.key === "Enter" || event.key === "Tab") {
                     event.preventDefault();
-                    const item = discoveryItems[activeDiscoveryIndex] ?? discoveryItems[0];
-                    if (item) selectDiscoveryItem(item);
+                    if (activeDiscoveryItem) selectDiscoveryItem(activeDiscoveryItem);
                     return;
                   }
                 }
@@ -2260,7 +2484,8 @@ function ComposerView({
                   !event.ctrlKey &&
                   !event.metaKey &&
                   !event.shiftKey &&
-                  recallHistory(event.key === "ArrowUp" ? "up" : "down", event.currentTarget)
+                  composerRef.current &&
+                  recallHistory(event.key === "ArrowUp" ? "up" : "down", composerRef.current)
                 ) {
                   event.preventDefault();
                   return;
@@ -2289,7 +2514,7 @@ function ComposerView({
                     : "Mentions"
               }
             >
-              {mode === "normal"
+              {mode === "normal" && !richComposer
                 ? draft.mentions.map((mention) => (
                     <ComposerMentionChip
                       key={mention.localID}
@@ -2387,6 +2612,21 @@ function ComposerView({
                     : "Attachments unavailable for remote servers"}
                 </TooltipContent>
               </Tooltip>
+              {mode === "normal" ? (
+                <ComposerStashMenu
+                  key={stashScope}
+                  scope={stashScope}
+                  disabled={
+                    !runtime?.profileID ||
+                    sending ||
+                    Boolean(activePendingInputEdit) ||
+                    Boolean(attachmentUpload)
+                  }
+                  canStash={canStash}
+                  onStash={stashCurrentPrompt}
+                  onRestore={restoreStashedPrompt}
+                />
+              ) : null}
               {mode === "normal" ? (
                 <RecentOutputsPicker
                   connectionID={runtime?.connectionID ?? null}
@@ -2590,11 +2830,36 @@ function ComposerView({
                     className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
                     aria-label={mode === "shell" ? "Run shell command" : "Send message"}
                     disabled={!canSubmit}
-                    onClick={() => void submit()}
+                    onClick={(event) => {
+                      if (event.shiftKey && onCreateSession && mode === "normal")
+                        setMultiModelOpen(true);
+                      else void submit();
+                    }}
                   >
                     {sending ? <Spinner aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
                   </InputGroupButton>
                 )}
+                {onCreateSession && mode === "normal" ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <InputGroupButton
+                          type="button"
+                          size="icon-sm"
+                          aria-label="More send options"
+                          disabled={!canSubmit}
+                        />
+                      }
+                    >
+                      <ChevronDown aria-hidden="true" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="top" align="end">
+                      <DropdownMenuItem onClick={() => setMultiModelOpen(true)}>
+                        Send to several models…
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
               </div>
             </InputGroupAddon>
           )}
@@ -2627,6 +2892,7 @@ function sameComposerProps(previous: ComposerProps, next: ComposerProps): boolea
     previous.onMessageAdmitted === next.onMessageAdmitted &&
     previous.onModelsChange === next.onModelsChange &&
     previous.onCreateSession === next.onCreateSession &&
+    previous.onOpenCreatedSession === next.onOpenCreatedSession &&
     previous.onCreateSessionError === next.onCreateSessionError &&
     previous.contextBar === next.contextBar &&
     previous.contextBarMode === next.contextBarMode &&

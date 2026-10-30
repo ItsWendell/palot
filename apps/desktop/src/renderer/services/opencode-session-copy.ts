@@ -15,11 +15,11 @@ export async function copySessionToServer(input: {
   const source = openCodeClient(input.sourceConnectionID);
   const destination = openCodeClient(input.destinationConnectionID);
   const signal = openCodeRequestSignal();
-  const transfer = await source.session.export(
+  const transfer = await source.experimental.session.export(
     { sessionID: input.sessionID, sanitize: false },
     { signal },
   );
-  const imported = await destination.session.import(
+  const imported = await destination.experimental.session.import(
     {
       ...transfer,
       info: { ...transfer.info, parentID: undefined },
@@ -29,7 +29,7 @@ export async function copySessionToServer(input: {
   );
   // A failed verification must never remove the original or retry the import automatically.
   try {
-    const verified = await destination.session.export(
+    const verified = await destination.experimental.session.export(
       { sessionID: imported.id, sanitize: false },
       { signal },
     );

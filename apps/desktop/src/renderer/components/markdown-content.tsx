@@ -61,6 +61,10 @@ import {
 } from "./ui/dropdown-menu";
 import { Button } from "./ui/button";
 import { TaskMentionChip } from "./task-mention-chip";
+import { MarkdownActionsContext } from "./markdown-actions";
+import { toggleMarkdownTask } from "../lib/markdown-task-edit";
+import { markdownMediaSource, type MarkdownMediaSource } from "../lib/markdown-media";
+import { MarkdownImageActions } from "./markdown-image-actions";
 
 const MARKDOWN_EXTENSIONS = [
   calloutsExtension(),
@@ -71,12 +75,22 @@ const MARKDOWN_EXTENSIONS = [
   indentedCodeExtension(),
   streamingMarkdownExtension(),
 ];
+
+/** Extend the parser's URL policy only for inert image/media destinations. */
+function markdownURLTransform(url: string, kind: "link" | "image", fallback: string): string {
+  const value = url.trim();
+  if (/^data:(?:audio|video)\/[\w.+-]+[;,]/i.test(value)) return value;
+  if (kind === "image" && /^data:image\/[\w.+-]+[;,]/i.test(value)) return value;
+  if (value.startsWith("blob:")) return value;
+  return fallback;
+}
 const MarkdownRenderContext = createContext({
   baseUrl: undefined as string | undefined,
   idPrefix: "markdown",
   passiveMedia: false,
   remoteFavicons: false,
   streaming: false,
+  editableTasks: false,
 });
 const MarkdownLinkContext = createContext(false);
 export type WorkspaceFileOpenHandler = (
@@ -122,6 +136,8 @@ export function MarkdownWorkspaceProvider({
   workspaceDirectory,
   workspaceLocation,
   allowHomePaths = false,
+  runCode,
+  previewHTML,
 }: {
   children?: ReactNode;
   onOpenFile(reference: MarkdownFileReference, event?: ReactMouseEvent | ReactKeyboardEvent): void;
@@ -132,9 +148,12 @@ export function MarkdownWorkspaceProvider({
   workspaceLocation?: LocationRef;
   /** Link `~/…` paths; only meaningful when the server shares this machine's home. */
   allowHomePaths?: boolean;
+  runCode?(code: string): Promise<void>;
+  previewHTML?(html: string): void;
 }) {
   const runtime = useAtomValue(runtimeAtom);
   const [sessionConnectionID] = useState(runtime?.connectionID);
+  const actions = useMemo(() => ({ runCode, previewHTML }), [runCode, previewHTML]);
   return (
     <MarkdownHomePathsContext.Provider value={allowHomePaths}>
       <MarkdownWorkspaceLocationContext.Provider value={workspaceLocation}>
@@ -143,7 +162,9 @@ export function MarkdownWorkspaceProvider({
             <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
               <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
                 <MarkdownSessionConnectionContext.Provider value={sessionConnectionID}>
-                  {children}
+                  <MarkdownActionsContext.Provider value={actions}>
+                    {children}
+                  </MarkdownActionsContext.Provider>
                 </MarkdownSessionConnectionContext.Provider>
               </MarkdownSessionLinkContext.Provider>
             </MarkdownWebLinkContext.Provider>
@@ -296,6 +317,16 @@ function MarkdownLink({ href, children, ...props }: MarkdownComponentProps<"a">)
   const openWorkspaceFile = useContext(MarkdownWorkspaceFileContext);
   const openWebLink = useContext(MarkdownWebLinkContext);
   const allowHome = useContext(MarkdownHomePathsContext);
+  const workspaceLocation = useContext(MarkdownWorkspaceLocationContext);
+  const media = !baseUrl ? markdownMediaSource(href, workspaceLocation?.directory) : null;
+  if (media)
+    return (
+      <MarkdownMedia
+        source={media}
+        location={workspaceLocation}
+        name={typeof children === "string" ? children : "Media preview"}
+      />
+    );
   const fileReference =
     !baseUrl && openWorkspaceFile ? parseFileReference(href, { source: "href", allowHome }) : null;
   if (fileReference && openWorkspaceFile) {
@@ -481,6 +512,14 @@ function workspaceFileIcon(path: string) {
 function MarkdownImage({ alt, src, className, title, ...props }: MarkdownComponentProps<"img">) {
   const { baseUrl, passiveMedia } = useContext(MarkdownRenderContext);
   const workspaceLocation = useContext(MarkdownWorkspaceLocationContext);
+  const media =
+    !baseUrl && !src?.startsWith("blob:")
+      ? markdownMediaSource(src, workspaceLocation?.directory)
+      : null;
+  if (media)
+    return (
+      <MarkdownMedia source={media} location={workspaceLocation} name={alt || "Media preview"} />
+    );
   const localImage = workspaceLocation
     ? localMarkdownImage(src, workspaceLocation.directory)
     : null;
@@ -498,6 +537,16 @@ function MarkdownImage({ alt, src, className, title, ...props }: MarkdownCompone
   }
 
   const placeholder = <span>{alt ? `[Image: ${alt}]` : "[Image]"}</span>;
+  if (src && /^(?:data:image\/|blob:)/i.test(src))
+    return (
+      <MarkdownImageView
+        {...props}
+        alt={alt}
+        src={src}
+        name={markdownImageName(alt, src)}
+        mime={markdownImageMime(src)}
+      />
+    );
   // Remote images stay gated so rendering never silently fetches tracking URLs.
   if (!passiveMedia) return placeholder;
 
@@ -614,6 +663,41 @@ function useBlobURL(data: Uint8Array | undefined, mime: string): string | null {
   return entry && entry.data === data ? entry.url : null;
 }
 
+function MarkdownMedia({
+  source,
+  location,
+  name,
+}: {
+  source: MarkdownMediaSource;
+  location?: LocationRef;
+  name: string;
+}) {
+  const query = useWorkspaceFile(
+    location ?? { directory: "" },
+    source.path ?? "",
+    Boolean(location && source.path),
+  );
+  const objectURL = useBlobURL(query.data, source.mime);
+  const url = source.url ?? objectURL;
+  if (!url)
+    return (
+      <span className="text-muted-foreground">
+        {query.isError ? "Could not load media" : "Loading media…"}
+      </span>
+    );
+  return source.kind === "audio" ? (
+    <audio src={url} controls preload="metadata" aria-label={name} className="max-w-full" />
+  ) : (
+    <video
+      src={url}
+      controls
+      preload="metadata"
+      aria-label={name}
+      className="max-h-96 max-w-full rounded-lg"
+    />
+  );
+}
+
 function MarkdownImageView({
   alt,
   src,
@@ -638,29 +722,37 @@ function MarkdownImageView({
     />
   );
 
-  if (linked) return image;
+  if (linked)
+    return (
+      <MarkdownImageActions src={src} name={name}>
+        {image}
+      </MarkdownImageActions>
+    );
 
   return (
     <>
-      <button
-        type="button"
-        aria-label={`Open image preview: ${name}`}
-        onClick={() => setOpen(true)}
-        className="group relative inline-flex max-w-full cursor-zoom-in overflow-hidden rounded-lg align-middle outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      >
-        {image}
-        <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/0 opacity-0 transition-[background-color,opacity] duration-150 group-hover:bg-black/20 group-hover:opacity-100 group-focus-visible:bg-black/20 group-focus-visible:opacity-100">
-          <span className="grid size-9 place-items-center rounded-full border border-white/20 bg-black/55 text-white shadow-sm backdrop-blur-sm">
-            <ZoomIn className="size-4" aria-hidden="true" />
+      <MarkdownImageActions src={src} name={name}>
+        <button
+          type="button"
+          aria-label={`Open image preview: ${name}`}
+          onClick={() => setOpen(true)}
+          className="group relative inline-flex max-w-full cursor-zoom-in overflow-hidden rounded-lg align-middle outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        >
+          {image}
+          <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/0 opacity-0 transition-[background-color,opacity] duration-150 group-hover:bg-black/20 group-hover:opacity-100 group-focus-visible:bg-black/20 group-focus-visible:opacity-100">
+            <span className="grid size-9 place-items-center rounded-full border border-white/20 bg-black/55 text-white shadow-sm backdrop-blur-sm">
+              <ZoomIn className="size-4" aria-hidden="true" />
+            </span>
           </span>
-        </span>
-      </button>
+        </button>
+      </MarkdownImageActions>
       <ImageLightbox src={src} name={name} mime={mime} open={open} onOpenChange={setOpen} />
     </>
   );
 }
 
 const MARKDOWN_COMPONENTS = {
+  input: MarkdownTaskCheckbox,
   a: MarkdownLink,
   code: MarkdownInlineCode,
   img: MarkdownImage,
@@ -671,6 +763,19 @@ const MARKDOWN_COMPONENTS = {
   "palot-details": MarkdownDetails,
   "palot-session-link": MarkdownSessionLink,
 } satisfies MarkdownComponents;
+
+function MarkdownTaskCheckbox(props: MarkdownComponentProps<"input">) {
+  const { editableTasks } = useContext(MarkdownRenderContext);
+  return (
+    <input
+      {...props}
+      aria-label={props.checked ? "Completed task" : "Incomplete task"}
+      disabled={!editableTasks}
+      readOnly={!editableTasks}
+      onChange={() => {}}
+    />
+  );
+}
 
 function MarkdownSessionLink({
   children,
@@ -695,6 +800,7 @@ interface MarkdownContentProps {
   streaming?: boolean;
   passiveMedia?: boolean;
   baseUrl?: string;
+  onTaskEdit?(text: string): void;
 }
 
 export const MarkdownContent = memo(function MarkdownContent({
@@ -703,14 +809,35 @@ export const MarkdownContent = memo(function MarkdownContent({
   streaming = false,
   passiveMedia = false,
   baseUrl,
+  onTaskEdit,
 }: MarkdownContentProps) {
   return (
-    <div className={cn("markdown typeset-chat select-text", className)}>
+    <div
+      className={cn("markdown typeset-chat select-text", className)}
+      onChange={
+        onTaskEdit
+          ? (event) => {
+              const target = event.target;
+              if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") return;
+              const index = Array.from(
+                event.currentTarget.querySelectorAll('input[type="checkbox"]'),
+              ).indexOf(target);
+              onTaskEdit(
+                toggleMarkdownTask(value, index, {
+                  extensions: MARKDOWN_EXTENSIONS,
+                  allowHtml: false,
+                }),
+              );
+            }
+          : undefined
+      }
+    >
       <MarkdownBody
         value={value}
         streaming={streaming}
         passiveMedia={passiveMedia}
         baseUrl={baseUrl}
+        editableTasks={Boolean(onTaskEdit)}
       />
     </div>
   );
@@ -721,8 +848,9 @@ const MarkdownBody = memo(function MarkdownBody({
   streaming,
   passiveMedia,
   baseUrl,
+  editableTasks,
 }: Required<Pick<MarkdownContentProps, "value" | "streaming" | "passiveMedia">> &
-  Pick<MarkdownContentProps, "baseUrl">) {
+  Pick<MarkdownContentProps, "baseUrl"> & { editableTasks: boolean }) {
   const remoteFavicons = useAtomValue(remoteMarkdownFaviconsAtom);
   const openSession = useContext(MarkdownSessionLinkContext);
   const extensions = useMemo(
@@ -739,8 +867,8 @@ const MarkdownBody = memo(function MarkdownBody({
   const generatedID = useId().replaceAll(":", "");
   const idPrefix = `markdown-${generatedID}`;
   const context = useMemo(
-    () => ({ baseUrl, idPrefix, passiveMedia, remoteFavicons, streaming }),
-    [baseUrl, idPrefix, passiveMedia, remoteFavicons, streaming],
+    () => ({ baseUrl, idPrefix, passiveMedia, remoteFavicons, streaming, editableTasks }),
+    [baseUrl, idPrefix, passiveMedia, remoteFavicons, streaming, editableTasks],
   );
   return (
     <MarkdownRenderContext.Provider value={context}>
@@ -748,6 +876,7 @@ const MarkdownBody = memo(function MarkdownBody({
         allowHtml={false}
         components={MARKDOWN_COMPONENTS}
         extensions={extensions}
+        urlTransform={markdownURLTransform}
         frontmatter={false}
         headingIds
         idPrefix={idPrefix}

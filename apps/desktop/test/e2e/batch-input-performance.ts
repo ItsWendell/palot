@@ -80,7 +80,7 @@ export function batchInputPerformanceScenario(mode: "steady" | "burst"): Scenari
       }
       for (const entry of sessions) {
         await client.session.prompt({ sessionID: entry.id, text: `${route(entry.label)} Warm.` });
-        await client.session.wait({ sessionID: entry.id });
+        await client.experimental.session.wait({ sessionID: entry.id });
       }
       const transcript = page.getByLabel("Task transcript", { exact: true });
       await expect(transcript).toContainText("ALPHA warmed batch input fixture.");
@@ -100,7 +100,10 @@ export function batchInputPerformanceScenario(mode: "steady" | "burst"): Scenari
                   { sessionID: id, text: `${route(label)} Run the numbered text fixture.` },
                   { signal: controller.signal },
                 );
-                await client.session.wait({ sessionID: id }, { signal: controller.signal });
+                await client.experimental.session.wait(
+                  { sessionID: id },
+                  { signal: controller.signal },
+                );
               }),
             );
           });
@@ -143,7 +146,7 @@ export function batchInputPerformanceScenario(mode: "steady" | "burst"): Scenari
 
         // Validate the authoritative output after measurement, not in the hot loop.
         for (const { id, label } of sessions) {
-          const exported = await client.session.export({ sessionID: id });
+          const exported = await client.experimental.session.export({ sessionID: id });
           const response = exported.messages.findLast((message) => message.type === "assistant");
           expect(response?.type).toBe("assistant");
           if (response?.type !== "assistant") throw new Error("Assistant response is missing");

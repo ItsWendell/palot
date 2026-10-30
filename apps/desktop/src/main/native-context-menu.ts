@@ -15,8 +15,19 @@ import { guardFocusedOpenCodeConnection } from "./opencode-native-scope";
 
 export type NativeContextMenuParams = Pick<
   Electron.ContextMenuParams,
-  "editFlags" | "formControlType" | "isEditable" | "linkURL" | "selectionText"
+  | "dictionarySuggestions"
+  | "editFlags"
+  | "formControlType"
+  | "isEditable"
+  | "linkURL"
+  | "misspelledWord"
+  | "selectionText"
 >;
+
+export interface NativeContextMenuSpellingActions {
+  replaceMisspelling: (suggestion: string) => void;
+  addToDictionary: (word: string) => void;
+}
 
 export interface NativeContextMenuActions {
   copyLinkAddress: (url: string) => void;
@@ -24,6 +35,8 @@ export interface NativeContextMenuActions {
   openFile?: (filePath: string, line?: number, column?: number) => void;
   revealFile?: (filePath: string) => void;
   copyText?: (text: string) => void;
+  /** Only for Palot's own document; other frames never get spelling items. */
+  spelling?: NativeContextMenuSpellingActions;
 }
 
 export interface NativeContextMenuOptions {
@@ -79,6 +92,27 @@ export function parseNativeContextMenuFileTarget(
   }
 
   return null;
+}
+
+const MAX_SPELLING_SUGGESTIONS = 5;
+
+function spellingItems(
+  params: NativeContextMenuParams,
+  spelling: NativeContextMenuSpellingActions | undefined,
+): MenuItemConstructorOptions[] {
+  const word = params.misspelledWord;
+  if (!spelling || !params.isEditable || !word) return [];
+  const suggestions = params.dictionarySuggestions.slice(0, MAX_SPELLING_SUGGESTIONS);
+  return [
+    ...(suggestions.length > 0
+      ? suggestions.map((suggestion) => ({
+          label: suggestion,
+          click: () => spelling.replaceMisspelling(suggestion),
+        }))
+      : [{ label: "No Suggestions", enabled: false }]),
+    { type: "separator" },
+    { label: "Add to Dictionary", click: () => spelling.addToDictionary(word) },
+  ];
 }
 
 function editingItems(params: NativeContextMenuParams): MenuItemConstructorOptions[] {
@@ -178,6 +212,7 @@ export function buildNativeContextMenuTemplate(
   options: NativeContextMenuOptions,
 ): MenuItemConstructorOptions[] {
   const sections = [
+    spellingItems(params, options.actions.spelling),
     editingItems(params),
     selectionItems(params),
     fileItems(params, options),
@@ -228,6 +263,23 @@ export function installNativeContextMenu(window: BrowserWindow): () => void {
         // Copying the path remains available; never infer its server from focus.
       }
     }
+
+    // Subframes such as the sandboxed HTML preview hold agent content, not Palot's fields.
+    // Task browser guests are separate WebContents and never reach this listener.
+    const spelling: NativeContextMenuSpellingActions | undefined =
+      params.misspelledWord && params.frame && params.frame === webContents.mainFrame
+        ? {
+            replaceMisspelling: (suggestion) => {
+              if (!window.isDestroyed() && !webContents.isDestroyed())
+                webContents.replaceMisspelling(suggestion);
+            },
+            addToDictionary: (word) => {
+              if (window.isDestroyed() || webContents.isDestroyed()) return;
+              if (!webContents.session.addWordToSpellCheckerDictionary(word))
+                console.warn("[context-menu] Could not add the word to the dictionary");
+            },
+          }
+        : undefined;
 
     void (async () => {
       let preferredEditorLabel: string | undefined;
@@ -282,6 +334,7 @@ export function installNativeContextMenu(window: BrowserWindow): () => void {
                 .writeText(text)
                 .catch((error) => console.warn("[clipboard] Copy text failed", error));
           },
+          ...(spelling ? { spelling } : {}),
         },
       });
       if (template.length === 0) return;

@@ -11,6 +11,53 @@ Theme names identify visual presets and do not imply endorsement by another
 product. Themes supplied by `@shikijs/themes` and `@pierre/theming` retain the
 licenses and notices distributed with those packages.
 
+## Rich composer editor
+
+The optional, lazy-loaded rich composer uses ProseMirror. No T3 Code source is
+vendored. The installed package manifests and package-root `LICENSE` files were
+checked using `collectDependencyLicenses` from `scripts/generate-dependency-licenses.ts`:
+all ten packages below declare MIT and have readable license text (zero inventory
+issues for these roots). Normal build-generated notices include these texts too.
+
+| Package               | Version | Copyright                             |
+| --------------------- | ------- | ------------------------------------- |
+| prosemirror-model     | 1.25.12 | 2015–2017 Marijn Haverbeke and others |
+| prosemirror-state     | 1.4.4   | 2015–2017 Marijn Haverbeke and others |
+| prosemirror-view      | 1.42.8  | 2015–2017 Marijn Haverbeke and others |
+| prosemirror-transform | 1.12.4  | 2015–2017 Marijn Haverbeke and others |
+| prosemirror-history   | 1.5.1   | 2015–2017 Marijn Haverbeke and others |
+| prosemirror-keymap    | 1.2.3   | 2015–2017 Marijn Haverbeke and others |
+| prosemirror-commands  | 1.7.2   | 2015–2017 Marijn Haverbeke and others |
+| orderedmap            | 2.1.1   | 2016 Marijn Haverbeke and others      |
+| rope-sequence         | 1.3.4   | 2016 Marijn Haverbeke                 |
+| w3c-keyname           | 2.2.8   | 2016 Marijn Haverbeke and others      |
+
+MIT License
+
+Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Copyright (C) 2016 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Copyright (C) 2016 by Marijn Haverbeke <marijn@haverbeke.berlin>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
 ## OpenCode provider icons
 
 `src/renderer/components/ui/provider-icons` is vendored from

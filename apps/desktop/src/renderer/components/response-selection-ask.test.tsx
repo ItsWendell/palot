@@ -10,6 +10,8 @@ import { showErrorToast } from "../lib/toast-error";
 import { createSessionTranscriptProjector } from "../lib/turn-projection";
 import { createWorkbenchState, workbenchScopeKey } from "../lib/workbench-tabs";
 import { openCodeClient } from "../services/opencode-client";
+import { RESPONSE_QUOTE_HIGHLIGHT } from "../lib/response-quote-highlight";
+import { updateBtwTab } from "../lib/btw";
 import {
   ResponseSelectionAsk,
   readResponseSelection,
@@ -110,6 +112,7 @@ async function selectionChanged() {
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   document.getSelection()?.removeAllRanges();
   flushWorkbenchPersistence();
 });
@@ -149,6 +152,38 @@ describe("readResponseSelection", () => {
 });
 
 describe("Ask about selection", () => {
+  it.each(["submit", "cancel"])("clears the pending quote highlight on %s", async (action) => {
+    const highlights = new Map<string, Set<Range>>();
+    vi.stubGlobal("CSS", { ...CSS, highlights });
+    vi.stubGlobal(
+      "Highlight",
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges);
+        }
+      },
+    );
+    const store = setup();
+    const text = screen.getByTestId("a").firstChild!;
+    select(text, 4, text, 17);
+    await selectionChanged();
+    fireEvent.click(screen.getByRole("button", { name: "Ask about selection" }));
+    const tab = store.get(workbenchStateAtom).scopes[workbenchScopeKey(owner)]!.right.tabs[0]!;
+    expect([...highlights.get(RESPONSE_QUOTE_HIGHLIGHT)!][0]!.toString()).toBe("a ring buffer");
+    expect(document.getSelection()!.rangeCount).toBe(0);
+    act(() => {
+      store.set(workbenchStateAtom, (state) =>
+        action === "cancel"
+          ? createWorkbenchState()
+          : updateBtwTab(state, owner, tab.id, (current) => ({
+              ...current,
+              resource: { ...current.resource, question: "Why?" },
+            })),
+      );
+    });
+    expect(highlights.has(RESPONSE_QUOTE_HIGHLIGHT)).toBe(false);
+  });
+
   it("opens a side question about the selected text without generating an answer", async () => {
     const store = setup();
     const text = screen.getByTestId("a").firstChild!;

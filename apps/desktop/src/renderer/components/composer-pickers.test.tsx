@@ -201,6 +201,40 @@ describe("ReasoningPicker", () => {
     return { onSelectVariant };
   }
 
+  it("names the provider when another provider offers a model under the same name", () => {
+    const direct = model("anthropic", "sonnet", "Claude Sonnet (latest)");
+    const routed = model("opencode", "sonnet", "Claude Sonnet");
+    const both = [direct, routed];
+    render(
+      <Provider store={createStore()}>
+        <ModelPicker
+          session={{ ...session, model: { id: "sonnet", providerID: "anthropic" } }}
+          models={both}
+          catalogModels={both}
+          defaultModel={null}
+          providers={[
+            ...providers,
+            {
+              id: "opencode",
+              name: "OpenCode",
+              integrationID: null,
+              package: "o",
+              disabled: false,
+            },
+          ]}
+          preferenceScope={SCOPE}
+          open={false}
+          onOpenChange={vi.fn()}
+          onSelectionComplete={vi.fn()}
+          onSelectModel={vi.fn()}
+          onManageModels={vi.fn()}
+          disabled={false}
+        />
+      </Provider>,
+    );
+    expect(screen.getByRole("button", { name: "Model: Anthropic / Claude Sonnet" })).toBeTruthy();
+  });
+
   it("is hidden for models without reasoning options", () => {
     renderReasoning({ id: "fast", providerID: "openai" });
     expect(screen.queryByRole("button", { name: /^Reasoning:/ })).toBeNull();

@@ -625,6 +625,7 @@ function ScheduledProfilePage() {
 
       {detailOpen ? (
         <AutomationEditor
+          webhookAddress={snapshot?.webhookAddress ?? null}
           key={
             selectedAutomation?.id ??
             `create:${search.sessionID ?? "standalone"}:${createEditorVersion}`

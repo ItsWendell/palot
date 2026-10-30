@@ -372,7 +372,10 @@
     -webkit-app-region: no-drag;
   }
 
-  ::selection {
+  /* Chromium computes a highlight style for every element a highlight rule matches, and
+     descendants inherit highlight styles from their parent. Matching only the root (and each
+     shadow host) styles every selection once, instead of restyling the whole transcript. */
+  :root::selection {
     background: var(--selection);
   }
 
@@ -1699,23 +1702,34 @@
   }
 }
 
+/* Highlights are matched on :root only and inherited, like ::selection above. */
+/* The pending quote uses the theme's selection color, distinct from Find in task. */
+:root::highlight(palot-response-quote) {
+  background-color: var(--selection);
+}
+
 /* Find in task (components/transcript-find.tsx): CSS Custom Highlight API ranges. */
-::highlight(palot-transcript-find) {
+:root::highlight(palot-transcript-find) {
   background-color: color-mix(in oklch, var(--warning) 30%, transparent);
 }
 
-::highlight(palot-transcript-find-active) {
+:root::highlight(palot-transcript-find-active) {
   background-color: var(--primary);
   color: var(--primary-foreground);
 }
 
 @media (forced-colors: active) {
-  ::highlight(palot-transcript-find) {
+  :root::highlight(palot-response-quote) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+
+  :root::highlight(palot-transcript-find) {
     background-color: Mark;
     color: MarkText;
   }
 
-  ::highlight(palot-transcript-find-active) {
+  :root::highlight(palot-transcript-find-active) {
     background-color: Highlight;
     color: HighlightText;
   }

@@ -1,6 +1,6 @@
 {
   "name": "palot-2",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "private": true,
   "license": "MIT",
   "workspaces": [
@@ -70,7 +70,7 @@
     "clean": "vp run --filter @palot/desktop clean"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.89.0",
+    "@oxlint/plugins": "1.90.0",
     "vite-plus": "1.4.0"
   },
   "overrides": {
@@ -82,10 +82,10 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0"
   },
   "engines": {
-    "bun": "1.4.3",
+    "bun": "1.4.4",
     "node": ">=24.0.0"
   },
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "trustedDependencies": [
     "electron",
     "electron-builder",

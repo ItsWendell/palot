@@ -152,9 +152,20 @@ export function installSourceControl(overrides: Partial<PalotSourceControlApi> =
     error: { code: "internal" as const, message: "Not mocked" },
   });
   const source: PalotSourceControlApi = {
+    codeHosts: async () => [],
+    saveCodeHost: unsupported,
+    removeCodeHost: unsupported,
+    gitBranch: unsupported,
+    editPullRequest: unsupported,
+    pullRequestLabels: unsupported,
+    setPullRequestLabel: unsupported,
+    setPullRequestAutoMerge: unsupported,
+    updatePullRequestBranch: unsupported,
     status: async () => sourceControlStatus(),
     listPullRequestLinks: async () => ({ ok: true, value: [] }),
     linkPullRequest: async (input) => ({ ok: true, value: pullRequestLink(input.sessionID, 1) }),
+    preparePullRequest: unsupported,
+    createPullRequest: unsupported,
     unlinkPullRequest: async () => ({ ok: true, value: null }),
     watchPullRequest: async (input) => ({ ok: true, value: pullRequestLink(input.sessionID, 1) }),
     refreshPullRequests: async () => ({ ok: true, value: [] }),
@@ -196,6 +207,9 @@ export function installSourceControl(overrides: Partial<PalotSourceControlApi> =
     gitUnstage: unsupported,
     gitCommit: unsupported,
     gitPush: unsupported,
+    gitFetch: unsupported,
+    gitPull: unsupported,
+    gitSync: unsupported,
     onChanged: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -203,9 +217,20 @@ export function installSourceControl(overrides: Partial<PalotSourceControlApi> =
     ...overrides,
   };
   const api: MockedSourceControlApi = {
+    codeHosts: vi.fn(source.codeHosts),
+    saveCodeHost: vi.fn(source.saveCodeHost),
+    removeCodeHost: vi.fn(source.removeCodeHost),
+    gitBranch: vi.fn(source.gitBranch),
+    editPullRequest: vi.fn(source.editPullRequest),
+    pullRequestLabels: vi.fn(source.pullRequestLabels),
+    setPullRequestLabel: vi.fn(source.setPullRequestLabel),
+    setPullRequestAutoMerge: vi.fn(source.setPullRequestAutoMerge),
+    updatePullRequestBranch: vi.fn(source.updatePullRequestBranch),
     status: vi.fn(source.status),
     listPullRequestLinks: vi.fn(source.listPullRequestLinks),
     linkPullRequest: vi.fn(source.linkPullRequest),
+    preparePullRequest: vi.fn(source.preparePullRequest),
+    createPullRequest: vi.fn(source.createPullRequest),
     unlinkPullRequest: vi.fn(source.unlinkPullRequest),
     watchPullRequest: vi.fn(source.watchPullRequest),
     refreshPullRequests: vi.fn(source.refreshPullRequests),
@@ -227,6 +252,9 @@ export function installSourceControl(overrides: Partial<PalotSourceControlApi> =
     gitUnstage: vi.fn(source.gitUnstage),
     gitCommit: vi.fn(source.gitCommit),
     gitPush: vi.fn(source.gitPush),
+    gitFetch: vi.fn(source.gitFetch),
+    gitPull: vi.fn(source.gitPull),
+    gitSync: vi.fn(source.gitSync),
     onChanged: vi.fn(source.onChanged),
   };
   const existing = (window as { palot?: object }).palot ?? {};

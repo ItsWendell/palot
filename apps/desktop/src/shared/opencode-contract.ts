@@ -10,6 +10,7 @@ import type {
   PalotBrowserComment,
   PalotBrowserLayout,
   PalotBrowserPageControl,
+  PalotBrowserPermissionControl,
   PalotBrowserRegistration,
   PalotBrowserShortcut,
   PalotBrowserUserCommand,
@@ -63,6 +64,8 @@ import {
 } from "./project-scripts-contract";
 import type { PalotToolsFocus } from "./palot-tools-contract";
 import type { PalotVoiceApi } from "./voice-contract";
+import { GUEST_LINKS_IPC_CHANNELS, type PalotGuestLinksApi } from "./guest-links-contract";
+import { SPELLCHECK_IPC_CHANNELS, type PalotSpellcheckApi } from "./spellcheck-contract";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -833,6 +836,8 @@ export interface PalotSession {
   location: LocationRef;
   createdAt: number;
   updatedAt: number;
+  /** When the latest run started (OpenCode 2.2.2+); newer than `idleAt` while it runs. */
+  busyAt?: number;
   idleAt?: number;
   viewedAt?: number;
   outcome?: "succeeded" | "failed" | "interrupted";
@@ -1236,6 +1241,7 @@ export const IPC_CHANNELS = {
   browserPageControl: "palot:browser:page-control",
   browserClearData: "palot:browser:clear-data",
   browserClose: "palot:browser:close",
+  browserPermission: "palot:browser:permission",
   browserEvent: "palot:browser:event",
   browserShortcut: "palot:browser:shortcut",
   cancelRequest: "palot:opencode:cancel-request",
@@ -1249,6 +1255,7 @@ export const IPC_CHANNELS = {
   pickSessionImport: "palot:system:pick-session-import",
   writeClipboardText: "palot:system:write-clipboard-text",
   attachClipboardImages: "palot:system:attach-clipboard-images",
+  attachClipboardText: "palot:system:attach-clipboard-text",
   attachmentProgress: "palot:system:attachment-progress",
   cancelAttachmentUpload: "palot:system:cancel-attachment-upload",
   attachmentPreview: "palot:system:attachment-preview",
@@ -1287,10 +1294,14 @@ export const IPC_CHANNELS = {
   automationNotificationOpened: "palot:automation:notification-opened",
   ...SOURCE_CONTROL_IPC_CHANNELS,
   ...PROJECT_SCRIPTS_IPC_CHANNELS,
+  ...GUEST_LINKS_IPC_CHANNELS,
+  ...SPELLCHECK_IPC_CHANNELS,
   events: "palot:opencode:events",
+  writeClipboardImage: "palot:system:write-clipboard-image",
 } as const;
 
 export interface PalotApi {
+  readonly guestLinks: PalotGuestLinksApi;
   readonly platform: PalotPlatform;
   /** Immutable BrowserWindow startup hints; use loadAppearance before renderer hydration. */
   readonly appearancePreferences: AppearancePreferences;
@@ -1314,6 +1325,7 @@ export interface PalotApi {
   ): Promise<number | void>;
   browserClearData(input: PalotBrowserRegistration): Promise<void>;
   browserClose(bindingID: string): Promise<void>;
+  browserPermission(bindingID: string, control: PalotBrowserPermissionControl): Promise<void>;
   onBrowserEvent(listener: (event: PalotBrowserEvent) => void): () => void;
   onBrowserShortcut(listener: (shortcut: PalotBrowserShortcut) => void): () => void;
   loadAppearance(): Promise<{
@@ -1401,6 +1413,11 @@ export interface PalotApi {
     connectionID?: string,
     requestID?: string,
   ): Promise<PalotFilePickerResult>;
+  attachClipboardText(
+    text: string,
+    connectionID: string,
+    requestID?: string,
+  ): Promise<PalotFilePickerResult>;
   cancelAttachmentUpload(requestID: string): Promise<void>;
   onAttachmentProgress(listener: (progress: PalotAttachmentProgress) => void): () => void;
   attachmentPreview(grant: string, connectionID?: string): Promise<PalotAttachmentPreview | null>;
@@ -1455,4 +1472,7 @@ export interface PalotApi {
   readonly projectScripts: PalotProjectScriptsApi;
   /** Voice call host bridge: claim, state mirroring and OS-level commands. */
   readonly voice: PalotVoiceApi;
+  /** Spellchecking in Palot's own windows: on/off and, outside macOS, dictionaries. */
+  readonly spellcheck: PalotSpellcheckApi;
+  writeClipboardImage(png: ArrayBuffer): Promise<void>;
 }

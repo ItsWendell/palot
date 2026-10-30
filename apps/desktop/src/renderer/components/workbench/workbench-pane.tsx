@@ -40,6 +40,7 @@ import { retryBtw } from "../../atoms/btw";
 import { experimentalBrowserAtom } from "../../atoms/ui";
 import { useAtom, useAtomValue, useStore } from "jotai";
 import { runtimeAtom } from "../../atoms/workspace";
+import { workspaceFileSelectionAtom } from "../../atoms/workspace-file-selection";
 import { useBrowserSession } from "../../hooks/use-browser-session";
 import { usePalotNavigation } from "../../hooks/use-navigation";
 import { useSessionPullRequests } from "../../hooks/use-source-control";
@@ -48,6 +49,7 @@ import type { PalotBrowserShortcut } from "../../../shared/browser-contract";
 import { suggestedBrowserSites } from "../../lib/browser-recent-sites";
 import {
   workbenchTabTitle,
+  workbenchScopeKey,
   canRestoreWorkbenchTab,
   type ClosedWorkbenchTab,
   type OpenWorkbenchTabInput,
@@ -61,6 +63,7 @@ import { showErrorToast } from "../../lib/toast-error";
 import { openNewWorkbenchTerminal } from "../../services/workbench-terminal";
 import { palot } from "../../services/palot";
 import { primaryPullRequestLink } from "../pull-requests/pull-request-presentation";
+import { HtmlPreviewTab } from "../workbench-tabs/html-preview-tab";
 import { NewTabPage, type NewTabTool } from "./new-tab-page";
 import { adjacentWorkbenchTab, workbenchKeyAction } from "./workbench-keys";
 import { Button } from "../ui/button";
@@ -138,6 +141,18 @@ export function WorkbenchPane({
   const browserEnabled = useAtomValue(experimentalBrowserAtom);
   const browser = useBrowserSession(scope);
   const state = context[pane];
+  const selectionStore = useStore();
+  const activeFile = state.tabs.find((tab) => tab.id === state.activeTabID && tab.kind === "file");
+  useEffect(() => {
+    if (!visible || !state.requestedOpen || activeFile?.kind !== "file") return;
+    selectionStore.set(workspaceFileSelectionAtom, (current) => ({
+      ...current,
+      [workbenchScopeKey(scope)]: {
+        location: activeFile.resource.location,
+        path: activeFile.resource.path,
+      },
+    }));
+  }, [activeFile, scope, state.requestedOpen, selectionStore, visible]);
   const commands = useWorkbenchCommands(scope);
   const sectionRef = useRef<HTMLElement>(null);
   const tabListRef = useRef<HTMLDivElement>(null);
@@ -332,6 +347,15 @@ export function WorkbenchPane({
                   tab={tab}
                   pane={pane}
                   active={state.activeTabID === tab.id}
+                  permissionPending={
+                    tab.kind === "browser" &&
+                    !(visible && state.requestedOpen && state.activeTabID === tab.id) &&
+                    Boolean(
+                      browser?.permissions?.requests.some(
+                        (request) => request.tabID === tab.resource.browserTabID,
+                      ),
+                    )
+                  }
                   browserPage={
                     tab.kind === "browser"
                       ? browser?.state.tabs.find((page) => page.id === tab.resource.browserTabID)
@@ -555,10 +579,12 @@ function WorkbenchTabItem({
   hasTabsBefore,
   hasTabsAfter,
   setPinned,
+  permissionPending,
 }: {
   tab: WorkbenchTab;
   pane: WorkbenchPaneID;
   active: boolean;
+  permissionPending?: boolean;
   browserPage?: { title?: string; url?: string };
   closeTab(): void;
   moveTab(): void;
@@ -601,6 +627,9 @@ function WorkbenchTabItem({
       >
         <TabsTrigger
           value={tab.id}
+          aria-label={
+            permissionPending ? `${title}, microphone or camera permission needed` : undefined
+          }
           onFocus={() => tabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" })}
           className={cn(
             // The list draws the active pill and the hover pill; the trigger only sets text.
@@ -609,6 +638,13 @@ function WorkbenchTabItem({
           )}
         >
           <WorkbenchTabIcon tab={tab} />
+          {permissionPending ? (
+            <span
+              className="size-1.5 shrink-0 rounded-full bg-warning"
+              title="Microphone or camera permission needed"
+              aria-hidden="true"
+            />
+          ) : null}
           {/* Inactive tabs fade their title under the hover-revealed close button instead of
               covering it with a solid square, so the hover pill reads as one surface. */}
           <span
@@ -710,6 +746,7 @@ function WorkbenchTabContent({
   active: boolean;
 }) {
   if (tab.kind === "btw") return <BtwTab tab={tab} />;
+  if (tab.kind === "html-preview") return active ? <HtmlPreviewTab tab={tab} /> : null;
   if (tab.kind === "new-tab")
     return (
       <WorkbenchNewTab

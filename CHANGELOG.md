@@ -5,6 +5,143 @@ file records user-visible changes. Internal refactors belong in Git history
 unless they change behavior, compatibility, security, privacy, or release
 operations.
 
+## 0.22.0
+
+This remains an experimental pre-release, not a supported stable release.
+
+### Added
+
+- Edit text files in the workbench. Save with Mod+S, or Revert; there is no autosave, so an
+  agent's edits are never overwritten silently: if the file changed on disk, Palot offers
+  "Overwrite" or "Reload". Closing a tab with unsaved edits asks first. Files on another
+  server's task are read-only until you switch to it.
+- The Files tab is a lazy-loading folder tree with search.
+- Pages in the browser can ask for your microphone or camera. Palot shows the request above
+  the page with Allow and Block, which pages and agents cannot press, remembers the answer
+  for that site in the task's browser, and shows a microphone in the address bar where you
+  can reset it. Before, every request was silently refused.
+- New previews: CSV and TSV as a table, Jupyter notebooks with saved outputs (code is never
+  run), font specimens, Mermaid files as diagrams, and a hex view for other binary files.
+  Markdown, CSV, notebooks and Mermaid share a Preview/Source toggle, and the preview follows
+  unsaved edits.
+- More previews: SQLite databases (tables and paged rows, read-only), archives (zip, jar, tar,
+  gzip; open an entry without extracting it), OpenDocument text, spreadsheets and slides, RTF
+  and epub. Select lines in any file to comment on them; the comment joins your next prompt
+  like a diff comment.
+- Pull requests: create one from Changes with a generated, editable title and description
+  (draft supported); it links to the task and can be watched. Fetch, Pull, Sync and "Commit &
+  push", with ahead/behind counts, an explicit rebase or merge choice when branches diverged,
+  and a confirmation before pushing to the default branch. PR links that appear in an agent's
+  finished tool output are linked to the task after Palot checks them with GitHub.
+- Branches: switch, create and rename from the task, and name a new task's worktree branch
+  (with an optional prefix). Edit a PR's title, description and labels, turn auto-merge on or
+  off, and update a branch that is behind. Worktrees can clean up merged checkouts
+  automatically (off by default), with "Run cleanup now" and a log; the safety checks of
+  manual removal still apply.
+- GitLab (merge requests, pipelines, approvals, merge and "merge when pipeline succeeds"),
+  Forgejo/Gitea (pull requests, reviews, merge, commit statuses) and Bitbucket Cloud (pull
+  requests, approvals, build statuses; merging stays on Bitbucket). Each host's token is
+  stored encrypted in Settings → Source control. Actions a host doesn't support are disabled
+  with the reason.
+- Git actions work for tasks on remote OpenCode servers, including SSH connections, through
+  OpenCode's shell API; nothing is added to the task's transcript.
+- Agents can create, link and watch pull requests (`create_pull_request` asks first under
+  Defaults, like scheduling).
+- Scheduled tasks can run on events: a watched PR's CI failing or passing, or a new review or
+  comment, with repository and branch filters; or a private local webhook (127.0.0.1 only,
+  secret URL, rate-limited) whose JSON fields can be used in the prompt as
+  `{{payload.field}}`. Repeated events are deduplicated.
+- Transcripts: code blocks can wrap, and shell snippets have "Run in terminal", which pastes
+  the command without running it. Opening a task lands on a "New" divider at the first unread
+  message. Task-list checkboxes render in replies and can be ticked in Markdown file previews.
+  "Edit from here" rewinds to one of your messages, restoring files, and puts it back in the
+  composer. HTML code blocks open as static previews (scripts disabled). Local audio and video
+  play inline, and images can be copied or saved.
+- Inbox: drag across rows from a Settle or Pin button to apply it to all of them, with one
+  Undo. Screen readers announce when the open task starts, needs you, finishes or fails, and
+  when a background task needs you. A crashing view shows a recovery screen instead of a blank
+  window.
+- Composer: stash a prompt (Mod+S) and bring it back later from the stash menu; drag a file
+  from the Files tree to mention it. A usage-limit failure can "Snooze until reset" and
+  continue then. A rich composer (Settings, beta) styles Markdown as you type and shows inline
+  chips; large pastes become attachments. New tasks can send one prompt to two to four models
+  at once, each in its own worktree, and compare the replies.
+- Files tree: reveals the open file, and screen readers announce it by name. A browser tab
+  waiting on a permission prompt is flagged in the tab strip.
+- Custom themes: copy a theme, edit its colours with a live preview, save it for light or dark,
+  export it as JSON, or import a VS Code colour theme including its syntax colours.
+- Guest links (beta, off by default): share one task through an expiring, revocable link.
+  Guests see a live, text-only transcript and can suggest messages, which reach the agent only
+  when you press Send. Publishing the link through Tailscale or OpenTunnel is a separate,
+  explicit step; stopping sharing ends access immediately.
+- `/reload` and a "Reload configuration" palette command reload OpenCode's configuration and
+  plugins without opening Settings.
+- The branch menu in a task's header can copy the branch name.
+- Tasks show OpenCode's `/goal` in a card above the composer: whether it's being pursued (with
+  the round), paused (with why, such as the reviewer seeing no progress) or met (with the
+  reviewer's reason), with Pause, Resume and Clear. Starting a new goal while one is unfinished
+  asks first. Needs OpenCode 2.2.1.
+- Pull requests has an "Open by others" list: everyone else's open pull requests in the
+  repositories or organizations you filter to, whether or not anyone is assigned or asked to
+  review. The search box narrows it as usual, for example `no:assignee` or `review:none`.
+  GitHub only.
+- While you write the first side question about selected reply text, that text stays highlighted
+  in the transcript.
+- PageUp and PageDown in the composer scroll the task by most of a page without moving the caret
+  (instantly with Reduce Motion). Both keys are listed under Composer in Keyboard shortcuts.
+- Right-clicking a misspelled word shows up to five suggestions and Add to Dictionary above the
+  editing items.
+- Settings → General → Spelling turns spellchecking on or off. On Linux and Windows you can also
+  pick dictionary languages; by default they follow your system languages, plus US English when
+  none of them is English. Turning spellchecking off also stops Palot's windows from downloading
+  dictionaries.
+
+### Changed
+
+- Pinned OpenCode dependencies and the isolated release-smoke runtime to 2.2.3 (with `effect`
+  4.0.6, which its packages require), and moved Palot to the client's `client.experimental`
+  group, so the deprecated method names that 2.3 removes are no longer used. Request paths are
+  unchanged, so older 2.x servers still work.
+- Updated Electron to 45.1.0, sql.js to 1.15.2 (SQLite 3.54), Lighthouse, Lucide, officeparser,
+  shadcn and the Bun pin (1.4.4).
+- Upgraded TanStack DB to the 1.0 release candidate (`@tanstack/db` and `@tanstack/react-db`
+  1.0.0-rc.1) and dropped the unused `@tanstack/query-db-collection`. Session state behaves the
+  same, and the renderer bundle is about 5 kB gzipped smaller.
+- OpenCode's image tool shows as an image card titled "Started image generation": the call only
+  starts a background job, and the image arrives in a later notice. This covers both
+  `image_generate` and `experimental_image_generate`, its 2.2.2 name, which OpenCode turns on
+  whenever an image model is connected.
+- When two providers offer a model under the same name, the model picker shows which provider
+  each one is from, and same-named models from one provider are told apart by their IDs.
+  "(latest)" is no longer part of model names.
+- Project paths in the project picker shorten in the middle, keeping the start and the last
+  two folders, instead of cutting off the beginning.
+- Popovers open with the same short spring as menus.
+- Selecting text and Find in task restyle much less of a long transcript: selection and highlight
+  styles are matched once at the root and inherited, instead of on every element.
+- Question options' text can be selected and copied; a click that ends a selection no longer
+  picks the option.
+- Running tasks in the Inbox are ordered by when OpenCode started them (2.2.2+), which survives
+  reloads and doesn't need the transcript loaded.
+- Composer suggestions (`@`, `/`, `$`) keep the highlight on the item you chose as results
+  update. A list that scrolls or updates under a resting pointer no longer takes it, and Enter
+  never accepts a row left over from the previous query.
+- Opening and closing the side and navigation panes does less style work (35–47% less in
+  measurements), because the header's window-control spacing no longer restyles the whole
+  window.
+
+### Fixed
+
+- Opening a task while another task was being created (including forks, imports and subagents)
+  could show "Something went wrong: CancelledError" instead of the transcript. A new session made
+  Palot refresh its task list and cancel every load in progress; the refresh now restarts only its
+  own lists, and a cancelled lookup no longer fails the task view.
+- Saved composer drafts that mention an agent or a reference are no longer dropped on reload.
+- A continued subagent links to its task while it is still running, not only once it finishes.
+- Error messages no longer include a server's stack trace.
+- Slash commands send only their arguments to OpenCode. Custom commands received `/name` as
+  part of `$ARGUMENTS`, and `/goal pause` would have started a new goal named "/goal pause".
+
 ## 0.21.0
 
 This remains an experimental pre-release, not a supported stable release.

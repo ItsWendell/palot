@@ -248,7 +248,7 @@ export async function inspectPickedFiles(filePaths: string[]): Promise<PalotFile
 /** Transfer native-inspected selections only; failed files never retain desktop URIs. */
 export async function uploadPickedAttachments(
   selected: PalotFilePickerResult,
-  client: Pick<OpenCodeClient, "server" | "file">,
+  client: Pick<OpenCodeClient, "server" | "experimental">,
   scope: {
     signal: AbortSignal;
     validate(): void;
@@ -363,7 +363,7 @@ export async function uploadPickedAttachments(
       validate();
       const name = attachment.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100) || "attachment";
       const destination = serverPath.join(temporary, `palot-${randomUUID()}-${name}`);
-      const written = await client.file.write(
+      const written = await client.experimental.file.write(
         { path: destination, payload },
         { signal: scope.signal },
       );
@@ -381,6 +381,15 @@ export async function uploadPickedAttachments(
   if (selected.files.length > MAX_ATTACHMENT_COUNT)
     errors.push(`Attach up to ${MAX_ATTACHMENT_COUNT} files at a time.`);
   return { files, errors };
+}
+
+export async function stageClipboardText(text: unknown): Promise<PalotFilePickerResult> {
+  if (typeof text !== "string" || !text || Buffer.byteLength(text, "utf8") > MAX_ATTACHMENT_BYTES)
+    throw new Error("Pasted text must be nonempty and smaller than 20 MiB.");
+  await mkdir(CLIPBOARD_DIRECTORY, { recursive: true, mode: 0o700 });
+  const filePath = path.join(CLIPBOARD_DIRECTORY, `pasted-text-${randomUUID()}.txt`);
+  await writeFile(filePath, text, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  return inspectPickedFiles([filePath]);
 }
 
 export async function stageClipboardImages(

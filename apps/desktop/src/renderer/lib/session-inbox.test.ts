@@ -379,6 +379,33 @@ describe("projectSessionInbox", () => {
     expect(snapshot.inbox.map((item) => item.session.id)).toEqual([first.id, second.id]);
   });
 
+  it("orders running tasks by the server's run start, which survives reloads", () => {
+    // After a reload Palot knows neither start; OpenCode's time.busy still does.
+    const first = { ...root, id: "first", updatedAt: 300, busyAt: 100, idleAt: 50 };
+    const second = { ...root, id: "second", updatedAt: 400, busyAt: 200, idleAt: 50 };
+    // A stale busy time from a finished run is not a start.
+    const third = { ...root, id: "third", updatedAt: 450, busyAt: 10, idleAt: 40 };
+    const snapshot = projectSessionInbox({
+      sessions: [third, second, first],
+      projects: [],
+      requests: new Map(),
+      activeIDs: new Set([first.id, second.id, third.id]),
+      runningSinceBySession: new Map([
+        [first.id, null],
+        [second.id, null],
+        [third.id, 150],
+      ]),
+      triage: null,
+      now: 500,
+    });
+
+    expect(snapshot.inbox.map((item) => [item.session.id, item.runningSince])).toEqual([
+      [first.id, 100],
+      [third.id, 150],
+      [second.id, 200],
+    ]);
+  });
+
   it("uses the idle transition for settled-session recency", () => {
     const recentlyIdle = { ...root, id: "recent-idle", updatedAt: 100, idleAt: 90 };
     const metadataUpdated = { ...root, id: "metadata-updated", updatedAt: 200, idleAt: 80 };

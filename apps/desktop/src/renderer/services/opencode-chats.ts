@@ -52,7 +52,7 @@ export async function createChatSession(input: {
     chatRootDirectory(home),
     chatFolderName(input.now ?? Date.now(), input.prompt, id),
   );
-  await client.file.write({
+  await client.experimental.file.write({
     path: joinServerPath(directory, CHAT_MARKER_FILE),
     payload: new TextEncoder().encode(`${JSON.stringify({ version: 1 })}\n`),
   });

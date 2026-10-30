@@ -23,7 +23,10 @@ function renderShell(config: { get: () => Promise<ConfigGetOutput> }) {
   ]);
   const update = vi.fn(async () => undefined);
   const get = vi.fn(config.get);
-  setOpenCodeClientForTest({ config: { get, shells, update } } as unknown as OpenCodeClient);
+  setOpenCodeClientForTest({
+    config: { get, shells },
+    experimental: { config: { update } },
+  } as unknown as OpenCodeClient);
   const store = createStore();
   store.set(runtimeAtom, {
     connectionID: "connection-1",

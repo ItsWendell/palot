@@ -109,6 +109,16 @@ function setup(sessions: SessionInfo[] = [session("ses_root")], askBeforeSchedul
   });
   const onTriageChanged = vi.fn();
   const abort = new AbortController();
+  const linked = {
+    key: "github.com/acme/web#7",
+    pullRequest: { url: "https://github.com/acme/web/pull/7" },
+  };
+  const sourceControl = {
+    linkPullRequest: vi.fn(async () => ({ ok: true as const, value: linked })),
+    listPullRequestLinks: vi.fn(async () => ({ ok: true as const, value: [linked] })),
+    watchPullRequest: vi.fn(async () => ({ ok: true as const, value: linked })),
+    createPullRequest: vi.fn(async () => ({ ok: true as const, value: linked })),
+  };
   const context: PalotToolContext = {
     profileID: "profile",
     withClient: (operation) => operation(client as unknown as OpenCodeClient),
@@ -124,6 +134,7 @@ function setup(sessions: SessionInfo[] = [session("ses_root")], askBeforeSchedul
     signal: abort.signal,
     scheduling: palotSchedulingState(),
     askBeforeScheduling: () => askBeforeScheduling,
+    sourceControl: () => sourceControl as never,
   };
   const tools = new Map(palotTools(context).map((tool) => [tool.name, tool]));
   const call = async (name: string, args: Record<string, unknown>, sessionID = "ses_root") => {
@@ -134,10 +145,69 @@ function setup(sessions: SessionInfo[] = [session("ses_root")], askBeforeSchedul
   const emit = (event: Partial<OpenCodeEvent>) => {
     for (const observer of observers) observer(event as OpenCodeEvent);
   };
-  return { call, client, dispatch, triageDispatch, onTriageChanged, active, emit, byID, abort };
+  return {
+    call,
+    client,
+    dispatch,
+    triageDispatch,
+    onTriageChanged,
+    active,
+    emit,
+    byID,
+    abort,
+    sourceControl,
+  };
 }
 
 describe("Palot agent tools", () => {
+  it("links and watches the calling subagent's root task", async () => {
+    const harness = setup([
+      session("ses_root"),
+      session("ses_child", { parentID: "ses_root" } as Partial<SessionInfo>),
+    ]);
+    await harness.call(
+      "link_pull_request",
+      { url: "https://github.com/acme/web/pull/7" },
+      "ses_child",
+    );
+    expect(harness.sourceControl.linkPullRequest).toHaveBeenCalledWith({
+      profileID: "profile",
+      sessionID: "ses_root",
+      url: "https://github.com/acme/web/pull/7",
+    });
+    await harness.call("watch_pull_request", {}, "ses_child");
+    expect(harness.sourceControl.watchPullRequest).toHaveBeenLastCalledWith({
+      profileID: "profile",
+      sessionID: "ses_root",
+      key: "github.com/acme/web#7",
+      watching: true,
+    });
+    await harness.call("unwatch_pull_request", {});
+    expect(harness.sourceControl.watchPullRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({ watching: false }),
+    );
+  });
+
+  it("requires PR creation approval even when scheduling approvals are disabled", async () => {
+    const harness = setup([session("ses_root", { permissions: [] })], false);
+    const args = { base: "main", title: "Feature", body: "Summary", draft: true };
+    expect((await harness.call("create_pull_request", args)).value.error.code).toBe(
+      "approval_required",
+    );
+    expect(harness.sourceControl.createPullRequest).not.toHaveBeenCalled();
+    expect(harness.byID.get("ses_root")!.permissions).toContainEqual({
+      action: "palot_create_pull_request",
+      resource: "*",
+      effect: "ask",
+    });
+    // The next invocation is protected by the authoritative OpenCode permission rule.
+    expect((await harness.call("create_pull_request", args)).error).toBe(false);
+    expect(harness.sourceControl.createPullRequest).toHaveBeenCalledWith({
+      profileID: "profile",
+      sessionID: "ses_root",
+      ...args,
+    });
+  });
   it("declares object schemas and keeps tool names within OpenCode's limits", () => {
     const tools = palotTools({} as PalotToolContext);
     for (const tool of tools) {

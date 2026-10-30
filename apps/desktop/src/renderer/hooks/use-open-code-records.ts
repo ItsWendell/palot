@@ -15,6 +15,8 @@ export function useOpenCodeRecords<TKind extends OpenCodeDataGraphRecordKind>(
   const queryClient = useQueryClient();
   const collection = openCodeReconciler(queryClient).graph.collection;
   const query = useLiveQuery({
+    // fn.where/fn.select have no structural identity, so TanStack DB 1.0 throws
+    // UnhashableQueryIRError without a nonempty key. collection.id scopes it to this graph.
     queryKey: [collection.id, connectionID, kind, sessionID ?? null],
     query: (q) => {
       const records = q

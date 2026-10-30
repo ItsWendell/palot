@@ -18,6 +18,7 @@ import {
   type SourceControlTriage,
 } from "./pull-request-service";
 import { PullRequestRepository } from "./pull-request-repository";
+import { pullRequestEvents } from "./pull-request-events";
 import { PULL_REQUEST_WATCH_READ_FAILURE_LIMIT } from "./pull-request-watch";
 import { SourceControlService } from "./source-control-service";
 
@@ -151,7 +152,11 @@ function fakeGitHub() {
   const graphql = vi.fn(
     async (input: Parameters<typeof partial>[0]) => (await partial(input)).data,
   );
-  const rest = vi.fn(async () => ({ status: 200, data: [] as unknown, notModified: false }));
+  const rest = vi.fn(async (_input: Parameters<GitHubGateway["rest"]>[0]) => ({
+    status: 200,
+    data: [] as unknown,
+    notModified: false,
+  }));
   const gateway: GitHubGateway = {
     graphql: graphql as GitHubGateway["graphql"],
     graphqlPartial: partial as GitHubGateway["graphqlPartial"],
@@ -216,6 +221,16 @@ async function setup(env: Record<string, string | undefined> = {}) {
   }));
   const isLocalProfile = (profileID: string) =>
     profileID === PROFILE ? true : profileID === "remote-profile" ? false : null;
+  const git = {
+    pullRequestContext: vi.fn(async () => ({
+      branch: "feature",
+      base: "main",
+      branches: ["main"],
+      diff: "branch diff",
+      commits: "Add feature",
+      pushed: true,
+    })),
+  };
   const service = new PullRequestService({
     repository,
     github: github.gateway,
@@ -223,6 +238,7 @@ async function setup(env: Record<string, string | undefined> = {}) {
     triage,
     isLocalProfile,
     repositoryOf,
+    git,
     emit: (event) => events.push(event),
     now: () => now,
     env: () => env,
@@ -246,6 +262,7 @@ async function setup(env: Record<string, string | undefined> = {}) {
     settles,
     events,
     repositoryOf,
+    git,
     advance(ms: number) {
       now += ms;
     },
@@ -295,6 +312,40 @@ afterEach(() => {
 });
 
 describe("pull request status sync", () => {
+  it("reads and publishes event detail for linked PRs without enabling a task watch", async () => {
+    context.link("s1", 7, "open");
+    const detail = vi.fn(async () => {});
+    const unsubscribe = pullRequestEvents.subscribe({ matches: () => true, detail });
+    try {
+      context.github.pulls.set("acme/web#7", {
+        number: 7,
+        state: "OPEN",
+        checks: [{ name: "CI", status: "IN_PROGRESS" }],
+      });
+      await context.service.refresh({ profileID: PROFILE, sessionID: "s1" });
+      expect(detail).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sessionID: "s1" }),
+        expect.objectContaining({ number: 7 }),
+        expect.objectContaining({ checks: [expect.objectContaining({ status: "pending" })] }),
+        "me",
+      );
+      context.github.pulls.set("acme/web#7", {
+        number: 7,
+        state: "OPEN",
+        checks: [{ name: "CI", status: "COMPLETED", conclusion: "FAILURE" }],
+      });
+      await context.service.refresh({ profileID: PROFILE, sessionID: "s1" });
+      expect(detail).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ checks: [expect.objectContaining({ status: "failure" })] }),
+        "me",
+      );
+      expect(context.sessions.prompts).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
   it("reads open links every sweep, closed every 15 minutes, and merged never, batched", async () => {
     const { github, service } = context;
     context.link("s-open", 1, "open");
@@ -375,6 +426,99 @@ describe("pull request status sync", () => {
       sessionIDs: ["s1"],
       reason: "linked",
     });
+  });
+});
+
+describe("creating and automatically linking pull requests", () => {
+  const input = {
+    profileID: PROFILE,
+    sessionID: "task",
+    base: "main",
+    title: "Add feature",
+    body: "Summary",
+    draft: true,
+  };
+
+  function creationApi() {
+    let created = false;
+    context.github.pulls.set("acme/web#71", { number: 71, state: "OPEN" });
+    context.github.rest.mockImplementation(async (request) => {
+      if (request.method === "POST") {
+        created = true;
+        return { status: 201, data: { number: 71 }, notModified: false };
+      }
+      if (request.path.includes("/pulls?"))
+        return { status: 200, data: created ? [{ number: 71 }] : [], notModified: false };
+      return { status: 200, data: { default_branch: "main" }, notModified: false };
+    });
+  }
+
+  it("creates with the edited fields, links automatically, and reuses an existing PR", async () => {
+    creationApi();
+    expect(await context.service.prepare(input)).toMatchObject({
+      base: "main",
+      pushed: true,
+      existing: null,
+    });
+    const link = await context.service.create(input);
+    expect(link).toMatchObject({ sessionID: "task", pullRequest: { number: 71 } });
+    expect(context.github.rest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        body: { head: "feature", base: "main", title: "Add feature", body: "Summary", draft: true },
+      }),
+    );
+    expect((await context.service.create(input)).key).toBe(link.key);
+    expect(context.github.rest.mock.calls.filter(([call]) => call.method === "POST")).toHaveLength(
+      1,
+    );
+  });
+
+  it("never publishes a branch implicitly and rejects remote connections before network access", async () => {
+    creationApi();
+    context.git.pullRequestContext.mockResolvedValue({
+      branch: "feature",
+      base: "main",
+      branches: ["main"],
+      diff: "diff",
+      commits: "commit",
+      pushed: false,
+    });
+    await expect(context.service.create(input)).rejects.toMatchObject({
+      code: "branch-not-pushed",
+    });
+    expect(context.github.rest.mock.calls.some(([call]) => call.method === "POST")).toBe(false);
+    context.github.rest.mockClear();
+    await expect(
+      context.service.create({ ...input, profileID: "remote-profile" }),
+    ).rejects.toMatchObject({ code: "unsupported-connection" });
+    expect(context.github.rest).not.toHaveBeenCalled();
+  });
+
+  it("auto-links only verified repository/current-branch URLs and leaves existing links alone", async () => {
+    context.github.pulls.set("acme/web#71", { number: 71, state: "OPEN" });
+    await context.service.autoLink(PROFILE, "task", "https://github.com/elsewhere/repo/pull/71");
+    expect(context.service.list({ sessionID: "task" })).toHaveLength(0);
+    expect(context.github.graphql).not.toHaveBeenCalled();
+    context.repositoryOf.mockResolvedValue({
+      remote: "git@github.com:Acme/Web.git",
+      branch: "other",
+    });
+    await context.service.autoLink(PROFILE, "task", "https://github.com/acme/web/pull/71");
+    expect(context.service.list({ sessionID: "task" })).toHaveLength(0);
+    context.repositoryOf.mockResolvedValue({
+      remote: "git@github.com:Acme/Web.git",
+      branch: "feature",
+    });
+    await context.service.autoLink(
+      PROFILE,
+      "task",
+      "Created: https://github.com/acme/web/pull/71\n",
+    );
+    expect(context.service.list({ sessionID: "task" })).toHaveLength(1);
+    context.github.graphql.mockClear();
+    await context.service.autoLink(PROFILE, "task", "https://github.com/acme/web/pull/72");
+    expect(context.github.graphql).not.toHaveBeenCalled();
   });
 });
 

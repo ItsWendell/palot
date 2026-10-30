@@ -1,4 +1,4 @@
-import { mkdtemp, open, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,6 +8,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   readAttachmentPreview,
   stageClipboardImages,
+  stageClipboardText,
 } from "./file-attachments";
 
 const temporaryDirectories: string[] = [];
@@ -27,6 +28,18 @@ afterEach(async () => {
 });
 
 describe("file attachments", () => {
+  test("stages large pasted UTF-8 text losslessly as a private text attachment", async () => {
+    const text = "✓ exact text\n".repeat(3000);
+    const result = await stageClipboardText(text);
+    expect(result.errors).toEqual([]);
+    expect(result.files[0]).toMatchObject({ mime: "text/plain", size: Buffer.byteLength(text) });
+    expect(await readFile(new URL(result.files[0]!.uri), "utf8")).toBe(text);
+    expect((await stat(new URL(result.files[0]!.uri))).mode & 0o777).toBe(0o600);
+    await expect(stageClipboardText({ text })).rejects.toThrow("Pasted text");
+    await expect(stageClipboardText("x".repeat(MAX_ATTACHMENT_BYTES + 1))).rejects.toThrow(
+      "Pasted text",
+    );
+  });
   test.each(["json", "xml", "yaml", "yml"])(
     "normalizes %s source attachment MIME types",
     async (extension) => {

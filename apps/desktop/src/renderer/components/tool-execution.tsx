@@ -398,6 +398,8 @@ function executionTitle(view: ToolExecutionView) {
   if (view.kind === "image-generation") {
     const editing = view.operation === "edit";
     if (view.status === "error") return editing ? "Image edit failed" : "Image generation failed";
+    // The tool part never changes when the background job finishes; its notice carries the image.
+    if (view.background) return editing ? "Started image edit" : "Started image generation";
     const active = view.status === "running" || view.status === "pending";
     if (editing) return active ? "Editing image" : "Edited image";
     return active ? "Generating image" : "Generated image";

@@ -219,7 +219,7 @@ async function promptAndWait(
   acknowledge = true,
 ): Promise<void> {
   await client.session.prompt({ sessionID, text });
-  await client.session.wait({ sessionID });
+  await client.experimental.session.wait({ sessionID });
   if (!acknowledge) return;
   const completed = await client.session.get({ sessionID });
   if (completed.time.idle === undefined) return;

@@ -59,12 +59,15 @@ export type KeyboardShortcutID =
   | "composer.agent.next"
   | "composer.agent.previous"
   | "composer.attach"
+  | "composer.stash"
   | "composer.shell"
   | "composer.shell.exit"
   | "composer.shell.enter-key"
   | "composer.shell.exit-key"
   | "composer.history.previous"
   | "composer.history.next"
+  | "composer.page.up"
+  | "composer.page.down"
   | "task.find"
   | "task.turn.previous"
   | "task.turn.next"
@@ -94,6 +97,7 @@ export interface KeyboardShortcut {
 }
 
 const COMPOSER_TYPING = "Part of typing in the composer";
+const COMPOSER_PAGING = "The caret stays put; not while suggestions are open";
 const WORKBENCH_TAB_CYCLING =
   "Switches workbench tabs instead while a workbench with several tabs has focus";
 
@@ -228,6 +232,13 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   },
   { id: "composer.attach", group: "composer", label: "Attach files", keys: ["Mod", "U"] },
   {
+    id: "composer.stash",
+    group: "composer",
+    label: "Stash prompt",
+    keys: ["Mod", "S"],
+    locked: "Only while the composer is focused; file editors keep Save",
+  },
+  {
     id: "composer.shell",
     group: "composer",
     label: "Shell command mode",
@@ -268,6 +279,22 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     label: "Next prompt",
     keys: ["ArrowDown"],
     note: "In an empty composer",
+    locked: COMPOSER_TYPING,
+  },
+  {
+    id: "composer.page.up",
+    group: "composer",
+    label: "Scroll the task up a page",
+    keys: ["PageUp"],
+    note: COMPOSER_PAGING,
+    locked: COMPOSER_TYPING,
+  },
+  {
+    id: "composer.page.down",
+    group: "composer",
+    label: "Scroll the task down a page",
+    keys: ["PageDown"],
+    note: COMPOSER_PAGING,
     locked: COMPOSER_TYPING,
   },
   { id: "task.find", group: "task-view", label: "Find in task", keys: ["Mod", "F"] },
@@ -385,6 +412,8 @@ const SHARED_KEY_LABELS: Record<string, string> = {
   ArrowDown: "↓",
   ArrowLeft: "←",
   ArrowRight: "→",
+  PageUp: "Page Up",
+  PageDown: "Page Down",
   " ": "Space",
   Space: "Space",
 };

@@ -139,6 +139,8 @@ export interface ImageGenerationExecution extends ToolExecutionBase {
   kind: "image-generation";
   operation: "generate" | "edit";
   referenceCount: number;
+  /** The call only started a background job (OpenCode's `image_generate`); a later notice has the image. */
+  background: boolean;
 }
 
 export interface GenericExecution extends ToolExecutionBase {
@@ -186,7 +188,9 @@ const IMAGE_GENERATION_TOOL_NAMES = new Set([
   "edit_images",
   "generate_image",
   "generate_images",
+  "experimental_image_generate",
   "image_gen",
+  "image_generate",
   "image_generation",
   "image_generator",
   "image_to_image",
@@ -287,11 +291,30 @@ const PALOT_TOOL_TITLES: Record<string, string> = {
   snooze_task: "Snooze task",
   pin_task: "Pin task",
   archive_task: "Archive task",
+  link_pull_request: "Link pull request",
+  watch_pull_request: "Watch pull request",
+  unwatch_pull_request: "Stop watching pull request",
+  create_pull_request: "Create pull request",
 };
 
 /** What a Palot tool call is doing, in the terms Palot's sidebar and Scheduled page use. */
 function palotSummary(tool: string, input: RecordValue): { label: string | null; args: string[] } {
   const value = (key: string) => genericScalar(input[key]);
+  if (
+    [
+      "link_pull_request",
+      "watch_pull_request",
+      "unwatch_pull_request",
+      "create_pull_request",
+    ].includes(tool)
+  )
+    return {
+      label: value("title") ?? value("url") ?? "current branch",
+      args: [
+        ...(value("base") ? [`into ${value("base")}`] : []),
+        ...(value("taskId") ? [value("taskId")!] : []),
+      ],
+    };
   if (tool === "schedule_task") {
     const repeats = value("rrule");
     return {
@@ -961,7 +984,10 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
         string(value.metadata.sessionId) ??
         string(value.metadata.sessionID) ??
         string(value.metadata.task_id) ??
-        string(value.input.task_id),
+        string(value.input.task_id) ??
+        // A continued subagent names its session only in the input until the call finishes. A failed
+        // continuation can name an unrelated session, such as the parent, so it gets no link.
+        (value.value.status === "error" ? null : string(value.input.sessionID)),
       background:
         boolean(value.metadata.background) ||
         boolean(value.input.background) ||
@@ -983,6 +1009,10 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
           ? "edit"
           : "generate",
       referenceCount,
+      background:
+        value.value.status === "complete" &&
+        value.value.images.length === 0 &&
+        string(value.metadata.jobID) !== null,
     };
   }
   const code = string(value.input.code);

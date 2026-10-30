@@ -74,7 +74,7 @@ async function seed(client: Client, directory: string, label: string, id: string
         ],
       },
     ]).flat();
-    return await client.session.import({
+    return await client.experimental.session.import({
       info: { ...base, id, title: `Cold navigation ${label}`, parentID: undefined },
       messages,
       location: { directory },

@@ -4,6 +4,7 @@ import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { composerDraftAtomFamily } from "../../atoms/ui";
 import { composerScope } from "../../lib/composer-scope";
 import { terminalQuote } from "./terminal-quote";
+import { terminalPasteAtom } from "../../atoms/terminal-paste";
 import { resetShortcutBindings, setShortcutBinding } from "../../lib/keyboard-shortcuts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PalotEventBatch } from "../../../shared";
@@ -19,6 +20,9 @@ const ghostty = vi.hoisted(() => ({
   disposed: 0,
   selection: "",
   selectionChange: null as (() => void) | null,
+  bracketedPaste: false,
+  pasteChecks: 0,
+  pastes: [] as string[],
 }));
 
 vi.mock("../../atoms/workspace", async () => ({
@@ -37,6 +41,13 @@ vi.mock("ghostty-web", () => ({
     loadAddon() {}
     open() {}
     focus() {}
+    hasBracketedPaste() {
+      ghostty.pasteChecks += 1;
+      return ghostty.bracketedPaste;
+    }
+    paste(data: string) {
+      ghostty.pastes.push(data);
+    }
     setOption() {}
     write(data: string) {
       ghostty.writes.push(data);
@@ -96,6 +107,9 @@ afterEach(() => {
   ghostty.disposed = 0;
   ghostty.selection = "";
   ghostty.selectionChange = null;
+  ghostty.bracketedPaste = false;
+  ghostty.pasteChecks = 0;
+  ghostty.pastes.length = 0;
   resetShortcutBindings();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -103,6 +117,37 @@ afterEach(() => {
 });
 
 describe("TerminalTab", () => {
+  it("waits for safe shell paste, consumes exactly once, and never adds Enter", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connected: true,
+      profileID: "profile-1",
+      connectionID: "paste-owner",
+    } as never);
+    store.set(terminalPasteAtom, new Map([[tab.id, "echo first\necho second\n"]]));
+    vi.spyOn(palot, "resizePty").mockResolvedValue();
+    vi.spyOn(workbenchTerminal, "recoverWorkbenchTerminal").mockImplementation(
+      (_resource, _connection, options) => {
+        options.onStatus("connected");
+        return { connectionID: () => "paste-socket", reconnect() {}, exit() {}, stop() {} };
+      },
+    );
+    const view = render(
+      <Provider store={store}>
+        <TerminalTab tab={{ ...tab, resource: { ...tab.resource, transport: "legacy" } }} />
+      </Provider>,
+    );
+    await waitFor(() =>
+      expect(view.getByText("Waiting for safe shell paste support…")).toBeTruthy(),
+    );
+    await waitFor(() => expect(ghostty.selectionChange).not.toBeNull());
+    await waitFor(() => expect(ghostty.pasteChecks).toBeGreaterThan(0));
+    expect(ghostty.pastes).toEqual([]);
+    ghostty.bracketedPaste = true;
+    await waitFor(() => expect(ghostty.pastes).toEqual(["echo first\necho second"]));
+    expect(store.get(terminalPasteAtom).has(tab.id)).toBe(false);
+    expect(ghostty.pastes).toHaveLength(1);
+  });
   it("quotes from the terminal shortcut before shell input and follows effective bindings", async () => {
     const store = createStore();
     store.set(runtimeAtom, {

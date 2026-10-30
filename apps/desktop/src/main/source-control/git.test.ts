@@ -45,6 +45,54 @@ async function repository() {
 const git = new GitRunner();
 
 describe("GitRunner", () => {
+  it("creates, switches and renames branches without losing dirty work", async () => {
+    const root = await repository();
+    execFileSync("git", ["-C", root, "commit", "--allow-empty", "-qm", "Base"]);
+    expect(
+      (
+        await git.changeBranch({
+          directory: root,
+          action: "create",
+          name: "palot/new",
+          base: "main",
+        })
+      ).branch.name,
+    ).toBe("palot/new");
+    expect(
+      (await git.changeBranch({ directory: root, action: "rename", name: "palot/renamed" })).branch
+        .name,
+    ).toBe("palot/renamed");
+    await writeFile(path.join(root, "untracked.txt"), "keep me");
+    for (const action of ["switch", "create", "rename"] as const)
+      await expect(
+        git.changeBranch({ directory: root, action, name: "main" }),
+      ).rejects.toMatchObject({ code: "dirty-worktree" });
+    expect((await git.status(root)).files.map((file) => file.path)).toEqual(["untracked.txt"]);
+    await git.stage(root, ["untracked.txt"]);
+    await git.commit(root, "Keep work");
+    expect(
+      (await git.changeBranch({ directory: root, action: "switch", name: "main" })).branch.name,
+    ).toBe("main");
+    for (const name of ["--force", "@{-1}", "bad name", "refs/heads/../escape"])
+      await expect(
+        git.changeBranch({ directory: root, action: "create", name }),
+      ).rejects.toMatchObject({ code: "invalid-input" });
+  });
+
+  it("switches a remote branch into a tracking branch and refuses an existing destination", async () => {
+    const root = await repository();
+    execFileSync("git", ["-C", root, "commit", "--allow-empty", "-qm", "Base"]);
+    execFileSync("git", ["-C", root, "remote", "add", "origin", root]);
+    execFileSync("git", ["-C", root, "update-ref", "refs/remotes/origin/topic", "HEAD"]);
+    expect(
+      (await git.changeBranch({ directory: root, action: "switch", name: "origin/topic" })).branch,
+    ).toMatchObject({ name: "topic", upstream: "origin/topic" });
+    await expect(
+      git.changeBranch({ directory: root, action: "rename", name: "main" }),
+    ).rejects.toMatchObject({ code: "git-failed" });
+    expect((await git.status(root)).branch.name).toBe("topic");
+  });
+
   it("stages, unstages and commits selected files", async () => {
     const root = await repository();
     await writeFile(path.join(root, "a.txt"), "a\n");
@@ -131,7 +179,8 @@ describe("GitRunner", () => {
     await git.stage(root, ["a.txt"]);
     await git.commit(root, "Add a");
 
-    const pushed = await git.push(root);
+    await expect(git.push(root)).rejects.toMatchObject({ code: "default-branch-confirmation" });
+    const pushed = await git.push(root, true);
     expect(pushed).toMatchObject({ remote: "origin", branch: "main", setUpstream: true });
     expect(pushed.branchStatus).toMatchObject({ upstream: "origin/main", ahead: 0, behind: 0 });
 
@@ -139,7 +188,64 @@ describe("GitRunner", () => {
     await git.stage(root, ["a.txt"]);
     const second = await git.commit(root, "Change a");
     expect(second.branch.ahead).toBe(1);
-    await expect(git.push(root)).resolves.toMatchObject({ setUpstream: false });
+    await expect(git.push(root, true)).resolves.toMatchObject({ setUpstream: false });
+  });
+
+  it("fetches ahead/behind, refuses divergent pulls by default, and rebases only explicitly", async () => {
+    const root = await repository();
+    const remote = await mkdtemp(path.join(os.tmpdir(), "palot-pull-remote-"));
+    roots.push(remote);
+    execFileSync("git", ["init", "--quiet", "--bare", remote]);
+    execFileSync("git", ["-C", root, "remote", "add", "origin", remote]);
+    await writeFile(path.join(root, "base.txt"), "base\n");
+    await git.stage(root, ["base.txt"]);
+    await git.commit(root, "Base");
+    await git.push(root, true);
+    execFileSync("git", ["-C", root, "checkout", "-qb", "feature"]);
+    await git.push(root);
+    const other = await repository();
+    execFileSync("git", ["-C", other, "remote", "add", "origin", remote]);
+    execFileSync("git", ["-C", other, "fetch", "--quiet", "origin"]);
+    execFileSync("git", ["-C", other, "checkout", "-qb", "feature", "--track", "origin/feature"]);
+    const change = async (directory: string, file: string) => {
+      await writeFile(path.join(directory, file), file);
+      await git.stage(directory, [file]);
+      return git.commit(directory, `Add ${file}`);
+    };
+    await change(other, "remote.txt");
+    await git.push(other);
+    expect((await git.fetch(root)).branch).toMatchObject({ behind: 1, ahead: 0 });
+    expect((await git.pull(root)).branch).toMatchObject({ behind: 0, ahead: 0 });
+    const local = await change(root, "local.txt");
+    await change(other, "remote2.txt");
+    await git.push(other);
+    await expect(git.pull(root)).rejects.toMatchObject({ code: "branch-diverged" });
+    expect((await git.status(root)).branch.oid).toBe(local.oid);
+    expect((await git.pull(root, "rebase")).branch).toMatchObject({ ahead: 1, behind: 0 });
+    await git.push(root);
+    await writeFile(path.join(root, "base.txt"), "uncommitted secret\n");
+    const context = await git.pullRequestContext(root, "main");
+    expect(context).toMatchObject({ branch: "feature", base: "main", pushed: true });
+    expect(context.diff).toContain("remote2.txt");
+    expect(context.diff).not.toContain("uncommitted secret");
+    await expect(git.pullRequestContext(root, "--output=/tmp/invalid")).rejects.toMatchObject({
+      code: "invalid-input",
+    });
+  });
+
+  it("confirms a feature branch configured to push to the default branch", async () => {
+    const root = await repository();
+    const remote = await mkdtemp(path.join(os.tmpdir(), "palot-default-remote-"));
+    roots.push(remote);
+    execFileSync("git", ["init", "--quiet", "--bare", remote]);
+    execFileSync("git", ["-C", root, "remote", "add", "origin", remote]);
+    await writeFile(path.join(root, "a.txt"), "a");
+    await git.stage(root, ["a.txt"]);
+    await git.commit(root, "Base");
+    await git.push(root, true);
+    execFileSync("git", ["-C", root, "checkout", "-qb", "feature"]);
+    execFileSync("git", ["-C", root, "branch", "--set-upstream-to=origin/main"]);
+    await expect(git.push(root)).rejects.toMatchObject({ code: "default-branch-confirmation" });
   });
 
   it("reports a directory outside any repository", async () => {

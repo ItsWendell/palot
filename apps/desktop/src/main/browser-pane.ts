@@ -5,7 +5,7 @@ import { NodeHttpClient } from "@effect/platform-node";
 import { Browser } from "@opencode/plugin-browser/rpc";
 import { OpenCode } from "@opencode/client/effect";
 import { SessionID } from "@opencode/schema/session-id";
-import { BrowserWindow, session } from "electron";
+import { BrowserWindow, session, systemPreferences } from "electron";
 import { Deferred, Effect, ManagedRuntime, Queue, Schedule, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import type {
@@ -14,11 +14,17 @@ import type {
   PalotBrowserRegistration,
   PalotBrowserUserCommand,
   PalotBrowserPageControl,
+  PalotBrowserPermissionControl,
   PalotBrowserHost,
 } from "../shared/browser-contract";
 import { IPC_CHANNELS } from "../shared/opencode-contract";
 import { createBrowserPage, type BrowserPage } from "./browser-chromium";
 import { browserFailure } from "./browser/errors";
+import {
+  installBrowserPermissions,
+  siteOrigin,
+  type BrowserPermissions,
+} from "./browser/permissions";
 import { createBrowserNetwork, type BrowserNetwork } from "./browser/network";
 import { destinationOrigin, fileURLWithin, normalizeURL } from "./browser/policy";
 import { browserRestoreKey, createBrowserRestoreStore } from "./browser/restore";
@@ -37,6 +43,7 @@ type Entry = {
   requests: Map<string, { abort: AbortController; tabID?: Browser.TabID }>;
   report?: (event: BrowserEvent) => void;
   cleanup: () => void;
+  permissions?: BrowserPermissions;
   pages: Map<Browser.TabID, BrowserPage>;
   pending: Map<Browser.TabID, { promise: Promise<BrowserPage>; abort: AbortController }>;
   operations: Map<Browser.TabID, Set<AbortController>>;
@@ -194,6 +201,7 @@ export function createBrowserPane() {
     entry.pages.clear();
     entry.tabs.clear();
     entry.focusedTabID = null;
+    entry.permissions?.dispose();
     send(entry, { type: "state", state: null, error: reason });
     entries.delete(entry.id);
     entry.ready.reject(new Error(reason));
@@ -748,6 +756,23 @@ export function createBrowserPane() {
         fileRoots: localFiles ? [details.location.directory] : [],
         cleanup: () => {},
       };
+      entry.permissions = installBrowserPermissions(session.fromPartition(partition), {
+        tabFor: (contents) => {
+          if (!contents) return null;
+          for (const [tabID, page] of entry.pages)
+            if (!page.contents.isDestroyed() && page.contents.id === contents.id) return tabID;
+          return null;
+        },
+        notify: (state) => send(entry, { type: "permissions", ...state }),
+        systemAccess: async (kind) =>
+          process.platform !== "darwin" ||
+          systemPreferences.askForMediaAccess(kind === "microphone" ? "microphone" : "camera"),
+        reloadOrigin: (origin) => {
+          for (const page of entry.pages.values())
+            if (!page.contents.isDestroyed() && siteOrigin(page.contents.getURL()) === origin)
+              page.contents.reload();
+        },
+      });
       // A private partition's file subresources must not escape the session workspace.
       session
         .fromPartition(partition)
@@ -1082,6 +1107,12 @@ export function createBrowserPane() {
         if (entry) entry.clearing = false;
         clearingKeys.delete(key);
       }
+    },
+    async permission(win: BrowserWindow, id: string, control: PalotBrowserPermissionControl) {
+      const permissions = owned(win, id).permissions;
+      if (!permissions) throw new Error("Browser permissions are unavailable");
+      if (control.type === "decide") await permissions.decide(control.requestID, control.decision);
+      else permissions.revoke(control.origin);
     },
     close(win: BrowserWindow, id: string) {
       // Renderer cleanup (including route unmount and disabling the setting) uses this same

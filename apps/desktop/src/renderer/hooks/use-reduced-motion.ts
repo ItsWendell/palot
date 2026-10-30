@@ -17,7 +17,8 @@ function subscribe(callback: () => void) {
   };
 }
 
-function snapshot() {
+/** The current reduced-motion preference, for event handlers that animate imperatively. */
+export function prefersReducedMotion(): boolean {
   return (
     window.matchMedia?.(QUERY).matches === true ||
     document.documentElement.dataset.reducedMotion === "true"
@@ -29,5 +30,5 @@ function snapshot() {
  * query and the native accessibility preference, which can disagree on Linux.
  */
 export function useReducedMotion(): boolean {
-  return useSyncExternalStore(subscribe, snapshot, () => false);
+  return useSyncExternalStore(subscribe, prefersReducedMotion, () => false);
 }

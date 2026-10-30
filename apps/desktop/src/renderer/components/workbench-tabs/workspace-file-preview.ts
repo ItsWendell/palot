@@ -1,11 +1,23 @@
 import { MAX_OFFICE_BYTES, type OfficeFormat } from "./office-preview-model";
+import { parseDelimitedPreview, type DelimitedPreviewData } from "./delimited-preview-model";
+import { parseNotebookPreview, type NotebookPreviewData } from "./notebook-preview-model";
+import { MAX_BINARY_BYTES, type DocumentFormat } from "./binary-preview-model";
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
 const MAX_AUDIO_VIDEO_MIB = 256;
 const MAX_AUDIO_VIDEO_BYTES = MAX_AUDIO_VIDEO_MIB * 1024 * 1024;
 
+export type RichWorkspaceFilePreview =
+  | { kind: "sqlite" | "archive"; data: Uint8Array }
+  | { kind: "document"; format: DocumentFormat; data: Uint8Array }
+  | { kind: "delimited"; text: string; table: DelimitedPreviewData }
+  | { kind: "notebook"; text: string; notebook: NotebookPreviewData }
+  | { kind: "mermaid"; text: string }
+  | { kind: "font" | "hex"; data: Uint8Array };
+
 export type WorkspaceFilePreview =
+  | RichWorkspaceFilePreview
   | { kind: "office"; format: OfficeFormat; data: Uint8Array }
   | { kind: "unsupported-office" }
   | { kind: "image" | "pdf"; mime: string; data: Uint8Array }
@@ -14,9 +26,40 @@ export type WorkspaceFilePreview =
   | { kind: "too-large"; limitMiB: number }
   | { kind: "binary" };
 
+export function isRichFilePreview(
+  preview: WorkspaceFilePreview,
+): preview is RichWorkspaceFilePreview {
+  return [
+    "delimited",
+    "notebook",
+    "mermaid",
+    "font",
+    "hex",
+    "sqlite",
+    "archive",
+    "document",
+  ].includes(preview.kind);
+}
+
 /** Only sniff formats we explicitly embed; a filename/MIME hint cannot turn SVG or HTML into media. */
 export function classifyWorkspaceFile(path: string, data: Uint8Array): WorkspaceFilePreview {
   const extension = path.split(".").at(-1)?.toLowerCase();
+  if (
+    extension &&
+    /^(?:sqlite|sqlite3|db)$/.test(extension) &&
+    asciiAt(data, 0, "SQLite format 3\0")
+  ) {
+    if (data.byteLength > MAX_BINARY_BYTES) return { kind: "too-large", limitMiB: 64 };
+    return { kind: "sqlite", data };
+  }
+  if (extension && /^(?:odt|ods|odp|rtf|epub)$/.test(extension)) {
+    if (data.byteLength > MAX_MEDIA_BYTES) return { kind: "too-large", limitMiB: 16 };
+    return { kind: "document", format: extension as DocumentFormat, data };
+  }
+  if (extension && /^(?:zip|jar|tar|gz|tgz)$/.test(extension)) {
+    if (data.byteLength > MAX_BINARY_BYTES) return { kind: "too-large", limitMiB: 64 };
+    return { kind: "archive", data };
+  }
   if (extension === "docx" || extension === "xlsx" || extension === "pptx") {
     if (data.byteLength > MAX_OFFICE_BYTES) return { kind: "too-large", limitMiB: 16 };
     return { kind: "office", format: extension, data };
@@ -40,13 +83,30 @@ export function classifyWorkspaceFile(path: string, data: Uint8Array): Workspace
     return { kind: mime === "application/pdf" ? "pdf" : "image", mime, data };
   }
 
+  // FontFace validates the bytes before a font is installed or shown, never a URL from the file.
+  if (extension && /^(?:ttf|otf|woff|woff2)$/.test(extension)) {
+    if (data.byteLength > MAX_MEDIA_BYTES) return { kind: "too-large", limitMiB: 16 };
+    return { kind: "font", data };
+  }
+
   if (data.byteLength > MAX_TEXT_BYTES) return { kind: "too-large", limitMiB: 2 };
-  if (data.includes(0)) return { kind: "binary" };
+  if (data.includes(0)) return { kind: "hex", data };
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
+    if (extension === "csv" || extension === "tsv") {
+      const table = parseDelimitedPreview(text, extension === "csv" ? "," : "\t");
+      if (table?.rows.length) return { kind: "delimited", text, table };
+    }
+    if (extension === "ipynb") {
+      const notebook = parseNotebookPreview(text);
+      if (notebook) return { kind: "notebook", text, notebook };
+    }
+    if ((extension === "mmd" || extension === "mermaid") && text.trim()) {
+      return { kind: "mermaid", text };
+    }
     return { kind: /\.(?:md|markdown)$/i.test(path) ? "markdown" : "text", text };
   } catch {
-    return { kind: "binary" };
+    return { kind: "hex", data };
   }
 }
 

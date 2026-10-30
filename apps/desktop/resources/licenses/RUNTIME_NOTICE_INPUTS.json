@@ -22,6 +22,14 @@
       ]
     },
     {
+      "id": "sql-js-wasm",
+      "packageName": "sql.js",
+      "version": "1.15.2",
+      "sha256": ["0dfeecda2070b36da0cd4f6afa250af9453de528a983770f85b13d5d6b667572"],
+      "source": "https://github.com/sql-js/sql.js/tree/v1.15.2",
+      "notices": ["sql-js", "sqlite", "sources"]
+    },
+    {
       "id": "opencode-linux-x64",
       "packageName": "@opencode/cli-linux-x64-baseline",
       "version": "2.0.14",
@@ -89,7 +97,15 @@
     },
     "sources": {
       "file": "upstream/RUNTIME_SOURCES.md",
-      "sha256": "3d82ca561eaf09a87208f7707557ab04006ee323858cde7864b57b73ba33e7a0"
+      "sha256": "5c64df0a2d256de4848c027ac23c889707991dd8d6a99a8425ee0926141cc39f"
+    },
+    "sql-js": {
+      "file": "upstream/sql.js.LICENSE.txt",
+      "sha256": "60a3f6e4d7b29b4321359e683b36cf198d24f58e24582070f56e6fa89d5ee2be"
+    },
+    "sqlite": {
+      "file": "upstream/sqlite.PUBLIC-DOMAIN.txt",
+      "sha256": "1a98bf5b551390e4fba8c701a2ebda60aa5a0fd73aa2728d753972baddce05c1"
     }
   }
 }

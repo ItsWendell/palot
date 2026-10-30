@@ -794,7 +794,7 @@ describe("renderer OpenCode settings service", () => {
   it("adds an MCP server through the official client after resolving the location", async () => {
     const get = vi.fn().mockResolvedValue(location);
     const add = vi.fn().mockResolvedValue(undefined);
-    setOpenCodeClientForTest(client({ location: { get }, mcp: { add } }));
+    setOpenCodeClientForTest(client({ location: { get }, experimental: { mcp: { add } } }));
 
     await addMcpServer({
       projectID: "project-1",
@@ -1016,7 +1016,7 @@ describe("renderer OpenCode settings service", () => {
 
   it("rejects unsafe remote MCP URLs before registration", async () => {
     const add = vi.fn();
-    setOpenCodeClientForTest(client({ mcp: { add } }));
+    setOpenCodeClientForTest(client({ experimental: { mcp: { add } } }));
 
     await expect(
       addMcpServer({
@@ -1033,7 +1033,7 @@ describe("renderer OpenCode settings service", () => {
     const connect = vi.fn().mockResolvedValue(undefined);
     const disconnect = vi.fn().mockResolvedValue(undefined);
     const remove = vi.fn().mockResolvedValue(undefined);
-    setOpenCodeClientForTest(client({ mcp: { connect, disconnect, remove } }));
+    setOpenCodeClientForTest(client({ experimental: { mcp: { connect, disconnect, remove } } }));
     const input = {
       projectID: "project-1",
       directory: "/repo",
@@ -1176,7 +1176,7 @@ describe("renderer OpenCode settings service", () => {
           options.signal.addEventListener("abort", () => reject(options.signal.reason)),
         ),
     );
-    setOpenCodeClientForTest(client({ mcp: { connect } }));
+    setOpenCodeClientForTest(client({ experimental: { mcp: { connect } } }));
     const controller = new AbortController();
     const pending = connectMcpServer(
       { projectID: "project-1", directory: "/repo", server: "docs" },

@@ -643,6 +643,33 @@ describe("projectToolExecution", () => {
     });
   });
 
+  it("links a running continued subagent to the session its input names, unless it failed", () => {
+    const part = (status: "running" | "error"): PalotMessageContent =>
+      ({
+        type: "tool",
+        id: `subagent-${status}`,
+        name: "subagent",
+        state: {
+          status,
+          input: { description: "Follow up", agent: "general", sessionID: "session-child" },
+          content: [],
+          metadata: {},
+          ...(status === "error" ? { error: { message: "Subagent session not found" } } : {}),
+        },
+      }) as PalotMessageContent;
+
+    expect(projectToolExecution(part("running"), 0)).toMatchObject({
+      kind: "subagent",
+      status: "running",
+      sessionID: "session-child",
+    });
+    expect(projectToolExecution(part("error"), 0)).toMatchObject({
+      kind: "subagent",
+      status: "error",
+    });
+    expect(projectToolExecution(part("error"), 0)).not.toHaveProperty("sessionID", "session-child");
+  });
+
   it("supports the subagent tool alias", () => {
     expect(
       projectToolExecution(
@@ -805,6 +832,36 @@ describe("projectToolExecution", () => {
       operation: "edit",
       referenceCount: 2,
     });
+  });
+
+  it("marks OpenCode's image_generate as a started background job", () => {
+    const started = projectToolExecution(
+      tool(
+        "image_generate",
+        { prompt: "A lighthouse at dusk" },
+        "Image request started in the background with openai/gpt-image-2.",
+        { path: "/tmp/images/image_1", model: "openai/gpt-image-2", jobID: "job_1" },
+      ),
+      0,
+    );
+    expect(started).toMatchObject({
+      kind: "image-generation",
+      operation: "generate",
+      status: "complete",
+      background: true,
+    });
+    expect(
+      projectToolExecution(tool("image_gen", { prompt: "A square" }, "Generated"), 0),
+    ).toMatchObject({ kind: "image-generation", background: false });
+    // OpenCode 2.2.2 renamed the tool and enables it whenever an image model is connected.
+    expect(
+      projectToolExecution(
+        tool("experimental_image_generate", { prompt: "A lighthouse" }, "Started.", {
+          jobID: "job_2",
+        }),
+        0,
+      ),
+    ).toMatchObject({ kind: "image-generation", background: true });
   });
 });
 

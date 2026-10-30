@@ -910,7 +910,7 @@ export const multiConnectionScenario: Scenario = {
 
       // Copy through the native UI and verify both isolated databases. Never move/delete source.
       const copyText = "This isolated conversation must survive the server copy unchanged.";
-      const copySource = await client.session.import({
+      const copySource = await client.experimental.session.import({
         info: {
           ...(await client.session.get({ sessionID: session.id })),
           id: `ses_${crypto.randomUUID()}`,
@@ -947,7 +947,7 @@ export const multiConnectionScenario: Scenario = {
       await assertOwner(page, copySource.id, profileID);
       expect((await client.session.get({ sessionID: copySource.id })).title).toBe(copySource.title);
       expect((await remote.session.get({ sessionID: copySource.id })).title).toBe(copySource.title);
-      const copiedTranscript = await remote.session.export({
+      const copiedTranscript = await remote.experimental.session.export({
         sessionID: copySource.id,
         sanitize: false,
       });

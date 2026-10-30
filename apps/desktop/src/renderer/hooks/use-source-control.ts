@@ -8,10 +8,20 @@ import {
 import { useAtomValue } from "jotai";
 import { useEffect, useEffectEvent } from "react";
 import type {
+  GitBranchInput,
+  PullRequestEditInput,
+  PullRequestLabelInput,
+  PullRequestAutoMergeInput,
+  PullRequestUpdateBranchInput,
   GitCommitInput,
   GitCommitResult,
   GitPathsInput,
   GitPushResult,
+  GitPushInput,
+  GitPullInput,
+  GitSyncInput,
+  CreatePullRequestInput,
+  PreparePullRequestInput,
   GitTarget,
   GitWorkingTreeStatus,
   LinkPullRequestInput,
@@ -76,10 +86,22 @@ async function unwrap<T>(result: Promise<SourceControlResult<T>>): Promise<T> {
 
 /** Thin, unwrapped bridge calls: resolve with the value or reject with `SourceControlError`. */
 export const sourceControl = {
+  gitBranch: (input: GitBranchInput) => unwrap(bridge().gitBranch(input)),
+  editPullRequest: (input: PullRequestEditInput) => unwrap(bridge().editPullRequest(input)),
+  pullRequestLabels: (input: PullRequestRef) => unwrap(bridge().pullRequestLabels(input)),
+  setPullRequestLabel: (input: PullRequestLabelInput) =>
+    unwrap(bridge().setPullRequestLabel(input)),
+  setPullRequestAutoMerge: (input: PullRequestAutoMergeInput) =>
+    unwrap(bridge().setPullRequestAutoMerge(input)),
+  updatePullRequestBranch: (input: PullRequestUpdateBranchInput) =>
+    unwrap(bridge().updatePullRequestBranch(input)),
   status: (profileID?: string) => bridge().status(profileID),
   listPullRequestLinks: (input?: ListPullRequestLinksInput) =>
     unwrap(bridge().listPullRequestLinks(input)),
   linkPullRequest: (input: LinkPullRequestInput) => unwrap(bridge().linkPullRequest(input)),
+  preparePullRequest: (input: PreparePullRequestInput) =>
+    unwrap(bridge().preparePullRequest(input)),
+  createPullRequest: (input: CreatePullRequestInput) => unwrap(bridge().createPullRequest(input)),
   unlinkPullRequest: (input: UnlinkPullRequestInput) => unwrap(bridge().unlinkPullRequest(input)),
   refreshPullRequests: (input: RefreshPullRequestsInput) =>
     unwrap(bridge().refreshPullRequests(input)),
@@ -110,7 +132,10 @@ export const sourceControl = {
   gitStage: (input: GitPathsInput) => unwrap(bridge().gitStage(input)),
   gitUnstage: (input: GitPathsInput) => unwrap(bridge().gitUnstage(input)),
   gitCommit: (input: GitCommitInput) => unwrap(bridge().gitCommit(input)),
-  gitPush: (target: GitTarget) => unwrap(bridge().gitPush(target)),
+  gitPush: (target: GitPushInput) => unwrap(bridge().gitPush(target)),
+  gitFetch: (target: GitTarget) => unwrap(bridge().gitFetch(target)),
+  gitPull: (input: GitPullInput) => unwrap(bridge().gitPull(input)),
+  gitSync: (input: GitSyncInput) => unwrap(bridge().gitSync(input)),
   onChanged(listener: (event: SourceControlChangedEvent) => void): () => void {
     const api = typeof window === "undefined" ? undefined : window.palot?.sourceControl;
     return api ? api.onChanged(listener) : () => {};
@@ -279,15 +304,16 @@ export function useSessionPullRequests(sessionID: string | null, profileID?: str
 /** Cursor-paginated GitHub search for the Pull requests page. */
 export function usePullRequestSearch(
   list: PullRequestSearchList,
-  options: { limit?: number; enabled?: boolean; query?: string } = {},
+  options: { limit?: number; enabled?: boolean; query?: string; host?: string } = {},
 ) {
   const limit = options.limit ?? 25;
   const query = options.query?.trim() ?? "";
   useSourceControlInvalidation();
   return useInfiniteQuery({
-    queryKey: sourceControlKeys.search(list, limit, query),
+    queryKey: [...sourceControlKeys.search(list, limit, query), options.host ?? "github.com"],
     queryFn: ({ pageParam }) =>
       sourceControl.searchPullRequests({
+        ...(options.host && options.host !== "github.com" ? { host: options.host } : {}),
         list,
         limit,
         cursor: pageParam,
@@ -356,6 +382,12 @@ export function useLinkPullRequest() {
   );
 }
 
+export function useCreatePullRequest() {
+  return useLinksMutation<WithoutProfile<CreatePullRequestInput>, PullRequestLink>(
+    sourceControl.createPullRequest,
+  );
+}
+
 export function useUnlinkPullRequest() {
   return useLinksMutation<WithoutProfile<UnlinkPullRequestInput>, null>(
     sourceControl.unlinkPullRequest,
@@ -402,6 +434,26 @@ export function useGitStage() {
   );
 }
 
+export function useGitBranch() {
+  useSourceControlInvalidation();
+  return useGitMutation<WithoutProfile<GitBranchInput>, GitWorkingTreeStatus>(
+    sourceControl.gitBranch,
+  );
+}
+
+export function useEditPullRequest() {
+  return usePullRequestMutation(sourceControl.editPullRequest);
+}
+export function useSetPullRequestLabel() {
+  return usePullRequestMutation(sourceControl.setPullRequestLabel);
+}
+export function useSetPullRequestAutoMerge() {
+  return usePullRequestMutation(sourceControl.setPullRequestAutoMerge);
+}
+export function useUpdatePullRequestBranch() {
+  return usePullRequestMutation(sourceControl.updatePullRequestBranch);
+}
+
 export function useGitUnstage() {
   return useGitMutation<WithoutProfile<GitPathsInput>, GitWorkingTreeStatus>(
     sourceControl.gitUnstage,
@@ -414,7 +466,17 @@ export function useGitCommit() {
 
 /** Pushes the current branch, setting the upstream when it has none. */
 export function useGitPush() {
-  return useGitMutation<WithoutProfile<GitTarget>, GitPushResult>(sourceControl.gitPush);
+  return useGitMutation<WithoutProfile<GitPushInput>, GitPushResult>(sourceControl.gitPush);
+}
+
+export function useGitFetch() {
+  return useGitMutation<WithoutProfile<GitTarget>, GitWorkingTreeStatus>(sourceControl.gitFetch);
+}
+export function useGitPull() {
+  return useGitMutation<WithoutProfile<GitPullInput>, GitWorkingTreeStatus>(sourceControl.gitPull);
+}
+export function useGitSync() {
+  return useGitMutation<WithoutProfile<GitSyncInput>, GitPushResult>(sourceControl.gitSync);
 }
 
 // ---------------------------------------------------------------------------------------------

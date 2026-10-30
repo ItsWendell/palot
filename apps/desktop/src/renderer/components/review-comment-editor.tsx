@@ -7,10 +7,16 @@ import { composerScope } from "../lib/composer-scope";
 import { canCommentOnRange, commentSelection, type ReviewComment } from "../lib/review-comments";
 import { Button } from "./ui/button";
 
-export function useReviewComments(profileID: string, sessionID?: string) {
+export function useReviewComments(
+  profileID: string,
+  sessionID?: string,
+  allowInactiveConnection = false,
+) {
   const runtime = useAtomValue(runtimeAtom);
-  const enabled = Boolean(sessionID && runtime?.profileID === profileID);
-  const [, setState] = useAtom(
+  const enabled = Boolean(
+    sessionID && (allowInactiveConnection || runtime?.profileID === profileID),
+  );
+  const [state, setState] = useAtom(
     composerStateAtomFamily(composerScope(profileID, `session:${sessionID ?? ""}`)),
   );
   const add = (path: string, range: SelectedLineRange, comment: string) => {
@@ -28,7 +34,7 @@ export function useReviewComments(profileID: string, sessionID?: string) {
         : { ...current, comments: [...current.comments, item] },
     );
   };
-  return { enabled, add };
+  return { enabled, add, comments: state.edit ? state.edit.comments : state.comments };
 }
 
 export function ReviewCommentEditor({

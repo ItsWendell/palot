@@ -40,6 +40,7 @@ import {
   type CheckGroup,
 } from "./pull-request-presentation";
 import { useArmedConfirm } from "./use-armed-confirm";
+import { PullRequestBranchActions, PullRequestLabelPicker } from "./pull-request-edit";
 
 export function PullRequestSummaryTab({
   detail,
@@ -51,6 +52,27 @@ export function PullRequestSummaryTab({
   return (
     <div className="flex flex-col gap-6 px-4 pt-4 pb-10">
       <MergeBox detail={detail} />
+      <SummarySection title="Labels" aside={<PullRequestLabelPicker detail={detail} />}>
+        {detail.labels.length ? (
+          <div className="flex min-w-0 flex-wrap gap-1">
+            {detail.labels.map((label) => (
+              <span
+                key={label.name}
+                className="inline-flex h-5 items-center gap-1 rounded-full border border-border/70 px-2 text-tag"
+              >
+                <span
+                  className="size-2 rounded-full"
+                  style={{ backgroundColor: `#${label.color.replace(/^#/, "")}` }}
+                  aria-hidden="true"
+                />
+                {label.name}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No labels.</p>
+        )}
+      </SummarySection>
       <SummarySection title="Description">
         {detail.body.trim() ? (
           <MarkdownContent value={detail.body} baseUrl={detail.url} className="text-sm" />
@@ -60,39 +82,15 @@ export function PullRequestSummaryTab({
       </SummarySection>
       <ChecksSection detail={detail} />
       <ReviewersSection detail={detail} knownLogins={knownLogins} />
-      {detail.labels.length || detail.assignees.length ? (
+      {detail.assignees.length ? (
         <SummarySection title="Details">
           <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-2 gap-y-1.5 text-meta">
-            {detail.labels.length ? (
-              <>
-                <dt className="text-muted-foreground">Labels</dt>
-                <dd className="flex min-w-0 flex-wrap gap-1">
-                  {detail.labels.map((label) => (
-                    <span
-                      key={label.name}
-                      className="inline-flex h-5 items-center gap-1 rounded-full border border-border/70 px-2 text-tag"
-                    >
-                      <span
-                        className="size-2 rounded-full"
-                        style={{ backgroundColor: `#${label.color.replace(/^#/, "")}` }}
-                        aria-hidden="true"
-                      />
-                      {label.name}
-                    </span>
-                  ))}
-                </dd>
-              </>
-            ) : null}
-            {detail.assignees.length ? (
-              <>
-                <dt className="text-muted-foreground">Assignees</dt>
-                <dd className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
-                  {detail.assignees.map((assignee) => (
-                    <PullRequestPersonLabel key={assignee.login} person={assignee} />
-                  ))}
-                </dd>
-              </>
-            ) : null}
+            <dt className="text-muted-foreground">Assignees</dt>
+            <dd className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
+              {detail.assignees.map((assignee) => (
+                <PullRequestPersonLabel key={assignee.login} person={assignee} />
+              ))}
+            </dd>
           </dl>
         </SummarySection>
       ) : null}
@@ -211,10 +209,11 @@ function MergeBox({ detail }: { detail: PullRequestDetail }) {
       ) : null}
       {detail.autoMerge ? (
         <p className="text-meta text-muted-foreground">
-          Auto-merge is on ({MERGE_METHOD_LABEL[detail.autoMerge.method].toLowerCase()}). GitHub
+          Auto-merge is on ({MERGE_METHOD_LABEL[detail.autoMerge.method].toLowerCase()}). The host
           merges once every requirement passes.
         </p>
       ) : null}
+      <PullRequestBranchActions detail={detail} method={method} />
       {error ? (
         <p role="alert" className="flex items-start gap-1.5 text-meta text-destructive">
           <CircleAlert className="mt-px size-3 shrink-0" aria-hidden="true" />
@@ -272,8 +271,7 @@ function ChecksSection({ detail }: { detail: PullRequestDetail }) {
       )}
       {!detail.checksComplete ? (
         <p className="mt-2 text-meta text-muted-foreground">
-          This list is incomplete: GitHub reported more checks than Palot read. Open the pull
-          request on GitHub for the rest.
+          This list is incomplete. Open the request on its code host for the rest.
         </p>
       ) : null}
     </SummarySection>
@@ -345,7 +343,7 @@ function ReviewersSection({
     <SummarySection
       title="Reviewers"
       aside={
-        open && detail.viewer.canUpdate ? (
+        open && detail.viewer.canUpdate && detail.capabilities?.reviewers !== false ? (
           <ReviewerPicker detail={detail} knownLogins={knownLogins} />
         ) : null
       }

@@ -1,7 +1,7 @@
 import type { FileDiffInfo, ModelRef } from "@opencode/client";
 import { useMutation } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { ArrowDown, ArrowUp, ChevronRight, GitBranch, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, MoreHorizontal, Sparkles } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -14,6 +14,7 @@ import type {
   GitCommitResult,
   GitPushResult,
   GitWorkingTreeStatus,
+  GitPullStrategy,
 } from "../../../shared/source-control-contract";
 import type { PalotSession } from "../../../shared";
 import { runtimeAtom } from "../../atoms/workspace";
@@ -22,6 +23,9 @@ import {
   SourceControlError,
   useGitCommit,
   useGitPush,
+  useGitFetch,
+  useGitPull,
+  useGitSync,
   useGitStage,
   useGitStatus,
   useGitUnstage,
@@ -42,12 +46,37 @@ import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { CreatePullRequestControl } from "../pull-requests/create-pull-request";
+import { CheckoutBranchPicker } from "../branch-picker";
 
-type SourceControlAction = "stage" | "unstage" | "commit" | "push" | "generate";
+type SourceControlAction =
+  | "stage"
+  | "unstage"
+  | "commit"
+  | "push"
+  | "generate"
+  | "fetch"
+  | "pull"
+  | "sync";
 
 type Feedback =
   | { kind: "committed"; result: GitCommitResult }
   | { kind: "pushed"; result: GitPushResult }
+  | { kind: "updated"; action: "fetch" | "pull" }
   | { kind: "error"; action: SourceControlAction; error: unknown };
 
 export interface ChangesSourceControlInput {
@@ -113,6 +142,9 @@ export function useChangesSourceControl(input: ChangesSourceControlInput) {
   const unstage = useGitUnstage();
   const commit = useGitCommit();
   const push = useGitPush();
+  const fetch = useGitFetch();
+  const pull = useGitPull();
+  const sync = useGitSync();
   const runtime = useAtomValue(runtimeAtom);
   const selectModel = useCallback(
     (sessions: PalotSession[]) =>
@@ -129,10 +161,13 @@ export function useChangesSourceControl(input: ChangesSourceControlInput) {
 
   const [message, setMessage] = useState("");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [confirmPush, setConfirmPush] = useState<(() => void) | null>(null);
   const fail = (action: SourceControlAction) => (error: unknown) =>
     setFeedback({ kind: "error", action, error });
 
-  const pathsBusy = stage.isPending || unstage.isPending;
+  const busy =
+    commit.isPending || push.isPending || fetch.isPending || pull.isPending || sync.isPending;
+  const pathsBusy = stage.isPending || unstage.isPending || busy;
   const stagedCount = tree ? stagedPaths(tree).length : 0;
 
   const setStaged = (paths: string[], staged: boolean) => {
@@ -150,9 +185,8 @@ export function useChangesSourceControl(input: ChangesSourceControlInput) {
     if (entry) setStaged([entry.path], entry.state !== "staged");
   };
 
-  const canCommit =
-    stagedCount > 0 && message.trim() !== "" && !commit.isPending && !generate.isPending;
-  const commitNow = () => {
+  const canCommit = stagedCount > 0 && message.trim() !== "" && !pathsBusy && !generate.isPending;
+  const commitNow = (andPush = false) => {
     if (!canCommit) return;
     setFeedback(null);
     commit.mutate(
@@ -161,22 +195,69 @@ export function useChangesSourceControl(input: ChangesSourceControlInput) {
         onSuccess: (result) => {
           setMessage("");
           setFeedback({ kind: "committed", result });
+          if (andPush) pushNow();
         },
         onError: fail("commit"),
       },
     );
   };
 
-  const pushNow = () => {
+  const pushNow = (
+    confirmed = false,
+    onSuccess?: () => void,
+    onError?: (error: unknown) => void,
+  ) => {
     if (push.isPending) return;
     setFeedback(null);
     push.mutate(
-      { profileID, directory },
+      { profileID, directory, ...(confirmed ? { confirmDefaultBranch: true } : {}) },
       {
-        onSuccess: (result) => setFeedback({ kind: "pushed", result }),
-        onError: fail("push"),
+        onSuccess: (result) => {
+          setFeedback({ kind: "pushed", result });
+          onSuccess?.();
+        },
+        onError: (error) => {
+          if (error instanceof SourceControlError && error.code === "default-branch-confirmation")
+            setConfirmPush(() => () => pushNow(true, onSuccess, onError));
+          else {
+            fail("push")(error);
+            onError?.(error);
+          }
+        },
       },
     );
+  };
+
+  const update = (
+    action: "fetch" | "pull" | "sync",
+    strategy: GitPullStrategy = "ff-only",
+    confirmed = false,
+  ) => {
+    if (busy) return;
+    setFeedback(null);
+    const target = {
+      profileID,
+      directory,
+      strategy,
+      ...(confirmed ? { confirmDefaultBranch: true } : {}),
+    };
+    const onError = (error: unknown) => {
+      if (error instanceof SourceControlError && error.code === "default-branch-confirmation")
+        setConfirmPush(() => () => update(action, strategy, true));
+      else fail(action)(error);
+    };
+    if (action === "sync")
+      sync.mutate(target, {
+        onSuccess: (result) => setFeedback({ kind: "pushed", result }),
+        onError,
+      });
+    else if (action === "pull")
+      pull.mutate(target, { onSuccess: () => setFeedback({ kind: "updated", action }), onError });
+    else
+      fetch.mutate(
+        { profileID, directory },
+        { onSuccess: () => setFeedback({ kind: "updated", action }), onError },
+      );
   };
 
   const generateMessage = () => {
@@ -197,6 +278,10 @@ export function useChangesSourceControl(input: ChangesSourceControlInput) {
   };
 
   return {
+    profileID,
+    sessionID: input.sessionID,
+    model,
+    connectionID: runtime?.connectionID,
     availability,
     tree,
     entries,
@@ -207,13 +292,26 @@ export function useChangesSourceControl(input: ChangesSourceControlInput) {
     feedback,
     canCommit,
     committing: commit.isPending,
-    pushing: push.isPending,
+    pushing: push.isPending || sync.isPending,
+    busy,
+    confirmPush: confirmPush
+      ? () => {
+          const run = confirmPush;
+          setConfirmPush(null);
+          run();
+        }
+      : null,
+    cancelPush: () => setConfirmPush(null),
     generating: generate.isPending,
     toggle,
     stageAll: () => tree && setStaged(stageablePaths(tree), true),
     unstageAll: () => tree && setStaged(stagedPaths(tree), false),
-    commit: commitNow,
-    push: pushNow,
+    commit: () => commitNow(),
+    commitAndPush: () => commitNow(true),
+    push: () => pushNow(),
+    pushForPullRequest: (onSuccess: () => void, onError: (error: unknown) => void) =>
+      pushNow(false, onSuccess, onError),
+    update,
     generateMessage,
     refetch: refetchGit,
   };
@@ -261,7 +359,7 @@ export function ChangesSourceControlPanel({ controller }: { controller: ChangesS
   if (controller.availability === "unsupported") {
     return (
       <p className="shrink-0 border-t border-border bg-background px-3 py-1.5 text-meta text-muted-foreground">
-        Commit and push are available for local connections.
+        Git actions need a local connection or an OpenCode 2.2 server with the shell API.
       </p>
     );
   }
@@ -285,10 +383,11 @@ export function ChangesSourceControlPanel({ controller }: { controller: ChangesS
       className="flex shrink-0 flex-col gap-1.5 border-t border-border bg-background px-2 py-1.5"
     >
       <div className="flex h-7 min-w-0 items-center gap-2 text-meta">
-        <GitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span className="min-w-0 truncate font-medium" title={branch.name ?? undefined}>
-          {branch.name ?? "Detached HEAD"}
-        </span>
+        <CheckoutBranchPicker
+          directory={controller.tree.root}
+          profileID={controller.profileID}
+          disabled={controller.busy}
+        />
         {branch.ahead > 0 || branch.behind > 0 ? (
           <span
             className="flex shrink-0 items-center gap-1 font-mono text-diff text-muted-foreground tabular-nums"
@@ -339,7 +438,7 @@ export function ChangesSourceControlPanel({ controller }: { controller: ChangesS
               type="button"
               variant="outline"
               size="xs"
-              disabled={controller.pushing}
+              disabled={controller.busy}
               aria-busy={controller.pushing || undefined}
               onClick={controller.push}
             >
@@ -347,6 +446,36 @@ export function ChangesSourceControlPanel({ controller }: { controller: ChangesS
               {pushLabel}
             </Button>
           ) : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Git actions"
+                  disabled={controller.busy}
+                />
+              }
+            >
+              <MoreHorizontal aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => controller.update("fetch")}>Fetch</DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!branch.upstream}
+                onClick={() => controller.update("pull")}
+              >
+                Pull
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!branch.upstream}
+                onClick={() => controller.update("sync")}
+              >
+                Sync (pull then push)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       <Textarea
@@ -360,7 +489,7 @@ export function ChangesSourceControlPanel({ controller }: { controller: ChangesS
         spellCheck
         className="max-h-40 min-h-14 text-compact"
       />
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
         <Button
           type="button"
           variant="ghost"
@@ -376,6 +505,17 @@ export function ChangesSourceControlPanel({ controller }: { controller: ChangesS
           )}
           {controller.generating ? "Generating…" : "Generate message"}
         </Button>
+        {controller.sessionID ? (
+          <CreatePullRequestControl
+            key={`${controller.sessionID}:${branch.name}`}
+            profileID={controller.profileID}
+            sessionID={controller.sessionID}
+            model={controller.model}
+            connectionID={controller.connectionID}
+            pushing={controller.pushing}
+            push={controller.pushForPullRequest}
+          />
+        ) : null}
         <Button
           type="button"
           size="xs"
@@ -387,8 +527,41 @@ export function ChangesSourceControlPanel({ controller }: { controller: ChangesS
           {controller.committing ? <Spinner data-icon="inline-start" aria-hidden="true" /> : null}
           Commit
         </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          disabled={!controller.canCommit}
+          onClick={controller.commitAndPush}
+        >
+          Commit &amp; push
+        </Button>
       </div>
       <SourceControlFeedback controller={controller} canPush={canPush} pushLabel={pushLabel} />
+      <Dialog
+        open={Boolean(controller.confirmPush)}
+        onOpenChange={(open) => {
+          if (!open) controller.cancelPush();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm branch push</DialogTitle>
+            <DialogDescription>
+              This targets the remote's default branch, or Git could not determine its default
+              branch. Confirm before publishing these commits.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={controller.cancelPush}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => controller.confirmPush?.()}>
+              Confirm push
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
@@ -404,6 +577,12 @@ function SourceControlFeedback({
 }) {
   const { feedback } = controller;
   if (!feedback) return null;
+  if (feedback.kind === "updated")
+    return (
+      <p role="status" className="text-meta text-muted-foreground">
+        {feedback.action === "fetch" ? "Fetched remote changes" : "Pulled remote changes"}
+      </p>
+    );
   if (feedback.kind === "committed") {
     return (
       <div role="status" className="flex min-w-0 items-center gap-2 text-meta">
@@ -442,6 +621,30 @@ function SourceControlFeedback({
   return (
     <div role="alert" className="flex flex-col gap-1 text-meta text-destructive">
       <p>{text}</p>
+      {feedback.error instanceof SourceControlError &&
+      feedback.error.code === "branch-diverged" &&
+      (feedback.action === "pull" || feedback.action === "sync") ? (
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={controller.busy}
+            onClick={() => controller.update(feedback.action as "pull" | "sync", "rebase")}
+          >
+            Rebase and {feedback.action === "sync" ? "sync" : "pull"}
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={controller.busy}
+            onClick={() => controller.update(feedback.action as "pull" | "sync", "merge")}
+          >
+            Merge and {feedback.action === "sync" ? "sync" : "pull"}
+          </Button>
+        </div>
+      ) : null}
       {detail ? (
         <Collapsible>
           <CollapsibleTrigger className="group/detail flex items-center gap-1 text-muted-foreground hover:text-foreground">
@@ -472,6 +675,9 @@ const ACTION_FAILED: Record<SourceControlAction, string> = {
   commit: "Could not commit",
   push: "Could not push",
   generate: "Could not generate a commit message",
+  fetch: "Could not fetch",
+  pull: "Could not pull",
+  sync: "Could not sync",
 };
 
 /** Specific, actionable text for a failed action; `detail` is Git or hook output. */
@@ -515,7 +721,9 @@ export function describeSourceControlError(
     case "path-outside-repository":
       return result(`${ACTION_FAILED[action]}: the path is outside this repository.`);
     case "unsupported-connection":
-      return result("Commit and push are available for local connections.");
+      return result(
+        "Git actions need a local connection or an OpenCode 2.2 server with the shell API.",
+      );
     default:
       return result(`${ACTION_FAILED[action]}: ${message}`);
   }

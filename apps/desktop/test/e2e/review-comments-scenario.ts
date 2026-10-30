@@ -46,7 +46,7 @@ export const reviewCommentsScenario: Scenario = {
   },
   async run(page, { client, session, projectDirectory }) {
     await client.session.prompt({ sessionID: session.id, text: EDIT_PROMPT });
-    await client.session.wait({ sessionID: session.id });
+    await client.experimental.session.wait({ sessionID: session.id });
     await expect(
       page.getByText("The review fixture edit is complete.", { exact: true }),
     ).toBeVisible();
@@ -92,7 +92,7 @@ export const reviewCommentsScenario: Scenario = {
     const composer = page.getByRole("textbox", { name: "Message Palot" });
     await expect(composer).toHaveValue("");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await client.session.wait({ sessionID: session.id });
+    await client.experimental.session.wait({ sessionID: session.id });
     await expect(page.getByText("The line review was received.", { exact: true })).toBeVisible();
 
     const saved = (await client.message.list({ sessionID: session.id, order: "asc" })).data.filter(

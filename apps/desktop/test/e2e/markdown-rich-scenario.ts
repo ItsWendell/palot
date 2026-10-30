@@ -68,7 +68,7 @@ export const markdownRichScenario: Scenario = {
         content: [{ type: "text", text: RESPONSE }],
       },
     ];
-    const source = await client.session.import({
+    const source = await client.experimental.session.import({
       info: { ...session, id: `${session.id}_markdown_rich`, title: "Mermaid rendering fixture" },
       messages,
       location: session.location,

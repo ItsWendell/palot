@@ -65,7 +65,7 @@ function createRailScenario(streaming: boolean): Scenario {
         ];
       }).flat();
       // Import settled turns through the official API, never a provider or renderer injection.
-      const source = await client.session.import({
+      const source = await client.experimental.session.import({
         info: { ...session, id: `${session.id}_rail`, title: "Transcript rail fixture" },
         messages,
         location: session.location,
@@ -273,9 +273,9 @@ function createRailScenario(streaming: boolean): Scenario {
         await expectAligned(page, 3);
         await expect(composer).toHaveValue(SOURCE_DRAFT);
         await page.screenshot({ path: join(runRoot, "transcript-rail-narrow-fallback.png") });
-        expect((await client.session.export({ sessionID: source.id })).messages).toHaveLength(
-          PROMPT_COUNT * 2,
-        );
+        expect(
+          (await client.experimental.session.export({ sessionID: source.id })).messages,
+        ).toHaveLength(PROMPT_COUNT * 2);
         expect(await client.session.inbox.list({ sessionID: source.id })).toHaveLength(0);
         expect(llm.scriptedCalls()).toBe(0);
         if (streaming) await exerciseStreamingRail(page, source.id, context);
@@ -403,10 +403,10 @@ async function exerciseStreamingRail(page: Page, sessionID: string, context: Sce
     }
   } finally {
     // Let the one owned local continuation settle before the outer fixture cleanup.
-    await client.session.wait({ sessionID });
+    await client.experimental.session.wait({ sessionID });
   }
   await expect(composer).toHaveValue(SOURCE_DRAFT);
-  const completed = await client.session.export({ sessionID });
+  const completed = await client.experimental.session.export({ sessionID });
   expect(
     completed.messages.some(
       (message) =>

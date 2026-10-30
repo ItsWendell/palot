@@ -31,7 +31,7 @@ export const openCodeApiMigrationScenario: Scenario = {
         content: [{ type: "text", text: ANSWER }],
       },
     ];
-    const source = await client.session.import({
+    const source = await client.experimental.session.import({
       info: { ...session, id: `${session.id}_migration`, title: "API migration fixture" },
       messages,
       location: session.location,
@@ -108,7 +108,7 @@ export const openCodeApiMigrationScenario: Scenario = {
     await expect(panel).toBeHidden();
     await expect(composer).toHaveValue(DRAFT);
 
-    const exported = await client.session.export({ sessionID });
+    const exported = await client.experimental.session.export({ sessionID });
     expect(exported.info.title).toBe("API migration renamed");
     expect(exported.messages).toEqual(messages);
     await page.reload();

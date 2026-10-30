@@ -241,6 +241,10 @@ describe("browser attachment", () => {
       webRequest: { onBeforeRequest: vi.fn() },
       clearStorageData: vi.fn(async () => {}),
       clearCache: vi.fn(async () => {}),
+      setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
+      setDevicePermissionHandler: vi.fn(),
+      setDisplayMediaRequestHandler: vi.fn(),
     });
     mocks.popupPreferences.mockImplementation((session) => ({ session, sandbox: true }));
     mocks.popupSurface.mockImplementation((_owner, options) => ({
@@ -373,6 +377,42 @@ describe("browser attachment", () => {
     disposed.resolve();
     await clearing;
     expect(mocks.stored.sessions[browserRestoreKey("profile", "ses_test")]).toBeUndefined();
+    await pane.dispose();
+  });
+
+  it("shows a page's microphone request to its own window, which alone can answer it", async () => {
+    const { pane, win, binding, state } = await attachedPane();
+    await pane.command(win as never, binding, { type: "tabs.open" });
+    await vi.waitFor(() => expect(state().tabs).toHaveLength(1));
+    const page = mocks.page.mock.results[0]!.value;
+    page.contents = { id: 41, isDestroyed: () => false, getURL: () => "https://meet.example/a" };
+    const partition = mocks.partition.mock.results[0]!.value;
+    const handler = partition.setPermissionRequestHandler.mock.calls[0]![0];
+    const callback = vi.fn();
+    handler(page.contents, "media", callback, {
+      mediaTypes: ["audio"],
+      requestingUrl: "https://meet.example/a",
+      isMainFrame: true,
+    });
+    const prompt = win.webContents.send.mock.calls
+      .map(
+        ([, event]) => event as { type: string; requests?: Array<{ id: string; tabID: string }> },
+      )
+      .findLast((event) => event.type === "permissions")!;
+    expect(prompt.requests).toEqual([
+      expect.objectContaining({ tabID: state().tabs[0]!.id, kinds: ["microphone"] }),
+    ]);
+    const decide = {
+      type: "decide" as const,
+      requestID: prompt.requests![0]!.id,
+      decision: "allow" as const,
+    };
+    await expect(pane.permission(window() as never, binding, decide)).rejects.toThrow(
+      "binding is unavailable",
+    );
+    expect(callback).not.toHaveBeenCalled();
+    await pane.permission(win as never, binding, decide);
+    expect(callback).toHaveBeenCalledWith(true);
     await pane.dispose();
   });
 

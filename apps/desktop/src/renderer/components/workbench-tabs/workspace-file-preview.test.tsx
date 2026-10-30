@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import { FileTab } from "./file-tab";
-import { classifyWorkspaceFile } from "./workspace-file-preview";
+import { classifyWorkspaceFile, isRichFilePreview } from "./workspace-file-preview";
 
 const mocks = vi.hoisted(() => ({
   file: vi.fn((_props: { file: FileContents }) => null),
@@ -85,6 +85,15 @@ const webm = () =>
   );
 
 describe("workspace file preview classification", () => {
+  it("requires SQLite magic and applies the database/archive/document size caps", () => {
+    expect(classifyWorkspaceFile("data.db", text("not a database")).kind).toBe("text");
+    expect(classifyWorkspaceFile("data.sqlite3", text("SQLite format 3\0")).kind).toBe("sqlite");
+    const big = new Uint8Array(64 * 1024 * 1024 + 1);
+    big.set(text("SQLite format 3\0"));
+    expect(classifyWorkspaceFile("data.db", big)).toEqual({ kind: "too-large", limitMiB: 64 });
+    expect(classifyWorkspaceFile("files.tar.gz", big)).toEqual({ kind: "too-large", limitMiB: 64 });
+    expect(classifyWorkspaceFile("book.epub", big)).toEqual({ kind: "too-large", limitMiB: 16 });
+  });
   it.each(["docx", "xlsx", "pptx"])(
     "routes .%s to the bounded Office parser, never the source or media viewer",
     (format) => {
@@ -174,18 +183,33 @@ describe("workspace file preview classification", () => {
     expect(classifyWorkspaceFile("fake.mp4", text("ftypisom"))).toMatchObject({ kind: "text" });
     const riffAvi = wave();
     riffAvi.set(text("AVI "), 8);
-    expect(classifyWorkspaceFile("fake.wav", riffAvi)).toMatchObject({ kind: "binary" });
+    expect(classifyWorkspaceFile("fake.wav", riffAvi)).toMatchObject({
+      kind: "hex",
+      data: riffAvi,
+    });
     const matroska = webm();
     matroska.set(text("mkv "), 8);
-    expect(classifyWorkspaceFile("fake.webm", matroska)).toMatchObject({ kind: "binary" });
+    expect(classifyWorkspaceFile("fake.webm", matroska)).toMatchObject({
+      kind: "hex",
+      data: matroska,
+    });
     const silentMp3 = mp3();
     silentMp3.set(bytes(0, 0, 0, 0), 417);
-    expect(classifyWorkspaceFile("fake.mp3", silentMp3)).toMatchObject({ kind: "binary" });
+    expect(classifyWorkspaceFile("fake.mp3", silentMp3)).toMatchObject({
+      kind: "hex",
+      data: silentMp3,
+    });
   });
 
   it("rejects invalid UTF-8 and NULs, and bounds decoded text and media", () => {
-    expect(classifyWorkspaceFile("sample.md", bytes(0xff))).toEqual({ kind: "binary" });
-    expect(classifyWorkspaceFile("sample.md", bytes(65, 0, 66))).toEqual({ kind: "binary" });
+    expect(classifyWorkspaceFile("sample.md", bytes(0xff))).toEqual({
+      kind: "hex",
+      data: bytes(0xff),
+    });
+    expect(classifyWorkspaceFile("sample.md", bytes(65, 0, 66))).toEqual({
+      kind: "hex",
+      data: bytes(65, 0, 66),
+    });
     expect(classifyWorkspaceFile("sample.md", new Uint8Array(2 * 1024 * 1024 + 1))).toEqual({
       kind: "too-large",
       limitMiB: 2,
@@ -206,6 +230,82 @@ describe("workspace file preview classification", () => {
       limitMiB: 256,
     });
   });
+});
+
+describe("rich workspace file classification", () => {
+  it.each(["csv", "tsv"])(
+    "classifies UTF-8 .%s tables and keeps malformed quoting as text",
+    (extension) => {
+      const delimiter = extension === "csv" ? "," : "\t";
+      const source = `name${delimiter}value\r\nhello${delimiter}world\r\n`;
+      const preview = classifyWorkspaceFile(`data.${extension.toUpperCase()}`, text(source));
+      expect(preview).toEqual({
+        kind: "delimited",
+        text: source,
+        table: {
+          rows: [
+            ["name", "value"],
+            ["hello", "world"],
+          ],
+          truncated: false,
+        },
+      });
+      expect(isRichFilePreview(preview)).toBe(true);
+      expect(classifyWorkspaceFile(`data.${extension}`, text('"unfinished'))).toEqual({
+        kind: "text",
+        text: '"unfinished',
+      });
+      expect(classifyWorkspaceFile(`data.${extension}`, bytes(0xff))).toMatchObject({
+        kind: "hex",
+      });
+    },
+  );
+
+  it("validates notebook JSON and cell content before choosing a rich preview", () => {
+    const source = JSON.stringify({
+      nbformat: 4,
+      cells: [{ cell_type: "markdown", source: ["# Notebook"] }],
+    });
+    expect(classifyWorkspaceFile("analysis.ipynb", text(source))).toMatchObject({
+      kind: "notebook",
+      notebook: { cells: [{ kind: "markdown", source: "# Notebook" }] },
+    });
+    for (const invalid of ["{broken", "{}", '{"nbformat":4,"cells":[{}]}']) {
+      expect(classifyWorkspaceFile("analysis.ipynb", text(invalid))).toEqual({
+        kind: "text",
+        text: invalid,
+      });
+    }
+    expect(classifyWorkspaceFile("analysis.json", text(source))).toMatchObject({ kind: "text" });
+  });
+
+  it.each(["ttf", "otf", "woff", "woff2"])(
+    "routes .%s bytes to FontFace validation with a size cap",
+    (extension) => {
+      const data = bytes(0, 1, 0, 0, 1);
+      expect(classifyWorkspaceFile(`font.${extension}`, data)).toEqual({ kind: "font", data });
+      expect(
+        classifyWorkspaceFile(`font.${extension}`, new Uint8Array(16 * 1024 * 1024 + 1)),
+      ).toEqual({ kind: "too-large", limitMiB: 16 });
+    },
+  );
+
+  it.each(["mmd", "mermaid"])(
+    "classifies UTF-8 .%s diagrams but not binary or empty content",
+    (extension) => {
+      expect(classifyWorkspaceFile(`flow.${extension}`, text("graph TD\nA-->B"))).toEqual({
+        kind: "mermaid",
+        text: "graph TD\nA-->B",
+      });
+      expect(classifyWorkspaceFile(`flow.${extension}`, bytes(65, 0))).toMatchObject({
+        kind: "hex",
+      });
+      expect(classifyWorkspaceFile(`flow.${extension}`, text(""))).toEqual({
+        kind: "text",
+        text: "",
+      });
+    },
+  );
 });
 
 describe("FileTab previews", () => {

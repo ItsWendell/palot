@@ -8,6 +8,8 @@ export interface ReviewComment {
   comment: string;
   selection: { startLine: number; startChar: number; endLine: number; endChar: number };
   side?: "additions" | "deletions";
+  /** Local rich-composer position, never sent as part of the review context. */
+  composerOffset?: number;
 }
 
 export function commentSelection(range: SelectedLineRange): ReviewComment["selection"] {
@@ -37,6 +39,8 @@ export function isReviewComment(value: unknown): value is ReviewComment {
     typeof item.id === "string" &&
     typeof item.path === "string" &&
     Boolean(item.path) &&
+    (item.composerOffset === undefined ||
+      (Number.isSafeInteger(item.composerOffset) && item.composerOffset >= 0)) &&
     typeof item.comment === "string" &&
     !!selection &&
     [selection.startLine, selection.startChar, selection.endLine, selection.endChar].every(

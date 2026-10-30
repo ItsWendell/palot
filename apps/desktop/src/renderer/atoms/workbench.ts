@@ -1,6 +1,7 @@
 import { atom, useAtomValue, useStore } from "jotai";
 import { selectAtom } from "jotai/utils";
 import { useMemo } from "react";
+import { workbenchFileEditsAtom } from "./workbench-file-edits";
 import { loadPersistedValue, persistedAtom, savePersistedValue } from "./persisted";
 import { isBrowserRecentSites, type BrowserRecentSites } from "../lib/browser-recent-sites";
 import {
@@ -40,8 +41,23 @@ export const workbenchStateAtom = atom(
   (get) => get(valueAtom),
   (get, set, update: WorkbenchState | ((state: WorkbenchState) => WorkbenchState)) => {
     const next = typeof update === "function" ? update(get(valueAtom)) : update;
+    const retained = new Set(
+      Object.values(next.scopes).flatMap((scope) =>
+        [...scope.right.tabs, ...scope.bottom.tabs].map((tab) => tab.id),
+      ),
+    );
+    const sessions = get(workbenchFileEditsAtom);
+    const removed = [...sessions].filter(([id]) => !retained.has(id));
+    if (
+      removed.some(([, session]) => session.getSnapshot().dirty) &&
+      !window.confirm("Discard unsaved file edits? Your changes will be lost.")
+    )
+      return false;
+    if (removed.length)
+      set(workbenchFileEditsAtom, new Map([...sessions].filter(([id]) => retained.has(id))));
     set(valueAtom, next);
     scheduleSave(next);
+    return true;
   },
 );
 
@@ -91,7 +107,7 @@ export const workbenchCommandAtom = atom(
     const current = get(workbenchStateAtom);
     if (command.type === "open") {
       const next = openWorkbenchTab(current, command.scope, command.input, command.options);
-      set(workbenchStateAtom, next.state);
+      if (!set(workbenchStateAtom, next.state)) return { ok: false, reason: "cancelled" };
       return next.result;
     }
     if (command.type === "replace") {
@@ -103,7 +119,8 @@ export const workbenchCommandAtom = atom(
         command.input,
         command.options,
       );
-      if (next.state !== current) set(workbenchStateAtom, next.state);
+      if (next.state !== current && !set(workbenchStateAtom, next.state))
+        return { ok: false, reason: "cancelled" };
       return next.result;
     }
     const next = mutateWorkbench(current, command.scope, command.mutation);

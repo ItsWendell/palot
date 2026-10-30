@@ -20,9 +20,9 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot 0.21.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
+Palot 0.22.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
-release-smoke runtime are pinned to **2.2.0** for repeatable checks. Stable
+release-smoke runtime are pinned to **2.2.3** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
 tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
 versions require explicit consent; V1, unknown majors and malformed versions are
@@ -211,6 +211,25 @@ server-stored attachments), image and decision generation, and `plugin.gui` for 
 Desktop's Solid GUI plugins, which Palot does not host. `experimental.background_compaction`
 is a config option only; OpenCode's config API writes just the shell, so Palot cannot set it.
 
+The 2.2.1 client nests every route under `/api/experimental` in `client.experimental` (for
+example `client.experimental.session.wait`, `client.experimental.file.write`,
+`client.experimental.mcp.add`). The old locations remain as deprecated aliases until the next
+minor release; Palot uses only the new ones. Request paths are unchanged, so these calls still
+work against older servers. 2.2.1 also adds opt-in scheduled prompts
+(`client.experimental.schedule.*`, behind `experimental.schedules`), which Palot does not use
+yet, and the opt-in `image_generate` tool, which starts a background job: Palot titles that call
+"Started image generation", since the image arrives in a later notice. 2.2.2 renamed it to
+`experimental_image_generate` and enables it whenever a connected provider has an image model;
+Palot recognizes both names. 2.2.3's packages depend on `effect` 4.0.6, which Palot matches so
+the client, protocol and schema share one Effect instance.
+
+`/goal` is a built-in server command in 2.2.1 (no opt-in). Palot reads a task's goal through
+the plugin's RPC (`rpc.call` with `opencode.goal`/`get` in the session's location) and follows
+`rpc.opencode.goal.changed` events, and shows it in a card above the composer; its controls run
+`/goal pause|resume|clear`. OpenCode pauses an active goal itself when the user stops the task.
+Commands are sent with their arguments as `text`; the `/name` the composer shows is not part of
+it, matching what templates' `$ARGUMENTS` and plugin commands expect.
+
 OpenCode checks each tool call against the permission action `palot_<tool>`. Like ChatGPT's
 app tools, Palot's tools follow the task's approvals. Full access (`*: allow`) allows them all.
 Defaults adds rules that allow reading and organizing tasks and ask for `palot_schedule_task`,
@@ -285,6 +304,11 @@ start a separate service or silently fall back to desktop-direct networking.
 
 HTTP(S) browser traffic, including localhost and private-network requests, uses
 the connected server. Browser tool permission is broad, without per-site approval.
+Device access is separate: a page's microphone or camera request (`media`, main frame,
+http(s) only) waits for the person's answer in a Palot prompt outside the page, is
+remembered per origin for the attachment's in-memory partition, and is refused after
+a minute unanswered. Every other Chromium permission, device chooser and screen capture
+is refused (`main/browser/permissions.ts`).
 Saved tab inventory remains on the desktop after disabling or detaching the
 browser; clearing task browser data is a separate action. Read the
 [privacy and retention details](../PRIVACY.md#experimental-browser) before enabling it.

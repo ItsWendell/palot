@@ -15,6 +15,15 @@ describe("error diagnostics", () => {
     expect(errorDiagnostic(error).cause?.cause?.code).toBe("ECONNREFUSED");
   });
 
+  it("drops a stack trace a server put in its error message", () => {
+    const error = new Error(
+      "FileSystem.DirectoryNotFoundError: Directory not found: /work/tree\n    at <anonymous> (/$bunfs/root/chunk.js:87:13207)\n    at runLoop (/$bunfs/root/chunk.js:18:2552)",
+    );
+    expect(actionableErrorMessage(error, "fallback")).toBe(
+      "FileSystem.DirectoryNotFoundError: Directory not found: /work/tree",
+    );
+  });
+
   it("describes unexpected HTTP statuses without serializing opaque objects", () => {
     expect(errorDiagnostic({ status: 503 }).message).toBe("HTTP status 503");
   });

@@ -107,7 +107,7 @@ export interface RetirementCheck {
   /** Uncommitted paths; null when they could not be read. */
   dirtyFiles: string[] | null;
   /** Local branch state; null when it could not be read. */
-  git: { branch: string | null; oid: string | null; ahead: number } | null;
+  git: { branch: string | null; oid: string | null; ahead: number; root?: string } | null;
   /** The merged pull request's head commit; null when it could not be read. */
   pullRequestHeadOid: string | null;
 }
@@ -256,7 +256,7 @@ export async function readRetirementState({
     queryClient.fetchQuery({
       queryKey: sourceControlKeys.pullRequestDetail(ref),
       queryFn: () => sourceControl.pullRequestDetail(ref),
-      staleTime: 30_000,
+      staleTime: 0,
     }),
   ]);
   // Running tasks are read last, after the slower reads, so they are the freshest state.
@@ -282,11 +282,15 @@ export async function readRetirementState({
     git:
       git.status === "fulfilled"
         ? {
+            root: git.value.root,
             branch: git.value.branch.name,
             oid: git.value.branch.oid,
             ahead: git.value.branch.ahead,
           }
         : null,
-    pullRequestHeadOid: detail.status === "fulfilled" ? detail.value.headOid || null : null,
+    pullRequestHeadOid:
+      detail.status === "fulfilled" && detail.value.state === "merged"
+        ? detail.value.headOid || null
+        : null,
   };
 }

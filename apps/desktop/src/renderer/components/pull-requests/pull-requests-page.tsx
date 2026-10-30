@@ -19,6 +19,7 @@ import {
   type PullRequestSnapshot,
 } from "../../../shared/source-control-contract";
 import { useSessionCatalog } from "../../hooks/use-session-catalog";
+import { useThreadHeaderInsets } from "../../hooks/use-thread-header-insets";
 import {
   sourceControlKeys,
   usePullRequestLinks,
@@ -26,6 +27,7 @@ import {
 } from "../../hooks/use-source-control";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestDetailPane } from "./pull-request-detail";
 import { PullRequestFilterMenu } from "./pull-request-filters";
@@ -48,6 +50,7 @@ const UNSUPPORTED_FALLBACK = "Linking pull requests to tasks only works on this 
  * container the panes stack and the detail gets a back button.
  */
 export function PullRequestsPage() {
+  const headerRef = useThreadHeaderInsets();
   const search = useRouterState({
     select: (state) => validatePullRequestsSearch(state.location.search as Record<string, unknown>),
   });
@@ -62,8 +65,40 @@ export function PullRequestsPage() {
   const [draggedListWidth, setDraggedListWidth] = useState<number | null>(null);
   const listWidth = draggedListWidth ?? savedListWidth;
   const selected = useMemo(() => parsePullRequestParam(search.pr), [search.pr]);
-  const github = status.data?.github;
-  const authenticated = github?.authenticated === true;
+  const [chosenHost, setChosenHost] = useState<string | null>(null);
+  const host = chosenHost ?? selected?.host ?? "github.com";
+  const kind = status.data?.hosts?.find((account) => account.host === host)?.kind ?? "github";
+  const github =
+    status.data?.githubHosts?.find((account) => account.host === host) ?? status.data?.github;
+  const authenticated = kind !== "github" || github?.authenticated === true;
+  const hostPicker = (
+    <Select
+      value={host}
+      onValueChange={(value) => {
+        if (value) {
+          setChosenHost(value);
+          select(null);
+        }
+      }}
+    >
+      <SelectTrigger aria-label="Code host" className="window-no-drag max-w-48">
+        <SelectValue>{host}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {[
+          ...new Set([
+            "github.com",
+            ...(status.data?.githubHosts ?? []).map((account) => account.host),
+            ...(status.data?.hosts ?? []).map((account) => account.host),
+          ]),
+        ].map((name) => (
+          <SelectItem key={name} value={name}>
+            {name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
   const linkUnsupported = status.error
     ? sourceControlErrorMessage(status.error)
     : status.data && !status.data.supported
@@ -71,7 +106,7 @@ export function PullRequestsPage() {
       : null;
   const pausedUntil =
     github?.pausedUntil && github.pausedUntil > Date.now() ? github.pausedUntil : null;
-  const authRejected = github?.error?.code === "github-auth-failed";
+  const authRejected = kind === "github" && github?.error?.code === "github-auth-failed";
 
   const linksByKey = useMemo(() => {
     const grouped = new Map<string, PullRequestLink[]>();
@@ -122,6 +157,7 @@ export function PullRequestsPage() {
       ) : !authenticated || authRejected ? (
         <PageMessage>
           <Empty className="min-h-64 max-w-md border">
+            {hostPicker}
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <GitPullRequest aria-hidden="true" />
@@ -150,13 +186,17 @@ export function PullRequestsPage() {
               selected && "@max-[44rem]/pull-requests:hidden",
             )}
           >
-            <div className="window-drag flex h-(--shell-header-height) shrink-0 items-center gap-2 border-b border-border/60 pr-3 pl-(--thread-header-leading-inset,18px)">
+            <div
+              ref={headerRef}
+              className="window-drag flex h-(--shell-header-height) shrink-0 items-center gap-2 border-b border-border/60 pr-3 pl-(--thread-header-leading-inset,18px)"
+            >
               <h1 className="text-compact font-semibold">Pull requests</h1>
+              {hostPicker}
               {github?.login ? (
                 <span className="truncate text-meta text-muted-foreground">{github.login}</span>
               ) : null}
               <div className="ml-auto flex items-center gap-0.5">
-                <PullRequestFilterMenu />
+                {kind === "github" || kind === "bitbucket" ? <PullRequestFilterMenu /> : null}
                 <Button
                   type="button"
                   variant="ghost"
@@ -180,6 +220,8 @@ export function PullRequestsPage() {
               </p>
             ) : null}
             <PullRequestList
+              host={host}
+              kind={kind}
               enabled={authenticated}
               selected={selected}
               onSelect={select}

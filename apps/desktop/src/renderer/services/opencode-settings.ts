@@ -672,7 +672,10 @@ export async function loadShellSettings(
 
 /** Saves the default shell in global OpenCode config; `null` returns to automatic. */
 export async function updateDefaultShell(connectionID: string, shell: string | null) {
-  await openCodeClient(connectionID).config.update({ shell }, { signal: requestSignal() });
+  await openCodeClient(connectionID).experimental.config.update(
+    { shell },
+    { signal: requestSignal() },
+  );
 }
 
 export interface ShellSelectOption {
@@ -713,7 +716,7 @@ export async function updatePlugin(
 export async function addWellknownIntegration(input: AddWellknownIntegrationInput): Promise<void> {
   const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
-  await client.integration.wellknown.add(
+  await client.experimental.integration.wellknown.add(
     { url: input.url, location: settingsLocation(input) },
     { signal: requestSignal() },
   );
@@ -723,7 +726,7 @@ export async function addMcpServer(input: AddMcpServerInput): Promise<void> {
   const client = openCodeClient(input.connectionID);
   validateMcpConfig(input.config);
   await resolveSettingsLocation(client, input);
-  await client.mcp.add(
+  await client.experimental.mcp.add(
     { server: input.server, location: settingsLocation(input), config: input.config },
     { signal: requestSignal() },
   );
@@ -748,7 +751,7 @@ export function validateMcpConfig(config: AddMcpServerInput["config"]): void {
 export async function removeMcpServer(input: McpServerInput): Promise<void> {
   const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
-  await client.mcp.remove(
+  await client.experimental.mcp.remove(
     { server: input.server, location: settingsLocation(input) },
     { signal: requestSignal() },
   );
@@ -758,7 +761,7 @@ export async function connectMcpServer(input: McpServerInput, signal?: AbortSign
   const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input, requestSignal(signal));
   // OpenCode answers once the handshake settles, so a following list reads its outcome.
-  await client.mcp.connect(
+  await client.experimental.mcp.connect(
     { server: input.server, location: settingsLocation(input) },
     { signal: requestSignal(signal) },
   );
@@ -793,7 +796,7 @@ export async function getIntegration(
 export async function disconnectMcpServer(input: McpServerInput): Promise<void> {
   const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
-  await client.mcp.disconnect(
+  await client.experimental.mcp.disconnect(
     { server: input.server, location: settingsLocation(input) },
     { signal: requestSignal() },
   );

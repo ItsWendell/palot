@@ -101,6 +101,67 @@ Keep tests that catch a realistic behavioral regression. Tests that search sourc
 text for classes or restate constants don't prove rendering or runtime behavior.
 See [CODING_STANDARDS.md](../CODING_STANDARDS.md).
 
+## Agent tool discoverability eval
+
+The normal unit suite checks 32 natural search phrasings against Palot's real
+catalog plus 300+ competing tools, using OpenCode's Code Mode ranking (unchanged from 2.2.0 to 2.2.1).
+For an opt-in paid-model check, from `apps/desktop` run:
+
+```sh
+EVAL_MODEL=anthropic/claude-haiku-4-5 bun run eval:tools
+```
+
+Choose a model you have credentials for in your environment. Optional
+`EVAL_CONFIG` supplies an inline OpenCode provider config; `OPENCODE_BIN` selects
+the pinned CLI. The script never reads your shared service or copies saved OAuth
+credentials. It starts an isolated HOME/XDG service, attaches the real Palot
+schemas with recording-only handlers, and runs ten prompts (four steps and 90
+seconds per prompt maximum). No actual task is scheduled, archived or changed.
+Prompts still reach your model provider and incur its normal charges. JSON and
+isolated service state are retained under the primary checkout's `.local/evals/`
+with owner-only access. Results record called tool names, not credentials or
+arguments. Inspect that private directory before sharing it. This measures tool
+selection, not whether the production action succeeded. It is not part of CI.
+
+## Event-triggered tasks
+
+In Scheduled, choose **Create → Trigger type → Local webhook** or **GitHub pull
+request**. PR triggers use the existing linked-PR sweep (about once a minute), with
+exact repository/head-branch filters. The first read records a baseline. CI run
+URLs and comment/review IDs dedupe later events. PR watches remain independent:
+if you enable both, the watched task and the automation can both receive a prompt.
+
+Saving an active webhook task opts into a random-port loopback listener. Copy its
+concealed **Webhook URL** and POST a JSON object from a local script:
+
+```sh
+curl --request POST "$PALOT_WEBHOOK_URL" \
+  --header 'Content-Type: application/json' \
+  --header 'Idempotency-Key: build-123' \
+  --data '{"reason":"build failed","build":123}'
+```
+
+Use `Inspect {{payload.reason}} for build {{payload.build}}` in the prompt.
+Substitutions traverse own properties only, JSON-quote values, cap each value at
+2,000 characters and total expansion at 16,000. This is data framing, not a
+prompt-injection defense. Don't send secrets. The URL changes after Palot restarts;
+the token remains private local state. There is no public listener or tunnel.
+
+The listener refuses browser origins, non-loopback Host values, non-POST methods,
+non-JSON objects and bodies over 32 KiB. Limits are 120 requests/minute globally and
+10/minute per authenticated task. Idempotency keys dedupe the last 256 deliveries
+per task across restarts. Without a key, identical payloads dedupe within the same
+minute bucket. A busy/offline automation keeps its latest event; on return, its
+existing missed-run policy either admits it or records a skipped run. Notification,
+approval, queue and concurrency rules are the same as time-triggered runs. Events
+while Palot is closed cannot be received; PR polling can recover later changes,
+while webhook senders must retry. `schedule_task` remains time-only; event triggers
+are UI-only, though tools can list, rename, change prompts, pause and delete them.
+
+Verify this with `bun run test:e2e -- event-automations --keep`. It posts to the
+isolated app's local endpoint and uses a fake GitHub CI failure, never the shared
+OpenCode service or a real GitHub mutation.
+
 ## Inspect isolated desktop state
 
 ```sh

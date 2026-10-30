@@ -60,6 +60,7 @@ export interface PalotToolHostOptions {
   enabled?: () => boolean;
   /** "Ask before agents schedule tasks"; Full access tasks never ask. Defaults to asking. */
   askBeforeScheduling?: () => boolean;
+  sourceControl?: PalotToolContext["sourceControl"];
   now?: () => number;
 }
 
@@ -207,7 +208,7 @@ export class PalotToolHost {
   #autoApprove(connectionID: string, request: { id: string; sessionID: string; action: string }) {
     const tool = palotToolName(request.action);
     if (!tool || PALOT_TOOL_APPROVALS[tool] !== "ask") return;
-    const ask = this.#options.askBeforeScheduling?.() ?? true;
+    const ask = tool === "create_pull_request" || (this.#options.askBeforeScheduling?.() ?? true);
     void this.#options.runtime
       .scopedConnection(connectionID)
       .withClient(async (client) => {
@@ -302,6 +303,7 @@ export class PalotToolHost {
           now: this.#now,
           scheduling,
           askBeforeScheduling: () => this.#options.askBeforeScheduling?.() ?? true,
+          sourceControl: this.#options.sourceControl,
         },
       };
       this.#connections.set(status.connectionID, state);

@@ -65,7 +65,8 @@ export function quickActionsFor(
   pullRequest: PullRequestSnapshot,
 ): QuickAction[] {
   const actions: QuickAction[] = [];
-  if (list === "review-requested" && pullRequest.state === "open") actions.push("approve");
+  if ((list === "review-requested" || list === "others") && pullRequest.state === "open")
+    actions.push("approve");
   if (pullRequest.state === "open" && pullRequest.mergeable === "mergeable") actions.push("merge");
   if (pullRequest.state === "open" || pullRequest.state === "draft") actions.push("close");
   return actions;
@@ -127,6 +128,7 @@ const START_PROMPT: Record<PullRequestSearchList | "detail", (url: string) => st
   authored: (url) => `Continue work on this pull request: ${url}`,
   mentioned: (url) => `Look into this pull request: ${url}`,
   "recently-merged": (url) => `Follow up on this merged pull request: ${url}`,
+  others: (url) => `Review this pull request: ${url}`,
   detail: (url) => `Work on this pull request: ${url}`,
 };
 

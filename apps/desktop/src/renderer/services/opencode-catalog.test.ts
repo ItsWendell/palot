@@ -29,7 +29,9 @@ describe("session log", () => {
     const log = vi.fn(async function* () {
       yield* items;
     });
-    setOpenCodeClientForTest({ session: { log } } as unknown as OpenCodeClient);
+    setOpenCodeClientForTest({
+      experimental: { session: { log } },
+    } as unknown as OpenCodeClient);
 
     await expect(loadSessionLog("session-1", 9)).resolves.toEqual(items);
     expect(log).toHaveBeenCalledWith(
@@ -52,7 +54,9 @@ describe("session log", () => {
         );
       });
     });
-    setOpenCodeClientForTest({ session: { log } } as unknown as OpenCodeClient);
+    setOpenCodeClientForTest({
+      experimental: { session: { log } },
+    } as unknown as OpenCodeClient);
     const controller = new AbortController();
     const result = loadSessionLog("session-1", undefined, controller.signal);
 

@@ -1,6 +1,17 @@
 import type {
+  GitBranchInput,
+  PullRequestEditInput,
+  PullRequestLabelInput,
+  PullRequestAutoMergeInput,
+  PullRequestUpdateBranchInput,
   GitHubAccountStatus,
   GitCommitInput,
+  GitPushInput,
+  GitPullInput,
+  GitSyncInput,
+  CreatePullRequestInput,
+  PreparePullRequestInput,
+  PullRequestPreparation,
   GitCommitResult,
   GitPathsInput,
   GitPushResult,
@@ -38,13 +49,20 @@ import { configuredGitHubHosts } from "./github-credentials";
 import type { GitRunner } from "./git";
 import type { PullRequestReviewService } from "./pull-request-review";
 import type { PullRequestService } from "./pull-request-service";
+import type { HostProviders } from "./host-providers";
+import type { SaveCodeHostInput } from "../../shared/source-control-contract";
 
 const DEFAULT_HOST = "github.com";
 
 export interface SourceControlServiceOptions {
+  gitForProfile?(profileID: string): Promise<SourceControlServiceOptions["git"]>;
+  providers?: HostProviders;
   pullRequests: PullRequestService;
   review: PullRequestReviewService;
-  git: Pick<GitRunner, "status" | "stage" | "unstage" | "commit" | "push">;
+  git: Pick<
+    GitRunner,
+    "status" | "stage" | "unstage" | "commit" | "push" | "fetch" | "pull" | "changeBranch"
+  >;
   github: GitHubGateway;
   isLocalProfile(profileID: string): boolean | null;
   emit(event: SourceControlChangedEvent): void;
@@ -54,6 +72,28 @@ export interface SourceControlServiceOptions {
 /** The IPC-facing facade: every method returns a `SourceControlResult` instead of throwing. */
 export class SourceControlService {
   constructor(private readonly options: SourceControlServiceOptions) {}
+  codeHosts() {
+    return Promise.resolve(this.options.providers?.accounts() ?? []);
+  }
+  saveCodeHost(input: SaveCodeHostInput) {
+    return sourceControlResult(() => {
+      if (!this.options.providers)
+        throw new SourceControlError("unsupported-action", "Code hosts are unavailable.");
+      this.options.providers.credentials.save(input);
+      this.options.emit({ type: "github", host: new URL(input.url).host });
+      return null;
+    });
+  }
+  removeCodeHost(host: string) {
+    return sourceControlResult(() => {
+      this.options.providers?.credentials.remove(host);
+      this.options.emit({ type: "github", host });
+      return null;
+    });
+  }
+  private reviewFor(ref: PullRequestRef) {
+    return this.options.providers?.get(ref.host) ?? this.options.review;
+  }
 
   start(): void {
     this.options.pullRequests.start();
@@ -78,6 +118,7 @@ export class SourceControlService {
           : "Pull requests and Git actions are only available for local OpenCode connections.",
       github: githubHosts.find((account) => account.host === DEFAULT_HOST)!,
       githubHosts,
+      hosts: this.options.providers?.accounts(),
     };
   }
 
@@ -112,6 +153,16 @@ export class SourceControlService {
     return sourceControlResult(() => this.options.pullRequests.link(input));
   }
 
+  preparePullRequest(
+    input: PreparePullRequestInput,
+  ): Promise<SourceControlResult<PullRequestPreparation>> {
+    return sourceControlResult(() => this.options.pullRequests.prepare(input));
+  }
+
+  createPullRequest(input: CreatePullRequestInput): Promise<SourceControlResult<PullRequestLink>> {
+    return sourceControlResult(() => this.options.pullRequests.create(input));
+  }
+
   unlinkPullRequest(input: UnlinkPullRequestInput): Promise<SourceControlResult<null>> {
     return sourceControlResult(() => {
       this.options.pullRequests.unlink(input);
@@ -138,43 +189,43 @@ export class SourceControlService {
   // Review workspace: GitHub-only, no OpenCode profile, the local machine's credentials.
 
   pullRequestDetail(ref: PullRequestRef): Promise<SourceControlResult<PullRequestDetail>> {
-    return sourceControlResult(() => this.options.review.detail(ref));
+    return sourceControlResult(() => this.reviewFor(ref).detail(ref));
   }
 
   pullRequestTimeline(
     input: PullRequestTimelineInput,
   ): Promise<SourceControlResult<PullRequestTimelinePage>> {
-    return sourceControlResult(() => this.options.review.timeline(input));
+    return sourceControlResult(() => this.reviewFor(input).timeline(input));
   }
 
   pullRequestFiles(ref: PullRequestRef): Promise<SourceControlResult<PullRequestFiles>> {
-    return sourceControlResult(() => this.options.review.files(ref));
+    return sourceControlResult(() => this.reviewFor(ref).files(ref));
   }
 
   setPullRequestFileViewed(input: PullRequestFileViewedInput): Promise<SourceControlResult<null>> {
     return sourceControlResult(async () => {
-      await this.options.review.setFileViewed(input);
+      await this.reviewFor(input).setFileViewed(input);
       return null;
     });
   }
 
   submitPullRequestReview(input: PullRequestReviewInput): Promise<SourceControlResult<null>> {
     return sourceControlResult(async () => {
-      await this.options.review.review(input);
+      await this.reviewFor(input).review(input);
       return null;
     });
   }
 
   addPullRequestComment(input: PullRequestCommentInput): Promise<SourceControlResult<null>> {
     return sourceControlResult(async () => {
-      await this.options.review.comment(input);
+      await this.reviewFor(input).comment(input);
       return null;
     });
   }
 
   replyToPullRequestThread(input: PullRequestThreadReplyInput): Promise<SourceControlResult<null>> {
     return sourceControlResult(async () => {
-      await this.options.review.reply(input);
+      await this.reviewFor(input).reply(input);
       return null;
     });
   }
@@ -183,63 +234,100 @@ export class SourceControlService {
     input: PullRequestThreadResolveInput,
   ): Promise<SourceControlResult<null>> {
     return sourceControlResult(async () => {
-      await this.options.review.resolve(input);
+      await this.reviewFor(input).resolve(input);
       return null;
     });
   }
 
   mergePullRequest(input: PullRequestMergeInput): Promise<SourceControlResult<PullRequestDetail>> {
-    return sourceControlResult(() => this.options.review.merge(input));
+    return sourceControlResult(() => this.reviewFor(input).merge(input));
   }
 
   setPullRequestState(
     input: PullRequestStateInput,
   ): Promise<SourceControlResult<PullRequestDetail>> {
-    return sourceControlResult(() => this.options.review.setState(input));
+    return sourceControlResult(() => this.reviewFor(input).setState(input));
   }
 
   setPullRequestDraft(
     input: PullRequestDraftInput,
   ): Promise<SourceControlResult<PullRequestDetail>> {
-    return sourceControlResult(() => this.options.review.setDraft(input));
+    return sourceControlResult(() => this.reviewFor(input).setDraft(input));
   }
 
   requestPullRequestReviewers(
     input: PullRequestReviewersInput,
   ): Promise<SourceControlResult<PullRequestDetail>> {
-    return sourceControlResult(() => this.options.review.requestReviewers(input));
+    return sourceControlResult(() => this.reviewFor(input).requestReviewers(input));
   }
 
   gitStatus(target: GitTarget): Promise<SourceControlResult<GitWorkingTreeStatus>> {
-    return sourceControlResult(() => {
+    return sourceControlResult(async () => {
       this.assertLocal(target.profileID);
-      return this.options.git.status(target.directory);
+      return (await this.gitFor(target.profileID)).status(target.directory);
     });
   }
 
+  gitBranch(input: GitBranchInput) {
+    return this.write(input, (git) => git.changeBranch(input));
+  }
+
+  editPullRequest(input: PullRequestEditInput) {
+    return sourceControlResult(() => this.reviewFor(input).edit(input));
+  }
+  pullRequestLabels(input: PullRequestRef) {
+    return sourceControlResult(() => this.reviewFor(input).labels(input));
+  }
+  setPullRequestLabel(input: PullRequestLabelInput) {
+    return sourceControlResult(() => this.reviewFor(input).setLabel(input));
+  }
+  setPullRequestAutoMerge(input: PullRequestAutoMergeInput) {
+    return sourceControlResult(() => this.reviewFor(input).setAutoMerge(input));
+  }
+  updatePullRequestBranch(input: PullRequestUpdateBranchInput) {
+    return sourceControlResult(() => this.reviewFor(input).updateBranch(input));
+  }
+
   gitStage(input: GitPathsInput): Promise<SourceControlResult<GitWorkingTreeStatus>> {
-    return this.write(input, () => this.options.git.stage(input.directory, input.paths));
+    return this.write(input, (git) => git.stage(input.directory, input.paths));
   }
 
   gitUnstage(input: GitPathsInput): Promise<SourceControlResult<GitWorkingTreeStatus>> {
-    return this.write(input, () => this.options.git.unstage(input.directory, input.paths));
+    return this.write(input, (git) => git.unstage(input.directory, input.paths));
   }
 
   gitCommit(input: GitCommitInput): Promise<SourceControlResult<GitCommitResult>> {
-    return this.write(input, () => this.options.git.commit(input.directory, input.message));
+    return this.write(input, (git) => git.commit(input.directory, input.message));
   }
 
-  gitPush(target: GitTarget): Promise<SourceControlResult<GitPushResult>> {
-    return this.write(target, () => this.options.git.push(target.directory));
+  gitPush(target: GitPushInput): Promise<SourceControlResult<GitPushResult>> {
+    return this.write(target, (git) => git.push(target.directory, target.confirmDefaultBranch));
+  }
+
+  gitFetch(target: GitTarget): Promise<SourceControlResult<GitWorkingTreeStatus>> {
+    return this.write(target, (git) => git.fetch(target.directory));
+  }
+
+  gitPull(input: GitPullInput): Promise<SourceControlResult<GitWorkingTreeStatus>> {
+    return this.write(input, (git) => git.pull(input.directory, input.strategy));
+  }
+
+  gitSync(input: GitSyncInput): Promise<SourceControlResult<GitPushResult>> {
+    return this.write(input, async (git) => {
+      await git.pull(input.directory, input.strategy);
+      return git.push(input.directory, input.confirmDefaultBranch);
+    });
   }
 
   private async write<T>(
     target: GitTarget,
-    operation: () => Promise<T>,
+    operation: (git: SourceControlServiceOptions["git"]) => Promise<T>,
   ): Promise<SourceControlResult<T>> {
     const guard = await sourceControlResult(() => this.assertLocal(target.profileID));
     if (!guard.ok) return { ok: false, error: guard.error };
-    const result = await sourceControlResult(operation);
+    const result = await sourceControlResult(async () =>
+      operation(await this.gitFor(target.profileID)),
+    );
     // A failed commit hook may still have rewritten files, so announce failures too.
     this.options.emit({ type: "git", profileID: target.profileID, directory: target.directory });
     return result;
@@ -254,5 +342,8 @@ export class SourceControlService {
         "unsupported-connection",
         "Pull requests and Git actions are only available for local OpenCode connections.",
       );
+  }
+  private gitFor(profileID: string) {
+    return this.options.gitForProfile?.(profileID) ?? Promise.resolve(this.options.git);
   }
 }

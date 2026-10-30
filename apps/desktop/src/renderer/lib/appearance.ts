@@ -14,7 +14,7 @@ import {
   type NativeSystemAppearance,
   type NativeSystemColors,
 } from "../../shared";
-import { registerOmarchyCodeTheme } from "./theme-catalog";
+import { registerOmarchyCodeTheme, registerUserCodeThemes } from "./theme-catalog";
 
 export interface ResolvedAppearance {
   preferences: AppearancePreferences;
@@ -102,6 +102,7 @@ export function resolveAppearance(
   preferences: AppearancePreferences,
   scheme: AppearanceColorScheme,
 ): ResolvedAppearance {
+  registerUserCodeThemes(preferences.customThemes);
   if (preferences.source === "system" && preferences.omarchyTheme)
     registerOmarchyCodeTheme(preferences.omarchyTheme);
   const themeID =

@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { ClientApi, promiseOmitEndpoints } from "@opencode/protocol/client";
+import { ClientApi, clientNamespace, promiseOmitEndpoints } from "@opencode/protocol/client";
 import { parseSync, visitorKeys, type Node, type TSTypeAliasDeclaration } from "oxc-parser";
 import { resolveCoveragePackages } from "./opencode-coverage-resolution";
 
@@ -159,16 +159,12 @@ function referencedSchemas(document: OpenApiDocument, value: unknown): Record<st
   );
 }
 
-export function clientPathFromOperationID(operationID: string): string {
+/** The client's name for an operation, without the `experimental` namespace. */
+export function endpointNameFromOperationID(operationID: string): string {
   if (operationID === "session.message.list") return "message.list";
-  // 2.2.0 publishes media.get inside the experimental group, like the persistent PTY routes.
-  if (operationID === "experimental.media.get") return operationID;
-  if (operationID.startsWith("server.experimental.")) {
-    return operationID.replace(/^server\./, "");
-  }
   const segments = operationID
     .replace(/^v2\./, "")
-    .replace(/^experimental\./, "")
+    .replace(/^(?:server\.)?experimental\./, "")
     .split(".");
   if (
     segments[0] === "session" &&
@@ -178,6 +174,15 @@ export function clientPathFromOperationID(operationID: string): string {
   }
   if (segments[0] === "fs") segments[0] = "file";
   return segments.join(".");
+}
+
+/**
+ * The Promise client member for an operation. Since 2.2.1 the client nests every route under
+ * `/api/experimental` in `client.experimental`; like the protocol, the URL decides, not the ID.
+ */
+export function clientPathFromOperation(operationID: string, path: string): string {
+  const name = endpointNameFromOperationID(operationID);
+  return clientNamespace({ path }) === "experimental" ? `experimental.${name}` : name;
 }
 
 function schemaFields(
@@ -311,7 +316,8 @@ export function inventoryFromOpenApi(
         path: operationPath,
         ...contractShape,
       };
-      const clientPath = clientPathFromOperationID(operationID);
+      const endpointName = endpointNameFromOperationID(operationID);
+      const clientPath = clientPathFromOperation(operationID, operationPath);
       operations.push({
         operationID,
         clientPath,
@@ -322,7 +328,7 @@ export function inventoryFromOpenApi(
         description: operation.description ?? null,
         experimental:
           operationPath.includes("/experimental/") || operationID.includes(".experimental."),
-        promiseClient: !promiseOmitEndpoints.has(clientPath.replace(/^file\./, "fs.")),
+        promiseClient: !promiseOmitEndpoints.has(endpointName.replace(/^file\./, "fs.")),
         streaming: isStreaming(operation),
         inputFields: [...inputFields].toSorted(),
         requiredInputFields: [...required].toSorted(),

@@ -134,6 +134,7 @@ import { PullRequestBadge } from "./pull-requests/pull-request-badge";
 import { announceSettledBatch, SettleIdleMenu } from "./settle-idle-menu";
 import { samePullRequestLinks } from "./pull-requests/pull-request-presentation";
 import { MoveToProjectDialog } from "./move-to-project-dialog";
+import { useInboxSweep } from "../hooks/use-inbox-sweep";
 
 const INBOX_SECTIONS: readonly InboxSection[] = ["pinned", "inbox", "snoozed", "settled"];
 const inboxRowKey = (item: InboxSessionView) => `${item.section}:${item.session.id}`;
@@ -406,6 +407,13 @@ export function InboxSidebarContent() {
     [dispatchTriage, openSession, runtime?.profileID],
   );
 
+  const sweep = useInboxSweep({
+    scopeKey: runtime?.profileID,
+    items: [...filtered.inbox, ...filtered.pinned],
+    keyOf: (item) => item.session.id,
+    canSettle: (item) => !mutationsDisabled && item.canSettle,
+    settle: settleIdle,
+  });
   return (
     <>
       <InboxToolbar
@@ -420,7 +428,7 @@ export function InboxSidebarContent() {
       />
       <SidebarContent className="min-h-0 overflow-hidden" {...freezeProps}>
         <ScrollArea className="h-full min-h-0">
-          <div className="space-y-1 px-2 pt-0.5 pb-2">
+          <div className="space-y-1 px-2 pt-0.5 pb-2" {...sweep}>
             {triageError ? (
               <div className="mb-2 rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2 text-xs text-destructive">
                 Inbox state could not be saved. All loaded tasks remain visible.
@@ -907,6 +915,7 @@ const InboxCard = memo(function InboxCard({
     <InboxCardSurface
       {...sidebarFluidRowProps}
       className={sidebarFluidCardClass}
+      data-inbox-sweep-key={item.session.id}
       item={item}
       selected={selected}
       vcs={vcs}
@@ -978,6 +987,7 @@ const InboxCard = memo(function InboxCard({
                     size="sm"
                     className={cn("h-6 gap-0.5 px-2 text-micro!", INBOX_ACTION_BUTTON_CLASS)}
                     aria-label="Settle task"
+                    data-inbox-settle
                     onClick={() => void onAction(item, "settle")}
                   />
                 }

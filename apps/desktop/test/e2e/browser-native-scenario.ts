@@ -41,6 +41,7 @@ export function createBrowserNativeScenario(transport: "local" | "http"): Scenar
     await cleanup?.();
   };
   return {
+    requiresFocus: true,
     description: `attach the experimental agent browser over ${transport === "http" ? "paired HTTP" : "local transport"} and browse a local fixture`,
     prompt: PROMPT,
     // The runner waits before assert(); the popup helper sends a second prompt
@@ -151,7 +152,7 @@ export function createBrowserNativeScenario(transport: "local" | "http"): Scenar
           )
           .toBe("attached");
         await client.session.prompt({ sessionID: session.id, text: PROMPT });
-        await client.session.wait({ sessionID: session.id });
+        await client.experimental.session.wait({ sessionID: session.id });
       } catch (error) {
         await cleanupProfile();
         throw error;
@@ -460,7 +461,11 @@ export function createBrowserNativeScenario(transport: "local" | "http"): Scenar
         await captureBrowserWindow(page, path.join(runRoot, "browser-comments.png"));
         await addressBar.fill("file:///etc/passwd");
         await addressBar.press("Enter");
-        await expect(page.getByRole("alert")).toContainText("Only HTTP, HTTPS");
+        await expect(page.getByRole("alert")).toContainText(
+          transport === "local"
+            ? "files from this task's workspace only"
+            : "only when OpenCode runs on this computer",
+        );
         await page.evaluate(() => {
           location.hash = "#/settings/browser";
         });

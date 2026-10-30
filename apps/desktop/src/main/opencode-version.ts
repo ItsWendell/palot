@@ -1,4 +1,4 @@
-export const SUPPORTED_OPENCODE_VERSION = "2.2.0";
+export const SUPPORTED_OPENCODE_VERSION = "2.2.3";
 
 // Published contracts used by Palot were compared across these exact releases.
 // A channel name is not a compatibility guarantee (Beta can even lag Stable).

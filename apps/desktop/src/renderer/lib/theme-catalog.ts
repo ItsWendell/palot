@@ -4,7 +4,8 @@ import { registerCustomTheme, resolveTheme, type DiffsTheme } from "@pierre/diff
 import { CODE_HIGHLIGHTER } from "./code-highlighter";
 import { textMateToZedTheme } from "./code-theme-convert";
 import type { AppearancePreferences } from "../../shared";
-import { effectiveCodeTheme } from "../../shared";
+import { effectiveCodeTheme, customThemeVariant } from "../../shared";
+import { customCodeThemeName, type CustomTheme } from "../../shared/custom-theme";
 import { builtinCodeThemes } from "./themes/builtin-code-themes";
 import { createOmarchyCodeTheme } from "./omarchy-code-theme";
 import { omarchyCodeThemeName, type OmarchyTheme } from "../../shared/omarchy-theme";
@@ -56,6 +57,28 @@ export const codeThemeCatalog = createThemeCatalog({
 
 const omarchyThemes = new Set<string>();
 
+export function registerUserCodeThemes(themes: CustomTheme[]): void {
+  for (const theme of themes) {
+    if (!theme.tokenColors) continue;
+    const name = customCodeThemeName(theme);
+    if (omarchyThemes.has(name)) continue;
+    const palette = customThemeVariant(theme).palette;
+    const code = textMateToZedTheme(
+      {
+        type: theme.scheme,
+        tokenColors: theme.tokenColors,
+        colors: {
+          "editor.background": palette.codeBackground,
+          "editor.foreground": palette.codeForeground,
+        },
+      },
+      name,
+    );
+    omarchyThemes.add(name);
+    registerCustomTheme(name, async () => code, "zed");
+  }
+}
+
 export function registerOmarchyCodeTheme(theme: OmarchyTheme): void {
   const name = omarchyCodeThemeName(theme);
   if (omarchyThemes.has(name)) return;
@@ -70,6 +93,7 @@ export function resolveCodeTheme(name: string): Promise<DiffsTheme> {
 }
 
 export async function prepareCodeThemes(preferences: AppearancePreferences): Promise<void> {
+  registerUserCodeThemes(preferences.customThemes);
   if (preferences.omarchyTheme) registerOmarchyCodeTheme(preferences.omarchyTheme);
   const names = [
     effectiveCodeTheme(preferences, "light").name,

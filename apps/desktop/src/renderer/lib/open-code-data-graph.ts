@@ -236,7 +236,7 @@ export class OpenCodeDataGraph {
       for (const [key, record] of pending) {
         const original = this.collection.get(key);
         // The key covers the record envelope; compare values without the
-        // collection's virtual metadata ($key, $synced, etc.).
+        // collection's virtual metadata ($key, $origin, $hasPendingWrites, etc.).
         if (!record) {
           if (original) deleted.push(key);
         } else if (!original || !deepEquals(original.value, record.value)) {
@@ -245,8 +245,9 @@ export class OpenCodeDataGraph {
       }
       if (deleted.length === 0 && upserted.length === 0) return false;
 
-      // The collection is sync-only (no optimistic mutations), so a sync transaction applies
-      // at once; @tanstack/db 0.13 removed the redundant `immediate` option.
+      // The collection is sync-only (no optimistic mutations or persistence), so a plain
+      // sync transaction applies and publishes synchronously at commit. It edits the rows
+      // the collection holds; `begin({ snapshot: true })` would replace all of them.
       this.#begin();
       for (const key of deleted) this.#write({ type: "delete", key });
       for (const mutation of upserted) this.#write(mutation);

@@ -19,7 +19,7 @@ and managing local OpenCode connections.
 upgrade from Palot 0.11.x. “Palot v2” names the rebuild; the application follows
 the `0.x` SemVer release sequence. OpenCode has its own independent version.
 
-Palot 0.21.0 is open-source pre-release software under active development, with
+Palot 0.22.0 is open-source pre-release software under active development, with
 desktop packaging targets for Linux x64 and macOS Apple Silicon. Available
 packages are experimental, not supported stable releases. macOS downloads are
 ad-hoc signed, not Apple Developer ID signed or notarized. Updates are manual.
@@ -33,25 +33,26 @@ still pre-release and should not be the only protection for important work.
 The 0.12.0 release is source-only. Earlier 0.11.x downloads install the previous
 application, not Palot v2.
 
-### New in 0.21.0
+### New in 0.22.0
+
+- Edit text files in the workbench, browse a lazy-loading Files tree, and preview
+  CSV, notebooks, SQLite databases, archives and more.
+- Pull requests from Changes with a generated description, branch switching, an
+  "Open by others" list, GitLab merge requests, and Git actions on remote servers.
+- Scheduled tasks that run on events, such as a watched pull request's CI failing
+  or a new review.
+- OpenCode's `/goal` in a card above the composer, with why a goal paused or was
+  met, plus Pause, Resume and Clear.
+- Custom themes, guest links (beta), spelling suggestions, and PageUp/PageDown
+  from the composer.
+- OpenCode 2.2.3 and Electron 45.1.
+
+### Added in 0.21.0
 
 - Chats without a project: start one with "New chat" or Mod+Alt+N, keep it in
   the Inbox as a Chat, and move it into a project when it turns into real work.
 - Agents find Palot's settle, snooze, pin and archive tools by name, and a task
   asked to settle itself stays settled after its reply.
-
-### Added in 0.20.0
-
-- Agents can schedule follow-ups and recurring work, read and wait on other
-  tasks, and organize the Inbox through Palot's own tools, following each
-  task's approvals.
-- Usage limits for OpenCode Go and Console budgets, and failed tasks that can
-  continue on their own when a limit resets.
-- `@` mentions of other tasks as live chips, quoting terminal output into the
-  composer, live-updating file tabs, and settings search in the command palette.
-- MCP server forms, approvals that can start new tasks in Full access, and a
-  fix for settled tasks returning to the Inbox after a restart.
-- OpenCode 2.2.0.
 
 ## Install
 
@@ -136,9 +137,9 @@ bun run install:nightly:mac
 bun run dev:focus
 ```
 
-Source builds require Bun `1.4.3`, Node.js `24` or later, and Vite+. Stable OpenCode
+Source builds require Bun `1.4.4`, Node.js `24` or later, and Vite+. Stable OpenCode
 **2.x starting at 2.0.7** is supported as an external service; the client and
-release-smoke runtime are pinned to **2.2.0**. V2 betas require explicit consent.
+release-smoke runtime are pinned to **2.2.3**. V2 betas require explicit consent.
 See [runtime compatibility](docs/opencode-runtime.md#compatibility) before upgrading.
 `bun run dev` starts hidden; `bun run dev:visible` shows the window without taking
 focus. Windows is not a qualified installation target.

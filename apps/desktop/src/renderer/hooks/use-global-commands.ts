@@ -38,7 +38,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useSyncExternalStore } from "react";
-import type { PalotSession } from "../../shared";
+import { actionableErrorMessage, type PalotSession } from "../../shared";
 import { useAttentionItems } from "./use-attention-items";
 import { catalogSessionIsUnread } from "./use-session-info";
 import { commandPaletteReturnFocusAtom, navigationOpenAtom, sidebarModeAtom } from "../atoms/ui";
@@ -54,6 +54,7 @@ import {
   visibleProjects,
 } from "../lib/view-models";
 import { palotBuild } from "../lib/build";
+import { openCodeKeys } from "../lib/opencode-query";
 import { writeClipboardText } from "../lib/clipboard";
 import type { GlobalCommand } from "../lib/global-commands";
 import { boundShortcutKeys, useShortcutOverrides } from "../lib/keyboard-shortcuts";
@@ -636,6 +637,38 @@ export function useGlobalCommands({
       run: () => openSettings(item.id, routeProjectID ?? currentProject?.id),
     })),
   );
+
+  const reloadConnectionID = runtime?.connected ? runtime.connectionID : null;
+  if (reloadConnectionID && reloadConnectionID !== "preview") {
+    commands.push({
+      id: "server.reloadConfiguration",
+      title: "Reload configuration",
+      description:
+        "Reload OpenCode configuration and plugins. Pending approvals and questions are cancelled.",
+      group: "actions",
+      icon: RotateCw,
+      keywords: ["config", "opencode.json", "plugins", "refresh", "reload", "server"],
+      kind: "action",
+      run: () =>
+        void toast
+          .promise(
+            palot
+              .reloadConfiguration(reloadConnectionID)
+              .then(() =>
+                queryClient.invalidateQueries({ queryKey: openCodeKeys.all(reloadConnectionID) }),
+              ),
+            {
+              loading: { title: "Reloading configuration…" },
+              success: { title: "Configuration reloaded" },
+              error: (cause: unknown) => ({
+                title: "Could not reload configuration",
+                description: actionableErrorMessage(cause, "OpenCode refused the reload."),
+              }),
+            },
+          )
+          .catch(() => undefined),
+    });
+  }
 
   const reactScanEnabled = diagnosticsPreferences.reactScanEnabled ?? __PALOT_REACT_SCAN_DEFAULT__;
   const runtimeSummary = runtime

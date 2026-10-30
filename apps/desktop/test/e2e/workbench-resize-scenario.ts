@@ -1,4 +1,4 @@
-import { expect } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
 
@@ -160,5 +160,63 @@ export const workbenchResizeScenario: Scenario = {
     await expect
       .poll(() => center.evaluate((element) => element.getBoundingClientRect().width))
       .toBeGreaterThanOrEqual(360);
+
+    await assertWorkspaceHeaderInsets(page, runRoot);
   },
 };
+
+export async function assertWorkspaceHeaderInsets(page: Page, runRoot: string) {
+  const inheritedInsets = await page
+    .getByLabel("Task transcript", { exact: true })
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [
+        style.getPropertyValue("--thread-header-leading-inset"),
+        style.getPropertyValue("--thread-header-trailing-inset"),
+      ];
+    });
+  expect(inheritedInsets).toEqual(["", ""]);
+  for (const viewport of [
+    { width: 920, height: 640 },
+    { width: 1440, height: 850 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const navigationOpen of [false, true]) {
+      const toggle = page.getByRole("button", { name: /^(Show|Hide) navigation$/ });
+      if ((await toggle.getAttribute("aria-pressed")) !== String(navigationOpen)) {
+        await toggle.click();
+      }
+      await expect
+        .poll(() =>
+          page.locator(".thread-header").evaluate((header) => {
+            const center = document.querySelector('[data-shell-panel="center"]')!;
+            const chrome = document.querySelector(".window-chrome-cluster")!;
+            const trailing = document.querySelector(".window-trailing-controls")!;
+            const style = getComputedStyle(header);
+            return Math.max(
+              Math.abs(
+                parseFloat(style.paddingLeft) -
+                  Math.max(
+                    18,
+                    chrome.getBoundingClientRect().right - center.getBoundingClientRect().left + 12,
+                  ),
+              ),
+              Math.abs(
+                parseFloat(style.paddingRight) -
+                  Math.max(
+                    12,
+                    center.getBoundingClientRect().right -
+                      trailing.getBoundingClientRect().left +
+                      12,
+                  ),
+              ),
+            );
+          }),
+        )
+        .toBeLessThan(1);
+      await page.screenshot({
+        path: join(runRoot, `header-${viewport.width}-${navigationOpen ? "open" : "closed"}.png`),
+      });
+    }
+  }
+}

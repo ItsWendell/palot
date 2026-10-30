@@ -94,6 +94,10 @@ if (options.list) {
   process.exit(0);
 }
 const name = positionals[0] ?? "smoke";
+const scenario = allScenarios[name as keyof typeof allScenarios];
+const requiresFocus = scenario && "requiresFocus" in scenario && scenario.requiresFocus;
+if (requiresFocus && display !== "private" && !options.focus)
+  throw new Error(`${name} requires native window focus; pass --focus on the desktop display.`);
 const trace = options.trace ?? false;
 const appTrace = options["app-trace"] ?? false;
 const profile = Boolean(options.profile || trace || appTrace);
@@ -101,7 +105,7 @@ const video = options.video ?? false;
 const cssSelectorStats = options["css-selector-stats"] ?? false;
 const reactProfile = options["react-profile"] ?? false;
 const reactScan = options["react-scan"] ?? false;
-const focus = options.focus ?? false;
+const focus = Boolean(options.focus || (display === "private" && requiresFocus));
 const showcase = options.showcase ?? false;
 const glass = Boolean(options.glass || showcase);
 const rendererOpaque = options["renderer-opaque"] ?? false;
@@ -114,7 +118,6 @@ const inactive = visible && !focus && !showcase;
 const keep = Boolean(options.keep || profile || reactScan || showcase || video);
 const inspect = options.inspect ?? false;
 const inspectOnFailure = options["inspect-on-failure"] ?? false;
-const scenario = allScenarios[name as keyof typeof allScenarios];
 const packagedExecutable = options.executable ? path.resolve(options.executable) : null;
 if (packagedExecutable && (profile || reactProfile || reactScan))
   throw new Error(

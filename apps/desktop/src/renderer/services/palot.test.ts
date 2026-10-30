@@ -279,14 +279,14 @@ describe("palot over the official OpenCode client", () => {
     const importSession = vi.fn().mockResolvedValue(session);
     const otherImport = vi.fn().mockRejectedValue(new Error("Wrong owner"));
     const pickDirectory = vi.fn().mockReturnValue(directory.promise);
-    setOpenCodeClientForTest(client({ session: { import: importSession } }));
+    setOpenCodeClientForTest(client({ experimental: { session: { import: importSession } } }));
     Object.defineProperty(window, "palot", {
       configurable: true,
       value: bridge({ pickSessionImport: () => file.promise, pickDirectory }),
     });
 
     const pending = palot.importSession();
-    setOpenCodeClientForTest(client({ session: { import: otherImport } }));
+    setOpenCodeClientForTest(client({ experimental: { session: { import: otherImport } } }));
     file.resolve({ contents: JSON.stringify({ info: session, messages: [] }) });
     await vi.waitFor(() => expect(pickDirectory).toHaveBeenCalledOnce());
     directory.resolve("/repo");
@@ -326,7 +326,7 @@ describe("palot over the official OpenCode client", () => {
   it("waits for official execution cleanup before resolving idle", async () => {
     const idle = Promise.withResolvers<void>();
     const wait = vi.fn().mockReturnValue(idle.promise);
-    setOpenCodeClientForTest(client({ session: { wait } }));
+    setOpenCodeClientForTest(client({ experimental: { session: { wait } } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
 
     const settled = vi.fn();
@@ -344,7 +344,7 @@ describe("palot over the official OpenCode client", () => {
 
   it("propagates cleanup failures instead of treating the session as idle", async () => {
     const wait = vi.fn().mockRejectedValue(new Error("Cleanup timed out"));
-    setOpenCodeClientForTest(client({ session: { wait } }));
+    setOpenCodeClientForTest(client({ experimental: { session: { wait } } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
 
     await expect(palot.waitForSessionIdle(session.id)).rejects.toThrow("Cleanup timed out");
@@ -681,7 +681,8 @@ describe("palot over the official OpenCode client", () => {
     expect(command).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "review",
-        text: '/review\nAttached file: "/server/uploads/archive.zip"',
+        // OpenCode passes `text` to the command as its arguments, never the `/review` itself.
+        text: 'Attached file: "/server/uploads/archive.zip"',
       }),
       expect.anything(),
     );
@@ -752,7 +753,7 @@ describe("palot over the official OpenCode client", () => {
     );
   });
 
-  it("runs commands with the beta text payload and no receipt", async () => {
+  it("sends a command's arguments as its text, with mentions measured from them", async () => {
     const command = vi.fn().mockResolvedValue(undefined);
     setOpenCodeClientForTest(client({ session: { command } }));
     Object.defineProperty(window, "palot", { configurable: true, value: bridge() });
@@ -777,11 +778,12 @@ describe("palot over the official OpenCode client", () => {
       {
         sessionID: "session-1",
         name: "review",
-        text: "/review auth",
+        text: "auth",
         skills: [
           {
             id: "skill-1",
-            mention: { start: 13, end: 21, text: "$skill-1" },
+            // "/review " (8 characters) is not part of the arguments.
+            mention: { start: 5, end: 13, text: "$skill-1" },
             text: "Pinned skill content",
           },
         ],
@@ -811,7 +813,7 @@ describe("palot over the official OpenCode client", () => {
     const transfer = { info: { ...session, parentID: "parent-session" }, messages };
     const exportSession = vi.fn().mockResolvedValue(transfer);
     const saveSessionExport = vi.fn().mockResolvedValue("/tmp/Task.palot-task.json");
-    setOpenCodeClientForTest(client({ session: { export: exportSession } }));
+    setOpenCodeClientForTest(client({ experimental: { session: { export: exportSession } } }));
     Object.defineProperty(window, "palot", {
       configurable: true,
       value: bridge({ saveSessionExport }),
@@ -837,7 +839,7 @@ describe("palot over the official OpenCode client", () => {
     };
     const exportSession = vi.fn().mockResolvedValue(transfer);
     const writeClipboardText = vi.fn().mockResolvedValue(undefined);
-    setOpenCodeClientForTest(client({ session: { export: exportSession } }));
+    setOpenCodeClientForTest(client({ experimental: { session: { export: exportSession } } }));
     Object.defineProperty(window, "palot", {
       configurable: true,
       value: bridge({ writeClipboardText }),
@@ -857,7 +859,7 @@ describe("palot over the official OpenCode client", () => {
   it("does not report a copied conversation when export fails", async () => {
     const exportSession = vi.fn().mockRejectedValue(new Error("Export failed"));
     const writeClipboardText = vi.fn().mockResolvedValue(undefined);
-    setOpenCodeClientForTest(client({ session: { export: exportSession } }));
+    setOpenCodeClientForTest(client({ experimental: { session: { export: exportSession } } }));
     Object.defineProperty(window, "palot", {
       configurable: true,
       value: bridge({ writeClipboardText }),
@@ -871,7 +873,7 @@ describe("palot over the official OpenCode client", () => {
     const imported = { ...session, id: "session-imported" };
     const importSession = vi.fn().mockResolvedValue(imported);
     const transfer = { info: { ...session, parentID: "missing-parent" }, messages: [] };
-    setOpenCodeClientForTest(client({ session: { import: importSession } }));
+    setOpenCodeClientForTest(client({ experimental: { session: { import: importSession } } }));
     Object.defineProperty(window, "palot", {
       configurable: true,
       value: bridge({
@@ -966,10 +968,9 @@ describe("palot over the official OpenCode client", () => {
     });
     setOpenCodeClientForTest(
       client({
-        session: {
-          stats,
-          context,
-          instructions: { entry: { list: listEntries, remove: removeEntry } },
+        session: { context },
+        experimental: {
+          session: { stats, instructions: { entry: { list: listEntries, remove: removeEntry } } },
         },
         file: { list: listFiles },
       }),

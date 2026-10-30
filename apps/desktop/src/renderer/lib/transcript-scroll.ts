@@ -24,6 +24,55 @@ export function transcriptKeyboardScrollDelta(event: {
   return event.key === " " ? (event.shiftKey ? -1 : 1) : 0;
 }
 
+/**
+ * Direction of an unmodified PageUp/PageDown typed in the composer. As in chat apps, these
+ * page the transcript even when the draft itself overflows. An open suggestion list keeps
+ * the keys' native meaning, and so do modified page keys (Shift extends the selection).
+ */
+export function composerTranscriptPageDirection(event: {
+  key: string;
+  target: EventTarget | null;
+  defaultPrevented: boolean;
+  isComposing: boolean;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+}): -1 | 0 | 1 {
+  if (event.key !== "PageUp" && event.key !== "PageDown") return 0;
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    event.shiftKey ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey
+  )
+    return 0;
+  const input =
+    event.target instanceof Element ? event.target.closest("[data-palot-composer-input]") : null;
+  if (!input || input.getAttribute("aria-expanded") === "true") return 0;
+  return event.key === "PageUp" ? -1 : 1;
+}
+
+/**
+ * Scroll offset one page away: 80% of the transcript visible above the composer dock that
+ * overlays its bottom, clamped to the scroll range. `from` continues a page scroll that is
+ * still animating, so repeated presses add up.
+ */
+export function transcriptPageScrollTop(input: {
+  metrics: TranscriptScrollMetrics;
+  obscuredBottom: number;
+  direction: -1 | 1;
+  from?: number | null;
+}): number {
+  const { scrollTop, scrollHeight, clientHeight } = input.metrics;
+  const visible =
+    clientHeight - input.obscuredBottom > 0 ? clientHeight - input.obscuredBottom : clientHeight;
+  const top = (input.from ?? scrollTop) + input.direction * visible * 0.8;
+  return Math.min(Math.max(0, scrollHeight - clientHeight), Math.max(0, top));
+}
+
 export interface TranscriptScrollMetrics {
   scrollTop: number;
   scrollHeight: number;

@@ -20,7 +20,7 @@ export function usageLimitsQueryOptions(
     queryKey: openCodeKeys.usageLimits(connectionID, directory),
     queryFn: async ({ signal }) => {
       try {
-        const result = await openCodeClient(connectionID).usage.limits(
+        const result = await openCodeClient(connectionID).experimental.usage.limits(
           { location: { directory } },
           { signal },
         );

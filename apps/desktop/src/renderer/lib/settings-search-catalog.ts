@@ -18,15 +18,23 @@ function page(
 
 // Hand-maintained alongside the settings rows. These navigate to pages, not individual rows.
 export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
+  ...page("/settings/source-control", [
+    ["Code hosts", "git github gitlab forgejo gitea bitbucket pull request merge request"],
+    ["Access token", "source control host url credentials encrypted vault glab"],
+  ]),
   ...page("/settings/general", [
+    ["Guest links (beta)", "share guest live browser approval message link tailscale opentunnel"],
     ["Default workspace", "new task checkout worktree"],
     ["Approvals for new tasks", "full access permissions ask approve defaults"],
     ["New worktree starting point", "repository default current branch"],
     ["Messages while running", "steer queue delivery"],
+    ["Rich composer (beta)", "markdown formatting inline chips editor"],
     ["Automatically send blocking work to background", "steering foreground"],
     ["Context meter", "tokens window composer"],
     ["Suggest compacting before sending", "compaction summarize prompt cache"],
     ["Default shell", "terminal command login"],
+    ["Check spelling", "spellcheck spell checker misspelled typos dictionary suggestions"],
+    ["Spelling languages", "spellcheck dictionary language hunspell"],
     ["Default sidebar", "inbox projects navigation"],
     ["Auto-settle idle tasks", "auto settle automatic inactivity inbox settled"],
     ["Settle idle chats after", "chat auto settle automatic inactivity inbox settled no project"],

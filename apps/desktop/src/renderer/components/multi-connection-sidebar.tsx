@@ -20,6 +20,7 @@ import { useTriageDispatcher } from "../hooks/use-auto-settle";
 import { useConnectionOverview } from "../hooks/use-connection-overview";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionWindowDrag } from "../hooks/use-session-window-drag";
+import { useInboxSweep } from "../hooks/use-inbox-sweep";
 import { useOwnedVcsInfoMap, ownedVcsLocationKey } from "../hooks/use-vcs-info";
 import {
   CHATS_PROJECT_FILTER,
@@ -363,6 +364,17 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
         ),
     });
   };
+  const sweep = useInboxSweep({
+    items,
+    keyOf: rowKey,
+    canSettle: (item) =>
+      mode === "inbox" &&
+      (item.section === "inbox" || item.section === "pinned") &&
+      item.canSettle &&
+      canMutate(item.connection) &&
+      !busy.has(rowKey(item)),
+    settle: settleIdle,
+  });
   const renderRow = (item: OwnedItem) => {
     const { connection, session } = item;
     const connected = connection.runtime?.connected === true && connection.phase === "ready";
@@ -549,6 +561,7 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
                 {...sidebarFluidRowProps}
                 key={rowKey(item)}
                 className={sidebarFluidCardClass}
+                data-inbox-sweep-key={rowKey(item)}
                 item={item}
                 hint={windowDrag.hint}
                 vcs={
@@ -597,6 +610,7 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
                           INBOX_CARD_ACTION_BUTTON_CLASS,
                         )}
                         aria-label="Settle task"
+                        data-inbox-settle
                         onClick={settle}
                       >
                         <Check aria-hidden="true" />
@@ -898,7 +912,7 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
           </>
         }
       />
-      <SidebarContent className="min-h-0 overflow-hidden" {...freezeProps}>
+      <SidebarContent className="min-h-0 overflow-hidden" {...freezeProps} {...sweep}>
         <ScrollArea className="h-full min-h-0">
           <div className="space-y-1 px-2 pt-0.5 pb-2">
             {visible.map((c) =>

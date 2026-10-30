@@ -98,7 +98,7 @@ export const compactQuestionScenario: Scenario = {
     await expect(panel).toBeVisible();
     expect(llm.requests).toHaveLength(1);
     await panel.getByRole("button", { name: "Send", exact: true }).click();
-    await client.session.wait({ sessionID: session.id });
+    await client.experimental.session.wait({ sessionID: session.id });
     await expect(page.getByText("COMPACT SINGLE ANSWER RECEIVED", { exact: true })).toBeVisible();
     await assertRestoredComposer();
 
@@ -124,7 +124,7 @@ export const compactQuestionScenario: Scenario = {
     await expect(panel.locator('input[value="Caveats"]')).toBeChecked();
     expect(llm.requests).toHaveLength(3);
     await panel.getByRole("button", { name: "Send", exact: true }).click();
-    await client.session.wait({ sessionID: session.id });
+    await client.experimental.session.wait({ sessionID: session.id });
     await assertRestoredComposer();
   },
   async assert(page, { client, session }) {

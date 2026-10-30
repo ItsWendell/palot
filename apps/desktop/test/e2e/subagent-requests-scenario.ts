@@ -180,7 +180,10 @@ export const subagentRequestsScenario: Scenario = {
           (await client.session.form.get({ sessionID: grandchild.id, formID: question!.id })).state,
       )
       .toEqual({ status: "answered", answer: { q0: ANSWER } });
-    await client.session.wait({ sessionID: session.id }, { signal: AbortSignal.timeout(TIMEOUT) });
+    await client.experimental.session.wait(
+      { sessionID: session.id },
+      { signal: AbortSignal.timeout(TIMEOUT) },
+    );
     await expect(page.getByText(PARENT_DONE, { exact: true })).toBeVisible({ timeout: TIMEOUT });
     await assertParentSelected(page, parentHash, this.prompt);
     await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeVisible();

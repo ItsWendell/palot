@@ -41,6 +41,18 @@ type RunPatch = Partial<{
 export class AutomationRepository {
   constructor(private readonly database: Database) {}
 
+  eventAutomations(): AutomationRecord[] {
+    return this.database
+      .select()
+      .from(schema.automations)
+      .where(ne(schema.automations.status, "deleted"))
+      .all()
+      .map(mapAutomation)
+      .filter(
+        (record) => record.trigger.type === "webhook" || record.trigger.type === "pull-request",
+      );
+  }
+
   synchronizeDefinition(
     definition: AutomationDefinition,
     definitionVersion: number,
@@ -262,6 +274,16 @@ export class AutomationRepository {
       { behavior: "immediate" },
     );
     return created ? this.run(input.id) : null;
+  }
+
+  hasOccurrence(key: string): boolean {
+    return Boolean(
+      this.database
+        .select({ id: schema.automationRuns.id })
+        .from(schema.automationRuns)
+        .where(eq(schema.automationRuns.occurrenceKey, key))
+        .get(),
+    );
   }
 
   run(id: string): AutomationRun | null {

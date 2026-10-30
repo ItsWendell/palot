@@ -206,7 +206,7 @@ export const streamingPatchScenario: Scenario = {
       }
 
       finalizedAssertions = "running";
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
       await expect(page.getByText(COMPLETE, { exact: true })).toBeVisible();
       await expect
         .poll(() => {

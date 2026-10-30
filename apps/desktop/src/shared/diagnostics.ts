@@ -53,5 +53,7 @@ export function actionableErrorMessage(error: unknown, fallback: string): string
   ) {
     current = current.cause;
   }
-  return current.message && current.message !== "undefined" ? current.message : fallback;
+  // Some servers put their stack trace in the message; people need only the sentence above it.
+  const message = current.message.split(/\n\s+at\s/, 1)[0]!.trim();
+  return message && message !== "undefined" ? message : fallback;
 }

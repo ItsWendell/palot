@@ -110,7 +110,7 @@ export const automationRuns = sqliteTable(
     definitionVersion: integer("definition_version").notNull(),
     definitionSnapshotJSON: text("definition_snapshot_json").notNull(),
     trigger: text("trigger", {
-      enum: ["scheduled", "catch-up", "manual", "retry"],
+      enum: ["scheduled", "catch-up", "manual", "retry", "event"],
     }).notNull(),
     scheduledFor: integer("scheduled_for").notNull(),
     occurrenceKey: text("occurrence_key").notNull(),

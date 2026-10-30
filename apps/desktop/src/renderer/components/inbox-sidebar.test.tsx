@@ -88,6 +88,73 @@ afterEach(() => {
 });
 
 describe("InboxSidebarContent", () => {
+  it("sweeps the real Settle buttons across rows into one batch with one undo", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connectionID: "disconnected",
+      profileID: "local-default",
+      connected: true,
+      phase: "connected",
+    } as OpenCodeRuntimeStatus);
+    store.set(sessionTriageSnapshotAtom, {
+      profileID: "local-default",
+      bootstrapThrough: null,
+      sessions: [],
+    });
+    const dispatch = vi.fn(async (_command: { type: string; sessions?: { sessionID: string }[] }) =>
+      store.get(sessionTriageSnapshotAtom)!,
+    );
+    Object.assign(window.palot, { dispatchSessionTriage: dispatch });
+    const addToast = vi.spyOn(toast, "add");
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, {
+      sessions: [session("one", "Sweep one", 20), session("two", "Sweep two", 10)],
+    });
+    renderWithRouter(
+      <SidebarProvider>
+        <InboxSidebarContent />
+      </SidebarProvider>,
+      store,
+      "/new",
+      queryClient,
+    );
+    const one = screen
+      .getByRole("button", { name: /^Open Sweep one,/ })
+      .closest<HTMLElement>("[data-inbox-card]")!;
+    const two = screen
+      .getByRole("button", { name: /^Open Sweep two,/ })
+      .closest<HTMLElement>("[data-inbox-card]")!;
+    const settle = within(one).getByRole("button", { name: "Settle task" });
+    expect(settle.hasAttribute("data-inbox-settle")).toBe(true);
+    vi.spyOn(document, "elementFromPoint").mockReturnValue(two);
+    fireEvent.pointerDown(settle, { button: 0, pointerId: 1 });
+    expect(one.dataset.inboxSweep).toBe("true");
+    fireEvent.pointerMove(window, { pointerId: 1 });
+    expect(two.dataset.inboxSweep).toBe("true");
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    await waitFor(() =>
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "settle-many", sessions: expect.any(Array) }),
+      ),
+    );
+    expect(dispatch.mock.calls[0]![0].sessions!.map((entry) => entry.sessionID)).toEqual([
+      "one",
+      "two",
+    ]);
+    expect(one.hasAttribute("data-inbox-sweep")).toBe(false);
+    await waitFor(() => expect(addToast).toHaveBeenCalledOnce());
+    expect(addToast.mock.calls[0]![0]).toMatchObject({
+      title: "Settled 2 tasks",
+      actionProps: { children: "Undo" },
+    });
+    act(() => (addToast.mock.calls[0]![0].actionProps!.onClick as () => void)());
+    await waitFor(() =>
+      expect(dispatch).toHaveBeenLastCalledWith(
+        expect.objectContaining({ type: "inbox-many", sessionIDs: ["one", "two"] }),
+      ),
+    );
+  });
+
   it("labels compact chat rows without pull request badges", () => {
     const chat = {
       ...session("chat", "Quick question", 20),

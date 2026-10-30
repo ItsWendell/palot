@@ -37,7 +37,7 @@ export async function generateOpenCodeText(
     options.timeoutMs ?? DEFAULT_GENERATE_TIMEOUT_MS,
   );
   try {
-    return (await openCodeClient(connectionID).generate.text(body, { signal })).text;
+    return (await openCodeClient(connectionID).experimental.generate.text(body, { signal })).text;
   } catch (error) {
     if (!isMissingOpenCodeRoute(error)) throw error;
   }

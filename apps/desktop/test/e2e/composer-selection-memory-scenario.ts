@@ -197,7 +197,7 @@ export const composerSelectionMemoryScenario: Scenario = {
     expect(createdID).not.toBe(session.id);
     expect(createdID).not.toBe(other.id);
     await expectSelection(client, createdID, BETA, ref(OTHER_MODEL));
-    await client.session.wait({ sessionID: createdID });
+    await client.experimental.session.wait({ sessionID: createdID });
     await expect(page.getByText(RESPONSE, { exact: true })).toBeVisible();
     const requests = llm.requests.filter(({ body }) => !isTitleRequest(body));
     expect(requests).toHaveLength(2);

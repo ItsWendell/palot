@@ -61,6 +61,14 @@ vi.mock("./definitions", () => ({
     }
   },
 }));
+vi.mock("./events", () => ({
+  AutomationEvents: class {
+    webhook = { address: null };
+    async start() {}
+    async refresh() {}
+    async shutdown() {}
+  },
+}));
 vi.mock("./repository", () => ({
   AutomationRepository: class {
     reconcileDefinitionFiles() {}

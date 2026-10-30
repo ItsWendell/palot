@@ -205,7 +205,7 @@ export const interactionStreamingPerformanceScenario: Scenario = {
         sessionID: entry.id,
         text: `${marker(entry.label)} Warm history.`,
       });
-      await client.session.wait({ sessionID: entry.id });
+      await client.experimental.session.wait({ sessionID: entry.id });
     }
     const navigation = page.getByRole("button", { name: /^(Show|Hide) navigation$/ });
     if ((await navigation.getAttribute("aria-pressed")) === "false") await navigation.click();
@@ -277,7 +277,7 @@ export const interactionStreamingPerformanceScenario: Scenario = {
               { sessionID: id, text: `${marker(label)} Stream the interaction fixture.` },
               requestOptions,
             );
-            await client.session.wait({ sessionID: id }, requestOptions);
+            await client.experimental.session.wait({ sessionID: id }, requestOptions);
             completed.add(id);
           } catch (error) {
             if (!controller.signal.aborted) errors.push(error);
@@ -337,7 +337,7 @@ export const interactionStreamingPerformanceScenario: Scenario = {
               return interrupted.has(selected.id);
             })
             .toBe(true);
-          await client.session.wait({ sessionID: selected.id }, requestOptions);
+          await client.experimental.session.wait({ sessionID: selected.id }, requestOptions);
           expect((await client.session.active())[selected.id]?.type).not.toBe("running");
           idleConfirmedAt = Date.now();
         }
@@ -509,13 +509,15 @@ export const interactionStreamingPerformanceScenario: Scenario = {
         expect(emissionsAfterStop).toBeLessThan(CHUNK_COUNT);
         expect(interrupted.size).toBe(1);
         for (const entry of sessions.slice(1)) {
-          const exported = await client.session.export({ sessionID: entry.id });
+          const exported = await client.experimental.session.export({ sessionID: entry.id });
           expect(JSON.stringify(exported.messages)).toContain(
             `${entry.label} INTERACTION STREAM COMPLETE`,
           );
         }
         expect(
-          JSON.stringify((await client.session.export({ sessionID: session.id })).messages),
+          JSON.stringify(
+            (await client.experimental.session.export({ sessionID: session.id })).messages,
+          ),
         ).not.toContain("ALPHA INTERACTION STREAM COMPLETE");
         return {
           actions,

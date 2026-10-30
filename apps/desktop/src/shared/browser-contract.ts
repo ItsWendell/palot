@@ -48,7 +48,35 @@ export type PalotBrowserEvent =
       active: boolean;
       selection?: PalotBrowserSelection;
     }
-  | { bindingID: string; type: "preview"; path: string };
+  | { bindingID: string; type: "preview"; path: string }
+  | {
+      bindingID: string;
+      type: "permissions";
+      requests: PalotBrowserPermissionRequest[];
+      grants: PalotBrowserPermissionGrant[];
+    };
+
+export type PalotBrowserMediaKind = "microphone" | "camera";
+
+/** A site waiting for the person to allow or block devices; pages and agents cannot answer. */
+export interface PalotBrowserPermissionRequest {
+  id: string;
+  tabID: Browser.TabID;
+  origin: string;
+  kinds: PalotBrowserMediaKind[];
+}
+
+/** A site's remembered answers for this task's browser. */
+export interface PalotBrowserPermissionGrant {
+  origin: string;
+  microphone?: "allow" | "block";
+  camera?: "allow" | "block";
+}
+
+/** The person's answer to a permission prompt, or revoking a site's answers. */
+export type PalotBrowserPermissionControl =
+  | { type: "decide"; requestID: string; decision: "allow" | "block" }
+  | { type: "revoke"; origin: string };
 
 /**
  * A tab shortcut pressed inside an embedded browser page. Main keeps it from the page and

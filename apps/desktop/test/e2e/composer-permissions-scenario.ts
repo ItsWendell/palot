@@ -74,7 +74,7 @@ export const composerPermissionsScenario: Scenario = {
       },
     ];
     // Seed before Electron starts: live creation can race workspace refresh against hydration.
-    const source = await client.session.import({
+    const source = await client.experimental.session.import({
       info: {
         ...session,
         id: `${session.id}_approvals`,

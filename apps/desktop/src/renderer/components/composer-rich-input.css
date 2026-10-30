@@ -1,0 +1,26 @@
+.palot-rich-input {
+  position: relative;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+  line-height: var(--text-sm--line-height);
+  font-size: var(--text-sm);
+}
+.palot-rich-input > div {
+  margin: 0;
+}
+.palot-rich-input:has(> div > br:only-child)::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  pointer-events: none;
+  color: var(--muted-foreground);
+}
+.palot-rich-input .ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
+}
+.palot-rich-input .ProseMirror-separator {
+  display: inline;
+}
+.palot-rich-input .ProseMirror-gapcursor {
+  display: none;
+}

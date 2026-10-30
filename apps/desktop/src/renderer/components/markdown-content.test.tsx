@@ -28,6 +28,50 @@ function pinchWheelEvent(bubbles = true) {
 }
 
 describe("MarkdownContent", () => {
+  it("offers shell paste and HTML preview through the task's action handlers", () => {
+    const run = vi.fn().mockResolvedValue(undefined);
+    const preview = vi.fn();
+    render(
+      <MarkdownWorkspaceProvider onOpenFile={vi.fn()} runCode={run} previewHTML={preview}>
+        <MarkdownContent value={"```bash\necho safe\n```\n\n```html\n<h1>Isolated</h1>\n```"} />
+      </MarkdownWorkspaceProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run in terminal" }));
+    expect(run).toHaveBeenCalledExactlyOnceWith("echo safe");
+    fireEvent.click(screen.getByRole("button", { name: "Preview HTML" }));
+    expect(preview).toHaveBeenCalledExactlyOnceWith("<h1>Isolated</h1>");
+    expect(screen.queryByRole("heading", { name: "Isolated" })).toBeNull();
+  });
+  it("retains code wrapping through streaming settlement without changing text and toggles back", () => {
+    const text = "echo original command";
+    const store = createStore();
+    const contents = (streaming: boolean) => (
+      <Provider store={store}>
+        <MarkdownContent value={`\`\`\`bash\n${text}\n\`\`\``} streaming={streaming} />
+      </Provider>
+    );
+    const view = render(contents(true));
+    fireEvent.click(screen.getByRole("button", { name: "Wrap code" }));
+    expect(view.container.querySelector("pre")?.style.whiteSpace).toBe("pre-wrap");
+    view.rerender(contents(false));
+    expect(view.container.querySelector("pre")?.style.whiteSpace).toBe("pre-wrap");
+    expect(view.container.querySelector("pre")?.textContent).toBe(text);
+    fireEvent.click(screen.getByRole("button", { name: "Unwrap code" }));
+    expect(view.container.querySelector("pre")?.style.whiteSpace).toBe("");
+  });
+  it("renders disabled task checkboxes and enables only document draft edits", () => {
+    const value = "- [ ] first\n- [x] done";
+    const edit = vi.fn();
+    const view = render(<MarkdownContent value={value} />);
+    const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(boxes.map((box) => [box.checked, box.disabled])).toEqual([
+      [false, true],
+      [true, true],
+    ]);
+    view.rerender(<MarkdownContent value={value} onTaskEdit={edit} />);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
+    expect(edit).toHaveBeenCalledExactlyOnceWith("- [ ] first\n- [ ] done");
+  });
   it("links complete session tokens in prose and standalone inline code without changing copy text", () => {
     const id = "ses_0123456789abcdefghijklmnop";
     const openSession = vi.fn();
@@ -596,14 +640,17 @@ describe("MarkdownContent", () => {
     expect(html).not.toContain("<img");
   });
 
-  it("rejects non-web image protocols when passive media is explicitly enabled", () => {
-    const html = renderToStaticMarkup(
-      <MarkdownContent value="![Tracker](data:image/png;base64,AAAA)" passiveMedia />,
-    );
+  it.each(["javascript:alert(1)", "file:///outside/image.png"])(
+    "rejects unsafe image destination %s even with passive media enabled",
+    (destination) => {
+      const html = renderToStaticMarkup(
+        <MarkdownContent value={`![Tracker](${destination})`} passiveMedia />,
+      );
 
-    expect(html).toContain("[Image: Tracker]");
-    expect(html).not.toContain("<img");
-  });
+      expect(html).toContain("[Image: Tracker]");
+      expect(html).not.toContain("<img");
+    },
+  );
 
   it("opens standalone Markdown images in the shared lightbox", () => {
     render(
@@ -655,6 +702,38 @@ describe("MarkdownContent", () => {
       );
       return { view, openFile };
     }
+
+    it("renders workspace and embedded media players but leaves web media as an ordinary link", async () => {
+      const read = vi.spyOn(palot, "readWorkspaceFile").mockResolvedValue(new Uint8Array([0, 1]));
+      vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:workspace-video");
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+      const { view } = renderInTask(
+        "[Video](clips/demo.mp4)\n\n[Audio](data:audio/wav;base64,AAAA)\n\n[Remote](https://example.com/track.mp3)",
+      );
+      await waitFor(() =>
+        expect(view.container.querySelector("video")?.getAttribute("src")).toBe(
+          "blob:workspace-video",
+        ),
+      );
+      expect(view.container.querySelector("audio")?.getAttribute("src")).toBe(
+        "data:audio/wav;base64,AAAA",
+      );
+      expect(screen.getByRole("link", { name: "Remote" }).getAttribute("href")).toBe(
+        "https://example.com/track.mp3",
+      );
+      expect(read).toHaveBeenCalledExactlyOnceWith(
+        { directory: "/repo", path: "clips/demo.mp4" },
+        expect.anything(),
+        "local-connection",
+      );
+    });
+
+    it("offers save and copy in an image context menu", async () => {
+      renderInTask("![Fixture](data:image/png;base64,AAAA)");
+      fireEvent.contextMenu(screen.getByRole("img", { name: "Fixture" }));
+      expect(await screen.findByRole("menuitem", { name: "Save image as…" })).toBeTruthy();
+      expect(screen.getByRole("menuitem", { name: "Copy image" })).toBeTruthy();
+    });
 
     it("reads workspace images through the task's server and shows them inline", async () => {
       const read = vi

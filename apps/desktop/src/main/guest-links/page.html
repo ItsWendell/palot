@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Palot · Guest task</title>
+    <link rel="stylesheet" href="./page.css" />
+    <script src="./page.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span>Palot · Guest link · Beta</span>
+        <h1>Shared task</h1>
+        <p id="status" role="status">Connecting…</p>
+      </header>
+      <p class="notice">
+        You can follow this task and suggest a message. Only the owner can send it to the agent.
+        Names are not verified.
+      </p>
+      <section id="transcript" aria-label="Task transcript"></section>
+      <form>
+        <label
+          >Your name<input name="name" maxlength="80" required autocomplete="nickname"
+        /></label>
+        <label
+          >Message for the owner<textarea name="text" maxlength="4000" rows="3" required></textarea>
+        </label>
+        <button type="submit" disabled>Ask the owner to send</button>
+        <p id="submission" role="status"></p>
+      </form>
+    </main>
+  </body>
+</html>

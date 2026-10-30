@@ -19,6 +19,7 @@ import path from "node:path";
 import * as v from "valibot";
 import { openExternalUrl } from "./external-url";
 import { openDesktopDialog } from "./desktop-dialogs";
+import { writeClipboardImage } from "./clipboard-image";
 import { normalizeSshConfig } from "./ssh/config";
 import { sshInteractions } from "./ssh/interaction";
 import { IPC_CHANNELS } from "../shared/opencode-contract";
@@ -47,6 +48,7 @@ import {
   readAttachmentPreview,
   shutdownAttachmentStorage,
   stageClipboardImages,
+  stageClipboardText,
 } from "./file-attachments";
 import { openCodeRuntime } from "./opencode-runtime";
 import { prepareNativeAttachments } from "./native-attachments";
@@ -93,6 +95,8 @@ import { shutdownSourceControlService, sourceControlService } from "./source-con
 import { registerVoiceHostIpc } from "./voice/voice-host";
 import { heapSnapshots } from "./diagnostics/heap-snapshots";
 import { palotToolHost, shutdownPalotToolHost } from "./palot-tools";
+import { registerGuestLinksIpc, shutdownGuestLinks } from "./guest-links/runtime";
+import { registerSpellcheckIpc } from "./spellcheck";
 
 let performanceTraceActive = false;
 const requestProxy = new OpenCodeRequestProxy({
@@ -565,6 +569,8 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   registerSourceControlIpc(register, sourceControlService);
   registerProjectScriptsIpc(register, projectScriptsService);
   registerVoiceHostIpc(register);
+  registerGuestLinksIpc(register);
+  registerSpellcheckIpc(register);
   startProjectScripts();
   register(IPC_CHANNELS.browserRegister, (event, value: unknown) => {
     const win = browserWindow(event);
@@ -665,6 +671,23 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
       );
     },
   );
+  register(IPC_CHANNELS.browserPermission, (event, bindingID: unknown, value: unknown) => {
+    const control = v.parse(
+      v.variant("type", [
+        v.strictObject({
+          type: v.literal("decide"),
+          requestID: identifier,
+          decision: v.union([v.literal("allow"), v.literal("block")]),
+        }),
+        v.strictObject({
+          type: v.literal("revoke"),
+          origin: v.pipe(v.string(), v.maxLength(2_048)),
+        }),
+      ]),
+      value,
+    );
+    return browserPane.permission(browserWindow(event), v.parse(identifier, bindingID), control);
+  });
   register(IPC_CHANNELS.browserClose, (event, bindingID: unknown) => {
     browserPane.close(browserWindow(event), v.parse(identifier, bindingID));
   });
@@ -1215,6 +1238,12 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
       throw new Error("Attachment request is invalid.");
     attachmentRequests.cancel(event.sender.id, requestID);
   });
+  registerFocusedNative(IPC_CHANNELS.attachClipboardText, async (event, input: unknown) => {
+    requireRuntimeCapability("localFileAttachments");
+    return withAttachmentRequest(event, input, () =>
+      stageClipboardText((input as { text?: unknown }).text),
+    );
+  });
   registerFocusedNative(IPC_CHANNELS.attachClipboardImages, async (event, input: unknown) => {
     requireRuntimeCapability("localFileAttachments");
     return withAttachmentRequest(event, input, async () => {
@@ -1366,6 +1395,7 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     } else {
       await automationService().shutdown();
       await shutdownPalotToolHost();
+      await shutdownGuestLinks();
       await shutdownSourceControlService();
       await openCodeRuntime.shutdown();
       closePalotDatabase();
@@ -1373,6 +1403,10 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
       await removePalotOwnedData();
     }
     await requestAppRestart(`Reset Palot ${scope === "settings" ? "settings" : "data"}`);
+  });
+  register(IPC_CHANNELS.writeClipboardImage, (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    return writeClipboardImage(input);
   });
 }
 

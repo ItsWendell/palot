@@ -354,7 +354,7 @@ export class AutomationRunner {
         : null;
       if (memoryPath) this.memoryDirectories.set(run.id, path.dirname(memoryPath));
       else this.memoryDirectories.delete(run.id);
-      await client.session.instructions.entry.put(
+      await client.experimental.session.instructions.entry.put(
         {
           sessionID,
           key: AUTOMATION_INSTRUCTION_KEY,
@@ -493,7 +493,7 @@ export class AutomationRunner {
       const sessions = await this.sessionTree(client, sessionID, startedAt, signal);
       for (const value of sessions) this.rememberSession(runID, value);
       await this.reconcileAttention(client, runID, sessions, signal);
-      await client.session.wait({ sessionID }, { signal });
+      await client.experimental.session.wait({ sessionID }, { signal });
       const outcome = await this.sessionOutcome(client, sessionID, runID, startedAt, signal, false);
       if (outcome !== "unknown") return;
       const admission = await this.findAdmission(client, sessionID, runID, signal);
@@ -749,7 +749,9 @@ export class AutomationRunner {
       );
       if (activeSessions.length) {
         await Promise.all(
-          activeSessions.map((sessionID) => client.session.wait({ sessionID }, { signal })),
+          activeSessions.map((sessionID) =>
+            client.experimental.session.wait({ sessionID }, { signal }),
+          ),
         );
         stable = 0;
       }
@@ -844,7 +846,7 @@ export class AutomationRunner {
     let cursor = previousCursor;
     let outcome: TerminalOutcome = "unknown";
     try {
-      for await (const event of client.session.log(
+      for await (const event of client.experimental.session.log(
         {
           sessionID,
           ...(previousCursor ? { after: previousCursor } : {}),
@@ -889,7 +891,7 @@ export class AutomationRunner {
   ): Promise<void> {
     let cursor = 0;
     try {
-      for await (const event of client.session.log(
+      for await (const event of client.experimental.session.log(
         { sessionID, follow: false },
         { signal: requestSignal(signal) },
       )) {

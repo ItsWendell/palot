@@ -24,12 +24,14 @@ const pierreBaseCSS = `
 [data-line-type="change-deletion"] [data-diff-span] * {
   color: light-dark(color-mix(in oklch, var(--destructive) 45%, var(--foreground)), var(--foreground)) !important;
 }
-/* Find in diff: document styles do not reach this shadow tree, so the rules live here. */
-::highlight(${DIFF_FIND_HIGHLIGHT}) { background-color: color-mix(in oklch, var(--warning) 30%, transparent); }
-::highlight(${DIFF_FIND_ACTIVE_HIGHLIGHT}) { background-color: var(--primary); color: var(--primary-foreground); }
+/* Find in diff: document styles do not reach this shadow tree, so the rules live here. Each diff
+   token is an element; matching the host once lets Chromium inherit the highlight style instead of
+   computing it for every token. */
+:host::highlight(${DIFF_FIND_HIGHLIGHT}) { background-color: color-mix(in oklch, var(--warning) 30%, transparent); }
+:host::highlight(${DIFF_FIND_ACTIVE_HIGHLIGHT}) { background-color: var(--primary); color: var(--primary-foreground); }
 @media (forced-colors: active) {
-  ::highlight(${DIFF_FIND_HIGHLIGHT}) { background-color: Mark; color: MarkText; }
-  ::highlight(${DIFF_FIND_ACTIVE_HIGHLIGHT}) { background-color: Highlight; color: HighlightText; }
+  :host::highlight(${DIFF_FIND_HIGHLIGHT}) { background-color: Mark; color: MarkText; }
+  :host::highlight(${DIFF_FIND_ACTIVE_HIGHLIGHT}) { background-color: Highlight; color: HighlightText; }
 }
 `;
 

@@ -1,4 +1,8 @@
 import type {
+  PullRequestEditInput,
+  PullRequestLabelInput,
+  PullRequestAutoMergeInput,
+  PullRequestUpdateBranchInput,
   PullRequestCommentInput,
   PullRequestDetail,
   PullRequestDraftInput,
@@ -322,6 +326,92 @@ export class PullRequestReviewService {
     });
     this.changed(ref, "reviewers");
     return this.detail(ref);
+  }
+
+  async edit(input: PullRequestEditInput): Promise<PullRequestDetail> {
+    const ref = normalized(input);
+    if (!input.title.trim()) throw new SourceControlError("invalid-input", "Write a title first.");
+    await this.options.github.rest({
+      host: ref.host,
+      method: "PATCH",
+      path: this.restPath(ref, "pulls"),
+      body: { title: input.title.trim(), body: input.body },
+      priority: "interactive",
+    });
+    return this.afterStateChange(ref, "edited");
+  }
+
+  async labels(input: PullRequestRef): Promise<Array<{ name: string; color: string }>> {
+    const ref = normalized(input);
+    const labels: Array<{ name: string; color: string }> = [];
+    // Page until exhausted, so a repository's less common labels stay selectable.
+    for (let page = 1; page <= 100; page += 1) {
+      const { data } = await this.options.github.rest<Array<{ name: string; color: string }>>({
+        host: ref.host,
+        path: `repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.name)}/labels?per_page=100&page=${page}`,
+        priority: "interactive",
+      });
+      labels.push(...data);
+      if (data.length < 100) break;
+    }
+    return labels;
+  }
+
+  async setLabel(input: PullRequestLabelInput): Promise<PullRequestDetail> {
+    const ref = normalized(input);
+    if (!input.name.trim()) throw new SourceControlError("invalid-input", "Choose a label.");
+    // Add/remove just one label: never overwrite a concurrent label edit.
+    await this.options.github.rest({
+      host: ref.host,
+      method: input.add ? "POST" : "DELETE",
+      path: `${this.restPath(ref, "issues")}/labels${input.add ? "" : `/${encodeURIComponent(input.name)}`}`,
+      ...(input.add ? { body: { labels: [input.name] } } : {}),
+      priority: "interactive",
+    });
+    return this.afterStateChange(ref, "edited");
+  }
+
+  async setAutoMerge(input: PullRequestAutoMergeInput): Promise<PullRequestDetail> {
+    const ref = normalized(input);
+    const detail = await this.detail(ref);
+    if (
+      input.enabled &&
+      (!detail.autoMergeAllowed ||
+        detail.state !== "open" ||
+        !detail.mergeMethods.includes(input.method))
+    )
+      throw new SourceControlError(
+        "merge-blocked",
+        "Auto-merge is unavailable for this repository or pull request.",
+      );
+    await this.withNodeID(ref, (id) =>
+      this.graphql(ref, input.enabled ? mutations.enableAutoMerge : mutations.disableAutoMerge, {
+        id,
+        ...(input.enabled ? { method: GRAPHQL_MERGE_METHODS[input.method] } : {}),
+      }),
+    );
+    return this.afterStateChange(ref, "state");
+  }
+
+  async updateBranch(input: PullRequestUpdateBranchInput): Promise<PullRequestDetail> {
+    const ref = normalized(input);
+    if (!/^[0-9a-f]{40}$/i.test(input.expectedHeadOid))
+      throw new SourceControlError(
+        "invalid-input",
+        "Refresh the pull request before updating its branch.",
+      );
+    await this.options.github.rest({
+      host: ref.host,
+      method: "PUT",
+      path: `${this.restPath(ref, "pulls")}/update-branch`,
+      body: { expected_head_sha: input.expectedHeadOid },
+      priority: "interactive",
+    });
+    return this.afterStateChange(ref, "state");
+  }
+
+  private restPath(ref: NormalizedPullRequestRef, kind: "pulls" | "issues") {
+    return `repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.name)}/${kind}/${ref.number}`;
   }
 
   private async afterStateChange(

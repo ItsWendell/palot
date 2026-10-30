@@ -32,6 +32,22 @@ export type AutomationTrigger =
       dtstart: number;
       timezone: string;
       rrule: string;
+    }
+  | {
+      version: 1;
+      type: "webhook";
+      timezone: string;
+      /** Random per-automation capability. Stored privately; never include in prompts. */
+      token: string;
+    }
+  | {
+      version: 1;
+      type: "pull-request";
+      timezone: string;
+      event: "checks-failed" | "checks-passed" | "remarks";
+      /** Exact owner/repo and head branch filters; empty means any linked PR. */
+      repository: string;
+      branch: string;
     };
 
 export type AutomationMissedRunPolicy =
@@ -74,7 +90,7 @@ export interface AutomationRecord extends AutomationDefinition {
   consecutiveStartFailures: number;
 }
 
-export type AutomationRunTrigger = "scheduled" | "catch-up" | "manual" | "retry";
+export type AutomationRunTrigger = "scheduled" | "catch-up" | "manual" | "retry" | "event";
 
 export type AutomationRunState =
   | "pending"
@@ -131,6 +147,8 @@ export interface AutomationSnapshot {
   profileID: string;
   automations: AutomationRecord[];
   runs: AutomationRun[];
+  /** Present only while an opted-in local webhook listener is running. No token. */
+  webhookAddress?: string | null;
 }
 
 export interface AutomationSchedulePreview {

@@ -41,7 +41,9 @@ function reconnect(connectionID = runtime.connectionID) {
 beforeEach(() => {
   watch.mockReset().mockResolvedValue(undefined);
   unwatch.mockReset().mockResolvedValue(undefined);
-  vi.spyOn(clients, "openCodeClient").mockReturnValue({ file: { watch, unwatch } } as never);
+  vi.spyOn(clients, "openCodeClient").mockReturnValue({
+    experimental: { file: { watch, unwatch } },
+  } as never);
   vi.spyOn(palot, "subscribe").mockImplementation((listener) => {
     listeners.add(listener);
     return () => listeners.delete(listener);

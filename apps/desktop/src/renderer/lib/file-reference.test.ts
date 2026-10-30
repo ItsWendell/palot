@@ -15,6 +15,23 @@ const code = (value: string, allowHome = false) =>
 const href = (value: string) => parseFileReference(value, { source: "href" });
 
 describe("parseFileReference", () => {
+  it.each([
+    "data.sqlite",
+    "data.sqlite3",
+    "data.db",
+    "bundle.zip",
+    "bundle.jar",
+    "bundle.tar",
+    "bundle.tgz",
+    "bundle.tar.gz",
+    "document.odt",
+    "sheets.ods",
+    "slides.odp",
+    "document.rtf",
+    "book.epub",
+  ])("links the previewable file %s", (path) => {
+    expect(code(path)).toEqual({ path });
+  });
   it("reads line, column, and range suffixes", () => {
     expect(code("src/x.ts:12")).toEqual({ path: "src/x.ts", line: 12 });
     expect(code("src/x.ts:12:3")).toEqual({ path: "src/x.ts", line: 12, column: 3 });

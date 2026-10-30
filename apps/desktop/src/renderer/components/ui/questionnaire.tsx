@@ -90,16 +90,32 @@ function QuestionnaireChoices({
   );
 }
 
+/** A click that ends a text selection inside the choice is a copy gesture, not a toggle. */
+function endsSelectionWithin(element: Element): boolean {
+  const selection = element.ownerDocument.getSelection();
+  if (!selection || selection.isCollapsed) return false;
+  for (let index = 0; index < selection.rangeCount; index++)
+    if (selection.getRangeAt(index).intersectsNode(element)) return true;
+  return false;
+}
+
 function QuestionnaireChoice({
   children,
   className,
+  onClick,
   ...props
 }: React.ComponentProps<typeof QuestionnairePrimitive.Choice>) {
   return (
     <QuestionnairePrimitive.Choice
       data-slot="questionnaire-choice"
+      onClick={(event) => {
+        onClick?.(event);
+        // Cancelling the label's click keeps its input unchanged.
+        if (!event.defaultPrevented && endsSelectionWithin(event.currentTarget))
+          event.preventDefault();
+      }}
       className={cn(
-        "group/questionnaire-choice relative flex min-h-8 cursor-pointer items-start gap-2 rounded-md px-0 py-1 text-start text-compact ring-1 ring-transparent ring-inset transition-colors outline-none select-none hover:bg-muted/60 has-[>input:focus-visible]:ring-2 has-[>input:focus-visible]:ring-ring data-invalid:ring-destructive data-checked:bg-primary/10 data-checked:ring-primary/40",
+        "group/questionnaire-choice relative flex min-h-8 cursor-pointer items-start gap-2 rounded-md px-0 py-1 text-start text-compact ring-1 ring-transparent ring-inset transition-colors outline-none hover:bg-muted/60 has-[>input:focus-visible]:ring-2 has-[>input:focus-visible]:ring-ring data-invalid:ring-destructive data-checked:bg-primary/10 data-checked:ring-primary/40",
         "data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
         className,
       )}
@@ -123,9 +139,10 @@ function QuestionnaireChoice({
           className="hidden size-3.5 group-data-[type=radio]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block"
         />
       </span>
+      {/* Above the input overlay, so its text can be selected and copied. */}
       <QuestionnairePrimitive.ChoiceLabel
         data-slot="questionnaire-choice-label"
-        className="flex min-w-0 flex-1 flex-col gap-0.5 wrap-anywhere"
+        className="relative z-20 flex min-w-0 flex-1 flex-col gap-0.5 select-text wrap-anywhere"
       >
         {children}
       </QuestionnairePrimitive.ChoiceLabel>

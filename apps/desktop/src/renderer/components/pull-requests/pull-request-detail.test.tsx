@@ -35,6 +35,101 @@ function renderDetail(
 }
 
 describe("pull request summary", () => {
+  it("edits the title and description and keeps failed drafts available", async () => {
+    const { api } = renderDetail(
+      {},
+      { editPullRequest: async (input) => ({ ok: true, value: pullRequestDetail(7, input) }) },
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Edit title and description" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Edit pull request" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Pull request title" }), {
+      target: { value: "Revised title" },
+    });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Pull request description" }), {
+      target: { value: "Revised body" },
+    });
+    api.editPullRequest.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "github-forbidden", message: "Not allowed" },
+    });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save pull request" }));
+    expect(
+      (within(dialog).getByRole("textbox", { name: "Pull request title" }) as HTMLInputElement)
+        .value,
+    ).toBe("Revised title");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save pull request" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Edit pull request" })).toBeNull(),
+    );
+    expect(api.editPullRequest).toHaveBeenLastCalledWith({
+      ...ref,
+      title: "Revised title",
+      body: "Revised body",
+    });
+  });
+
+  it("confirms auto-merge and branch updates in place, and lets Escape disarm", async () => {
+    const { api } = renderDetail({
+      autoMergeAllowed: true,
+      mergeState: "behind",
+      headOid: "a".repeat(40),
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Enable auto-merge" }));
+    expect(api.setPullRequestAutoMerge).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: "Confirm enable auto-merge" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Enable auto-merge" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm enable auto-merge" }));
+    expect(api.setPullRequestAutoMerge).toHaveBeenCalledWith({
+      ...ref,
+      enabled: true,
+      method: "merge",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Update branch" }));
+    expect(api.updatePullRequestBranch).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Confirm update branch" }));
+    expect(api.updatePullRequestBranch).toHaveBeenCalledWith({
+      ...ref,
+      expectedHeadOid: "a".repeat(40),
+    });
+  });
+
+  it("adds and removes individual repository labels without replacing the others", async () => {
+    const bug = { name: "bug", color: "ff0000" };
+    const docs = { name: "docs", color: "00ff00" };
+    let selected = [bug];
+    const { api } = renderDetail(
+      { labels: selected },
+      {
+        pullRequestLabels: async () => ({ ok: true, value: [bug, docs] }),
+        setPullRequestLabel: async (input) => {
+          selected = input.add
+            ? [...selected, docs]
+            : selected.filter((label) => label.name !== input.name);
+          return { ok: true, value: pullRequestDetail(7, { labels: selected }) };
+        },
+      },
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Edit labels" }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "docs" }));
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: "docs" }).getAttribute("aria-checked")).toBe(
+        "true",
+      ),
+    );
+    expect(api.setPullRequestLabel).toHaveBeenLastCalledWith({ ...ref, name: "docs", add: true });
+    await userEvent.click(screen.getByRole("checkbox", { name: "bug" }));
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: "bug" }).getAttribute("aria-checked")).toBe(
+        "false",
+      ),
+    );
+    expect(api.setPullRequestLabel).toHaveBeenLastCalledWith({ ...ref, name: "bug", add: false });
+    expect(selected).toEqual([docs]);
+  });
+
   it("groups checks failing, running, passing with required and incomplete notes", async () => {
     renderDetail({
       checksComplete: false,
@@ -128,7 +223,9 @@ describe("pull request summary", () => {
   ] as const)("disables merging with a clear reason (%o)", async (detail, reason) => {
     renderDetail(detail as Partial<PullRequestDetail>);
     const merge = await screen.findByRole("region", { name: "Merge" });
-    const button = within(merge).getByRole("button", { name: /merge/i }) as HTMLButtonElement;
+    const button = within(merge).getByRole("button", {
+      name: "Create a merge commit",
+    }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(within(merge).getByText(new RegExp(reason))).toBeTruthy();
   });

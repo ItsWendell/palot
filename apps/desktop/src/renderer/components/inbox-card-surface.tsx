@@ -72,7 +72,7 @@ export function InboxCardSurface({
       data-profile-id={profileID}
       data-selected={selected || undefined}
       className={cn(
-        "group/inbox-card relative overflow-hidden rounded-md bg-transparent transition-colors hover:bg-(--palot-sidebar-hover)",
+        "group/inbox-card relative overflow-hidden rounded-md bg-transparent transition-colors hover:bg-(--palot-sidebar-hover) data-[inbox-sweep=true]:bg-accent data-[inbox-sweep=true]:ring-1 data-[inbox-sweep=true]:ring-inset data-[inbox-sweep=true]:ring-ring",
         selected && "bg-(--palot-sidebar-selected) text-sidebar-foreground",
         props.className,
       )}

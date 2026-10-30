@@ -175,7 +175,7 @@ export function PullRequestReviewPopover({
   const canSubmit: Record<ReviewEvent, boolean> = {
     comment: hasBody || comments.length > 0,
     approve: !isAuthor,
-    "request-changes": !isAuthor && hasBody,
+    "request-changes": !isAuthor && hasBody && pullRequest.capabilities?.requestChanges !== false,
   };
 
   const send = (event: ReviewEvent) => {
@@ -282,6 +282,11 @@ export function PullRequestReviewPopover({
               onSubmit={send}
             />
           </div>
+          {pullRequest.capabilities?.requestChanges === false ? (
+            <p className="text-xs text-muted-foreground">
+              Request changes is not supported by this host integration. Leave a comment instead.
+            </p>
+          ) : null}
         </form>
       </PopoverContent>
     </Popover>

@@ -3,6 +3,9 @@ import { formatInTimeZone } from "date-fns-tz";
 import type { AutomationRecord, AutomationRun, AutomationTrigger } from "../../shared";
 
 export function automationScheduleLabel(trigger: AutomationTrigger): string {
+  if (trigger.type === "webhook") return "Local webhook";
+  if (trigger.type === "pull-request")
+    return `PR ${trigger.event === "remarks" ? "review or comment" : trigger.event.replaceAll("-", " ")}${trigger.repository ? ` · ${trigger.repository}` : ""}${trigger.branch ? ` · ${trigger.branch}` : ""}`;
   if (trigger.type === "once") {
     return formatInTimeZone(trigger.at, trigger.timezone, "MMM d, yyyy 'at' h:mm a zzz");
   }
@@ -19,6 +22,8 @@ export function automationScheduleLabel(trigger: AutomationTrigger): string {
 export function nextRunLabel(automation: AutomationRecord): string {
   if (automation.status === "paused") return "Paused";
   if (automation.activeRunID) return "Running now";
+  if (automation.trigger.type === "webhook" || automation.trigger.type === "pull-request")
+    return "Waiting for event";
   if (!automation.nextRunAt) return "No more runs";
   return `Next run ${formatDistanceToNowStrict(automation.nextRunAt, { addSuffix: true })} · ${automation.trigger.timezone}`;
 }

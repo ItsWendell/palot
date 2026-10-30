@@ -5,6 +5,8 @@ import type { AutomationDraft, PalotMessage } from "../../shared";
 import { usageRangeAtom } from "../atoms/ui";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { useAutomations } from "../hooks/use-automations";
+import { useSessionInbox } from "../hooks/use-session-inbox";
+import { useTriageDispatcher } from "../hooks/use-auto-settle";
 import { usageLimitFailure } from "../lib/usage-limits";
 import { showErrorToast } from "../lib/toast-error";
 import { Button } from "./ui/button";
@@ -29,6 +31,11 @@ function UsageLimitActionsContent({
   const days = useAtomValue(usageRangeAtom);
   const navigate = useNavigate();
   const { dispatch, snapshot } = useAutomations();
+  const inbox = useSessionInbox();
+  const item = [...inbox.pinned, ...inbox.inbox, ...inbox.snoozed, ...inbox.settled].find(
+    (item) => item.session.id === sessionID,
+  );
+  const dispatchTriage = useTriageDispatcher();
   const [now, setNow] = useState(() => Date.now());
   const [pending, setPending] = useState(false);
   const [scheduledKey, setScheduledKey] = useState<string | null>(null);
@@ -55,8 +62,18 @@ function UsageLimitActionsContent({
       ),
     );
   const scheduled = saved || scheduledKey === key;
-  const schedule = async () => {
-    if (!sessionID || resetsAt === null || resetsAt <= Date.now() || pending || scheduled) return;
+  const schedule = async (snooze = false) => {
+    const profileID = runtime?.profileID;
+    if (
+      !sessionID ||
+      resetsAt === null ||
+      resetsAt <= Date.now() ||
+      pending ||
+      (scheduled && !snooze) ||
+      !profileID ||
+      (snooze && !item)
+    )
+      return;
     const draft: AutomationDraft = {
       name: "Continue after usage limit",
       status: "active",
@@ -78,16 +95,33 @@ function UsageLimitActionsContent({
       createdFromSessionID: sessionID,
     };
     setPending(true);
+    let continuationSaved = scheduled;
     try {
-      await dispatch({ type: "create", draft });
+      if (!scheduled) await dispatch({ type: "create", draft });
+      continuationSaved = true;
       setScheduledKey(key);
+      if (snooze && item)
+        await dispatchTriage(profileID, {
+          type: "snooze",
+          sessionID,
+          at: Date.now(),
+          until: resetsAt,
+          through: item.activityThrough,
+        });
       toast.add({
         type: "success",
-        title: "Continuation scheduled",
+        title: snooze
+          ? "Task snoozed until reset; continuation scheduled"
+          : "Continuation scheduled",
         actionProps: { children: "Scheduled", onClick: () => void navigate({ to: "/scheduled" }) },
       });
     } catch (error) {
-      showErrorToast("Could not schedule continuation", error);
+      showErrorToast(
+        continuationSaved && snooze
+          ? "Continuation scheduled, but could not snooze task"
+          : "Could not schedule continuation",
+        error,
+      );
     } finally {
       setPending(false);
     }
@@ -104,6 +138,17 @@ function UsageLimitActionsContent({
           onClick={() => void schedule()}
         >
           {scheduled ? "Continuation scheduled" : "Continue when it resets"}
+        </Button>
+      ) : null}
+      {canSchedule ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={pending || !runtime?.profileID || !item || item.snoozedUntil === resetsAt}
+          onClick={() => void schedule(true)}
+        >
+          {item?.snoozedUntil === resetsAt ? "Snoozed until reset" : "Snooze until reset"}
         </Button>
       ) : null}
       <Button

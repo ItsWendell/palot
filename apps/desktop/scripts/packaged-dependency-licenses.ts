@@ -167,10 +167,10 @@ export async function writePackagedDependencyNotices(
   const runtimeNotices = new Set<string>();
   const licenseDirectory = path.join(resources, "licenses");
   for (const output of manifest.outputs.filter((file) => file.path.endsWith(".wasm"))) {
-    if (!/^renderer\/assets\/ghostty-vt-[^/]+\.wasm$/.test(output.path))
-      throw new Error(`Unmapped WebAssembly artifact: ${output.path}`);
+    const artifactId = wasmArtifactID(output.path);
+    if (!artifactId) throw new Error(`Unmapped WebAssembly artifact: ${output.path}`);
     for (const notice of await verifyRuntimeNoticeInputs({
-      artifactId: "ghostty-web-wasm",
+      artifactId,
       artifactPath: path.join(appRoot, "out", output.path),
       licenseDirectory,
     }))
@@ -240,20 +240,38 @@ export async function verifyPackagedDependencyNotices(
   const asar = path.join(resources, "app.asar");
   uncache(asar);
   const wasm = listPackage(asar, { isPack: false }).filter((name) => name.endsWith(".wasm"));
-  if (wasm.length !== 1) throw new Error("Unexpected packaged WebAssembly artifact set.");
+  const artifacts = wasm.map((name) => ({ name, artifactId: wasmArtifactID(name.slice(5)) }));
+  if (
+    artifacts.some((artifact) => !artifact.artifactId) ||
+    new Set(artifacts.map((artifact) => artifact.artifactId)).size !== WASM_ARTIFACTS.length ||
+    artifacts.length !== WASM_ARTIFACTS.length
+  )
+    throw new Error("Unexpected packaged WebAssembly artifact set.");
   // Verification can run from a read-only DMG: use OS temporary storage, never the bundle.
   const temporary = await mkdtemp(path.join(tmpdir(), "palot-wasm-notices-"));
   try {
-    const file = path.join(temporary, "ghostty.wasm");
-    await writeFile(file, extractFile(asar, wasm[0]!.slice(1)));
-    await verifyRuntimeNoticeInputs({
-      artifactId: "ghostty-web-wasm",
-      artifactPath: file,
-      licenseDirectory: licenses,
-    });
+    for (const [index, artifact] of artifacts.entries()) {
+      const file = path.join(temporary, `artifact-${index}.wasm`);
+      await writeFile(file, extractFile(asar, artifact.name.slice(1)));
+      await verifyRuntimeNoticeInputs({
+        artifactId: artifact.artifactId!,
+        artifactPath: file,
+        licenseDirectory: licenses,
+      });
+    }
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
+}
+
+/** Every WebAssembly file Palot ships, by its Vite output name, and its notice inputs. */
+const WASM_ARTIFACTS = [
+  { pattern: /^renderer\/assets\/ghostty-vt-[^/]+\.wasm$/, artifactId: "ghostty-web-wasm" },
+  { pattern: /^renderer\/assets\/sql-wasm-[^/]+\.wasm$/, artifactId: "sql-js-wasm" },
+] as const;
+
+function wasmArtifactID(outputPath: string): string | null {
+  return WASM_ARTIFACTS.find((artifact) => artifact.pattern.test(outputPath))?.artifactId ?? null;
 }
 
 if (import.meta.main) {

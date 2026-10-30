@@ -63,7 +63,7 @@ export const conversationToolsScenario: Scenario = {
       ];
     }).flat();
     // Official transfer API seeds settled history without provider calls or renderer injection.
-    const source = await client.session.import({
+    const source = await client.experimental.session.import({
       info: { ...session, id: `${session.id}_history`, title: "Conversation history fixture" },
       messages,
       location: session.location,
@@ -122,7 +122,7 @@ export const conversationToolsScenario: Scenario = {
         sessionID: source.id,
         boundary: { type: "before", messageID: "msg_history_user_02" },
       });
-      const copied = await client.session.export({ sessionID: forkID });
+      const copied = await client.experimental.session.export({ sessionID: forkID });
       // OpenCode assigns new IDs to copied messages. The selected prompt is excluded.
       expect(
         copied.messages.filter((message) => message.type === "user").map((message) => message.text),
@@ -132,9 +132,9 @@ export const conversationToolsScenario: Scenario = {
       await page.screenshot({ path: join(runRoot, "conversation-fork-restored.png") });
       await navigate(page, source.id);
       await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(SOURCE_DRAFT);
-      expect((await client.session.export({ sessionID: source.id })).messages).toHaveLength(
-        messages.length,
-      );
+      expect(
+        (await client.experimental.session.export({ sessionID: source.id })).messages,
+      ).toHaveLength(messages.length);
     } finally {
       await navigate(page, session.id);
       if (forkID) await client.session.remove({ sessionID: forkID });
@@ -210,7 +210,7 @@ export const conversationPermissionScenario: Scenario = {
     await card.getByRole("button", { name: "Deny", exact: true }).click();
     await page.screenshot({ path: join(runRoot, "conversation-permission-feedback.png") });
     await card.getByRole("button", { name: "Confirm denial", exact: true }).click();
-    await client.session.wait({ sessionID: session.id });
+    await client.experimental.session.wait({ sessionID: session.id });
     await expect(page.getByText(FINAL, { exact: true })).toBeVisible();
     const calls = llm.requests.filter((request) => !isTitleRequest(request.body));
     expect(calls).toHaveLength(2);

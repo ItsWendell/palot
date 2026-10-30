@@ -31,6 +31,7 @@ import { Route as SettingsPermissionsRouteImport } from "./routes/settings.permi
 import { Route as SettingsProjectRouteImport } from "./routes/settings.project";
 import { Route as SettingsProvidersRouteImport } from "./routes/settings.providers";
 import { Route as SettingsShortcutsRouteImport } from "./routes/settings.shortcuts";
+import { Route as SettingsSourceControlRouteImport } from "./routes/settings.source-control";
 import { Route as SettingsToolsRouteImport } from "./routes/settings.tools";
 import { Route as SettingsVoiceRouteImport } from "./routes/settings.voice";
 import { Route as WorkspaceSessionsSessionIDRouteImport } from "./routes/_workspace.sessions.$sessionID";
@@ -159,6 +160,11 @@ const SettingsShortcutsRoute = SettingsShortcutsRouteImport.update({
   path: "/shortcuts",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
+  id: "/source-control",
+  path: "/source-control",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsToolsRoute = SettingsToolsRouteImport.update({
   id: "/tools",
   path: "/tools",
@@ -229,6 +235,7 @@ export interface FileRoutesByFullPath {
   "/settings/project": typeof SettingsProjectRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
   "/settings/shortcuts": typeof SettingsShortcutsRoute;
+  "/settings/source-control": typeof SettingsSourceControlRoute;
   "/settings/tools": typeof SettingsToolsRoute;
   "/settings/voice": typeof SettingsVoiceRoute;
   "/settings/": typeof SettingsIndexRoute;
@@ -259,6 +266,7 @@ export interface FileRoutesByTo {
   "/settings/project": typeof SettingsProjectRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
   "/settings/shortcuts": typeof SettingsShortcutsRoute;
+  "/settings/source-control": typeof SettingsSourceControlRoute;
   "/settings/tools": typeof SettingsToolsRoute;
   "/settings/voice": typeof SettingsVoiceRoute;
   "/": typeof WorkspaceIndexRoute;
@@ -294,6 +302,7 @@ export interface FileRoutesById {
   "/settings/project": typeof SettingsProjectRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
   "/settings/shortcuts": typeof SettingsShortcutsRoute;
+  "/settings/source-control": typeof SettingsSourceControlRoute;
   "/settings/tools": typeof SettingsToolsRoute;
   "/settings/voice": typeof SettingsVoiceRoute;
   "/_workspace/": typeof WorkspaceIndexRoute;
@@ -330,6 +339,7 @@ export interface FileRouteTypes {
     | "/settings/project"
     | "/settings/providers"
     | "/settings/shortcuts"
+    | "/settings/source-control"
     | "/settings/tools"
     | "/settings/voice"
     | "/settings/"
@@ -360,6 +370,7 @@ export interface FileRouteTypes {
     | "/settings/project"
     | "/settings/providers"
     | "/settings/shortcuts"
+    | "/settings/source-control"
     | "/settings/tools"
     | "/settings/voice"
     | "/"
@@ -394,6 +405,7 @@ export interface FileRouteTypes {
     | "/settings/project"
     | "/settings/providers"
     | "/settings/shortcuts"
+    | "/settings/source-control"
     | "/settings/tools"
     | "/settings/voice"
     | "/_workspace/"
@@ -582,6 +594,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsShortcutsRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/settings/source-control": {
+      id: "/settings/source-control";
+      path: "/source-control";
+      fullPath: "/settings/source-control";
+      preLoaderRoute: typeof SettingsSourceControlRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/settings/tools": {
       id: "/settings/tools";
       path: "/tools";
@@ -712,6 +731,7 @@ interface SettingsRouteChildren {
   SettingsProjectRoute: typeof SettingsProjectRoute;
   SettingsProvidersRoute: typeof SettingsProvidersRoute;
   SettingsShortcutsRoute: typeof SettingsShortcutsRoute;
+  SettingsSourceControlRoute: typeof SettingsSourceControlRoute;
   SettingsToolsRoute: typeof SettingsToolsRoute;
   SettingsVoiceRoute: typeof SettingsVoiceRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
@@ -732,6 +752,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsProjectRoute: SettingsProjectRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsShortcutsRoute: SettingsShortcutsRoute,
+  SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsToolsRoute: SettingsToolsRoute,
   SettingsVoiceRoute: SettingsVoiceRoute,
   SettingsIndexRoute: SettingsIndexRoute,

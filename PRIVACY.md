@@ -1,6 +1,6 @@
 # Privacy
 
-This policy describes the Palot 0.21.0 source. It may change as pre-release
+This policy describes the Palot 0.22.0 source. It may change as pre-release
 features evolve.
 
 ## Data sent by Palot
@@ -53,6 +53,12 @@ Browser permission is broad. Palot does not provide per-site approval or a
 separate sensitive-action confirmation boundary. Do not enable it for a server,
 task or browsing session you don't trust.
 
+Pages in the browser can't use your microphone or camera until you allow it in the
+prompt Palot shows above the page; pages and agents cannot answer that prompt.
+Palot remembers your answer for that site until you reset it from the address bar
+or the task's browser closes. Screen capture, location, notifications and USB or
+other devices stay refused.
+
 Tab IDs, URLs and the selected tab are saved locally by connection profile and
 task so pages can be restored. Saved URLs can contain sensitive query parameters;
 they are not stored in the encrypted credential vault. Cookies and site storage
@@ -81,6 +87,63 @@ conversation, so they reach its model provider like any other context. Schedulin
 deleting a scheduled task asks you first in tasks with Defaults approvals, unless you chose to
 always allow it; Full access tasks do not ask.
 
+## Guest links (beta)
+
+Guest links are off by default. Enabling the setting alone does not open a
+listener or publish anything. Creating a link starts an HTTP server on a random
+`127.0.0.1` port. Anyone holding that link can see the selected task's title,
+recent user and assistant text, simple tool-name/status rows, and live updates.
+Attachments, reasoning, tool inputs/output, other tasks, and workspace files are
+not exposed. Text already in a message can still contain private code or secrets.
+
+Guest names are self-reported, not verified. Submitted names, messages, and
+receipt statuses stay in memory until you end the share or quit Palot. Only
+**Send** forwards a guest message, prefixed with its name, through OpenCode to
+the task's model and integrations like any normal prompt. A guest's private
+submission receipt reveals only that submission's approval status. Shares and
+pending messages are not restored after restart; the beta setting is saved locally.
+
+Publishing is a separate, explicit action. Tailscale Serve uses HTTPS port 8443
+and makes the link reachable to allowed tailnet devices. OpenTunnel makes it
+reachable from the public internet through its relay, using the dedicated
+`palot-guests` CLI profile. These providers handle network metadata according to
+their own policies. OpenTunnel terminates TLS locally; its relay forwards encrypted
+traffic. The CLI may create a persistent identity and login service. Palot removes
+its guest route when the last share ends, but does not delete that identity or
+stop a shared CLI service. A crash or failed route cleanup can leave proxy
+configuration behind; check the provider CLI before reusing it.
+
+The URL is a bearer credential. Browser history, copied links, QR codes, proxy
+logs, and recipients can retain it. No Palot account is needed, and guests can
+copy anything they see. Expiry, **Stop sharing**, disabling the beta, archiving
+or deleting the task, and quitting Palot end access, but cannot erase copies
+already made by guests or providers.
+
+## Event-triggered scheduled tasks
+
+Event triggers are opt-in per task in Scheduled. GitHub triggers reuse the existing
+outbound polling of linked or watched PRs, including CI checks and other people's
+reviews/comments. Repository and head-branch filters limit which links match.
+Selected payload fields enter the task's prompt and reach OpenCode and its model
+provider, just like a time-triggered run. There is no inbound GitHub webhook.
+
+Creating an active local-webhook task opens an HTTP listener on **127.0.0.1 only**,
+on a random port while Palot is open. The port changes after restart. Each task
+has its own random secret URL, stored in owner-only automation files and the local
+database, not the encrypted credential vault. Anyone who has that URL and local
+access can trigger model work and its costs. Keep it private; delete the task to
+revoke it. Pausing every webhook task closes the listener. Browser-origin requests
+are refused. Requests must POST a JSON object, capped at 32 KiB, with global and
+per-task rate limits. No remote tunnel or public listener is created.
+
+Webhook payloads and PR event cursors are saved in owner-only local automation
+state. A busy/offline task retains only its latest pending event. Payload values
+referenced as `{{payload.field}}` are quoted and length-limited, but remain untrusted
+content: do not template secrets or instructions from an untrusted sender. Run
+prompts and substituted values remain in OpenCode's transcript and Palot's run
+snapshot. Webhook request headers and secret URLs are not included in prompts or
+logged by the listener. Idempotency keys are stored only as hashes.
+
 ## Voice chat
 
 Voice chat (Beta) starts only when you start a call. Palot then asks the connected
@@ -103,22 +166,59 @@ application-data folder) to find the workspace for that link. It reads only that
 public workspace directory, never Slack's sign-in or session data, keeps no copy,
 and sends nothing to a server. The link then opens in Slack or your browser.
 
-## GitHub pull requests
+## Spelling
 
-Pull request features work only for local OpenCode connections. Palot's desktop
-process reads a GitHub token from `GH_TOKEN` or `GITHUB_TOKEN`, or asks the GitHub
-CLI (`gh auth token`). Palot does not save that token, and it is never passed to
-the app's interface. Requests go only to `github.com` or the host set in
-`GH_HOST`.
+Chromium checks spelling in Palot's text fields on this computer. It does not send
+what you type or the words it checks to any service. On macOS, Palot uses the system
+spellchecker and downloads no dictionaries.
 
-While a pull request is linked to a task, Palot reads its status from GitHub in
+On Linux and Windows, Chromium uses Hunspell dictionaries. Palot does not set its own
+dictionary server, so the first time Chromium needs a language's dictionary, it
+downloads it from Google (`redirector.gvt1.com`). That request reveals the language
+and normal network metadata, such as your IP address. Downloaded dictionaries stay in
+Palot's app data folder for later launches. Palot checks your system's preferred
+languages, plus US English when none of them is English. **Settings → General →
+Spelling languages** changes that list, and **Check spelling** turns checking off.
+While it is off, Palot clears the list, so Chromium downloads no dictionaries for
+Palot's windows.
+
+**Add to Dictionary** saves the word in Palot's app data. On macOS and Windows, the
+operating system's custom dictionary gets it too. Turning off Check spelling doesn't
+delete downloaded dictionaries or added words. Pages in the task browser use their
+own sessions with Chromium's defaults: your system language, unaffected by these
+settings, and fetched the same way when its dictionary isn't already on disk.
+
+## Source control
+
+Palot's desktop process contacts GitHub, GitLab, configured Forgejo/Gitea hosts,
+or Bitbucket Cloud directly, including for tasks on remote OpenCode servers.
+GitHub tokens still come from `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`, and
+requests go only to `github.com` or `GH_HOST`.
+
+For other hosts, Settings → Source control saves tokens using the same encrypted
+credential vault as connection credentials. Saving is refused when secure storage
+is unavailable. Only the host URL, provider type and vault reference go into normal
+settings storage; saved tokens are never returned to the interface. Removing a
+saved host deletes its saved token, but does not revoke it at the provider or
+remove environment variables or CLI sign-ins. Palot can also read `GITLAB_TOKEN`
+or `GL_TOKEN`, `FORGEJO_TOKEN` or `GITEA_TOKEN`, and `BITBUCKET_TOKEN`. These are
+scoped to their configured host, never tried against arbitrary Git remotes.
+GitLab can use `glab auth token --hostname` for a known GitLab host.
+
+Host requests use HTTPS, do not follow redirects, and send the token only to the
+configured API origin (Bitbucket Cloud uses `api.bitbucket.org`). Adding a host
+trusts that server with its token and repository requests. Host tokens are not
+sent to OpenCode or model providers. See [Source control](docs/source-control.md)
+for supported operations, environment host selection and required permissions.
+
+While a pull request is linked to a task, Palot reads its status from its host in
 the background (open pull requests about once a minute). The Pull requests screen
 reads lists, details, checks, comments and changed files when you open them.
 Merging, reviewing, commenting, requesting reviewers, closing or reopening, and
 marking files viewed happen only when you choose them. Watching a pull request
 lets Palot queue a prompt into that task when checks fail or pass, someone
 comments or reviews, or the branch conflicts; that prompt goes through OpenCode
-to the task's model like any other message. GitHub's terms apply to all of these
+to the task's model like any other message. The code host's terms apply to these
 requests.
 
 Avatar images load from `avatars.githubusercontent.com`, which exposes normal
@@ -131,7 +231,49 @@ is stored in Palot's local app storage on this device.
 
 Generating a commit message sends the staged files' changes through OpenCode to
 the task's model. Committing and pushing run your local `git` with your own Git
-configuration and credentials.
+configuration and credentials. For remote tasks, Git runs on the selected
+OpenCode server through its public shell API, over the existing HTTP connection
+or SSH tunnel. It does not create agent transcript messages. Paths, Git arguments,
+commit messages and command output reach that server, which uses its own Git
+configuration, hooks and credentials. Palot does not forward desktop code-host
+tokens to remote Git. Use only servers and repositories you trust: commits can
+run repository hooks, and pushes/fetches contact the configured Git remotes.
+
+Remote commands use private temporary output files, bounded execution times and
+bounded response reads. Palot asks OpenCode to remove the shell record and output
+after each command and removes its temporary files on normal exit. Interrupted
+connections or crashes can leave server-side artifacts; the server operator's
+logging and retention policies still apply. Remote Git needs OpenCode 2.2's shell
+API and POSIX tools. Palot never falls back to running remote paths on this device.
+
+Generating a pull request draft sends the committed branch diff, commit subjects,
+and recent task context through OpenCode to the task's model. Creating the pull
+request sends the title, description, base/head branches and draft choice to
+the selected code host, then links it locally. Palot also recognizes supported
+PR/MR URLs in settled tool and shell output, verifies the repository and branch with the host, and links
+them to the task if it has no PR link yet. Fetch, pull, sync and push use your
+selected server's Git configuration and credentials; sync pulls before pushing. Divergent
+pulls require an explicit rebase or merge choice, and default-branch pushes ask
+for confirmation.
+
+Editing a pull request sends its title and description to its host. Supported label,
+auto-merge and branch-update actions contact that host only when you choose them.
+Enabling auto-merge can merge immediately if the host's requirements already pass.
+Branch creation, switching and renaming use the selected connection's Git without discarding or
+stashing uncommitted changes. Naming a new worktree branch is optional.
+
+Automatic worktree retirement is off by default, configured on Worktrees. When
+enabled, Palot checks the current local connection's projects about once a minute
+while its workspace is open, including refreshing linked PRs from GitHub. Run
+cleanup now performs the same checks on demand. Retirement removes only managed
+worktrees with merged PRs, no running tasks, no uncommitted changes and a HEAD
+matching the merged PR; it never forces removal or removes the main checkout.
+Task histories and branches remain. A local log retains the last 100 automatic
+or on-demand retirements, including directory, PR URL and time.
+
+Agent tools can link and watch pull requests. The create-pull-request tool asks
+for approval under Defaults, independently of the scheduling approval setting;
+Full access tasks do not ask. Creating a PR never pushes a branch implicitly.
 
 ## Data stored on the device
 

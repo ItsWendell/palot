@@ -537,9 +537,13 @@ function byteLimit(maximum: number): Transform {
 }
 
 async function extractTar(archive: string, destination: string) {
-  const stream = createReadStream(archive)
-    .compose(createGunzip())
-    .compose(byteLimit(MAX_BINARY + MAX_METADATA));
+  // Stopping early (a refused or truncated archive) aborts every stage of the pipeline after its
+  // reader is gone. The extraction error is the one to report, so each stage ignores the abort.
+  const file = createReadStream(archive);
+  const gunzip = createGunzip();
+  const limit = byteLimit(MAX_BINARY + MAX_METADATA);
+  for (const stage of [file, gunzip, limit]) stage.on("error", () => undefined);
+  const stream = file.compose(gunzip).compose(limit);
   const iterator = stream[Symbol.asyncIterator]();
   let pending = Buffer.alloc(0);
   async function read(size: number): Promise<Buffer> {
@@ -615,8 +619,6 @@ async function extractTar(archive: string, destination: string) {
     if (!found) throw new Error("No regular opencode executable found in archive.");
   } finally {
     await output?.close();
-    // Stopping early (a refused or truncated archive) makes the composed pipeline emit an
-    // AbortError after the reader is gone; the extraction error above is the one to report.
     stream.on("error", () => undefined);
     stream.destroy();
   }

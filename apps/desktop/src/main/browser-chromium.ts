@@ -290,12 +290,8 @@ export function createBrowserPage(
       else options.fail();
     });
   });
-  contents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
-  );
-  contents.session.setPermissionCheckHandler(() => false);
-  contents.session.setDevicePermissionHandler(() => false);
-  contents.session.setDisplayMediaRequestHandler((_request, callback) => callback({}));
+  // Permissions are session-wide, so the browser pane installs them once per task partition
+  // (browser/permissions.ts); setting them here would replace them for every tab.
   contents.on("content-bounds-updated", (event) => event.preventDefault());
   // Sub-frames keep Chromium's own rules so blob:/data: viewers and sandboxed previews still load,
   // except file: documents, which must stay inside the allowed roots at every depth.

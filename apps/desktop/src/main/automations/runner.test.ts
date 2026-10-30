@@ -223,9 +223,13 @@ describe("AutomationRunner admission", () => {
           get: vi.fn().mockRejectedValue(new Error("not found")),
           list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
           prompt,
-          instructions: { entry: { put: vi.fn().mockResolvedValue(undefined) } },
           inbox: { list: vi.fn().mockResolvedValue([]) },
-          log: async function* () {},
+        },
+        experimental: {
+          session: {
+            instructions: { entry: { put: vi.fn().mockResolvedValue(undefined) } },
+            log: async function* () {},
+          },
         },
       } as unknown as OpenCodeClient;
       const memory = memoryStore();
@@ -242,7 +246,7 @@ describe("AutomationRunner admission", () => {
       await runner.execute("run-unknown");
 
       expect(prompt).toHaveBeenCalledTimes(1);
-      expect(client.session.instructions.entry.put).toHaveBeenCalledWith(
+      expect(client.experimental.session.instructions.entry.put).toHaveBeenCalledWith(
         expect.objectContaining({
           sessionID: "session-1",
           key: "palot.automation",
@@ -257,8 +261,8 @@ describe("AutomationRunner admission", () => {
       if (localPathActions) expect(memory.ensure).toHaveBeenCalledWith(definition.id);
       else {
         expect(memory.ensure).not.toHaveBeenCalled();
-        const instruction = vi.mocked(client.session.instructions.entry.put).mock.calls[0]![0]
-          .value;
+        const instruction = vi.mocked(client.experimental.session.instructions.entry.put).mock
+          .calls[0]![0].value;
         expect(instruction).not.toContain("/automations/");
         expect(instruction).not.toContain("Read it first");
       }
@@ -307,9 +311,13 @@ describe("AutomationRunner admission", () => {
           form: { list: vi.fn().mockResolvedValue([]) },
           get: vi.fn().mockResolvedValue({ id: "session-1", time: { created: 1, updated: 1 } }),
           prompt,
-          instructions: { entry: { put: putInstruction } },
           inbox: { list: vi.fn().mockResolvedValue([]) },
-          log: async function* () {},
+        },
+        experimental: {
+          session: {
+            instructions: { entry: { put: putInstruction } },
+            log: async function* () {},
+          },
         },
       } as unknown as OpenCodeClient;
       const runner = new AutomationRunner({
@@ -367,17 +375,21 @@ describe("AutomationRunner admission", () => {
           get: vi.fn().mockRejectedValue(new Error("not found")),
           list: vi.fn().mockResolvedValue({ data: [], cursor: { previous: null, next: null } }),
           prompt,
-          wait: vi.fn(
-            (_input, options: { signal: AbortSignal }) =>
-              new Promise<void>((_resolve, reject) => {
-                options.signal.addEventListener("abort", () => reject(options.signal.reason), {
-                  once: true,
-                });
-              }),
-          ),
-          instructions: { entry: { put: vi.fn().mockResolvedValue(undefined) } },
           inbox: { list: vi.fn().mockResolvedValue([]) },
-          log: async function* () {},
+        },
+        experimental: {
+          session: {
+            wait: vi.fn(
+              (_input, options: { signal: AbortSignal }) =>
+                new Promise<void>((_resolve, reject) => {
+                  options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+                    once: true,
+                  });
+                }),
+            ),
+            instructions: { entry: { put: vi.fn().mockResolvedValue(undefined) } },
+            log: async function* () {},
+          },
         },
       } as unknown as OpenCodeClient;
       const runner = new AutomationRunner({

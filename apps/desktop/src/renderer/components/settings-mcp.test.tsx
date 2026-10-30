@@ -62,7 +62,9 @@ function fakeClient(mcp: Record<string, unknown>, integration: Record<string, un
   const resolved = { directory: "/repo", project: { id: project.id, directory: "/repo" } };
   setOpenCodeClientForTest({
     location: { get: vi.fn().mockResolvedValue(resolved) },
+    // Reads are stable (`mcp.list`); connecting and editing servers are experimental since 2.2.1.
     mcp,
+    experimental: { mcp },
     integration,
   } as unknown as OpenCodeClient);
 }

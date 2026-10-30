@@ -5,8 +5,9 @@ import { OpenCode } from "@opencode/client";
 import { describe, expect, it } from "vitest";
 import { analyzeOpenCodeUsage, type StaticAnalysis } from "./opencode-coverage-analysis";
 import {
-  clientPathFromOperationID,
+  clientPathFromOperation,
   compareContracts,
+  endpointNameFromOperationID,
   installedContract,
   inventoryFromOpenApi,
   type ContractInventory,
@@ -17,10 +18,10 @@ import { checkCoverage, createBaseline } from "./opencode-coverage-report";
 
 const operation = (operationID: string, fingerprint = operationID): ContractOperation => ({
   operationID,
-  clientPath: clientPathFromOperationID(operationID),
+  clientPath: endpointNameFromOperationID(operationID),
   method: "GET",
   path: `/api/${operationID}`,
-  group: clientPathFromOperationID(operationID).split(".")[0] ?? "unknown",
+  group: endpointNameFromOperationID(operationID).split(".")[0] ?? "unknown",
   summary: null,
   description: null,
   experimental: false,
@@ -75,21 +76,27 @@ const analysis = (operations: ContractOperation[]): StaticAnalysis => ({
 
 describe("OpenCode coverage contract", () => {
   it("maps protocol operation IDs to Promise client paths", () => {
-    expect(clientPathFromOperationID("v2.fs.read")).toBe("file.read");
-    expect(clientPathFromOperationID("v2.session.form.reply")).toBe("form.reply");
-    expect(clientPathFromOperationID("session.form.reply")).toBe("session.form.reply");
-    expect(clientPathFromOperationID("form.list")).toBe("form.list");
-    expect(clientPathFromOperationID("session.permission.reply")).toBe("permission.reply");
-    expect(clientPathFromOperationID("experimental.media.get")).toBe("experimental.media.get");
-    expect(clientPathFromOperationID("experimental.usage.limits")).toBe("usage.limits");
-    expect(clientPathFromOperationID("session.message.list")).toBe("message.list");
-    expect(clientPathFromOperationID("v2.session.permission.create")).toBe("permission.create");
-    expect(clientPathFromOperationID("v2.experimental.integration.wellknown.add")).toBe(
+    expect(endpointNameFromOperationID("v2.fs.read")).toBe("file.read");
+    expect(endpointNameFromOperationID("v2.session.form.reply")).toBe("form.reply");
+    expect(endpointNameFromOperationID("session.form.reply")).toBe("session.form.reply");
+    expect(endpointNameFromOperationID("form.list")).toBe("form.list");
+    expect(endpointNameFromOperationID("session.permission.reply")).toBe("permission.reply");
+    expect(endpointNameFromOperationID("session.message.list")).toBe("message.list");
+    expect(endpointNameFromOperationID("v2.session.permission.create")).toBe("permission.create");
+    expect(endpointNameFromOperationID("v2.experimental.integration.wellknown.add")).toBe(
       "integration.wellknown.add",
     );
-    expect(clientPathFromOperationID("server.experimental.persistentPty.create")).toBe(
-      "experimental.persistentPty.create",
+    expect(endpointNameFromOperationID("server.experimental.persistentPty.create")).toBe(
+      "persistentPty.create",
     );
+    // Since 2.2.1 the URL places a route in `client.experimental`, as the protocol does.
+    expect(clientPathFromOperation("experimental.fs.write", "/api/experimental/file/write")).toBe(
+      "experimental.file.write",
+    );
+    expect(
+      clientPathFromOperation("experimental.session.log", "/api/experimental/session/{id}/log"),
+    ).toBe("experimental.session.log");
+    expect(clientPathFromOperation("v2.fs.read", "/api/file")).toBe("file.read");
   });
 
   it("enumerates unique operations from the installed official contract", () => {

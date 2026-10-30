@@ -39,6 +39,7 @@ import { projectLocation, visibleProjects } from "../lib/view-models";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useProjectCatalog, useSessionCatalogSelector } from "../hooks/use-session-catalog";
 import { useAutomations } from "../hooks/use-automations";
+import { useAutomaticWorktreeCleanup } from "../hooks/use-worktree-cleanup";
 import { palot } from "../services/palot";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { WorkbenchPane } from "./workbench/workbench-pane";
@@ -78,6 +79,7 @@ function sameWorkspaceSession(left: WorkspaceSession | null, right: WorkspaceSes
 
 export function Workspace({ content }: { content: ReactNode; children?: ReactNode }) {
   useAutomations();
+  useAutomaticWorktreeCleanup();
   const router = useRouter();
   const [phase, setPhase] = useAtom(phaseAtom);
   const [error, setError] = useAtom(errorAtom);
@@ -133,34 +135,6 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const shellExitCleanupRef = useRef<(() => void) | null>(null);
   const [exitingPanel, setExitingPanel] = useState<string | null>(null);
   const [workspaceSize, setWorkspaceSize] = useState({ width: 0, height: 0 });
-  useLayoutEffect(() => {
-    if (phase !== "ready") return;
-    const workspace = workspaceRef.current;
-    const chrome = workspace?.querySelector<HTMLElement>(".window-chrome-cluster");
-    const trailing = workspace?.querySelector<HTMLElement>(".window-trailing-controls");
-    const center = workspace?.querySelector<HTMLElement>('[data-shell-panel="center"]');
-    const navigation = workspace?.querySelector<HTMLElement>('[data-shell-panel="navigation"]');
-    if (!workspace || !chrome || !trailing || !center || !navigation) return;
-    // Panel state can lead or lag its physical size during hydration and transitions.
-    // Reserve only the toolbar's actual overlap with the center pane.
-    const measure = () => {
-      const inset = Math.max(
-        18,
-        chrome.getBoundingClientRect().right - center.getBoundingClientRect().left + 12,
-      );
-      workspace.style.setProperty("--thread-header-leading-inset", `${inset}px`);
-      workspace.style.setProperty(
-        "--thread-header-trailing-inset",
-        `${Math.max(12, center.getBoundingClientRect().right - trailing.getBoundingClientRect().left + 12)}px`,
-      );
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    for (const element of [workspace, chrome, trailing, center, navigation])
-      observer.observe(element);
-    return () => observer.disconnect();
-  }, [phase]);
   const [paneGeometry, setPaneGeometry] = useAtom(paneGeometryAtom);
   const navigationCompact =
     workspaceSize.width > 0 &&
@@ -807,7 +781,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
     );
   }
   return (
-    <div ref={workspaceRef} className="relative size-full min-h-0 min-w-0">
+    <div ref={workspaceRef} data-palot-workspace className="relative size-full min-h-0 min-w-0">
       <SidebarProvider
         open={navigationOpen}
         onOpenChange={setNavigationVisibility}

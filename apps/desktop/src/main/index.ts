@@ -40,6 +40,7 @@ import { appearanceService } from "./appearance-service";
 import { destroyTray, installTray } from "./tray";
 import { destroyOpenCodeAttentionIndex } from "./attention-index";
 import { palotToolHost, shutdownPalotToolHost } from "./palot-tools";
+import { shutdownGuestLinks } from "./guest-links/runtime";
 import { restoreWindowState, saveWindowState, trackWindowState } from "./window-state";
 import { startupWindowPresentation } from "./window-startup";
 import { openExternalUrl } from "./external-url";
@@ -56,6 +57,7 @@ import { showRecoveryWindow } from "./recovery-window";
 import { completePendingPalotReset } from "./data-recovery";
 import { createShowcaseBackdrop, resolveShowcaseConfiguration } from "./showcase-window";
 import { installNativeContextMenu } from "./native-context-menu";
+import { applySpellcheck } from "./spellcheck";
 import { linuxDesktopDiagnostics, windowManagerOwnsClose } from "./linux-desktop";
 import { WINDOW_MANAGER_OWNS_CLOSE_ARGUMENT } from "../shared/window-chrome";
 import { configureSecureStorage } from "./secure-storage";
@@ -90,7 +92,12 @@ if (isDevelopment) {
     process.env.PALOT_REMOTE_DEBUGGING_PORT ?? "9223",
   );
 }
-if (process.env.PALOT_E2E_USER_DATA) app.commandLine.appendSwitch("use-mock-keychain");
+if (process.env.PALOT_E2E_USER_DATA) {
+  app.commandLine.appendSwitch("use-mock-keychain");
+  // Headless test displays have no microphone or camera; Chromium's fake devices stand in.
+  // Permission prompts are unaffected: Palot's own handler still decides.
+  app.commandLine.appendSwitch("use-fake-device-for-media-stream");
+}
 configureSecureStorage(app.commandLine);
 
 app.setName(buildIdentity.displayName);
@@ -392,6 +399,11 @@ if (helpRequested) {
       await appearanceService().initializeDesktopAppearance();
       powerMonitor.on("resume", () => openCodeRuntime.recoverEventStream("resume"));
       installPermissionPolicy(session.defaultSession, { allowMicrophone: isWorkspaceContents });
+      try {
+        applySpellcheck();
+      } catch (error) {
+        log.warn("Could not apply spelling preferences", error);
+      }
       await cleanupStagedAttachments();
       app.setAboutPanelOptions({
         applicationName: buildIdentity.displayName,
@@ -495,6 +507,7 @@ if (helpRequested) {
       .shutdown()
       .finally(async () => {
         await trayShutdown;
+        await shutdownGuestLinks();
         destroyOpenCodeAttentionIndex();
         await shutdownPalotToolHost().catch((error) =>
           log.warn("Palot tool shutdown failed", error),

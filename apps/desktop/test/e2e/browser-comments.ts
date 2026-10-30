@@ -48,7 +48,7 @@ export async function verifyBrowserComments(page: Page, { client, session, llm }
   await expect(page.getByText("Browser comment applied.", { exact: true })).toBeVisible({
     timeout: 60_000,
   });
-  await client.session.wait({ sessionID: session.id });
+  await client.experimental.session.wait({ sessionID: session.id });
   const messages = (await client.message.list({ sessionID: session.id, order: "asc" })).data;
   const user = messages.findLast((message) => message.type === "user");
   expect(JSON.stringify(user?.metadata)).toContain("Check this heading's wording.");
@@ -111,7 +111,7 @@ export async function verifyBrowserComments(page: Page, { client, session, llm }
   await expect(
     page.getByText("Child-frame comment retained without a stale reference.", { exact: true }),
   ).toBeVisible();
-  await client.session.wait({ sessionID: session.id });
+  await client.experimental.session.wait({ sessionID: session.id });
   const latest = (await client.message.list({ sessionID: session.id, order: "asc" })).data.findLast(
     (message) => message.type === "user",
   );

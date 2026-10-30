@@ -6,6 +6,7 @@ import type { PalotOpenTarget } from "../../shared";
 import { attentionTargetAtom, markAttentionSeenAtom } from "../atoms/attention";
 import { defaultSidebarModeAtom, sidebarModeAtom } from "../atoms/ui";
 import { BrowserSessionManager } from "../components/browser-session-manager";
+import { TaskActivityAnnouncer } from "../components/task-activity-announcer";
 import { GlobalCommandPalette } from "../components/global-command-palette";
 import { OnboardingController } from "../components/onboarding-controller";
 import { ProjectScriptNotices } from "../components/project-script-notices";
@@ -170,6 +171,9 @@ function RuntimeLayout() {
         />
       ) : null}
       <InboxController />
+      <TaskActivityAnnouncer
+        sessionID={routeProfileID && routeProfileID !== runtime?.profileID ? null : sessionID}
+      />
       <ProjectScriptNotices />
       <OnboardingController
         initialTargetHandled={initialTarget.handled}

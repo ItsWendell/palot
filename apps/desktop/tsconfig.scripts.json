@@ -8,6 +8,9 @@
   "include": [
     "scripts/**/*.ts",
     "test/e2e/**/*.ts",
+    "test/tool-eval/**/*.ts",
+    "src/main/palot-tools/tools.ts",
+    "src/main/automations/recurrence.ts",
     "src/preload/api.d.ts",
     "src/shared/**/*.ts",
     "src/main/opencode-version.ts",

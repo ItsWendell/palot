@@ -22,7 +22,7 @@ function retainWatch(connectionID: string, directory: string, path: string): () 
     // Watch routes are optional on older servers. Fail silently.
     const renew = () =>
       void openCodeClient(connectionID)
-        .file.watch(input)
+        .experimental.file.watch(input)
         .catch(() => undefined);
     const unsubscribe = palot.subscribe((batch) => {
       if (

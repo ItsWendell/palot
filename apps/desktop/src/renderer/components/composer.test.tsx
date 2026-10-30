@@ -29,6 +29,8 @@ import { composerScope } from "../lib/composer-scope";
 import { createWorkbenchState, workbenchScopeKey, type WorkbenchTab } from "../lib/workbench-tabs";
 import { openCodeReconciler, sessionInfoFromPalot } from "../lib/open-code-reconciler";
 import { recentPromptScope, saveRecentPrompt } from "../lib/composer-recent-prompts";
+import { loadPromptStash } from "../lib/prompt-stash";
+import { WORKSPACE_FILE_DRAG_TYPE } from "../lib/workspace-file-drag";
 import { selectionMemoriesAtom } from "../lib/selection-memory";
 import { modelProjectPreferenceKey } from "../lib/model-preferences";
 import type { OpenCodeClient } from "@opencode/client";
@@ -1106,7 +1108,7 @@ describe("Composer discovery", () => {
         {
           sessionID: session.id,
           name: "review",
-          text: "/review auth",
+          text: "auth",
           delivery: "steer",
         },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -1303,7 +1305,7 @@ describe("Composer discovery", () => {
     );
   });
 
-  it("routes /fork, /export, /open, and /mcp to palette commands", async () => {
+  it("routes /fork, /export, /open, /mcp, and /reload to palette commands", async () => {
     const user = userEvent.setup();
     const store = createStore();
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
@@ -1316,6 +1318,7 @@ describe("Composer discovery", () => {
       ["export", "task.export"],
       ["open", "task.files.open"],
       ["mcp", "settings.open:tools"],
+      ["reload", "server.reloadConfiguration"],
     ] as const) {
       await user.type(input, `/${name}`);
       await screen.findByRole("option", { name: new RegExp(`/${name}`) });
@@ -1375,7 +1378,7 @@ describe("Composer discovery", () => {
     expect(await screen.findByRole("option", { name: "Build" })).toBeTruthy();
   });
 
-  it("scopes the active discovery index to the current query", async () => {
+  it("scopes the highlighted suggestion to the current query", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "palot", {
       configurable: true,
@@ -1400,7 +1403,7 @@ describe("Composer discovery", () => {
     await user.type(input, "/");
     await screen.findByRole("option", { name: /\/alpha/i });
     const bravo = screen.getByRole("option", { name: /\/bravo/i });
-    fireEvent.mouseEnter(bravo);
+    fireEvent.pointerMove(bravo, { movementX: 4, movementY: 0 });
     expect(bravo.getAttribute("aria-selected")).toBe("true");
 
     await user.type(input, "be");
@@ -1408,6 +1411,36 @@ describe("Composer discovery", () => {
     expect(screen.getByRole("option", { name: /\/beta/i }).getAttribute("aria-selected")).toBe(
       "true",
     );
+  });
+
+  it("accepts Enter from the list for the typed query, never an older one", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(
+      client({
+        command: {
+          list: vi.fn().mockResolvedValue({
+            data: [
+              { name: "alpha", description: "Alpha", subtask: false },
+              { name: "beta", description: "Beta", subtask: false },
+            ],
+          }),
+        },
+      }),
+    );
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    await user.type(input, "/");
+    await screen.findByRole("option", { name: /\/alpha/i });
+
+    // The suggestions filter with a deferred query, so Enter can arrive before they catch up.
+    act(() => {
+      fireEvent.change(input, { target: { value: "/be", selectionStart: 3, selectionEnd: 3 } });
+      expect(screen.getByRole("option", { name: /\/alpha/i })).toBeTruthy();
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+
+    await waitFor(() => expect(input.value).toBe("/beta "));
   });
 
   it("suggests and executes the built-in /compact command", async () => {
@@ -1777,6 +1810,66 @@ describe("Composer discovery", () => {
       expect(screen.getByText("Idle wait failed")).toBeTruthy();
     },
   );
+});
+
+describe("Composer prompt stash", () => {
+  it("stashes only the focused composer's draft and restores its attachments without overwriting new text", async () => {
+    const store = createStore();
+    const state = composerStateAtomFamily(composerScope("test-profile", `session:${session.id}`));
+    const files = [
+      { uri: "data:text/plain;base64,YQ==", name: "a.txt", mime: "text/plain", size: 1 },
+    ];
+    store.set(state, (current) => ({ ...current, files }));
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    fireEvent.change(input, { target: { value: "Save this prompt" } });
+    fireEvent.keyDown(document, { key: "s", ctrlKey: true });
+    expect(input.value).toBe("Save this prompt");
+    fireEvent.keyDown(input, { key: "s", ctrlKey: true });
+    expect(input.value).toBe("");
+    expect(store.get(state).files).toEqual([]);
+    const scope = JSON.stringify(["test-profile", session.projectID]);
+    expect(loadPromptStash(scope)[0]).toMatchObject({ draft: { text: "Save this prompt" }, files });
+    fireEvent.change(input, { target: { value: "New unsent work" } });
+    await userEvent.click(screen.getByRole("button", { name: "Prompt stash" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Restore Save this prompt" }));
+    expect(input.value).toBe("Save this prompt");
+    expect(store.get(state).files).toEqual(files);
+    expect(loadPromptStash(scope).map((entry) => entry.draft.text)).toEqual(["New unsent work"]);
+  });
+
+  it("does not stash while an attachment upload can still mutate the draft", async () => {
+    const upload = Promise.withResolvers<PalotFilePickerResult>();
+    vi.spyOn(palot, "pickFiles").mockReturnValue(upload.promise);
+    vi.spyOn(palot, "onAttachmentProgress").mockReturnValue(() => undefined);
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    fireEvent.change(input, { target: { value: "Keep me" } });
+    await userEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    fireEvent.keyDown(input, { key: "s", ctrlKey: true });
+    expect(input.value).toBe("Keep me");
+    expect(loadPromptStash(JSON.stringify(["test-profile", session.projectID]))).toEqual([]);
+    expect(screen.getByRole("button", { name: "Prompt stash" }).hasAttribute("disabled")).toBe(
+      true,
+    );
+    await act(async () => upload.resolve({ files: [], errors: [] }));
+  });
+
+  it("accepts a workspace-file drop as a resolved mention only from the same workspace", () => {
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const transfer = (profileID: string) => ({
+      types: [WORKSPACE_FILE_DRAG_TYPE],
+      getData: () => JSON.stringify({ profileID, ...session.location, path: "src/example.ts" }),
+    });
+    fireEvent.drop(input, { dataTransfer: transfer("other") });
+    expect(input.value).toBe("");
+    fireEvent.drop(input, { dataTransfer: transfer("test-profile") });
+    expect(input.value).toBe("@src/example.ts ");
+    expect(
+      screen.getByRole("button", { name: "Remove file mention @src/example.ts" }),
+    ).toBeTruthy();
+  });
 });
 
 describe("Composer text entry", () => {
@@ -3396,6 +3489,88 @@ describe("Composer mention context", () => {
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
     await user.type(screen.getByRole("textbox", { name: "Message Palot" }), "mail me@home ");
     expect(screen.queryByRole("group", { name: "Mentions" })).toBeNull();
+  });
+
+  /** `@` with two open files, and subagents that arrive later and list before them. */
+  function renderLateAgents() {
+    const agents = Promise.withResolvers<unknown>();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(
+      client({
+        agent: { list: vi.fn(() => agents.promise) },
+        reference: { list: vi.fn().mockResolvedValue({ data: [] }) },
+      }),
+    );
+    const store = createStore();
+    store.set(workbenchStateAtom, {
+      version: 1,
+      scopes: {
+        [workbenchScopeKey({ profileID: "test-profile", sessionID: session.id })]: {
+          right: {
+            tabs: [fileTab("auth", "src/auth.ts"), fileTab("guide", "docs/guide.md")],
+            activeTabID: "auth",
+            requestedOpen: true,
+          },
+          bottom: { tabs: [], activeTabID: null, requestedOpen: false },
+          updatedAt: 1,
+        },
+      },
+    });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    const highlighted = () =>
+      screen
+        .getAllByRole("option")
+        .filter((option) => option.getAttribute("aria-selected") === "true")
+        .map((option) => option.textContent);
+    const resolveAgents = () =>
+      act(async () =>
+        agents.resolve({
+          data: [
+            { id: "explore", name: "Explore", mode: "subagent", hidden: false, permissions: [] },
+          ],
+        }),
+      );
+    return { highlighted, resolveAgents };
+  }
+
+  it("keeps the first row highlighted while results update under a resting pointer", async () => {
+    const user = userEvent.setup();
+    const { highlighted, resolveAgents } = renderLateAgents();
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    await user.type(input, "@");
+    const guide = () => screen.getByRole("option", { name: /docs\/guide\.md/ });
+    await screen.findByRole("option", { name: /docs\/guide\.md/ });
+    expect(highlighted()).toEqual(["@auth.tssrc/auth.ts"]);
+
+    // A list that renders or scrolls under a resting pointer sends movement-free events.
+    fireEvent.pointerMove(guide(), { movementX: 0, movementY: 0 });
+    await resolveAgents();
+    await screen.findByRole("option", { name: /@explore/ });
+    fireEvent.pointerMove(guide(), { movementX: 0, movementY: 0 });
+    expect(highlighted()).toEqual(["@exploreSubagent"]);
+
+    fireEvent.pointerMove(guide(), { movementX: 2, movementY: 1 });
+    expect(highlighted()).toEqual(["@guide.mddocs/guide.md"]);
+    await user.keyboard("{Enter}");
+    expect(input.value).toBe("@docs/guide.md ");
+  });
+
+  it("keeps a suggestion chosen with the arrows when new results list before it", async () => {
+    const user = userEvent.setup();
+    const { highlighted, resolveAgents } = renderLateAgents();
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    await user.type(input, "@");
+    await screen.findByRole("option", { name: /docs\/guide\.md/ });
+    await user.keyboard("{ArrowDown}");
+    expect(highlighted()).toEqual(["@guide.mddocs/guide.md"]);
+
+    await resolveAgents();
+    await screen.findByRole("option", { name: /@explore/ });
+    expect(highlighted()).toEqual(["@guide.mddocs/guide.md"]);
+    await user.keyboard("{ArrowUp}");
+    expect(highlighted()).toEqual(["@auth.tssrc/auth.ts"]);
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(input.value).toBe("@docs/guide.md ");
   });
 });
 

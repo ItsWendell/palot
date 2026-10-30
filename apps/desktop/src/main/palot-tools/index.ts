@@ -5,6 +5,7 @@ import { automationService } from "../automations/service";
 import { openCodeRuntime } from "../opencode-runtime";
 import { sessionTriageStore } from "../session-triage-store";
 import { refreshTrayMenu } from "../tray";
+import { sourceControlService } from "../source-control/runtime";
 import { PalotToolHost } from "./host";
 
 let host: PalotToolHost | null = null;
@@ -18,6 +19,7 @@ export function palotToolHost(): PalotToolHost {
     onTriageChanged: broadcastSessionTriage,
     enabled: () => automationService().agentToolsEnabled(),
     askBeforeScheduling: () => automationService().askBeforeAgentScheduling(),
+    sourceControl: sourceControlService,
   }));
 }
 

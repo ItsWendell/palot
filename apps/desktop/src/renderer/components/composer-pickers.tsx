@@ -23,6 +23,7 @@ import {
   rememberRecentModel,
   toggleFavoriteModel,
 } from "../lib/model-preferences";
+import { modelLabels } from "../lib/model-labels";
 import { modelMatchesRef, resolveModelSelection } from "../lib/model-selection";
 import { primaryAgents } from "../lib/selection-memory";
 import { Button } from "./ui/button";
@@ -79,11 +80,21 @@ export const ModelPicker = memo(function ModelPicker({
   const selectedRef = selection.ref;
   const selected = selection.model;
   const unavailable = session.model !== null && selected === null;
-  const label = selected?.name ?? selectedRef?.id ?? "Choose model";
   const providerNames = useMemo(
     () => new Map(providers.map((provider) => [provider.id, provider.name])),
     [providers],
   );
+  // Names that tell the listed models apart: the same name from two providers shows its provider.
+  const labels = useMemo(
+    () => modelLabels(selected && !models.includes(selected) ? [...models, selected] : models),
+    [models, selected],
+  );
+  const selectedLabel = selected ? labels.get(modelPreferenceKey(selected)) : undefined;
+  const label = selected
+    ? selectedLabel?.providerAmbiguous
+      ? `${providerNames.get(selected.providerID) ?? selected.providerID} / ${selectedLabel.name}`
+      : (selectedLabel?.name ?? selected.name)
+    : (selectedRef?.id ?? "Choose model");
 
   const sections = useMemo(() => {
     const groups = groupPickerModels(models, usage, providers);
@@ -100,7 +111,7 @@ export const ModelPicker = memo(function ModelPicker({
       return {
         key,
         value: model,
-        label: model.name,
+        label: labels.get(key)?.name ?? model.name,
         description: showProvider ? providerName : undefined,
         keywords: modelSearchValues(model, providerName),
         badges,
@@ -151,7 +162,17 @@ export const ModelPicker = memo(function ModelPicker({
       });
     }
     return result;
-  }, [defaultModel, draft, models, providerNames, providers, selectedRef, unavailable, usage]);
+  }, [
+    defaultModel,
+    draft,
+    labels,
+    models,
+    providerNames,
+    providers,
+    selectedRef,
+    unavailable,
+    usage,
+  ]);
 
   const toggleFavorite = useCallback(
     (option: ComposerPickerOption<PalotModel | null>) => {

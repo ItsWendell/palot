@@ -133,7 +133,7 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       } finally {
         await writeFile(join(projectDirectory, ".workflow-compaction-release"), "release\n");
       }
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
     },
     async assert(page, { client, session, llm, runRoot }) {
       const messages = (
@@ -443,7 +443,7 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       } finally {
         await writeFile(join(projectDirectory, ".workflow-queue-release"), "release\n");
       }
-      await client.session.wait({ sessionID: session.id });
+      await client.experimental.session.wait({ sessionID: session.id });
     },
     async assert(page, { client, session }) {
       await expect(

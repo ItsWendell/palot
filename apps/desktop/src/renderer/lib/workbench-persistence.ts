@@ -104,6 +104,8 @@ function parseTab(value: unknown): WorkbenchTab | null {
   const location = parseLocation(value.resource.location);
   const sourceSessionID = optionalIdentifier(value.resource.sourceSessionID);
   if (!location || sourceSessionID === false) return null;
+  // Reply previews are transient; don't restore arbitrary agent documents across reloads.
+  if (value.kind === "html-preview") return null;
   if (value.kind === "btw") {
     const quote = parseBtwQuote(value.resource.quote);
     const followUps = parseBtwFollowUps(value.resource.followUps);

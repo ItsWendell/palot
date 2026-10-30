@@ -85,7 +85,7 @@ export interface GitHubGateway {
     host: string;
     path: string;
     priority: GitHubPriority;
-    method?: "GET" | "POST";
+    method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
     body?: unknown;
   }): Promise<GitHubRestResponse<T>>;
   graphql<T>(input: {
@@ -139,7 +139,7 @@ export class GitHubClient implements GitHubGateway {
     host: string;
     path: string;
     priority: GitHubPriority;
-    method?: "GET" | "POST";
+    method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
     body?: unknown;
   }): Promise<GitHubRestResponse<T>> {
     const host = input.host.trim().toLowerCase();

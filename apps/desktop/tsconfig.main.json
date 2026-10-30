@@ -4,5 +4,5 @@
     "lib": ["ES2024"],
     "types": ["node", "electron"]
   },
-  "include": ["src/main/**/*.ts", "src/shared/**/*.ts"]
+  "include": ["src/main/**/*.ts", "src/shared/**/*.ts", "test/tool-eval/**/*.ts"]
 }

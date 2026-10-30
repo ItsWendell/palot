@@ -361,7 +361,7 @@ class VoiceCallController {
         onEvent: (event) => this.handleEvent(event),
         onTransportLost: (message) => void this.finish(message),
         createSession: async (sdp, signal) => {
-          const result = await openCodeClient(target.connectionID).voice.session(
+          const result = await openCodeClient(target.connectionID).experimental.voice.session(
             {
               model: VOICE_MODEL,
               session: {

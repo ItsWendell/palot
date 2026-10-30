@@ -39,6 +39,7 @@ import { projectName } from "../../lib/view-models";
 import { useProjectWorktrees } from "../../hooks/use-project-worktrees";
 import { palot } from "../../services/palot";
 import { Button } from "../ui/button";
+import { CopyField } from "../ui/copy-field";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -62,6 +63,7 @@ interface AutomationEditorProps {
   runs: AutomationRun[];
   selectedRunID?: string;
   saving: boolean;
+  webhookAddress?: string | null;
   onClose(): void;
   onSave(draft: AutomationDraft): Promise<void>;
   onAction(action: "run-now" | "pause" | "resume" | "delete"): Promise<void>;
@@ -76,6 +78,7 @@ export function AutomationEditor({
   runs,
   selectedRunID,
   saving,
+  webhookAddress,
   onClose,
   onSave,
   onAction,
@@ -83,6 +86,11 @@ export function AutomationEditor({
 }: AutomationEditorProps) {
   const runtime = useAtomValue(runtimeAtom);
   const [draft, setDraft] = useState(initialDraft);
+  const [triggerType, setTriggerType] = useState<"time" | "webhook" | "pull-request">(
+    initialDraft.trigger.type === "once" || initialDraft.trigger.type === "recurring"
+      ? "time"
+      : initialDraft.trigger.type,
+  );
   const [frequency, setFrequency] = useState<Frequency>(() => frequencyFor(initialDraft.trigger));
   const [date, setDate] = useState(() => triggerDate(initialDraft.trigger));
   const [time, setTime] = useState(() => triggerTime(initialDraft.trigger));
@@ -131,8 +139,11 @@ export function AutomationEditor({
   const featuredRun = activeRun ?? latestRun;
 
   const trigger = useMemo(
-    () => buildTrigger(frequency, date, time, timezone, customRule),
-    [customRule, date, frequency, time, timezone],
+    () =>
+      triggerType === "time"
+        ? buildTrigger(frequency, date, time, timezone, customRule)
+        : draft.trigger,
+    [customRule, date, frequency, time, timezone, triggerType, draft.trigger],
   );
 
   useEffect(() => {
@@ -573,66 +584,229 @@ export function AutomationEditor({
             </p>
           </section>
 
-          <EditorSection title="Frequency">
-            <EditorRow label="Repeat">
-              <Select value={frequency} onValueChange={(value) => setFrequency(value as Frequency)}>
-                <EditorSelect label="Repeat">
-                  <SelectValue>{frequencyLabel(frequency)}</SelectValue>
+          <EditorSection title="Trigger">
+            <EditorRow label="When">
+              <Select
+                value={triggerType}
+                onValueChange={(value) => {
+                  if (value !== "time" && value !== "webhook" && value !== "pull-request") return;
+                  setTriggerType(value);
+                  if (value === "webhook")
+                    setDraft((current) => ({
+                      ...current,
+                      trigger: {
+                        version: 1,
+                        type: "webhook",
+                        timezone,
+                        token:
+                          current.trigger.type === "webhook"
+                            ? current.trigger.token
+                            : Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
+                                byte.toString(16).padStart(2, "0"),
+                              ).join(""),
+                      },
+                    }));
+                  if (value === "pull-request")
+                    setDraft((current) => ({
+                      ...current,
+                      trigger:
+                        current.trigger.type === "pull-request"
+                          ? current.trigger
+                          : {
+                              version: 1,
+                              type: "pull-request",
+                              timezone,
+                              event: "checks-failed",
+                              repository: "",
+                              branch: "",
+                            },
+                    }));
+                }}
+              >
+                <EditorSelect label="Trigger type">
+                  <SelectValue>
+                    {triggerType === "time"
+                      ? "Time schedule"
+                      : triggerType === "webhook"
+                        ? "Local webhook"
+                        : "GitHub pull request"}
+                  </SelectValue>
                 </EditorSelect>
                 <SelectContent align="end">
-                  <SelectItem value="once">Once</SelectItem>
-                  <SelectItem value="hourly">Hourly</SelectItem>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekdays">Weekdays</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="monthly">Monthly</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="time">Time schedule</SelectItem>
+                  <SelectItem value="pull-request">GitHub pull request</SelectItem>
+                  <SelectItem value="webhook">Local webhook</SelectItem>
                 </SelectContent>
               </Select>
             </EditorRow>
-            {frequency === "once" || frequency === "weekly" || frequency === "monthly" ? (
-              <EditorRow label={frequency === "once" ? "Date" : "Starting"}>
-                <Input
-                  type="date"
-                  value={date}
-                  onChange={(event) => setDate(event.target.value)}
-                  className="h-7 w-36 text-xs"
-                  aria-label={frequency === "once" ? "Date" : "Starting date"}
-                />
-              </EditorRow>
-            ) : null}
-            {frequency !== "hourly" ? (
-              <EditorRow label="At">
-                <Input
-                  type="time"
-                  value={time}
-                  onChange={(event) => setTime(event.target.value)}
-                  className="h-7 w-28 text-xs"
-                  aria-label="Run time"
-                />
-              </EditorRow>
-            ) : null}
-            <EditorRow label="Timezone">
-              <Input
-                value={timezone}
-                onChange={(event) => setTimezone(event.target.value)}
-                className="h-7 w-48 text-right text-xs"
-                aria-label="Timezone"
-              />
-            </EditorRow>
-            {frequency === "custom" ? (
-              <div className="border-t px-3 py-3">
-                <Label htmlFor="automation-rrule" className="text-meta! text-muted-foreground">
-                  RRULE
-                </Label>
-                <Input
-                  id="automation-rrule"
-                  value={customRule}
-                  onChange={(event) => setCustomRule(event.target.value)}
-                  className="mt-1.5 font-mono text-xs"
-                  placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR"
-                />
+            {triggerType === "webhook" ? (
+              <div className="space-y-3 border-b p-3 text-compact text-muted-foreground">
+                <p>
+                  Opt in to a loopback-only endpoint while Palot is open. Anyone with this secret
+                  URL can run the task. POST a JSON object (32 KiB maximum, 10 requests/minute).
+                </p>
+                <p>
+                  Use {"{{payload.field}}"} in the prompt. Values are quoted and limited. Retries
+                  can send an Idempotency-Key header; waiting events coalesce to the latest payload.
+                </p>
+                {automation && webhookAddress && draft.trigger.type === "webhook" ? (
+                  <CopyField
+                    label="Webhook URL"
+                    secret
+                    value={`${webhookAddress}/hooks/${automation.id}/${draft.trigger.token}`}
+                  />
+                ) : (
+                  <p>
+                    Save an active task to get its secret URL. The port changes when Palot restarts.
+                  </p>
+                )}
               </div>
+            ) : null}
+            {triggerType === "pull-request" && draft.trigger.type === "pull-request" ? (
+              <>
+                <EditorRow label="Event">
+                  <Select
+                    value={draft.trigger.event}
+                    onValueChange={(value) =>
+                      setDraft((current) =>
+                        current.trigger.type !== "pull-request"
+                          ? current
+                          : {
+                              ...current,
+                              trigger: {
+                                ...current.trigger,
+                                event: value as "checks-failed" | "checks-passed" | "remarks",
+                              },
+                            },
+                      )
+                    }
+                  >
+                    <EditorSelect label="PR event">
+                      <SelectValue>
+                        {draft.trigger.event === "checks-failed"
+                          ? "CI fails"
+                          : draft.trigger.event === "checks-passed"
+                            ? "Checks pass"
+                            : "Review or comment"}
+                      </SelectValue>
+                    </EditorSelect>
+                    <SelectContent align="end">
+                      <SelectItem value="checks-failed">CI fails</SelectItem>
+                      <SelectItem value="checks-passed">Checks pass</SelectItem>
+                      <SelectItem value="remarks">Review or comment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </EditorRow>
+                <EditorRow label="Repository">
+                  <Input
+                    aria-label="PR repository filter"
+                    placeholder="Any linked owner/repo"
+                    value={draft.trigger.repository}
+                    onChange={(event) =>
+                      setDraft((current) =>
+                        current.trigger.type !== "pull-request"
+                          ? current
+                          : {
+                              ...current,
+                              trigger: {
+                                ...current.trigger,
+                                repository: event.target.value.trim(),
+                              },
+                            },
+                      )
+                    }
+                  />
+                </EditorRow>
+                <EditorRow label="Head branch">
+                  <Input
+                    aria-label="PR branch filter"
+                    placeholder="Any branch"
+                    value={draft.trigger.branch}
+                    onChange={(event) =>
+                      setDraft((current) =>
+                        current.trigger.type !== "pull-request"
+                          ? current
+                          : {
+                              ...current,
+                              trigger: { ...current.trigger, branch: event.target.value },
+                            },
+                      )
+                    }
+                  />
+                </EditorRow>
+                <p className="border-b p-3 text-compact text-muted-foreground">
+                  Uses linked or watched PRs on local connections. The first poll records a
+                  baseline; later changes trigger runs. Payload fields include event, repository,
+                  branch, number, url, checks and remarks.
+                </p>
+              </>
+            ) : null}
+            {triggerType === "time" ? (
+              <>
+                <EditorRow label="Repeat">
+                  <Select
+                    value={frequency}
+                    onValueChange={(value) => setFrequency(value as Frequency)}
+                  >
+                    <EditorSelect label="Repeat">
+                      <SelectValue>{frequencyLabel(frequency)}</SelectValue>
+                    </EditorSelect>
+                    <SelectContent align="end">
+                      <SelectItem value="once">Once</SelectItem>
+                      <SelectItem value="hourly">Hourly</SelectItem>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekdays">Weekdays</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                      <SelectItem value="custom">Custom</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </EditorRow>
+                {frequency === "once" || frequency === "weekly" || frequency === "monthly" ? (
+                  <EditorRow label={frequency === "once" ? "Date" : "Starting"}>
+                    <Input
+                      type="date"
+                      value={date}
+                      onChange={(event) => setDate(event.target.value)}
+                      className="h-7 w-36 text-xs"
+                      aria-label={frequency === "once" ? "Date" : "Starting date"}
+                    />
+                  </EditorRow>
+                ) : null}
+                {frequency !== "hourly" ? (
+                  <EditorRow label="At">
+                    <Input
+                      type="time"
+                      value={time}
+                      onChange={(event) => setTime(event.target.value)}
+                      className="h-7 w-28 text-xs"
+                      aria-label="Run time"
+                    />
+                  </EditorRow>
+                ) : null}
+                <EditorRow label="Timezone">
+                  <Input
+                    value={timezone}
+                    onChange={(event) => setTimezone(event.target.value)}
+                    className="h-7 w-48 text-right text-xs"
+                    aria-label="Timezone"
+                  />
+                </EditorRow>
+                {frequency === "custom" ? (
+                  <div className="border-t px-3 py-3">
+                    <Label htmlFor="automation-rrule" className="text-meta! text-muted-foreground">
+                      RRULE
+                    </Label>
+                    <Input
+                      id="automation-rrule"
+                      value={customRule}
+                      onChange={(event) => setCustomRule(event.target.value)}
+                      className="mt-1.5 font-mono text-xs"
+                      placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR"
+                    />
+                  </div>
+                ) : null}
+              </>
             ) : null}
             <EditorRow label="Missed runs">
               <Select
@@ -902,7 +1076,7 @@ function EditorSelect({ label, children }: { label: string; children: React.Reac
 }
 
 function frequencyFor(trigger: AutomationTrigger): Frequency {
-  if (trigger.type === "once") return "once";
+  if (trigger.type !== "recurring") return "once";
   const value = trigger.rrule.toUpperCase();
   if (value === "FREQ=HOURLY;INTERVAL=1") return "hourly";
   if (value === "FREQ=DAILY;INTERVAL=1") return "daily";
@@ -930,7 +1104,11 @@ function frequencyLabel(frequency: Frequency): string {
 
 export function triggerDate(trigger: AutomationTrigger): string {
   return formatInTimeZone(
-    trigger.type === "once" ? trigger.at : trigger.dtstart,
+    trigger.type === "once"
+      ? trigger.at
+      : trigger.type === "recurring"
+        ? trigger.dtstart
+        : Date.now(),
     trigger.timezone,
     "yyyy-MM-dd",
   );
@@ -938,7 +1116,11 @@ export function triggerDate(trigger: AutomationTrigger): string {
 
 export function triggerTime(trigger: AutomationTrigger): string {
   return formatInTimeZone(
-    trigger.type === "once" ? trigger.at : trigger.dtstart,
+    trigger.type === "once"
+      ? trigger.at
+      : trigger.type === "recurring"
+        ? trigger.dtstart
+        : Date.now(),
     trigger.timezone,
     "HH:mm",
   );

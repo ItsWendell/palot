@@ -55,6 +55,7 @@ import {
   RetireWorktreeDialog,
   type RetirementReview,
 } from "./retire-worktree-dialog";
+import { WorktreeCleanupControls } from "./worktree-cleanup-controls";
 
 const MAX_REMEMBERED_PROFILES = 20;
 
@@ -394,6 +395,7 @@ export function WorktreesPage() {
             </div>
           </header>
 
+          <WorktreeCleanupControls />
           {!project && catalog.ready ? <ProjectRequired projects={projects} /> : null}
           {project && runtime?.connected === false ? (
             <Alert>

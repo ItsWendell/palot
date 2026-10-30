@@ -1,3 +1,4 @@
+import { isCancelledError } from "@tanstack/react-query";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { useAtomValue, useStore } from "jotai";
 import { useEffect } from "react";
@@ -44,9 +45,16 @@ export const Route = createFileRoute("/_workspace/sessions/$sessionID")({
     }
     let session = cached ? mapSession(cached) : null;
     if (!session && connectionID !== "disconnected" && !palot.isPreview()) {
-      await context.queryClient.fetchQuery(
-        sessionQueryOptions(context.queryClient, connectionID, params.sessionID),
-      );
+      try {
+        await context.queryClient.fetchQuery(
+          sessionQueryOptions(context.queryClient, connectionID, params.sessionID),
+        );
+      } catch (error) {
+        // A disconnect or refresh cancelled the lookup. Mount like an unconnected start;
+        // useSessionInfo fetches again instead of the route showing an error screen.
+        if (isCancelledError(error)) return;
+        throw error;
+      }
       const info = openCodeReconciler(context.queryClient).session(connectionID, params.sessionID);
       session = info ? mapSession(info) : null;
     } else if (!session) {

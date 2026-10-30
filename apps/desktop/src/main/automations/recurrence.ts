@@ -133,6 +133,7 @@ function occurrenceAfter(
 
 export function validateAutomationTrigger(trigger: AutomationTrigger): void {
   if (!validTimezone(trigger.timezone)) throw new Error(`Unknown timezone: ${trigger.timezone}`);
+  if (trigger.type === "webhook" || trigger.type === "pull-request") return;
   if (trigger.type === "once") {
     if (!Number.isFinite(trigger.at)) throw new Error("The scheduled time is invalid");
     return;
@@ -145,6 +146,7 @@ export function validateAutomationTrigger(trigger: AutomationTrigger): void {
 
 export function nextAutomationOccurrence(trigger: AutomationTrigger, after: number): number | null {
   validateAutomationTrigger(trigger);
+  if (trigger.type === "webhook" || trigger.type === "pull-request") return null;
   if (trigger.type === "once") return trigger.at > after ? trigger.at : null;
   return occurrenceAfter(recurringRule(trigger), trigger, after);
 }
@@ -155,6 +157,7 @@ export function automationOccurrences(
   limit = PREVIEW_LIMIT,
 ): number[] {
   validateAutomationTrigger(trigger);
+  if (trigger.type === "webhook" || trigger.type === "pull-request") return [];
   if (trigger.type === "once") return trigger.at > after ? [trigger.at] : [];
   const rule = recurringRule(trigger);
   const values: number[] = [];
@@ -177,17 +180,22 @@ export function schedulePreview(
 }
 
 export function scheduleSummary(trigger: AutomationTrigger): string {
+  if (trigger.type === "webhook") return "When a local webhook is called";
+  if (trigger.type === "pull-request")
+    return `PR ${trigger.event === "remarks" ? "review or comment" : trigger.event.replaceAll("-", " ")}${trigger.repository ? ` · ${trigger.repository}` : ""}${trigger.branch ? ` · ${trigger.branch}` : ""}`;
   if (trigger.type === "once") return `Once in ${trigger.timezone}`;
   return recurringRule(trigger).rule.toText() + ` · ${trigger.timezone}`;
 }
 
 export function initialNextRun(trigger: AutomationTrigger, now: number): number | null {
+  if (trigger.type === "webhook" || trigger.type === "pull-request") return null;
   if (trigger.type === "once") return trigger.at >= now ? trigger.at : trigger.at;
   const rule = recurringRule(trigger);
   return occurrenceAfter(rule, trigger, now, true);
 }
 
 export function advanceNextRun(trigger: AutomationTrigger, now: number): number | null {
+  if (trigger.type === "webhook" || trigger.type === "pull-request") return null;
   if (trigger.type === "once") return null;
   return occurrenceAfter(recurringRule(trigger), trigger, now);
 }
@@ -198,6 +206,7 @@ export function overdueOccurrenceCount(
   now: number,
   limit = 10_000,
 ): number {
+  if (trigger.type === "webhook" || trigger.type === "pull-request") return 0;
   if (scheduledFor > now) return 0;
   if (trigger.type === "once") return 1;
   const { rule, until } = recurringRule(trigger);

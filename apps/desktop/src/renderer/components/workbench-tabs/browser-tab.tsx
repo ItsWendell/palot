@@ -37,6 +37,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { BrowserAddressBar } from "./browser-address-bar";
+import { BrowserPermissionPrompt, BrowserSitePermissions, pageOrigin } from "./browser-permissions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +65,13 @@ export function BrowserTab({
   const page = browser?.state.tabs.find((tab) => tab.id === tabID);
   const popup = browser?.popupTabIDs.includes(pageID);
   const focused = browser?.state.focusedTabID === tabID;
+  const permissionRequest = browser?.permissions?.requests.find(
+    (request) => request.tabID === tabID,
+  );
+  const origin = pageOrigin(page?.url);
+  const siteGrant = origin
+    ? browser?.permissions?.grants.find((grant) => grant.origin === origin)
+    : undefined;
   const searchEngine = useAtomValue(browserSearchEngineAtom);
   const showFullURL = useAtomValue(browserShowFullURLAtom);
   const runtime = useAtomValue(runtimeAtom);
@@ -285,6 +293,7 @@ export function BrowserTab({
           onNavigate={(url) => void command({ type: "navigate", tabID: pageID, url })}
           onError={setError}
         />
+        <BrowserSitePermissions bindingID={bindingID} grant={siteGrant} onError={setError} />
         <Button
           type="button"
           size="icon-xs"
@@ -371,6 +380,11 @@ export function BrowserTab({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <BrowserPermissionPrompt
+        bindingID={bindingID}
+        request={permissionRequest}
+        onError={setError}
+      />
       {inspecting ? (
         <p
           role="status"

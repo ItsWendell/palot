@@ -48,12 +48,19 @@ export const PULL_REQUEST_SECTIONS: ReadonlyArray<{
     empty: "Nothing is waiting for your review.",
   },
   { list: "assigned", title: "Assigned", empty: "Nothing is assigned to you." },
+  {
+    list: "others",
+    title: "Open by others",
+    empty: "No one else has an open pull request here.",
+  },
   { list: "authored", title: "Authored", empty: "You have no open pull requests." },
   { list: "mentioned", title: "Mentioned", empty: "No open pull requests mention you." },
   { list: "recently-merged", title: "Recently merged", empty: "Nothing merged recently." },
 ];
 
 const SEARCH_DEBOUNCE_MS = 300;
+/** Mirrors the main process's scope check: "Open by others" needs a repository or organization. */
+const SEARCH_SCOPE = /(?:^|\s)(?:repo|org|user):\S/i;
 const ROW_SELECTOR = "button[data-pull-request-row]";
 
 /**
@@ -63,6 +70,8 @@ const ROW_SELECTOR = "button[data-pull-request-row]";
  * actions on every row.
  */
 export function PullRequestList({
+  host = "github.com",
+  kind = "github",
   enabled,
   selected,
   onSelect,
@@ -70,6 +79,8 @@ export function PullRequestList({
   sessions,
   quickActions,
 }: {
+  host?: string;
+  kind?: import("../../../shared/source-control-contract").CodeHostKind;
   enabled: boolean;
   selected: PullRequestRef | null;
   onSelect(pullRequest: PullRequestSnapshot): void;
@@ -82,7 +93,9 @@ export function PullRequestList({
   const [query, setQuery] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
   const filterQuery = pullRequestFilterQuery(useAtomValue(pullRequestFiltersAtom));
-  const combinedQuery = [filterQuery, query].filter(Boolean).join(" ");
+  const combinedQuery = [kind === "github" || kind === "bitbucket" ? filterQuery : "", query]
+    .filter(Boolean)
+    .join(" ");
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(draft.trim()), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
@@ -147,7 +160,7 @@ export function PullRequestList({
           </button>
         ) : null}
       </div>
-      <PullRequestFilterChips />
+      {kind === "github" || kind === "bitbucket" ? <PullRequestFilterChips /> : null}
       <div
         ref={listRef}
         role="navigation"
@@ -155,19 +168,34 @@ export function PullRequestList({
         className="palot-native-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-6"
         onKeyDown={moveFocus}
       >
-        {PULL_REQUEST_SECTIONS.map((section) => (
+        {PULL_REQUEST_SECTIONS.filter(
+          (section) =>
+            kind === "github" ||
+            (kind === "gitlab" && section.list !== "mentioned" && section.list !== "others") ||
+            (kind === "forgejo" &&
+              section.list !== "mentioned" &&
+              section.list !== "recently-merged" &&
+              section.list !== "others") ||
+            (kind === "bitbucket" && section.list === "authored"),
+        ).map((section) => (
           <PullRequestSection
             key={section.list}
+            host={host}
             list={section.list}
-            title={section.title}
+            title={kind === "bitbucket" ? "Repository pull requests" : section.title}
             empty={combinedQuery ? "No matches." : section.empty}
             query={combinedQuery}
             enabled={enabled}
+            unscoped={
+              section.list === "others" && !SEARCH_SCOPE.test(combinedQuery)
+                ? "Choose a repository or organization in Filters to see everyone's open pull requests there."
+                : undefined
+            }
             selected={selected}
             onSelect={onSelect}
             linksByKey={linksByKey}
             sessions={sessions}
-            quickActions={quickActions}
+            quickActions={quickActions && kind === "github"}
           />
         ))}
       </div>
@@ -176,29 +204,34 @@ export function PullRequestList({
 }
 
 function PullRequestSection({
+  host,
   list,
   title,
   empty,
   query,
   enabled,
+  unscoped,
   selected,
   onSelect,
   linksByKey,
   sessions,
   quickActions,
 }: {
+  host: string;
   list: PullRequestSearchList;
   title: string;
   empty: string;
   query: string;
   enabled: boolean;
+  /** Why this list can't load yet; it then shows this instead of searching. */
+  unscoped?: string;
   selected: PullRequestRef | null;
   onSelect(pullRequest: PullRequestSnapshot): void;
   linksByKey: ReadonlyMap<string, PullRequestLink[]>;
   sessions: readonly PalotSession[];
   quickActions: boolean;
 }) {
-  const search = usePullRequestSearch(list, { enabled, query });
+  const search = usePullRequestSearch(list, { enabled: enabled && !unscoped, query, host });
   const [collapsed, setCollapsed] = useAtom(pullRequestCollapsedSectionsAtom);
   const open = !collapsed[list];
   const items = useMemo(
@@ -237,7 +270,9 @@ function PullRequestSection({
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        {search.error && items.length === 0 ? (
+        {unscoped ? (
+          <p className="px-2 py-2 text-meta text-muted-foreground">{unscoped}</p>
+        ) : search.error && items.length === 0 ? (
           <p className="px-2 py-2 text-meta text-muted-foreground">
             {sourceControlErrorMessage(search.error)}
           </p>

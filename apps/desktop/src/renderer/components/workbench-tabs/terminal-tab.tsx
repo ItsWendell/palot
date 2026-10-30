@@ -20,6 +20,7 @@ import {
 } from "../../services/workbench-terminal";
 import { Button } from "../ui/button";
 import { quoteTerminalInComposer } from "./terminal-quote";
+import { terminalPasteAtom, terminalCommandText } from "../../atoms/terminal-paste";
 
 type TerminalTabDescriptor = Extract<WorkbenchTab, { kind: "terminal" }>;
 type TerminalSnapshot = {
@@ -52,6 +53,7 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
   const runtime = useAtomValue(runtimeAtom);
   const store = useStore();
+  const pendingPaste = useAtomValue(terminalPasteAtom).get(tab.id);
   const selectedSessionID = useAtomValue(selectedSessionIDAtom);
   const [selection, setSelection] = useState("");
   const canQuote = Boolean(selectedSessionID && runtime?.profileID === tab.resource.profileID);
@@ -363,6 +365,24 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
     return true;
   }
 
+  useEffect(() => {
+    if (pendingPaste === undefined || status !== "connected" || readOnly || !canManage) return;
+    // Wait for the shell's paste mode, not merely the WebSocket. Never send raw newlines
+    // into a terminal which may interpret them as Enter before its shell is ready.
+    const timer = window.setInterval(() => {
+      const terminal = terminalRef.current;
+      if (!terminal?.hasBracketedPaste()) return;
+      const pending = store.get(terminalPasteAtom);
+      if (pending.get(tab.id) !== pendingPaste) return;
+      const next = new Map(pending);
+      next.delete(tab.id);
+      store.set(terminalPasteAtom, next);
+      terminal.paste(terminalCommandText(pendingPaste));
+      terminal.focus();
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [pendingPaste, status, readOnly, canManage, store, tab.id]);
+
   return (
     <div
       className="relative flex min-h-0 flex-1 flex-col bg-code-background font-mono text-code-foreground"
@@ -480,6 +500,11 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
         className="min-h-0 flex-1 overflow-hidden px-3 py-2 font-mono text-foreground caret-transparent"
         data-workbench-terminal={tab.resource.ptyID}
       />
+      {pendingPaste !== undefined ? (
+        <span className="px-3 py-1 text-meta text-muted-foreground">
+          Waiting for safe shell paste support…
+        </span>
+      ) : null}
       {!canManage || status !== "connected" ? (
         <span
           title={status === "error" ? errorMessage : undefined}

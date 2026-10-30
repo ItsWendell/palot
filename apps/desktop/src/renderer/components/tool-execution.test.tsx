@@ -553,6 +553,26 @@ describe("ToolExecution", () => {
     expect(screen.getByRole("button", { name: "Generated image" })).toBeTruthy();
   });
 
+  it("titles OpenCode's background image_generate call as started, not generated", () => {
+    const part: PalotMessageContent = {
+      type: "tool",
+      id: "image-generate-background",
+      name: "experimental_image_generate",
+      state: {
+        status: "completed",
+        input: { prompt: "A lighthouse at dusk" },
+        content: [{ type: "text", text: "Image request started in the background." }],
+        metadata: { path: "/tmp/images/image_1", model: "openai/gpt-image-2", jobID: "job_1" },
+      },
+    };
+    render(
+      <Provider>
+        <ToolExecution part={part} index={0} />
+      </Provider>,
+    );
+    expect(screen.getByRole("button", { name: "Started image generation" })).toBeTruthy();
+  });
+
   it("renders pending image edits without parameter-heavy fallback titles", () => {
     const prompt = "Use the attached image as a palette reference".repeat(8);
     const part: PalotMessageContent = {

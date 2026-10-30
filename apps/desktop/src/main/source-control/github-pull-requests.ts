@@ -6,6 +6,7 @@ import type {
   PullRequestSnapshot,
   PullRequestState,
 } from "../../shared/source-control-contract";
+import { SourceControlError } from "./errors";
 
 export interface GitHubRepositoryRef {
   host: string;
@@ -535,7 +536,13 @@ const SEARCH_QUERIES: Record<PullRequestSearchList, string> = {
   assigned: "is:pr is:open archived:false assignee:@me sort:updated-desc",
   mentioned: "is:pr is:open archived:false mentions:@me sort:updated-desc",
   "recently-merged": "is:pr is:merged author:@me sort:updated-desc",
+  others: "is:pr is:open archived:false -author:@me sort:updated-desc",
 };
+
+/** A repository, organization or user qualifier, which "others" requires. */
+export function hasPullRequestSearchScope(text: string | undefined): boolean {
+  return /(?:^|\s)(?:repo|org|user):\S/i.test(text ?? "");
+}
 
 /** Longest user search text appended to a list's qualifiers. */
 export const SEARCH_TEXT_LIMIT = 256;
@@ -559,6 +566,11 @@ export function sanitizeSearchText(input: string | undefined): string {
 
 export function pullRequestSearchQuery(list: PullRequestSearchList, text?: string) {
   const extra = sanitizeSearchText(text);
+  if (list === "others" && !hasPullRequestSearchScope(extra))
+    throw new SourceControlError(
+      "invalid-input",
+      "Choose a repository or organization to list others' pull requests.",
+    );
   return {
     query: `query PalotPullRequestSearch($q: String!, $first: Int!, $after: String) {
       search(query: $q, type: ISSUE, first: $first, after: $after) {

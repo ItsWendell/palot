@@ -64,6 +64,8 @@ function params(
     formControlType: "none",
     isEditable: false,
     linkURL: "",
+    misspelledWord: "",
+    dictionarySuggestions: [],
     selectionText: "",
     ...overrides,
   };
@@ -71,22 +73,29 @@ function params(
 
 function build(
   overrides: Partial<NativeContextMenuParams> = {},
-  options: { preferredEditorLabel?: string } = {},
+  options: { preferredEditorLabel?: string; spelling?: boolean } = {},
 ) {
+  const { spelling = true, ...menuOptions } = options;
   const actions = {
     openLink: vi.fn(),
     copyLinkAddress: vi.fn(),
     openFile: vi.fn(),
     revealFile: vi.fn(),
     copyText: vi.fn(),
+    ...(spelling ? { spelling: { replaceMisspelling: vi.fn(), addToDictionary: vi.fn() } } : {}),
   };
   const template = buildNativeContextMenuTemplate(params(overrides), {
     actions,
     development: false,
-    ...options,
+    ...menuOptions,
   });
   return { actions, template };
 }
+
+const click = (item: Electron.MenuItemConstructorOptions | undefined) =>
+  item?.click?.({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
+const labels = (template: Electron.MenuItemConstructorOptions[]) =>
+  template.map((item) => item.label ?? item.role ?? item.type);
 
 describe("buildNativeContextMenuTemplate", () => {
   it("returns no items for blank contexts", () => {
@@ -160,6 +169,68 @@ describe("buildNativeContextMenuTemplate", () => {
     expect(actions.openFile).toHaveBeenCalledWith("/Users/example/project/src/main.ts", 42, 10);
     expect(actions.revealFile).toHaveBeenCalledWith("/Users/example/project/src/main.ts");
     expect(actions.copyText).toHaveBeenCalledWith("/Users/example/project/src/main.ts");
+  });
+
+  it("puts up to five spelling suggestions and Add to Dictionary above the editing items", () => {
+    const { actions, template } = build({
+      isEditable: true,
+      formControlType: "text-area",
+      misspelledWord: "recieve",
+      dictionarySuggestions: ["receive", "relieve", "reverie", "recieved", "deceive", "receiver"],
+    });
+
+    expect(labels(template)).toEqual([
+      "receive",
+      "relieve",
+      "reverie",
+      "recieved",
+      "deceive",
+      "separator",
+      "Add to Dictionary",
+      "separator",
+      "undo",
+      "redo",
+      "separator",
+      "cut",
+      "copy",
+      "paste",
+      "separator",
+      "selectAll",
+    ]);
+    click(template[1]);
+    click(template.find((item) => item.label === "Add to Dictionary"));
+    expect(actions.spelling?.replaceMisspelling).toHaveBeenCalledWith("relieve");
+    expect(actions.spelling?.addToDictionary).toHaveBeenCalledWith("recieve");
+  });
+
+  it("says when a misspelled word has no suggestions and still offers Add to Dictionary", () => {
+    const { actions, template } = build({
+      isEditable: true,
+      misspelledWord: "zqxjvbnmk",
+      dictionarySuggestions: [],
+    });
+
+    expect(template.slice(0, 3)).toEqual([
+      { label: "No Suggestions", enabled: false },
+      { type: "separator" },
+      expect.objectContaining({ label: "Add to Dictionary" }),
+    ]);
+    click(template[2]);
+    expect(actions.spelling?.addToDictionary).toHaveBeenCalledWith("zqxjvbnmk");
+    expect(actions.spelling?.replaceMisspelling).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a non-editable selection", { isEditable: false, selectionText: "recieve" }, {}],
+    ["contents without spelling actions", { isEditable: true }, { spelling: false }],
+  ])("never offers spelling items for %s", (_name, overrides, options) => {
+    const { template } = build(
+      { misspelledWord: "recieve", dictionarySuggestions: ["receive"], ...overrides },
+      options,
+    );
+    expect(labels(template)).not.toContain("receive");
+    expect(labels(template)).not.toContain("Add to Dictionary");
+    expect(labels(template)).not.toContain("No Suggestions");
   });
 
   it("builds file items for plain absolute paths with line numbers", () => {
@@ -318,6 +389,52 @@ describe("installNativeContextMenu", () => {
       params({ selectionText: "again" }),
     );
     expect(electronMocks.popup).toHaveBeenCalledTimes(1);
+  });
+
+  it("corrects spelling only for the window's own document, not its subframes", async () => {
+    const mainFrame = {};
+    class FakeWebContents extends EventEmitter {
+      mainFrame = mainFrame;
+      isDestroyed = () => false;
+      replaceMisspelling = vi.fn();
+      session = { addWordToSpellCheckerDictionary: vi.fn(() => true) };
+    }
+    class FakeWindow extends EventEmitter {
+      webContents = new FakeWebContents();
+      getContentBounds = () => ({ x: 10, y: 20, width: 900, height: 700 });
+      isDestroyed = () => false;
+    }
+    const window = new FakeWindow();
+    installNativeContextMenu(window as unknown as Electron.BrowserWindow);
+    const misspelled = params({
+      isEditable: true,
+      misspelledWord: "recieve",
+      dictionarySuggestions: ["receive"],
+    });
+
+    window.webContents.emit(
+      "context-menu",
+      { defaultPrevented: false },
+      { ...misspelled, frame: {} },
+    );
+    window.webContents.emit(
+      "context-menu",
+      { defaultPrevented: false },
+      { ...misspelled, frame: mainFrame },
+    );
+    await vi.waitFor(() => expect(electronMocks.buildFromTemplate).toHaveBeenCalledTimes(2));
+
+    const [subframe, own] = electronMocks.buildFromTemplate.mock.calls.map(
+      ([template]) => template as Electron.MenuItemConstructorOptions[],
+    );
+    expect(labels(subframe!)).not.toContain("Add to Dictionary");
+    expect(labels(own!).slice(0, 3)).toEqual(["receive", "separator", "Add to Dictionary"]);
+    click(own![0]);
+    click(own![2]);
+    expect(window.webContents.replaceMisspelling).toHaveBeenCalledWith("receive");
+    expect(window.webContents.session.addWordToSpellCheckerDictionary).toHaveBeenCalledWith(
+      "recieve",
+    );
   });
 
   it("uses the captured validated link for open and copy actions", () => {
