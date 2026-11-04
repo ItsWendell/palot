@@ -3,11 +3,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore, Provider } from "jotai";
 import type { PropsWithChildren } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { PalotSession } from "../../shared";
+import type { PalotEvent, PalotSession } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
 import { openCodeKeys } from "../lib/opencode-query";
+import { openCodeInvalidationKeys } from "../lib/opencode-query-events";
 import {
   reconcileProcesses,
+  SHELL_POLL_MS,
+  TERMINAL_POLL_MS,
   useSessionProcesses,
   type SessionCommand,
   type SessionProcess,
@@ -20,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   catalog: vi.fn(),
   client: vi.fn(),
+  locations: vi.fn(async (): Promise<{ directory: string }[]> => []),
 }));
 vi.mock("../services/palot", () => ({ palot: { listRunningShells: mocks.shells } }));
 vi.mock("../services/opencode-client", () => ({
@@ -28,6 +32,7 @@ vi.mock("../services/opencode-client", () => ({
     return {
       shell: { get: mocks.get },
       experimental: { persistentPty: { list: mocks.terminals } },
+      debug: { location: { list: mocks.locations } },
     };
   },
 }));
@@ -57,6 +62,7 @@ function terminal(id: string, active = true): SessionTerminal {
     location: { directory: "/repo" },
     cwd: "/repo",
     title: "Terminal",
+    userTitle: null,
     command: "zsh",
     args: [],
     pid: 1,
@@ -234,6 +240,7 @@ describe("session process scope", () => {
       location: { directory: "/child", workspaceID: "child-workspace" },
     } as PalotSession;
     mocks.catalog.mockReturnValue([root, child]);
+    mocks.locations.mockResolvedValue([{ directory: "/repo" }, { directory: "/child" }]);
     mocks.shells.mockImplementation(async (location) =>
       location.directory === "/repo"
         ? [command("a"), { ...command("unrelated"), sessionID: "other" }]
@@ -265,7 +272,8 @@ describe("session process scope", () => {
     await waitFor(() => expect(hook.result.current.rows).toHaveLength(3));
     expect(hook.result.current.commands).toBe(2);
     expect(hook.result.current.terminals).toBe(1);
-    expect(hook.result.current.rows.map((row) => row.id)).toEqual(["a", "b", "pty"]);
+    // The child's worktree is read once the loaded-location list confirms it.
+    expect(hook.result.current.rows.map((row) => row.id).sort()).toEqual(["a", "b", "pty"]);
     mocks.shells.mockResolvedValue([]);
     mocks.get.mockImplementation(async ({ id }) => ({
       data: {
@@ -313,6 +321,80 @@ describe("session process scope", () => {
     client.clear();
   });
 
+  it("reads only loaded subagent directories while closed and every directory once opened", async () => {
+    const root = { id: "root", location: { directory: "/repo" } } as PalotSession;
+    const warm = { id: "warm", parentID: "root", location: { directory: "/wt-warm" } };
+    const idle = { id: "idle", parentID: "root", location: { directory: "/wt-idle" } };
+    mocks.catalog.mockReturnValue([root, warm, idle]);
+    mocks.locations.mockResolvedValue([{ directory: "/wt-warm" }]);
+    mocks.shells.mockReset();
+    mocks.shells.mockImplementation(async (location) =>
+      location.directory === "/wt-idle" ? [{ ...command("idle-shell"), sessionID: "idle" }] : [],
+    );
+    mocks.terminals.mockResolvedValue([]);
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connectionID: "one",
+      profileID: "profile",
+      connected: true,
+      capabilities: { pty: "persistent" },
+    } as never);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <Provider store={store}>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </Provider>
+    );
+    const directories = () => mocks.shells.mock.calls.map(([location]) => location.directory);
+    const hook = renderHook(({ open }) => useSessionProcesses(root, new Set(["root"]), open), {
+      wrapper,
+      initialProps: { open: false },
+    });
+    await waitFor(() => expect(directories().sort()).toEqual(["/repo", "/wt-warm"]));
+    // A late loaded-location list or an invalidation never reaches the idle worktree.
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: openCodeKeys.runningShellsRoot("one") });
+    });
+    expect(directories()).not.toContain("/wt-idle");
+    expect(hook.result.current.commands).toBe(0);
+    // Live work there marks it loaded (see use-opencode-query-events), enabling the read.
+    act(() => client.setQueryData(openCodeKeys.loadedLocations("one"), ["/wt-warm", "/wt-idle"]));
+    await waitFor(() => expect(directories()).toContain("/wt-idle"));
+    await waitFor(() => expect(hook.result.current.commands).toBe(1));
+    // Opening the list is explicit and reads every family directory, loaded or not.
+    act(() => client.setQueryData(openCodeKeys.loadedLocations("one"), []));
+    mocks.shells.mockClear();
+    hook.rerender({ open: true });
+    await waitFor(() => expect(directories().sort()).toEqual(["/repo", "/wt-idle", "/wt-warm"]));
+    hook.unmount();
+    client.clear();
+  });
+
+  it("skips the loaded-location list when the whole family shares the task directory", async () => {
+    mocks.locations.mockClear();
+    mocks.shells.mockResolvedValue([]);
+    const root = { id: "root", location: { directory: "/repo" } } as PalotSession;
+    mocks.catalog.mockReturnValue([
+      root,
+      { id: "child", parentID: "root", location: { directory: "/repo" } },
+    ]);
+    const store = createStore();
+    store.set(runtimeAtom, { connectionID: "one", connected: true } as never);
+    const client = new QueryClient();
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <Provider store={store}>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </Provider>
+    );
+    const hook = renderHook(() => useSessionProcesses(root, new Set(["root"]), false), {
+      wrapper,
+    });
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    expect(mocks.locations).not.toHaveBeenCalled();
+    hook.unmount();
+    client.clear();
+  });
+
   it("does not request persistent terminals on legacy runtimes", async () => {
     mocks.terminals.mockClear();
     mocks.shells.mockResolvedValue([]);
@@ -337,5 +419,125 @@ describe("session process scope", () => {
     expect(hook.result.current.terminalsSupported).toBe(false);
     hook.unmount();
     client.clear();
+  });
+});
+
+describe("session process polling", () => {
+  const root = { id: "root", location: { directory: "/repo" } } as PalotSession;
+  const ids = new Set(["root"]);
+
+  function setup(open: boolean) {
+    vi.useFakeTimers();
+    mocks.shells.mockReset();
+    mocks.terminals.mockReset();
+    mocks.catalog.mockReturnValue([root]);
+    mocks.shells.mockResolvedValue([]);
+    mocks.terminals.mockResolvedValue([]);
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connectionID: "one",
+      profileID: "profile",
+      connected: true,
+      capabilities: { pty: "persistent" },
+    } as never);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <Provider store={store}>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </Provider>
+    );
+    const hook = renderHook(({ open }) => useSessionProcesses(root, ids, open), {
+      wrapper,
+      initialProps: { open },
+    });
+    return {
+      client,
+      hook,
+      cleanup() {
+        hook.unmount();
+        client.clear();
+        vi.useRealTimers();
+      },
+    };
+  }
+
+  it("reads once on mount and never polls while the list is closed", async () => {
+    const { hook, cleanup } = setup(false);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(mocks.shells).toHaveBeenCalledTimes(1);
+    expect(mocks.terminals).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(mocks.shells).toHaveBeenCalledTimes(1);
+    expect(mocks.terminals).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.commands).toBe(0);
+    cleanup();
+  });
+
+  it("polls commands and terminals only while the list is open", async () => {
+    const { hook, cleanup } = setup(false);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    hook.rerender({ open: true });
+    // Opening refreshes at once, then polls.
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(mocks.shells).toHaveBeenCalledTimes(2);
+    expect(mocks.terminals).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(SHELL_POLL_MS * 3));
+    expect(mocks.shells.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(mocks.terminals.mock.calls.length).toBeGreaterThanOrEqual(3);
+    hook.rerender({ open: false });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    const shells = mocks.shells.mock.calls.length;
+    const terminals = mocks.terminals.mock.calls.length;
+    await act(() => vi.advanceTimersByTimeAsync(TERMINAL_POLL_MS * 5));
+    expect(mocks.shells).toHaveBeenCalledTimes(shells);
+    expect(mocks.terminals).toHaveBeenCalledTimes(terminals);
+    cleanup();
+  });
+
+  it("follows shell events while closed", async () => {
+    const { client, hook, cleanup } = setup(false);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(hook.result.current.commands).toBe(0);
+    mocks.shells.mockResolvedValue([command("a")]);
+    const event = {
+      type: "shell.created",
+      location: { directory: "/repo", workspaceID: "workspace" },
+      data: {},
+    } as PalotEvent;
+    await act(async () => {
+      for (const queryKey of openCodeInvalidationKeys("one", event))
+        await client.invalidateQueries({ queryKey });
+    });
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(hook.result.current.commands).toBe(1);
+    mocks.shells.mockResolvedValue([]);
+    await act(async () => {
+      for (const queryKey of openCodeInvalidationKeys("one", {
+        ...event,
+        type: "shell.exited",
+      } as PalotEvent))
+        await client.invalidateQueries({ queryKey });
+    });
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(hook.result.current.commands).toBe(0);
+    expect(mocks.shells).toHaveBeenCalledTimes(3);
+    cleanup();
+  });
+
+  it("stops polling a deleted directory", async () => {
+    vi.useFakeTimers();
+    const missing = {
+      _tag: "LocationNotFoundError",
+      location: { directory: "/repo" },
+      message: "Location not found",
+    };
+    const { cleanup } = setup(true);
+    mocks.shells.mockRejectedValue(missing);
+    await act(() => vi.advanceTimersByTimeAsync(SHELL_POLL_MS * 5));
+    const calls = mocks.shells.mock.calls.length;
+    expect(calls).toBeLessThanOrEqual(2);
+    await act(() => vi.advanceTimersByTimeAsync(SHELL_POLL_MS * 5));
+    expect(mocks.shells).toHaveBeenCalledTimes(calls);
+    cleanup();
   });
 });

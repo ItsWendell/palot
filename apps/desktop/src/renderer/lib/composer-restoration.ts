@@ -68,7 +68,7 @@ function mentionRange(value: unknown): { start: number; end: number; text: strin
     : null;
 }
 
-function fileUriPath(uri: string): string | null {
+export function fileUriPath(uri: string): string | null {
   if (!uri.startsWith("file://")) return null;
   try {
     const path = decodeURIComponent(new URL(uri).pathname);

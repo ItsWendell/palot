@@ -1,8 +1,10 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { Provider, createStore } from "jotai";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { PalotMessage, PalotMessageContent } from "../../shared";
+import { createRendererQueryClient } from "../lib/query-client";
 import {
   createSessionTranscriptProjector,
   type TurnActivityGroup,
@@ -937,6 +939,80 @@ describe("TurnActivity", () => {
     expect(groupTrigger.getAttribute("aria-expanded")).toBe("true");
     await user.click(groupTrigger);
     expect(groupTrigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps a published artifact's card in view when its activity folds", async () => {
+    const user = userEvent.setup();
+    const parts: PalotMessageContent[] = [
+      { type: "tool", id: "read", name: "read", state: { status: "completed" } },
+      {
+        type: "tool",
+        id: "publish",
+        name: "execute",
+        state: {
+          status: "completed",
+          input: { code: "return await tools.opencode.artifact_create({...})" },
+          content: [{ type: "text", text: "null" }],
+          metadata: {
+            toolCalls: [
+              {
+                tool: "opencode.artifact_create",
+                status: "completed",
+                input: { title: "Coverage report", files: { "index.html": "" } },
+              },
+            ],
+          },
+        },
+      },
+    ];
+    const source = message(parts);
+    const view = render(
+      <QueryClientProvider client={createRendererQueryClient()}>
+        <Provider store={createStore()}>
+          <TurnActivity
+            turn={{
+              id: "artifact-turn",
+              user: null,
+              users: [],
+              activity: [
+                {
+                  id: "tools",
+                  kind: "tools",
+                  title: "Explored",
+                  status: "completed",
+                  presentation: "grouped",
+                  entries: parts.map((part, index) => ({ message: source, part, index })),
+                },
+              ],
+              blockingRequests: [],
+              final: { message: source, part: { type: "text", text: "Done" }, index: 2 },
+              postFinal: [],
+              tokensPerSecond: null,
+              status: "completed",
+              startedAt: 1,
+              finalStartedAt: 2,
+              workCompletedAt: null,
+              completedAt: 3,
+              canCollapse: true,
+              shouldAutoCollapse: true,
+            }}
+            sessionID="session-artifact"
+          />
+        </Provider>
+      </QueryClientProvider>,
+    );
+
+    const scope = within(view.container);
+    const turnTrigger = scope.getByRole("button", { name: "Completed in 1s" });
+    expect(turnTrigger.getAttribute("aria-expanded")).toBe("false");
+    expect(scope.getByRole("group", { name: "Artifact: Coverage report" })).toBeTruthy();
+    await user.click(turnTrigger);
+    const groupTrigger = scope.getByRole("button", { name: "Explored" });
+    expect(groupTrigger.getAttribute("aria-expanded")).toBe("false");
+    expect(scope.getAllByRole("group", { name: "Artifact: Coverage report" })).toHaveLength(1);
+    await user.click(groupTrigger);
+    expect(scope.getAllByRole("group", { name: "Artifact: Coverage report" })).toHaveLength(1);
+    view.unmount();
   });
 
   it("uses the turn summary as the only top-level activity disclosure", async () => {

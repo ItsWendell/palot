@@ -76,7 +76,7 @@ export const processPickerScenario: Scenario = {
       await expect(terminalRow).toContainText("This conversation");
       await terminalRow.click();
       const terminalCanvas = page.locator(`[data-workbench-terminal="${terminal.id}"]`);
-      const terminalPanel = page.getByRole("tabpanel", { name: "Terminal", exact: true });
+      const terminalPanel = page.getByRole("tabpanel", { name: TERMINAL_TITLE, exact: true });
       await expect(terminalCanvas.locator("canvas")).toBeVisible({ timeout: 30_000 });
       await expect(terminalPanel.getByText("Read-only terminal", { exact: true })).toBeVisible();
       // Enabled only after the real persistent PTY attachment has connected.
@@ -89,13 +89,13 @@ export const processPickerScenario: Scenario = {
         rows: 24,
       });
 
-      await page.getByRole("button", { name: "Close Terminal", exact: true }).click();
+      await page.getByRole("button", { name: `Close ${TERMINAL_TITLE}`, exact: true }).click();
       await expect(terminalCanvas).toHaveCount(0);
       const surviving = await client.experimental.persistentPty.list({ sessionID: session.id });
       expect(surviving.find((entry) => entry.id === terminal.id)?.status).toBe("running");
       await picker.click();
       await terminalRow.click();
-      await expect(page.getByRole("tab", { name: "Terminal", exact: true })).toHaveCount(1);
+      await expect(page.getByRole("tab", { name: TERMINAL_TITLE, exact: true })).toHaveCount(1);
       await expect(
         terminalPanel.getByRole("button", { name: "Take control", exact: true }),
       ).toBeEnabled();

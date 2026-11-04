@@ -644,6 +644,16 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     },
   );
   register(
+    IPC_CHANNELS.browserOpenArtifact,
+    (event, bindingID: unknown, artifactID: unknown, pane: unknown) =>
+      browserPane.openArtifact(
+        browserWindow(event),
+        v.parse(identifier, bindingID),
+        v.parse(v.pipe(v.string(), v.regex(/^art_[0-9A-Za-z]{1,64}$/)), artifactID),
+        v.parse(v.optional(v.union([v.literal("right"), v.literal("bottom")])), pane),
+      ),
+  );
+  register(
     IPC_CHANNELS.browserPageControl,
     (event, bindingID: unknown, tabID: unknown, value: unknown) => {
       const control = v.parse(

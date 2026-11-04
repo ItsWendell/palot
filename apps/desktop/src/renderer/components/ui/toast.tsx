@@ -14,6 +14,7 @@ import {
   OctagonXIcon,
   Loader2Icon,
 } from "lucide-react";
+import { LinkedText } from "@/components/link-actions";
 
 const toast = ToastPrimitive.createToastManager();
 
@@ -184,7 +185,14 @@ function ToastList() {
         <ToastIcon type={toastItem.type} />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <ToastTitle />
-          <ToastDescription />
+          {/* Server errors often name a URL; plain-text descriptions make it a link. */}
+          {typeof toastItem.description === "string" ? (
+            <ToastDescription>
+              <LinkedText text={toastItem.description} />
+            </ToastDescription>
+          ) : (
+            <ToastDescription />
+          )}
         </div>
         <ToastAction />
         <ToastClose />

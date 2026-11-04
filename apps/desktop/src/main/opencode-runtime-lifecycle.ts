@@ -30,11 +30,20 @@ const LOCAL_SERVICE_UNAVAILABLE =
   "No reachable local OpenCode service was found. Retry the connection, or start OpenCode explicitly. If no CLI is installed, install OpenCode 2 or download an official runtime in connection settings first.";
 const RECONNECTING_ERROR =
   "OpenCode is reconnecting. Retry once the service is available, or start it explicitly.";
+const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const STREAM_YIELD_MS = 8;
-// The service sends a keepalive every 15 seconds, including when no events are emitted.
+// OpenCode 2.2.5 sends a `: heartbeat` comment every 15 seconds, including when no
+// events are emitted. The SDK reports any received bytes through onActivity.
 const STREAM_IDLE_TIMEOUT_MS = 45_000;
 const STREAM_FOREGROUND_SILENCE_MS = 20_000;
+// `server.connected` is the first frame of every subscription. Heartbeat bytes alone
+// do not prove the server registered this subscriber, so bound the first event too.
+// The stream opens right after a successful health check; 20s is far beyond normal.
+const STREAM_CONNECT_TIMEOUT_MS = 20_000;
+// Reset reconnect backoff only after a replacement stream proved itself. Streams that
+// fail before this keep escalating, so a flapping server cannot cause a resync storm.
+const STREAM_STABLE_MS = 30_000;
 
 type Binary = { path: string; version: string };
 
@@ -146,6 +155,8 @@ export class OpenCodeRuntimeLifecycle {
   private reconnectAbort: AbortController | null = null;
   private streamAbort: AbortController | null = null;
   private streamLastActivity = 0;
+  private streamConnectedAt: number | null = null;
+  private reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
   private streamEpochValue = 0;
   private stopped = false;
   private statusValue: OpenCodeRuntimeStatus;
@@ -216,6 +227,8 @@ export class OpenCodeRuntimeLifecycle {
       await this.establish(input);
     })()
       .then(() => {
+        // An explicit connection is a fresh start, not part of a failing sequence.
+        this.reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
         this.startEventStream();
         return this.status();
       })
@@ -332,6 +345,7 @@ export class OpenCodeRuntimeLifecycle {
       else await this.adapter.stopService({ pty: "handoff" });
       this.connectionAbort.signal.throwIfAborted();
       await this.establish({ startLocalService: true, binary });
+      this.reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
       this.startEventStream();
       const client = this.clientValue;
       if (client) await this.options.onReconnect(client);
@@ -653,9 +667,14 @@ export class OpenCodeRuntimeLifecycle {
     const controller = new AbortController();
     this.streamAbort = controller;
     const streamEpoch = ++this.streamEpochValue;
+    this.streamConnectedAt = null;
     openCodeLog.info("event stream started", { connectionID: this.connectionID, streamEpoch });
     let watchdog: ReturnType<typeof setTimeout> | undefined;
-    const clearWatchdog = () => clearTimeout(watchdog);
+    let connectDeadline: ReturnType<typeof setTimeout> | undefined;
+    const clearWatchdog = () => {
+      clearTimeout(watchdog);
+      clearTimeout(connectDeadline);
+    };
     controller.signal.addEventListener("abort", clearWatchdog, { once: true });
     const fail = (error: unknown) => {
       if (controller.signal.aborted || this.stopped || this.streamAbort !== controller) return;
@@ -669,15 +688,26 @@ export class OpenCodeRuntimeLifecycle {
     const onActivity = () => {
       if (controller.signal.aborted || this.streamAbort !== controller) return;
       this.streamLastActivity = this.adapter.now();
-      clearWatchdog();
+      clearTimeout(watchdog);
       watchdog = setTimeout(
         () => fail(new Error("OpenCode event stream stalled")),
         STREAM_IDLE_TIMEOUT_MS,
       );
       watchdog.unref();
     };
+    const onConnected = () => {
+      if (controller.signal.aborted || this.streamAbort !== controller) return;
+      if (this.streamConnectedAt !== null) return;
+      this.streamConnectedAt = this.adapter.now();
+      clearTimeout(connectDeadline);
+    };
+    connectDeadline = setTimeout(
+      () => fail(new Error("OpenCode event stream did not confirm its subscription")),
+      STREAM_CONNECT_TIMEOUT_MS,
+    );
+    connectDeadline.unref();
     onActivity();
-    void this.consumeEvents(client, controller, streamEpoch, onActivity)
+    void this.consumeEvents(client, controller, streamEpoch, onActivity, onConnected)
       .catch(fail)
       .finally(() => {
         clearWatchdog();
@@ -701,10 +731,12 @@ export class OpenCodeRuntimeLifecycle {
     controller: AbortController,
     streamEpoch: number,
     onActivity: () => void,
+    onConnected: () => void,
   ): Promise<void> {
     let lastYield = this.adapter.now();
     for await (const event of client.event.subscribe({ signal: controller.signal, onActivity })) {
       if (controller.signal.aborted) return;
+      if (event.type === "server.connected") onConnected();
       this.options.onEvent(event, streamEpoch);
       if (this.adapter.now() - lastYield >= STREAM_YIELD_MS) {
         await new Promise<void>((resolve) => setImmediate(resolve));
@@ -721,6 +753,10 @@ export class OpenCodeRuntimeLifecycle {
       // Keep that failure for the same loop instead of losing it or spawning a second loop.
       this.pendingReconnect = { cause };
       return;
+    }
+    const connectedAt = this.streamConnectedAt;
+    if (connectedAt !== null && this.adapter.now() - connectedAt >= STREAM_STABLE_MS) {
+      this.reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
     }
     this.clientValue = null;
     openCodeLog.warn("reconnect started", {
@@ -740,7 +776,7 @@ export class OpenCodeRuntimeLifecycle {
   }
 
   private async reconnectLoop(signal: AbortSignal): Promise<void> {
-    let backoff = 1_000;
+    let backoff = this.reconnectDelayMs;
     let attempt = 0;
     while (!this.stopped && !signal.aborted) {
       try {
@@ -764,6 +800,9 @@ export class OpenCodeRuntimeLifecycle {
           this.pendingReconnect = null;
           throw cause;
         }
+        // The replacement has not proved itself yet. If it fails before
+        // STREAM_STABLE_MS, the next recovery continues from the escalated delay.
+        this.reconnectDelayMs = Math.min(backoff * 2, MAX_RECONNECT_DELAY_MS);
         return;
       } catch (error) {
         if (this.stopped || signal.aborted) return;

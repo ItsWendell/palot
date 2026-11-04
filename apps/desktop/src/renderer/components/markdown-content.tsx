@@ -4,7 +4,7 @@ import { streamingMarkdownExtension } from "@tanstack/markdown/extensions/stream
 import { calloutsExtension } from "@tanstack/markdown/extensions/callouts";
 import type { MarkdownComponentProps, MarkdownComponents } from "@tanstack/markdown/react";
 import type { InlineNode, MarkdownExtension } from "@tanstack/markdown";
-import { useAtomValue } from "jotai";
+import { atom, useAtomValue } from "jotai";
 import {
   Braces,
   Check,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   Children,
+  cloneElement,
   createContext,
   isValidElement,
   memo,
@@ -33,10 +34,18 @@ import type { LocationRef } from "@opencode/client";
 import { useClipboardCopy } from "../hooks/use-clipboard-copy";
 import { useWorkspaceFile } from "../hooks/use-workspace-file";
 import { remoteMarkdownFaviconsAtom } from "../atoms/ui";
+import { resolvedAppearanceAtom } from "../atoms/appearance";
 import { runtimeAtom } from "../atoms/workspace";
 import { cn } from "../lib/cn";
 import { duckDuckGoFaviconUrl } from "../lib/markdown-favicon";
 import { transformInlineMath } from "../lib/markdown-math";
+import {
+  decodeEntities,
+  holdBackPartialHtml,
+  htmlSyntaxExtension,
+  paragraphExtension,
+  screenUrl,
+} from "../lib/markdown-html";
 import { isCompleteSessionID, sessionLinksExtension } from "../lib/markdown-session-links";
 import { taskMentionsExtension } from "../lib/task-mentions";
 import { palot } from "../services/palot";
@@ -65,24 +74,33 @@ import { MarkdownActionsContext } from "./markdown-actions";
 import { toggleMarkdownTask } from "../lib/markdown-task-edit";
 import { markdownMediaSource, type MarkdownMediaSource } from "../lib/markdown-media";
 import { MarkdownImageActions } from "./markdown-image-actions";
+import { FileLinkMenu, WebLinkMenu, type FileOpenTrigger } from "./link-actions";
+import { trimAutoLinkLiteral } from "../lib/linkify";
 
+// Block parsers run in order: raw HTML blocks first, paragraphs last (they claim what is left).
 const MARKDOWN_EXTENSIONS = [
+  htmlSyntaxExtension(),
   calloutsExtension(),
   mathExtension(),
-  detailsExtension(),
   autoLinkExtension(),
-  setextHeadingExtension(),
   indentedCodeExtension(),
   streamingMarkdownExtension(),
+  paragraphExtension(),
 ];
 
-/** Extend the parser's URL policy only for inert image/media destinations. */
+/**
+ * One URL policy for Markdown destinations, autolinks and raw HTML `href`/`src`/`srcset`:
+ * decode entity references once, then extend the parser's screen only for inert image/media
+ * destinations. Raw HTML attributes arrive still encoded, so `&#106;avascript:` is screened as
+ * `javascript:`.
+ */
 function markdownURLTransform(url: string, kind: "link" | "image", fallback: string): string {
-  const value = url.trim();
+  const value = decodeEntities(url).trim();
+  const screened = value === url.trim() ? fallback : screenUrl(value);
   if (/^data:(?:audio|video)\/[\w.+-]+[;,]/i.test(value)) return value;
   if (kind === "image" && /^data:image\/[\w.+-]+[;,]/i.test(value)) return value;
   if (value.startsWith("blob:")) return value;
-  return fallback;
+  return screened;
 }
 const MarkdownRenderContext = createContext({
   baseUrl: undefined as string | undefined,
@@ -95,35 +113,62 @@ const MarkdownRenderContext = createContext({
 const MarkdownLinkContext = createContext(false);
 export type WorkspaceFileOpenHandler = (
   reference: MarkdownFileReference,
-  event?: ReactMouseEvent | ReactKeyboardEvent,
+  event?: FileOpenTrigger,
 ) => void;
 const MarkdownWorkspaceDirectoryContext = createContext<string | undefined>(undefined);
 const MarkdownWorkspaceLocationContext = createContext<LocationRef | undefined>(undefined);
 const MarkdownWorkspaceFileContext = createContext<WorkspaceFileOpenHandler | null>(null);
-/** `~` is the server's home; only a local connection can open it. */
+/** `~` is the server's home; link it when the connection is local or the home is known. */
 const MarkdownHomePathsContext = createContext(false);
+const MarkdownHomeDirectoryContext = createContext<string | undefined>(undefined);
 const MarkdownWebLinkContext = createContext<((url: string) => void) | null>(null);
 const MarkdownSessionLinkContext = createContext<((sessionID: string) => void) | null>(null);
 const MarkdownSessionConnectionContext = createContext<string | undefined>(undefined);
 
+/** Raw HTML `<details>`: the summary is the element's own `<summary>` content. */
 function MarkdownDetails({
   children,
-  open,
-  "data-summary": summary,
+  open = false,
+  summary,
 }: {
   children?: ReactNode;
-  open?: string;
-  "data-summary"?: string;
+  open?: boolean;
+  summary?: ReactNode;
 }) {
   return (
-    <details open={open !== undefined} className="markdown-details">
+    <details open={open} className="markdown-details">
       <summary>
         <ChevronDown className="markdown-details-chevron" aria-hidden="true" />
-        <span>{summary || "Details"}</span>
+        <span className="markdown-details-summary">{summary ?? "Details"}</span>
       </summary>
       <div className="markdown-details-content">{children}</div>
     </details>
   );
+}
+
+const colorSchemeAtom = atom((get) => get(resolvedAppearanceAtom).scheme);
+
+/** GitHub's `<picture>` light/dark images follow Palot's theme rather than the OS. */
+function MarkdownPicture({
+  children,
+  "data-sources": serialized,
+}: {
+  children?: ReactNode;
+  "data-sources"?: string;
+}) {
+  const scheme = useAtomValue(colorSchemeAtom);
+  const source = useMemo(() => {
+    try {
+      const sources = JSON.parse(serialized ?? "[]") as Array<{ media: string; src: string }>;
+      return sources.find(({ media }) =>
+        new RegExp(`prefers-color-scheme\\s*:\\s*${scheme}\\b`, "i").test(media),
+      )?.src;
+    } catch {
+      return undefined;
+    }
+  }, [scheme, serialized]);
+  if (!isValidElement<{ src?: string }>(children)) return <>{children}</>;
+  return source ? cloneElement(children, { src: source }) : children;
 }
 
 export type MarkdownFileReference = FileReference;
@@ -136,11 +181,12 @@ export function MarkdownWorkspaceProvider({
   workspaceDirectory,
   workspaceLocation,
   allowHomePaths = false,
+  homeDirectory,
   runCode,
   previewHTML,
 }: {
   children?: ReactNode;
-  onOpenFile(reference: MarkdownFileReference, event?: ReactMouseEvent | ReactKeyboardEvent): void;
+  onOpenFile: WorkspaceFileOpenHandler;
   onOpenWebLink?(url: string): void;
   onOpenSession?(sessionID: string): void;
   workspaceDirectory?: string;
@@ -148,6 +194,8 @@ export function MarkdownWorkspaceProvider({
   workspaceLocation?: LocationRef;
   /** Link `~/…` paths; only meaningful when the server shares this machine's home. */
   allowHomePaths?: boolean;
+  /** Where `~` points on the task's server, so `~/…` links resolve to an absolute path. */
+  homeDirectory?: string;
   runCode?(code: string): Promise<void>;
   previewHTML?(html: string): void;
 }) {
@@ -155,22 +203,24 @@ export function MarkdownWorkspaceProvider({
   const [sessionConnectionID] = useState(runtime?.connectionID);
   const actions = useMemo(() => ({ runCode, previewHTML }), [runCode, previewHTML]);
   return (
-    <MarkdownHomePathsContext.Provider value={allowHomePaths}>
-      <MarkdownWorkspaceLocationContext.Provider value={workspaceLocation}>
-        <MarkdownWorkspaceDirectoryContext.Provider value={workspaceDirectory}>
-          <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
-            <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
-              <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
-                <MarkdownSessionConnectionContext.Provider value={sessionConnectionID}>
-                  <MarkdownActionsContext.Provider value={actions}>
-                    {children}
-                  </MarkdownActionsContext.Provider>
-                </MarkdownSessionConnectionContext.Provider>
-              </MarkdownSessionLinkContext.Provider>
-            </MarkdownWebLinkContext.Provider>
-          </MarkdownWorkspaceFileContext.Provider>
-        </MarkdownWorkspaceDirectoryContext.Provider>
-      </MarkdownWorkspaceLocationContext.Provider>
+    <MarkdownHomePathsContext.Provider value={allowHomePaths || Boolean(homeDirectory)}>
+      <MarkdownHomeDirectoryContext.Provider value={homeDirectory}>
+        <MarkdownWorkspaceLocationContext.Provider value={workspaceLocation}>
+          <MarkdownWorkspaceDirectoryContext.Provider value={workspaceDirectory}>
+            <MarkdownWorkspaceFileContext.Provider value={onOpenFile}>
+              <MarkdownWebLinkContext.Provider value={onOpenWebLink ?? null}>
+                <MarkdownSessionLinkContext.Provider value={onOpenSession ?? null}>
+                  <MarkdownSessionConnectionContext.Provider value={sessionConnectionID}>
+                    <MarkdownActionsContext.Provider value={actions}>
+                      {children}
+                    </MarkdownActionsContext.Provider>
+                  </MarkdownSessionConnectionContext.Provider>
+                </MarkdownSessionLinkContext.Provider>
+              </MarkdownWebLinkContext.Provider>
+            </MarkdownWorkspaceFileContext.Provider>
+          </MarkdownWorkspaceDirectoryContext.Provider>
+        </MarkdownWorkspaceLocationContext.Provider>
+      </MarkdownHomeDirectoryContext.Provider>
     </MarkdownHomePathsContext.Provider>
   );
 }
@@ -318,6 +368,8 @@ function MarkdownLink({ href, children, ...props }: MarkdownComponentProps<"a">)
   const openWebLink = useContext(MarkdownWebLinkContext);
   const allowHome = useContext(MarkdownHomePathsContext);
   const workspaceLocation = useContext(MarkdownWorkspaceLocationContext);
+  // Anchors never nest: a link inside a raw HTML `<a>` (or vice versa) keeps only its label.
+  if (useContext(MarkdownLinkContext)) return <>{children}</>;
   const media = !baseUrl ? markdownMediaSource(href, workspaceLocation?.directory) : null;
   if (media)
     return (
@@ -347,36 +399,45 @@ function MarkdownLink({ href, children, ...props }: MarkdownComponentProps<"a">)
     isWebUrl && !containsMarkdownImage(children)
       ? markdownLinkIcon(resolvedHref, remoteFavicons)
       : null;
+  const anchor = (
+    <a
+      {...props}
+      className={cn(props.className, icon && "markdown-link")}
+      href={resolvedHref}
+      target={isWebUrl ? "_blank" : undefined}
+      rel={isWebUrl ? "noopener noreferrer" : undefined}
+      onClick={(event) => {
+        if (resolvedHref?.startsWith("#")) {
+          event.preventDefault();
+          document.getElementById(resolvedHref.slice(1))?.scrollIntoView({ block: "start" });
+          return;
+        }
+        if (isWebUrl && resolvedHref) {
+          event.preventDefault();
+          if (openWebLink) openWebLink(resolvedHref);
+          else void palot.openExternalUrl(resolvedHref);
+        }
+      }}
+    >
+      {icon ? (
+        <>
+          {icon}
+          <span className="markdown-link-label">{children}</span>
+        </>
+      ) : (
+        children
+      )}
+    </a>
+  );
   return (
     <MarkdownLinkContext.Provider value>
-      <a
-        {...props}
-        className={cn(props.className, icon && "markdown-link")}
-        href={resolvedHref}
-        target={isWebUrl ? "_blank" : undefined}
-        rel={isWebUrl ? "noopener noreferrer" : undefined}
-        onClick={(event) => {
-          if (resolvedHref?.startsWith("#")) {
-            event.preventDefault();
-            document.getElementById(resolvedHref.slice(1))?.scrollIntoView({ block: "start" });
-            return;
-          }
-          if (isWebUrl && resolvedHref) {
-            event.preventDefault();
-            if (openWebLink) openWebLink(resolvedHref);
-            else void palot.openExternalUrl(resolvedHref);
-          }
-        }}
-      >
-        {icon ? (
-          <>
-            {icon}
-            <span className="markdown-link-label">{children}</span>
-          </>
-        ) : (
-          children
-        )}
-      </a>
+      {isWebUrl && resolvedHref ? (
+        <WebLinkMenu url={resolvedHref.startsWith("//") ? `https:${resolvedHref}` : resolvedHref}>
+          {anchor}
+        </WebLinkMenu>
+      ) : (
+        anchor
+      )}
     </MarkdownLinkContext.Provider>
   );
 }
@@ -471,8 +532,9 @@ function MarkdownFileLink({
   children: ReactNode;
 }) {
   const workspaceDirectory = useContext(MarkdownWorkspaceDirectoryContext);
+  const homeDirectory = useContext(MarkdownHomeDirectoryContext);
   const icon = workspaceFileIcon(reference.path);
-  const fileHref = fileReferenceHref(reference, workspaceDirectory);
+  const fileHref = fileReferenceHref(reference, workspaceDirectory, homeDirectory);
   const label = fileReferenceLabel(reference);
   const open = (event: ReactMouseEvent | ReactKeyboardEvent) => {
     event.preventDefault();
@@ -480,21 +542,23 @@ function MarkdownFileLink({
   };
 
   return (
-    <a
-      href={fileHref}
-      role={fileHref ? undefined : "link"}
-      tabIndex={fileHref ? undefined : 0}
-      title={label}
-      aria-label={`Open ${label}`}
-      onClick={open}
-      onKeyDown={(event) => {
-        if (!fileHref && event.key === "Enter") open(event);
-      }}
-      className="inline-flex max-w-full cursor-pointer items-center gap-1 text-info underline-offset-4 outline-none hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70"
-    >
-      {icon}
-      <span className="min-w-0 truncate">{children}</span>
-    </a>
+    <FileLinkMenu reference={reference} directory={workspaceDirectory} onOpen={onOpen}>
+      <a
+        href={fileHref}
+        role={fileHref ? undefined : "link"}
+        tabIndex={fileHref ? undefined : 0}
+        title={label}
+        aria-label={`Open ${label}`}
+        onClick={open}
+        onKeyDown={(event) => {
+          if (!fileHref && event.key === "Enter") open(event);
+        }}
+        className="inline-flex max-w-full cursor-pointer items-center gap-1 text-info underline-offset-4 outline-none hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70"
+      >
+        {icon}
+        <span className="min-w-0 truncate">{children}</span>
+      </a>
+    </FileLinkMenu>
   );
 }
 
@@ -520,9 +584,10 @@ function MarkdownImage({ alt, src, className, title, ...props }: MarkdownCompone
     return (
       <MarkdownMedia source={media} location={workspaceLocation} name={alt || "Media preview"} />
     );
-  const localImage = workspaceLocation
-    ? localMarkdownImage(src, workspaceLocation.directory)
-    : null;
+  // Content with a base URL (pull request bodies, comments, reviews) is remote: its relative
+  // images resolve against that URL below and never read this machine's workspace.
+  const localImage =
+    workspaceLocation && !baseUrl ? localMarkdownImage(src, workspaceLocation.directory) : null;
   if (localImage && workspaceLocation) {
     return (
       <WorkspaceMarkdownImage
@@ -710,15 +775,23 @@ function MarkdownImageView({
   const linked = useContext(MarkdownLinkContext);
   const [open, setOpen] = useState(false);
   const dimensions = markdownImageDimensions(title);
+  const { align, ...imageProps } = props as typeof props & { align?: string };
+  // Raw HTML `<img align="left|right">` floats beside the text, as on GitHub.
+  const float =
+    align === "left"
+      ? "markdown-float markdown-float-left"
+      : align === "right"
+        ? "markdown-float markdown-float-right"
+        : undefined;
   const image = (
     <img
-      {...props}
+      {...imageProps}
       alt={alt}
       src={src}
       {...(title ? { title } : {})}
       {...(dimensions ? { width: dimensions.width, height: dimensions.height } : {})}
       draggable={false}
-      className={cn("max-w-full rounded-lg", className)}
+      className={cn("max-w-full rounded-lg", linked && float, className)}
     />
   );
 
@@ -736,7 +809,10 @@ function MarkdownImageView({
           type="button"
           aria-label={`Open image preview: ${name}`}
           onClick={() => setOpen(true)}
-          className="group relative inline-flex max-w-full cursor-zoom-in overflow-hidden rounded-lg align-middle outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className={cn(
+            "group relative inline-flex max-w-full cursor-zoom-in overflow-hidden rounded-lg align-middle outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            float,
+          )}
         >
           {image}
           <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/0 opacity-0 transition-[background-color,opacity] duration-150 group-hover:bg-black/20 group-hover:opacity-100 group-focus-visible:bg-black/20 group-focus-visible:opacity-100">
@@ -761,6 +837,7 @@ const MARKDOWN_COMPONENTS = {
   "palot-math": MarkdownMath,
   "palot-inline-math": MarkdownInlineMath,
   "palot-details": MarkdownDetails,
+  "palot-picture": MarkdownPicture,
   "palot-session-link": MarkdownSessionLink,
 } satisfies MarkdownComponents;
 
@@ -882,7 +959,7 @@ const MarkdownBody = memo(function MarkdownBody({
         idPrefix={idPrefix}
         streaming={streaming}
       >
-        {value}
+        {streaming ? holdBackPartialHtml(value) : value}
       </PalotMarkdown>
     </MarkdownRenderContext.Provider>
   );
@@ -954,50 +1031,6 @@ function markdownImageDimensions(
   return width > 0 && height > 0 ? { width, height } : null;
 }
 
-function detailsExtension(): MarkdownExtension {
-  return {
-    name: "palot-details",
-    parseBlock(context) {
-      const opening = context.lines[context.index]?.match(/^ {0,3}<details(\s+open)?\s*>\s*$/i);
-      if (!opening) return undefined;
-
-      const body: string[] = [];
-      let summary = "Details";
-      let cursor = context.index + 1;
-      let foundEnd = false;
-      while (cursor < context.lines.length) {
-        const line = context.lines[cursor] ?? "";
-        if (/^ {0,3}<\/details>\s*$/i.test(line)) {
-          foundEnd = true;
-          cursor += 1;
-          break;
-        }
-        const summaryMatch = line.match(/^ {0,3}<summary>(.*?)<\/summary>\s*$/i);
-        if (summaryMatch) {
-          summary = summaryMatch[1]?.trim() || summary;
-        } else {
-          body.push(line);
-        }
-        cursor += 1;
-      }
-
-      if (!foundEnd) return undefined;
-      context.consume(cursor - context.index);
-      return {
-        type: "component",
-        name: "details",
-        tagName: "palot-details",
-        attributes: {},
-        properties: {
-          "data-summary": summary,
-          ...(opening[1] ? { open: "true" } : {}),
-        },
-        children: context.parseBlocks(body.join("\n")),
-      };
-    },
-  };
-}
-
 function mathExtension(): MarkdownExtension {
   return {
     name: "palot-math",
@@ -1045,12 +1078,11 @@ function indentedCodeExtension(): MarkdownExtension {
           count += 1;
           continue;
         }
-        if (
-          line.trim() === "" &&
-          indentedCodeLine(context.lines[context.index + count + 1]) !== null
-        ) {
-          code.push("");
-          count += 1;
+        // Blank lines stay inside the block when indented code follows them.
+        let next = context.index + count;
+        while (next < context.lines.length && !context.lines[next]?.trim()) next += 1;
+        if (next > context.index + count && indentedCodeLine(context.lines[next]) !== null) {
+          for (; context.index + count < next; count += 1) code.push("");
           continue;
         }
         break;
@@ -1066,29 +1098,6 @@ function indentedCodeLine(line: string | undefined): string | null {
   return line?.startsWith("    ") ? line.slice(4) : null;
 }
 
-function setextHeadingExtension(): MarkdownExtension {
-  return {
-    name: "palot-setext-headings",
-    parseBlock(context) {
-      const value = context.lines[context.index];
-      const underline = context.lines[context.index + 1];
-      const match = underline?.match(/^ {0,3}(=+|-+)\s*$/);
-      if (!value?.trim() || !match || startsBlock(value)) return undefined;
-
-      context.consume(2);
-      return {
-        type: "heading",
-        depth: match[1]?.startsWith("=") ? 1 : 2,
-        children: context.parseInline(value.trim()),
-      };
-    },
-  };
-}
-
-function startsBlock(value: string): boolean {
-  return /^ {0,3}(?:#{1,6}(?:\s|$)|>|`{3,}|~{3,}|(?:[*+-]|\d+[.)])\s+)/.test(value);
-}
-
 function autoLinkExtension(): MarkdownExtension {
   return {
     name: "palot-auto-links",
@@ -1097,7 +1106,15 @@ function autoLinkExtension(): MarkdownExtension {
 }
 
 function autoLinkNodes(nodes: InlineNode[]): InlineNode[] {
+  // Text between a raw `<a …>` and `</a>` is already a link label.
+  let anchors = 0;
   return nodes.flatMap((node) => {
+    if (node.type === "inlineHtml") {
+      if (/^<a(?:[\s/>]|$)/.test(node.value)) anchors += 1;
+      else if (/^<\/a\s*>$/.test(node.value)) anchors = Math.max(0, anchors - 1);
+      return [node];
+    }
+    if (anchors > 0) return [node];
     if (node.type === "text") return autoLinkText(node.value);
     if (node.type === "strong" || node.type === "emphasis" || node.type === "strike") {
       return [{ ...node, children: autoLinkNodes(node.children) }];
@@ -1131,19 +1148,6 @@ function autoLinkText(value: string): InlineNode[] {
   return nodes.length > 0 ? nodes : [{ type: "text", value }];
 }
 
-/** GFM-style trailing punctuation backtracking, matching OpenCode's marked autolinks. */
-function trimAutoLinkLiteral(value: string): string {
-  let end = value.length;
-  let previous = -1;
-  while (end !== previous) {
-    previous = end;
-    while (/[.,!?;:*_'"~]$/.test(value.slice(0, end))) end -= 1;
-    while (value[end - 1] === ")" && unbalancedClosing(value.slice(0, end), "(", ")")) end -= 1;
-    while (value[end - 1] === "]" && unbalancedClosing(value.slice(0, end), "[", "]")) end -= 1;
-  }
-  return value.slice(0, end);
-}
-
 /** OpenCode links inline code only when the whole span is one web URL. */
 function inlineCodeUrl(value: string): string | undefined {
   const href = value.trim().replace(/[),.;!?]+$/, "");
@@ -1153,10 +1157,6 @@ function inlineCodeUrl(value: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function unbalancedClosing(value: string, open: string, close: string): boolean {
-  return value.split(close).length > value.split(open).length;
 }
 
 function insideIncompleteLinkDestination(value: string, offset: number): boolean {

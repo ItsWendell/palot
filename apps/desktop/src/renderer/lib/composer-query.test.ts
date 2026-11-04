@@ -5,6 +5,9 @@ describe("detectComposerQuery", () => {
   it.each([
     ["/", 1, { kind: "command", start: 0, end: 1, query: "" }],
     ["  /review", 9, { kind: "command", start: 2, end: 9, query: "review" }],
+    // Commands in nested folders are named with their path.
+    ["/git/com", 8, { kind: "command", start: 0, end: 8, query: "git/com" }],
+    ["/git/commit fix", 11, { kind: "command", start: 0, end: 11, query: "git/commit" }],
     ["Use $code-review", 16, { kind: "skill", start: 4, end: 16, query: "code-review" }],
     ["Open (@src/auth.ts", 18, { kind: "file", start: 6, end: 18, query: "src/auth.ts" }],
   ] as const)("detects %s", (text, caret, expected) => {

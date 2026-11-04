@@ -10,7 +10,7 @@ import type { SessionTriageSnapshot } from "../shared/session-triage-contract";
 import type { SourceControlChangedEvent } from "../shared/source-control-contract";
 import type { ProjectScriptRun } from "../shared/project-scripts-contract";
 import { VOICE_IPC_CHANNELS, type VoiceHostCommand } from "../shared/voice-contract";
-import { IPC_CHANNELS } from "../shared/opencode-contract";
+import { HOME_DIRECTORY_ARGUMENT, IPC_CHANNELS } from "../shared/opencode-contract";
 import { GUEST_LINKS_IPC_CHANNELS } from "../shared/guest-links-contract";
 import {
   hasStoredAppearancePreferencesArgument,
@@ -47,6 +47,10 @@ const api: PalotApi = {
     },
   },
   platform: process.platform,
+  homeDirectory:
+    process.argv
+      .find((argument) => argument.startsWith(HOME_DIRECTORY_ARGUMENT))
+      ?.slice(HOME_DIRECTORY_ARGUMENT.length) || null,
   appearancePreferences: parseAppearancePreferencesArgument(process.argv),
   hasStoredAppearancePreferences: hasStoredAppearancePreferencesArgument(process.argv),
   reducedTransparency: process.argv.includes(REDUCED_TRANSPARENCY_ARGUMENT),
@@ -56,6 +60,8 @@ const api: PalotApi = {
   browserLayout: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserLayout, input),
   browserCommand: (bindingID, command, pane) =>
     ipcRenderer.invoke(IPC_CHANNELS.browserCommand, bindingID, command, pane),
+  browserOpenArtifact: (bindingID, artifactID, pane) =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserOpenArtifact, bindingID, artifactID, pane),
   browserPageControl: (bindingID, tabID, control) =>
     ipcRenderer.invoke(IPC_CHANNELS.browserPageControl, bindingID, tabID, control),
   browserClearData: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserClearData, input),

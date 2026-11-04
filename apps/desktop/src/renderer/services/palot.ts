@@ -381,7 +381,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "2.2.3",
+  contractVersion: "2.2.5",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -398,7 +398,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.2.3",
+  version: "2.2.5",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,
@@ -553,6 +553,12 @@ export const palot = {
     const api = getApi();
     if (!api?.browserCommand) throw new Error("Browser controls are unavailable");
     return api.browserCommand(bindingID, command, pane);
+  },
+
+  async browserOpenArtifact(bindingID: string, artifactID: string, pane?: "right" | "bottom") {
+    const api = getApi();
+    if (!api?.browserOpenArtifact) throw new Error("Browser controls are unavailable");
+    return api.browserOpenArtifact(bindingID, artifactID, pane);
   },
 
   async browserPageControl(

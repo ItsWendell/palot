@@ -550,12 +550,24 @@ export type PalotIntegrationMethod =
       form: [];
     };
 
+/**
+ * A runtime problem an integration reported for one connection (OpenCode's
+ * `Connection.Status`). `needs_auth` asks for sign-in: at `url` when set,
+ * otherwise by connecting the integration again. Not persisted by OpenCode.
+ */
+export interface PalotIntegrationConnectionStatus {
+  status: "needs_auth";
+  message: string;
+  url: string | null;
+}
+
 export interface PalotIntegrationConnection {
   type: "credential" | "env";
   id: string | null;
   label: string;
   active: boolean;
   method?: "key" | "oauth" | "external";
+  status?: PalotIntegrationConnectionStatus;
 }
 
 export interface PalotIntegration {
@@ -1238,6 +1250,7 @@ export const IPC_CHANNELS = {
   browserRegister: "palot:browser:register",
   browserLayout: "palot:browser:layout",
   browserCommand: "palot:browser:command",
+  browserOpenArtifact: "palot:browser:open-artifact",
   browserPageControl: "palot:browser:page-control",
   browserClearData: "palot:browser:clear-data",
   browserClose: "palot:browser:close",
@@ -1300,9 +1313,14 @@ export const IPC_CHANNELS = {
   writeClipboardImage: "palot:system:write-clipboard-image",
 } as const;
 
+/** Carries this machine's home folder to the sandboxed preload, which cannot read it. */
+export const HOME_DIRECTORY_ARGUMENT = "--palot-home=";
+
 export interface PalotApi {
   readonly guestLinks: PalotGuestLinksApi;
   readonly platform: PalotPlatform;
+  /** This machine's home folder; `~` on a same-machine OpenCode server. Null when unknown. */
+  readonly homeDirectory: string | null;
   /** Immutable BrowserWindow startup hints; use loadAppearance before renderer hydration. */
   readonly appearancePreferences: AppearancePreferences;
   readonly hasStoredAppearancePreferences: boolean;
@@ -1318,6 +1336,12 @@ export interface PalotApi {
     command: PalotBrowserUserCommand,
     pane?: "right" | "bottom",
   ): Promise<string | void>;
+  /** Opens an OpenCode-hosted (local provider) artifact in the task browser; returns its page ID. */
+  browserOpenArtifact(
+    bindingID: string,
+    artifactID: string,
+    pane?: "right" | "bottom",
+  ): Promise<string>;
   browserPageControl(
     bindingID: string,
     tabID: string,

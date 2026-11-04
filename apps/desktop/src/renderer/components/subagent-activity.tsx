@@ -29,6 +29,7 @@ import {
   type TurnActivityGroup,
 } from "../lib/turn-projection";
 import { MarkdownContent } from "./markdown-content";
+import { BoundedScroll } from "./transcript/bounded-scroll";
 import { ElapsedTime } from "./elapsed-time";
 import { interruptChildSession } from "./running-work-control";
 import { Button } from "./ui/button";
@@ -321,10 +322,9 @@ export function SubagentResponse({ group }: { group: TurnActivityGroup }) {
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t border-border/50 px-3 py-3">
         {response ? (
-          <MarkdownContent
-            value={response}
-            className="max-h-[32rem] overflow-y-auto pr-2 text-xs/relaxed text-foreground/80"
-          />
+          <BoundedScroll label={`${agent} response`} viewportClassName="max-h-[32rem]">
+            <MarkdownContent value={response} className="pr-3 text-xs/relaxed text-foreground/80" />
+          </BoundedScroll>
         ) : (
           <p className="m-0 text-xs text-muted-foreground">No response content was provided.</p>
         )}

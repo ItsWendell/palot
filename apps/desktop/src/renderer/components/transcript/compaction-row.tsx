@@ -10,6 +10,7 @@ import { MarkdownContent } from "../markdown-content";
 import { ThinkingShimmer } from "../thinking-shimmer";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { LinkedText } from "../link-actions";
 
 /** Running compactions mention their expected duration after this delay. */
 export const COMPACTION_SLOW_HINT_MS = 10_000;
@@ -192,7 +193,11 @@ export function CompactionBoundary({ group }: { group: TurnActivityGroup }) {
               </p>
             ) : null}
             <CompactionUsage part={part} />
-            {error ? <p className="m-0 text-xs/relaxed text-destructive">{error}</p> : null}
+            {error ? (
+              <p className="m-0 text-xs/relaxed text-destructive">
+                <LinkedText text={error} />
+              </p>
+            ) : null}
             {summary ? (
               <MarkdownContent value={summary} className="text-xs/relaxed text-foreground/75" />
             ) : null}

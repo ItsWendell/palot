@@ -108,6 +108,7 @@ import { runtimeAtom } from "../atoms/workspace";
 import { desktopNotificationSettingsAtom } from "../atoms/notification-sounds";
 import { cn } from "../lib/cn";
 import { showErrorToast } from "../lib/toast-error";
+import { reloadOpenCodeConfiguration } from "../lib/configuration-reload";
 import { openCodeKeys } from "../lib/opencode-query";
 import { isAppearanceFontAvailable } from "../lib/font-loading";
 import { SETTINGS_NAV_ITEMS, type SettingsCategory } from "../lib/settings-navigation";
@@ -3684,8 +3685,7 @@ function ConfigSettings({
     setReloading(true);
     setReloadError(null);
     try {
-      await palot.reloadConfiguration(owner.connectionID);
-      await queryClient.invalidateQueries({ queryKey: openCodeKeys.all(owner.connectionID) });
+      await reloadOpenCodeConfiguration(queryClient, owner.connectionID);
       await refresh();
     } catch (cause) {
       setReloadError(actionableErrorMessage(cause, "Could not reload configuration."));

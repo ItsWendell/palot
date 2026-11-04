@@ -1,9 +1,13 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { PersistentPtyInfo } from "@opencode/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { afterEach, expect, it, vi } from "vitest";
 import { workbenchStateAtom, useWorkbenchScope } from "../../atoms/workbench";
 import { experimentalBrowserAtom } from "../../atoms/ui";
+import { runtimeAtom } from "../../atoms/workspace";
+import { listSessionTerminals, renamePty } from "../../services/opencode-pty";
 import {
   workbenchScopeKey,
   type WorkbenchTab,
@@ -39,6 +43,11 @@ vi.mock("../../services/palot", () => ({
   },
 }));
 vi.mock("../../lib/toast-error", () => ({ showErrorToast: vi.fn() }));
+vi.mock("../../services/opencode-pty", () => ({
+  listSessionTerminals: vi.fn(),
+  renamePty: vi.fn(),
+  ptyNotFound: () => false,
+}));
 vi.mock("../../hooks/use-navigation", () => ({
   usePalotNavigation: () => ({
     openPullRequests: vi.fn(),
@@ -99,21 +108,69 @@ function ScopePane() {
   return <WorkbenchPane pane="right" scope={scope} context={context} location={location} />;
 }
 
-function mount(tabs = pages, recentlyClosed?: ClosedWorkbenchTab[]) {
+function mount(tabs = pages, recentlyClosed?: ClosedWorkbenchTab[], activeTabID = "row-1") {
   const store = createStore();
   store.set(experimentalBrowserAtom, true);
   const context = {
-    right: { tabs, activeTabID: "row-1", requestedOpen: true },
+    right: { tabs, activeTabID, requestedOpen: true },
     bottom: { tabs: [], activeTabID: null, requestedOpen: false },
     updatedAt: 1,
     ...(recentlyClosed ? { recentlyClosed } : {}),
   };
   store.set(workbenchStateAtom, { version: 1, scopes: { [workbenchScopeKey(scope)]: context } });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <Provider store={store}>
-      <ScopePane />
-    </Provider>,
+    <QueryClientProvider client={queryClient}>
+      <Provider store={store}>
+        <ScopePane />
+      </Provider>
+    </QueryClientProvider>,
   );
+  return store;
+}
+
+function terminalTab(
+  ptyID: string,
+  transport: "persistent" | "legacy" = "persistent",
+): WorkbenchTab & { kind: "terminal" } {
+  return {
+    id: `tab-${ptyID}`,
+    kind: "terminal",
+    pinned: false,
+    resource: {
+      profileID: scope.profileID,
+      location,
+      ptyID,
+      sessionID: scope.sessionID,
+      transport,
+    },
+  };
+}
+
+function terminalInfo(id: string, title: string, userTitle: string | null = null) {
+  return {
+    id,
+    sessionID: scope.sessionID,
+    title,
+    userTitle,
+    status: "running",
+    cwd: "/repo",
+    command: "zsh",
+    args: [],
+    pid: 1,
+    foregroundProcess: null,
+    size: { cols: 80, rows: 24 },
+    output: { head: 0, tail: 0 },
+  } as PersistentPtyInfo;
+}
+
+function mountTerminals(tabs: WorkbenchTab[]) {
+  const store = mount(tabs, undefined, tabs[0]?.id);
+  store.set(runtimeAtom, {
+    connected: true,
+    profileID: scope.profileID,
+    connectionID: "connection",
+  } as never);
   return store;
 }
 
@@ -423,4 +480,128 @@ it("leaves Ctrl+Tab to task switching when the pane has one tab", () => {
   } finally {
     window.removeEventListener("keydown", windowListener);
   }
+});
+
+it("names a terminal tab from OpenCode and renames or clears it from the tab", async () => {
+  const user = userEvent.setup();
+  vi.mocked(listSessionTerminals).mockResolvedValue([terminalInfo("pty_1", "zsh")]);
+  vi.mocked(renamePty)
+    .mockResolvedValueOnce(terminalInfo("pty_1", "build", "build"))
+    .mockResolvedValueOnce(terminalInfo("pty_1", "zsh"));
+  mountTerminals([terminalTab("pty_1")]);
+
+  const tab = await screen.findByRole("tab", { name: "zsh" });
+  await user.dblClick(tab);
+  const field = screen.getByRole("textbox", { name: "Terminal name" });
+  expect(document.activeElement).toBe(field);
+  expect((field as HTMLInputElement).value).toBe("zsh");
+  await user.clear(field);
+  await user.type(field, "  build {Enter}");
+  expect(renamePty).toHaveBeenCalledWith("pty_1", "build", "connection");
+  expect(screen.queryByRole("textbox", { name: "Terminal name" })).toBeNull();
+  const renamed = await screen.findByRole("tab", { name: "build" });
+  expect(document.activeElement).toBe(renamed);
+
+  // An emptied field clears the user title; the tab shows OpenCode's automatic name again.
+  fireEvent.contextMenu(renamed);
+  await user.click(await screen.findByRole("menuitem", { name: "Rename terminal" }));
+  const again = await screen.findByRole("textbox", { name: "Terminal name" });
+  await waitFor(() => expect(document.activeElement).toBe(again));
+  await user.clear(again);
+  await user.keyboard("{Enter}");
+  expect(renamePty).toHaveBeenLastCalledWith("pty_1", null, "connection");
+  await screen.findByRole("tab", { name: "zsh" });
+});
+
+it("cancels a rename with Escape and sends nothing for an unchanged name", async () => {
+  const user = userEvent.setup();
+  vi.mocked(listSessionTerminals).mockResolvedValue([terminalInfo("pty_1", "zsh")]);
+  mountTerminals([terminalTab("pty_1")]);
+
+  await user.dblClick(await screen.findByRole("tab", { name: "zsh" }));
+  await user.type(screen.getByRole("textbox", { name: "Terminal name" }), "typed{Escape}");
+  expect(screen.queryByRole("textbox", { name: "Terminal name" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "zsh" })).toBeTruthy();
+
+  await user.dblClick(screen.getByRole("tab", { name: "zsh" }));
+  await user.keyboard("{Enter}");
+  expect(renamePty).not.toHaveBeenCalled();
+});
+
+it("restores the previous name and reports a rename OpenCode refuses", async () => {
+  const user = userEvent.setup();
+  vi.mocked(listSessionTerminals).mockResolvedValue([terminalInfo("pty_1", "zsh")]);
+  const refused = new Error(
+    "Terminal renaming will be available after OpenCode's terminal service restarts",
+  );
+  vi.mocked(renamePty).mockRejectedValue(refused);
+  mountTerminals([terminalTab("pty_1")]);
+
+  await user.dblClick(await screen.findByRole("tab", { name: "zsh" }));
+  const field = screen.getByRole("textbox", { name: "Terminal name" });
+  await user.clear(field);
+  await user.type(field, "build{Enter}");
+  await waitFor(() =>
+    expect(showErrorToast).toHaveBeenCalledWith("Could not rename terminal", refused),
+  );
+  expect(screen.getByRole("tab", { name: "zsh" })).toBeTruthy();
+});
+
+it("keeps a rename field on its own tab while another tab opens before it", async () => {
+  const user = userEvent.setup();
+  vi.mocked(listSessionTerminals).mockResolvedValue([
+    terminalInfo("pty_1", "first"),
+    terminalInfo("pty_2", "second"),
+  ]);
+  vi.mocked(renamePty).mockResolvedValue(terminalInfo("pty_2", "deploy", "deploy"));
+  const first = terminalTab("pty_1");
+  const second = terminalTab("pty_2");
+  const store = mountTerminals([first, second]);
+
+  await user.dblClick(await screen.findByRole("tab", { name: "second" }));
+  const field = screen.getByRole("textbox", { name: "Terminal name" });
+  await user.clear(field);
+  await user.type(field, "deploy");
+  // Arrow keys edit the field instead of moving between tabs.
+  await user.keyboard("{ArrowLeft}{Home}");
+  expect(document.activeElement).toBe(field);
+
+  const opened = terminalTab("pty_3");
+  act(() => {
+    const key = workbenchScopeKey(scope);
+    const current = store.get(workbenchStateAtom).scopes[key]!;
+    store.set(workbenchStateAtom, {
+      version: 1,
+      scopes: {
+        [key]: {
+          ...current,
+          right: { ...current.right, tabs: [opened, second, first], activeTabID: opened.id },
+        },
+      },
+    });
+  });
+  const stillEditing = screen.getByRole("textbox", { name: "Terminal name" });
+  expect(stillEditing).toBe(field);
+  expect(document.activeElement).toBe(field);
+  expect((field as HTMLInputElement).value).toBe("deploy");
+  expect(field.parentElement?.querySelector('[role="tab"]')?.getAttribute("aria-label")).toBe(
+    "second",
+  );
+
+  await user.keyboard("{Enter}");
+  expect(renamePty).toHaveBeenCalledOnce();
+  expect(renamePty).toHaveBeenCalledWith("pty_2", "deploy", "connection");
+});
+
+it("offers no rename for legacy terminals", async () => {
+  const user = userEvent.setup();
+  mountTerminals([terminalTab("pty_legacy", "legacy")]);
+
+  const tab = screen.getByRole("tab", { name: "Terminal" });
+  await user.dblClick(tab);
+  expect(screen.queryByRole("textbox", { name: "Terminal name" })).toBeNull();
+  fireEvent.contextMenu(tab);
+  await screen.findByRole("menuitem", { name: "Close others" });
+  expect(screen.queryByRole("menuitem", { name: "Rename terminal" })).toBeNull();
+  expect(listSessionTerminals).not.toHaveBeenCalled();
 });

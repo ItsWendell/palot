@@ -3,15 +3,17 @@ import {
   ArrowRight,
   Cable,
   Ellipsis,
+  ExternalLink,
   LoaderCircle,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
   Unplug,
 } from "lucide-react";
 import { useAtomValue } from "jotai";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   PalotIntegration,
   PalotIntegrationConnection,
@@ -20,6 +22,7 @@ import type {
 } from "../../../shared";
 import { modelPickerPreferencesAtom } from "../../atoms/ui";
 import { useSettingsOwner } from "../../hooks/use-settings-owner";
+import { isClaudeAgent } from "../../lib/claude-agent-setup";
 import { cn } from "../../lib/cn";
 import {
   modelPreferenceKey,
@@ -29,6 +32,7 @@ import {
 import { isPopularProvider, orderProviderIntegrations } from "../../lib/provider-presentation";
 import { palot } from "../../services/palot";
 import { useArmedConfirm } from "../pull-requests/use-armed-confirm";
+import { CommandText } from "../claude-agent-setup-dialog";
 import { ProviderConnectionDialog } from "../provider-connection-dialog";
 import {
   SettingsDisclosure,
@@ -79,7 +83,7 @@ import {
   providerPolicy,
   type ProviderEntry,
 } from "./provider-model-data";
-import { useModelProviderLinks } from "./settings-links";
+import { useModelProviderLinks, useProvidersConnectParam } from "./settings-links";
 
 const COLLAPSED_PROVIDER_COUNT = 8;
 /** Disconnecting reads a sentence first, so it stays armed a little longer than row actions. */
@@ -123,6 +127,7 @@ export function ProviderSettings({
     credentialID: string;
     label: string;
   } | null>(null);
+  const { value: connectID, clear: clearConnect } = useProvidersConnectParam();
   const integrations = snapshot?.integrations ?? [];
   const configSources = snapshot?.configSources ?? [];
   const models = snapshot?.catalog.models ?? [];
@@ -165,6 +170,16 @@ export function ProviderSettings({
     directory: location.directory,
     ...(location.workspaceID ? { workspaceID: location.workspaceID } : {}),
   };
+  const requested = connectID
+    ? integrations.find((integration) => integration.id === connectID)
+    : undefined;
+
+  // Other surfaces link here to fix a provider, such as a reply that failed sign-in.
+  useEffect(() => {
+    if (!requested) return;
+    setDialog(requested);
+    clearConnect();
+  }, [clearConnect, requested]);
 
   async function activate(connection: PalotIntegrationConnection) {
     if (!connection.id || connection.active) return;
@@ -459,6 +474,11 @@ function ConnectedProviderCard({
   const credentials = connections.filter((connection) => connection.type === "credential");
   const environment = connections.filter((connection) => connection.type === "env");
   const confirmDisconnect = useArmedConfirm(onDisconnect, DISCONNECT_ARMED_MS);
+  const claudeAgent = isClaudeAgent(entry.id);
+  // The problem OpenCode reports on the connection in use, such as a signed-out login.
+  const problem = connections.find((connection) => connection.active)?.status ?? null;
+  const signInURL = problem?.url && validHttpUrl(problem.url) ? problem.url : null;
+  const canConnect = Boolean(entry.integration && connectable(entry.integration));
   const summary =
     [
       credentials.length
@@ -501,6 +521,11 @@ function ConnectedProviderCard({
                 Disabled by config
               </Badge>
             ) : null}
+            {problem ? (
+              <Badge variant="warning" size="sm">
+                Needs sign-in
+              </Badge>
+            ) : null}
           </div>
           <p className="mt-1 text-compact text-muted-foreground">{summary}</p>
           {off ? null : onOpenModels ? (
@@ -518,10 +543,15 @@ function ConnectedProviderCard({
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1">
-          {entry.integration && connectable(entry.integration) ? (
+          {canConnect ? (
             <Button type="button" variant="outline" size="sm" onClick={onConnect}>
-              <Plus data-icon="inline-start" aria-hidden="true" />
-              Add credential
+              {claudeAgent ? (
+                <RefreshCw data-icon="inline-start" aria-hidden="true" />
+              ) : (
+                <Plus data-icon="inline-start" aria-hidden="true" />
+              )}
+              {/* Each Claude Agent connect replaces the last; there is nothing to add. */}
+              {claudeAgent ? "Check Claude Code" : "Add credential"}
             </Button>
           ) : null}
           {credentials.length > 0 ? (
@@ -562,6 +592,37 @@ function ConnectedProviderCard({
           Press Confirm disconnect to continue.
         </Banner>
       </div>
+      {problem ? (
+        <div className="px-4 pb-3">
+          <Banner
+            status="warning"
+            title={`${entry.name} needs sign-in`}
+            actions={
+              claudeAgent && canConnect ? (
+                <Button type="button" variant="outline" size="sm" onClick={onConnect}>
+                  Fix Claude Code setup
+                </Button>
+              ) : signInURL ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  render={<a href={signInURL} target="_blank" rel="noreferrer" />}
+                >
+                  Sign in
+                  <ExternalLink data-icon="inline-end" aria-hidden="true" />
+                </Button>
+              ) : canConnect ? (
+                <Button type="button" variant="outline" size="sm" onClick={onConnect}>
+                  Reconnect
+                </Button>
+              ) : undefined
+            }
+          >
+            <CommandText text={problem.message} />
+          </Banner>
+        </div>
+      ) : null}
       {off ? (
         <div className="px-4 pb-3">
           <Banner status="warning" title="Disabled by config">
@@ -604,10 +665,16 @@ function ConnectedProviderCard({
                       {connection.label}
                     </span>
                     {connection.active ? <Badge variant="secondary">In use</Badge> : null}
+                    {/* The card reports the active connection's problem. */}
+                    {connection.status && !connection.active ? (
+                      <Badge variant="warning" title={connection.status.message}>
+                        Needs sign-in
+                      </Badge>
+                    ) : null}
                   </div>
                   <p className="mt-1 text-compact text-muted-foreground">
                     {connection.type === "credential"
-                      ? connectionMethodLabel(connection)
+                      ? connectionMethodLabel(connection, entry.id)
                       : connection.active
                         ? "Environment variable"
                         : "Environment fallback · used when stored credentials are removed"}
@@ -709,7 +776,11 @@ function AvailableProviderRow({
           </Button>
         ) : null}
       </div>
-      {!canConnect && names.length > 0 ? (
+      {isClaudeAgent(integration.id) && canConnect ? (
+        <p className="text-meta text-muted-foreground">
+          Use your Claude plan or another Claude Code login. Needs Claude Code where OpenCode runs.
+        </p>
+      ) : !canConnect && names.length > 0 ? (
         <div className="flex flex-col gap-2">
           <p className="text-meta text-muted-foreground">
             Set {names.length === 1 ? "this variable" : "one of these variables"} where OpenCode
@@ -733,7 +804,12 @@ function AvailableProviderRow({
   );
 }
 
-function connectionMethodLabel(connection: PalotIntegrationConnection): string {
+function connectionMethodLabel(
+  connection: PalotIntegrationConnection,
+  integrationID: string,
+): string {
+  // Claude Agent's external credential is only the choice to use Claude Code's own login.
+  if (isClaudeAgent(integrationID) && connection.method === "external") return "Claude Code login";
   if (connection.method === "oauth") return "Account sign-in";
   if (connection.method === "key") return "Stored API key";
   if (connection.method === "external") return "External credential";

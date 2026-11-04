@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isSessionNotFoundError } from "@opencode/client";
 import type { OpenCodeRuntimeStatus, PalotApi } from "../../shared";
 import {
+  isOpenCodeLocationMissing,
   openCodeClient,
   openCodeFetch,
   registerOpenCodeRuntime,
@@ -194,5 +195,63 @@ describe("renderer OpenCode client transport", () => {
     expect((await pending).every((result) => result.status === "rejected")).toBe(true);
     expect(cancelOpenCodeRequest).toHaveBeenCalledTimes(9);
     expect(openCodeRequest).toHaveBeenCalledTimes(9);
+  });
+});
+
+describe("deleted directories", () => {
+  it("answers reads for a not-found directory locally until the directory is found again", async () => {
+    setFocusedOpenCodeRuntime({
+      connectionID: "a",
+      profileID: "profile-a",
+    } as OpenCodeRuntimeStatus);
+    registerOpenCodeRuntime({ connectionID: "b", profileID: "profile-b" } as OpenCodeRuntimeStatus);
+    let exists = false;
+    const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).buffer;
+    const openCodeRequest = vi.fn(async (request: { path: string }) => {
+      const url = new URL(request.path, "https://opencode.invalid");
+      const directory = url.searchParams.get("location[directory]");
+      if (directory === "/gone" && !exists)
+        return {
+          status: 404,
+          statusText: "Not Found",
+          headers: { "content-type": "application/json" },
+          body: encode({
+            _tag: "LocationNotFoundError",
+            location: { directory: "/gone" },
+            message: "Location not found: /gone",
+          }),
+        };
+      return {
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: encode(
+          url.pathname === "/api/location"
+            ? { directory, project: null }
+            : { data: [], cursor: {} },
+        ),
+      };
+    });
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: { openCodeRequest, cancelOpenCodeRequest: vi.fn() },
+    });
+    const shells = (connectionID?: string) =>
+      openCodeClient(connectionID).shell.list({ location: { directory: "/gone" } });
+    await expect(shells()).rejects.toMatchObject({ _tag: "LocationNotFoundError" });
+    expect(isOpenCodeLocationMissing("a", "/gone")).toBe(true);
+    // Reads short-circuit with the same typed error.
+    await expect(shells()).rejects.toMatchObject({ _tag: "LocationNotFoundError" });
+    expect(openCodeRequest).toHaveBeenCalledTimes(1);
+    // Other directories and other servers still reach the server.
+    await openCodeClient().shell.list({ location: { directory: "/repo" } });
+    await expect(shells("b")).rejects.toMatchObject({ _tag: "LocationNotFoundError" });
+    expect(openCodeRequest).toHaveBeenCalledTimes(3);
+    // The missing-folder check always asks, and a found directory reads normally again.
+    exists = true;
+    await openCodeClient().location.get({ location: { directory: "/gone" } });
+    expect(isOpenCodeLocationMissing("a", "/gone")).toBe(false);
+    await shells();
+    expect(openCodeRequest).toHaveBeenCalledTimes(5);
   });
 });

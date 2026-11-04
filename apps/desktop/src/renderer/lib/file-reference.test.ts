@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  expandHomePath,
   fileReferenceBases,
   fileReferenceHref,
+  inferHomeDirectory,
+  serverHomeDirectory,
   locationAtMessage,
   parseFileReference,
   projectRootFromSubpath,
@@ -119,6 +122,35 @@ it("builds absolute file hrefs from the workspace directory", () => {
   expect(fileReferenceHref({ path: "a#b.ts" }, "/repo")).toBe("file:///repo/a%23b.ts");
   expect(fileReferenceHref({ path: "src/x.ts" }, undefined)).toBeUndefined();
   expect(fileReferenceHref({ path: "~/x.ts" }, "/repo")).toBeUndefined();
+});
+
+it("resolves ~ against the server home so hrefs match what a click opens", () => {
+  expect(
+    fileReferenceHref({ path: "~/Projects/a b/index.html", line: 2 }, "/repo", "/home/me"),
+  ).toBe("file:///home/me/Projects/a%20b/index.html#L2");
+  expect(fileReferenceHref({ path: "~" }, "/repo", "/home/me")).toBe("file:///home/me");
+  expect(expandHomePath("~/../etc/x", "/home/me")).toBe("/home/etc/x");
+  expect(expandHomePath("~other/x", "/home/me")).toBe("~other/x");
+  expect(expandHomePath("~/x", undefined)).toBe("~/x");
+  expect(expandHomePath("src/x", "/home/me")).toBe("src/x");
+});
+
+it("knows the server home on this machine and infers it from remote locations", () => {
+  expect(
+    serverHomeDirectory({ sameMachine: true, localHome: "/Users/me/", directories: ["/srv"] }),
+  ).toBe("/Users/me");
+  // A remote server's home is not this machine's.
+  expect(
+    serverHomeDirectory({
+      sameMachine: false,
+      localHome: "/Users/me",
+      directories: ["/home/dev/app"],
+    }),
+  ).toBe("/home/dev");
+  expect(serverHomeDirectory({ sameMachine: false, directories: ["/srv/app"] })).toBeUndefined();
+  expect(inferHomeDirectory("C:\\Users\\dev\\repo")).toBe("C:/Users/dev");
+  expect(inferHomeDirectory("/root")).toBe("/root");
+  expect(inferHomeDirectory("/homework/x")).toBeNull();
 });
 
 it("matches Windows drive prefixes case-insensitively", () => {

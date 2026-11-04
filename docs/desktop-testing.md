@@ -126,6 +126,12 @@ Release verification must run against the exact packaged build separately.
 - `external-credentials` registers an isolated external integration method and
   checks form validation, connection labels, saved answers and reload persistence.
   It does not authenticate with a real provider.
+- `claude-agent-setup` walks OpenCode's built-in Claude Agent provider through Palot's
+  guided setup: no `claude` on the isolated service's PATH (not installed), then a
+  stand-in `claude` that answers the SDK's start-up request signed out and signed in.
+  It checks the step badges, that each check replaces the previous connection, the
+  ready state after an unchanged model list settles, and the provider card's Needs
+  sign-in recovery. It never runs the real Claude Code, signs in, or sends a prompt.
 
 ```sh
 bun run test:e2e -- workspace-preview --keep
@@ -137,7 +143,7 @@ bun run test:e2e -- usage --keep
 ### Browser scenarios
 
 `browser-native` enables Experimental Browser in an isolated Palot profile, attaches the real
-OpenCode 2.2.3 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
+OpenCode 2.2.5 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
 It checks the returned snapshot, Lighthouse category scores and JSON/HTML reports, the session
 workbench address bar, rejection of an out-of-root `file://` URL, and tab-URL restoration after
 detach/reattach when the setting changes. Use `--executable` to exercise the packaged Lighthouse
@@ -248,6 +254,11 @@ between checkout and worktree modes without creating a session or calling a mode
 `theme-presets` hydrates saved Codex preferences and exercises built-in palette
 selection and native persistence in both color modes, with screenshots. It is a UI
 integration check, not a performance measurement.
+
+`markdown-html --keep` streams a scripted reply with `details`, `kbd` and table
+`<br>` HTML in small chunks, fails if literal tag text ever appears in the
+transcript, and renders a Dependabot pull request description against fake GitHub.
+It saves light and dark screenshots of both.
 
 `markdown-rich --visible --keep` imports isolated settled messages without model
 calls. It checks Mermaid flowchart/sequence SVG rendering, light/dark regeneration,

@@ -31,6 +31,30 @@ export function useModelProviderLinks(projectID: string) {
   };
 }
 
+/**
+ * The `connect` search parameter of the Providers page
+ * (`#/settings/providers?connect=claude-agent`), and a way to drop it once handled.
+ */
+export function useProvidersConnectParam(): { value: string | undefined; clear(): void } {
+  const router = useOptionalRouter();
+  const subscribe = useCallback(
+    (notify: () => void) => router?.subscribe("onResolved", notify) ?? (() => {}),
+    [router],
+  );
+  const value = useSyncExternalStore(subscribe, () => {
+    const search = router?.state.location.search as Record<string, unknown> | undefined;
+    return typeof search?.connect === "string" && search.connect ? search.connect : undefined;
+  });
+  const clear = useCallback(() => {
+    void router?.navigate({
+      to: "/settings/providers",
+      search: (previous) => ({ ...previous, connect: undefined }),
+      replace: true,
+    });
+  }, [router]);
+  return { value, clear };
+}
+
 /** The `provider` search parameter of the Models page (`#/settings/models?provider=openai`). */
 export function useModelsProviderParam(): string | undefined {
   const router = useOptionalRouter();

@@ -626,6 +626,15 @@ export function ChangesTab({
             review.add(selection.id, selection.range, text);
             setSelection(null);
           }}
+          onSend={
+            review.send
+              ? (text) =>
+                  review.send?.(selection.id, selection.range, text).then((sent) => {
+                    if (sent) setSelection(null);
+                    return sent;
+                  }) ?? Promise.resolve(false)
+              : undefined
+          }
           onCancel={() => setSelection(null)}
         />
       ) : null}

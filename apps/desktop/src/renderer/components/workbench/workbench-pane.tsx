@@ -14,6 +14,7 @@ import {
   Minimize2,
   PanelBottom,
   PanelRight,
+  Pencil,
   Pin,
   PinOff,
   Plus,
@@ -44,6 +45,7 @@ import { workspaceFileSelectionAtom } from "../../atoms/workspace-file-selection
 import { useBrowserSession } from "../../hooks/use-browser-session";
 import { usePalotNavigation } from "../../hooks/use-navigation";
 import { useSessionPullRequests } from "../../hooks/use-source-control";
+import { useWorkbenchTerminal } from "../../hooks/use-session-terminals";
 import type { Browser } from "@opencode/plugin-browser/rpc";
 import type { PalotBrowserShortcut } from "../../../shared/browser-contract";
 import { suggestedBrowserSites } from "../../lib/browser-recent-sites";
@@ -85,6 +87,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { Input } from "../ui/input";
 import { Skeleton } from "../ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 
@@ -341,41 +344,41 @@ export function WorkbenchPane({
               activateOnFocus
               className="window-no-drag h-full! w-full min-w-0 items-center justify-start gap-0.5 overflow-x-auto rounded-none px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
-              {state.tabs.map((tab, index) => (
-                <WorkbenchTabItem
-                  key={tab.id}
-                  tab={tab}
-                  pane={pane}
-                  active={state.activeTabID === tab.id}
-                  permissionPending={
+              {state.tabs.map((tab, index) => {
+                const item = {
+                  pane,
+                  active: state.activeTabID === tab.id,
+                  permissionPending:
                     tab.kind === "browser" &&
                     !(visible && state.requestedOpen && state.activeTabID === tab.id) &&
                     Boolean(
                       browser?.permissions?.requests.some(
                         (request) => request.tabID === tab.resource.browserTabID,
                       ),
-                    )
-                  }
-                  browserPage={
+                    ),
+                  browserPage:
                     tab.kind === "browser"
                       ? browser?.state.tabs.find((page) => page.id === tab.resource.browserTabID)
-                      : undefined
-                  }
-                  closeTab={() => closeTab(tab)}
-                  moveTab={() =>
-                    commands.moveTab(pane, pane === "right" ? "bottom" : "right", tab.id)
-                  }
-                  closeOtherTabs={() =>
-                    closeTabs(state.tabs.filter((candidate) => candidate.id !== tab.id))
-                  }
-                  closeTabsToEnd={() => closeTabs(state.tabs.slice(index + 1))}
-                  closeTabsToStart={() => closeTabs(state.tabs.slice(0, index))}
-                  closeAllTabs={() => closeTabs(state.tabs)}
-                  hasTabsBefore={state.tabs[0]?.id !== tab.id}
-                  hasTabsAfter={state.tabs.at(-1)?.id !== tab.id}
-                  setPinned={(pinned) => commands.setTabPinned(pane, tab.id, pinned)}
-                />
-              ))}
+                      : undefined,
+                  closeTab: () => closeTab(tab),
+                  moveTab: () =>
+                    commands.moveTab(pane, pane === "right" ? "bottom" : "right", tab.id),
+                  closeOtherTabs: () =>
+                    closeTabs(state.tabs.filter((candidate) => candidate.id !== tab.id)),
+                  closeTabsToEnd: () => closeTabs(state.tabs.slice(index + 1)),
+                  closeTabsToStart: () => closeTabs(state.tabs.slice(0, index)),
+                  closeAllTabs: () => closeTabs(state.tabs),
+                  hasTabsBefore: state.tabs[0]?.id !== tab.id,
+                  hasTabsAfter: state.tabs.at(-1)?.id !== tab.id,
+                  setPinned: (pinned: boolean) => commands.setTabPinned(pane, tab.id, pinned),
+                };
+                // Keyed by tab, so a rename in progress stays with its tab as others open or move.
+                return tab.kind === "terminal" ? (
+                  <WorkbenchTerminalTabItem key={tab.id} tab={tab} {...item} />
+                ) : (
+                  <WorkbenchTabItem key={tab.id} tab={tab} {...item} />
+                );
+              })}
             </TabsList>
             <span
               className="palot-workbench-tab-fade palot-workbench-tab-fade-left"
@@ -565,6 +568,39 @@ function WorkbenchSurfaceMenu({
   );
 }
 
+type WorkbenchTabItemProps = {
+  tab: WorkbenchTab;
+  pane: WorkbenchPaneID;
+  active: boolean;
+  permissionPending?: boolean;
+  browserPage?: { title?: string; url?: string };
+  closeTab(): void;
+  moveTab(): void;
+  closeOtherTabs(): void;
+  closeTabsToEnd(): void;
+  closeTabsToStart(): void;
+  closeAllTabs(): void;
+  hasTabsBefore: boolean;
+  hasTabsAfter: boolean;
+  setPinned(pinned: boolean): void;
+  /** Overrides the tab's static title, such as a terminal's live name. */
+  label?: string;
+  /** Present when the tab (a terminal) can be renamed; `save` receives `null` for an emptied field. */
+  rename?: { value: string; save(title: string | null): void };
+};
+
+function WorkbenchTerminalTabItem({
+  tab,
+  ...props
+}: WorkbenchTabItemProps & { tab: Extract<WorkbenchTab, { kind: "terminal" }> }) {
+  const terminal = useWorkbenchTerminal(tab);
+  return <WorkbenchTabItem {...props} tab={tab} label={terminal.label} rename={terminal.rename} />;
+}
+
+// The rename field sits inside the tab list, whose keyboard navigation, focus tracking and
+// context menu must not see the field's own keys, pointer presses and focus.
+const isolateFromTabList = (event: { stopPropagation(): void }) => event.stopPropagation();
+
 function WorkbenchTabItem({
   tab,
   pane,
@@ -580,34 +616,48 @@ function WorkbenchTabItem({
   hasTabsAfter,
   setPinned,
   permissionPending,
-}: {
-  tab: WorkbenchTab;
-  pane: WorkbenchPaneID;
-  active: boolean;
-  permissionPending?: boolean;
-  browserPage?: { title?: string; url?: string };
-  closeTab(): void;
-  moveTab(): void;
-  closeOtherTabs(): void;
-  closeTabsToEnd(): void;
-  closeTabsToStart(): void;
-  closeAllTabs(): void;
-  hasTabsBefore: boolean;
-  hasTabsAfter: boolean;
-  setPinned(pinned: boolean): void;
-}) {
+  label,
+  rename,
+}: WorkbenchTabItemProps) {
   const title =
     tab.kind === "browser"
       ? browserPage?.url === "about:blank"
         ? "New tab"
         : browserPage?.title || browserPage?.url || "New tab"
-      : workbenchTabTitle(tab);
+      : (label ?? workbenchTabTitle(tab));
   const tooltip = tab.kind === "browser" ? browserPage?.url || title : title;
   const tabRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  // The field ends once: Enter, Escape or blur, never a second save from its unmount blur.
+  const editingRef = useRef(false);
+  const editing = draft !== null && rename !== undefined;
 
   useEffect(() => {
     if (active) tabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [active]);
+
+  useLayoutEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
+
+  const startRename = () => {
+    if (!rename) return;
+    editingRef.current = true;
+    setDraft(rename.value);
+  };
+  const endRename = (save: boolean, returnFocus: boolean) => {
+    if (!editingRef.current) return;
+    editingRef.current = false;
+    const value = draft?.trim() ?? "";
+    // Move focus before the field unmounts, so its blur finds the edit already ended.
+    if (returnFocus) triggerRef.current?.focus({ preventScroll: true });
+    setDraft(null);
+    if (save) rename?.save(value || null);
+  };
 
   return (
     <ContextMenu>
@@ -616,7 +666,10 @@ function WorkbenchTabItem({
           <div
             ref={tabRef}
             data-active={active || undefined}
-            className="group/tab relative flex h-7 max-w-52 min-w-0 shrink-0 items-center rounded-md data-[popup-open]:bg-muted/60"
+            className={cn(
+              "group/tab relative flex h-7 max-w-52 min-w-0 shrink-0 items-center rounded-md data-[popup-open]:bg-muted/60",
+              editing && "min-w-40",
+            )}
             onAuxClick={(event) => {
               if (event.button !== 1) return;
               event.preventDefault();
@@ -626,11 +679,24 @@ function WorkbenchTabItem({
         }
       >
         <TabsTrigger
+          ref={triggerRef}
           value={tab.id}
           aria-label={
-            permissionPending ? `${title}, microphone or camera permission needed` : undefined
+            permissionPending
+              ? `${title}, microphone or camera permission needed`
+              : editing
+                ? title
+                : undefined
           }
           onFocus={() => tabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" })}
+          onDoubleClick={
+            rename
+              ? (event) => {
+                  event.preventDefault();
+                  startRename();
+                }
+              : undefined
+          }
           className={cn(
             // The list draws the active pill and the hover pill; the trigger only sets text.
             "h-full min-w-0 flex-1 justify-start gap-1.5 rounded-md py-0 pl-2 font-normal text-muted-foreground after:hidden hover:text-foreground data-active:text-foreground",
@@ -652,6 +718,7 @@ function WorkbenchTabItem({
               "min-w-0 truncate",
               !active &&
                 "group-hover/tab:mask-[linear-gradient(to_left,transparent_1.5rem,black_2.75rem)] group-focus-within/tab:mask-[linear-gradient(to_left,transparent_1.5rem,black_2.75rem)]",
+              editing && "invisible",
             )}
             title={tooltip}
           >
@@ -665,6 +732,38 @@ function WorkbenchTabItem({
             />
           ) : null}
         </TabsTrigger>
+        {editing ? (
+          <Input
+            ref={inputRef}
+            aria-label="Terminal name"
+            // Empty saves clear the user's title, so the automatic one shows again.
+            placeholder="Automatic name"
+            data-workbench-tab-rename=""
+            value={draft ?? ""}
+            maxLength={200}
+            className="absolute inset-y-0.5 right-0.5 left-6 z-20 h-auto w-auto rounded-sm border-ring bg-background px-1 py-0 text-sm"
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={() => endRename(true, false)}
+            onKeyDown={(event) => {
+              isolateFromTabList(event);
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter") {
+                event.preventDefault();
+                endRename(true, true);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                endRename(false, true);
+              }
+            }}
+            onKeyUp={isolateFromTabList}
+            onFocus={isolateFromTabList}
+            onPointerDown={isolateFromTabList}
+            onMouseDown={isolateFromTabList}
+            onClick={isolateFromTabList}
+            onDoubleClick={isolateFromTabList}
+            onContextMenu={isolateFromTabList}
+          />
+        ) : null}
         {/* The active tab keeps its close button visible; others reveal it on hover or focus. */}
         <button
           type="button"
@@ -684,6 +783,17 @@ function WorkbenchTabItem({
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
+        {rename ? (
+          <>
+            <ContextMenuGroup>
+              <ContextMenuItem onClick={startRename}>
+                <Pencil />
+                Rename terminal
+              </ContextMenuItem>
+            </ContextMenuGroup>
+            <ContextMenuSeparator />
+          </>
+        ) : null}
         <ContextMenuGroup>
           <ContextMenuItem onClick={closeTab}>Close</ContextMenuItem>
           <ContextMenuItem onClick={closeOtherTabs}>Close others</ContextMenuItem>

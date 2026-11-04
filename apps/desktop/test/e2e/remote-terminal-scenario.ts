@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Scenario } from "./scenarios";
 import type { PalotApi } from "../../src/shared/opencode-contract";
 import { useIsolatedHttpProfile } from "./isolated-http-profile.ts";
+import { closeTerminalTab } from "./workbench-terminal.ts";
 
 export const remoteTerminalScenario: Scenario = {
   description:
@@ -75,7 +76,7 @@ export const remoteTerminalScenario: Scenario = {
         .poll(() => readFile(markerPath, "utf8").catch(() => ""))
         .toBe("remote-terminal-input-ok-reattached");
       await page.screenshot({ path: join(runRoot, "remote-terminal.png"), animations: "disabled" });
-      await page.getByRole("button", { name: "Close Terminal", exact: true }).click();
+      await closeTerminalTab(page, terminalID!);
       expect((await client.experimental.persistentPty.get({ ptyID: terminalID! })).status).toBe(
         "running",
       );

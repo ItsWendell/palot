@@ -1,6 +1,6 @@
 # Privacy
 
-This policy describes the Palot 0.22.0 source. It may change as pre-release
+This policy describes the Palot 0.23.0 source. It may change as pre-release
 features evolve.
 
 ## Data sent by Palot
@@ -59,6 +59,10 @@ Palot remembers your answer for that site until you reset it from the address ba
 or the task's browser closes. Screen capture, location, notifications and USB or
 other devices stay refused.
 
+Opening an OpenCode artifact loads it from the connected OpenCode server, or from
+the provider that hosts it, like any other page in the task browser. Artifact files
+stay where OpenCode's provider stored them; Palot keeps only the tab URL.
+
 Tab IDs, URLs and the selected tab are saved locally by connection profile and
 task so pages can be restored. Saved URLs can contain sensitive query parameters;
 they are not stored in the encrypted credential vault. Cookies and site storage
@@ -86,6 +90,16 @@ reads another task, that task's title, status and recent messages enter the read
 conversation, so they reach its model provider like any other context. Scheduling, changing or
 deleting a scheduled task asks you first in tasks with Defaults approvals, unless you chose to
 always allow it; Full access tasks do not ask.
+
+## Claude Agent
+
+OpenCode's Claude Agent provider uses the Claude Code CLI on the computer that runs
+OpenCode, signed in with Claude Code's own login. Palot never runs `claude` or its
+install command; its copy buttons only put the command on your clipboard. **Check
+connection** asks OpenCode to save a Claude Agent connection, which holds no token,
+and to start Claude Code once to read its version, account type and model list. No
+message is sent and no model is called. Claude Code's own terms and network behavior
+apply when it starts.
 
 ## Guest links (beta)
 

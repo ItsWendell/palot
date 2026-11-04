@@ -15,10 +15,51 @@ import { palot } from "../../services/palot";
 import { ProviderSettings } from "./providers-settings";
 
 const links = vi.hoisted(() => ({ openModels: vi.fn(), openProviders: vi.fn() }));
+const connectParam = vi.hoisted(() => ({ value: undefined as string | undefined, clear: vi.fn() }));
 vi.mock("./settings-links", () => ({
   useModelProviderLinks: () => ({ available: true, ...links }),
   useModelsProviderParam: () => undefined,
+  useProvidersConnectParam: () => connectParam,
 }));
+// The Claude Agent setup dialog reads live settings; these tests pass the snapshot directly.
+vi.mock("../../hooks/use-settings-snapshot", () => ({
+  useSettingsSnapshot: () => ({ data: undefined, refetch: vi.fn(async () => []) }),
+}));
+
+const SIGNED_OUT = {
+  status: "needs_auth" as const,
+  message: "Claude Code is not logged in. Run `claude auth login` in a terminal.",
+  url: null,
+};
+
+function withClaudeAgent(value = snapshot()): PalotSettingsSnapshot {
+  return {
+    ...value,
+    catalog: {
+      ...value.catalog,
+      models: [...value.catalog.models, model("claude-agent", "opus")],
+      providers: [...value.catalog.providers, provider("claude-agent", "Claude Agent")],
+    },
+    integrations: [
+      ...value.integrations,
+      {
+        id: "claude-agent",
+        name: "Claude Agent",
+        methods: [{ id: "claude-login", type: "external", label: "Claude Code login", form: [] }],
+        connections: [
+          {
+            type: "credential",
+            id: "claude",
+            label: "Claude Code login (claude auth login)",
+            active: true,
+            method: "external",
+            status: SIGNED_OUT,
+          },
+        ],
+      },
+    ],
+  };
+}
 
 const project: PalotProject = {
   id: "project-1",
@@ -193,6 +234,8 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   links.openModels.mockReset();
+  connectParam.value = undefined;
+  connectParam.clear.mockReset();
 });
 
 describe("Providers settings", () => {
@@ -272,6 +315,51 @@ describe("Providers settings", () => {
     const groq = within(available()).getByRole("listitem", { name: "Groq" });
     expect(within(groq).getByRole("button", { name: "Connect" })).toBeTruthy();
     expect(groq.textContent).toContain("Or set GROQ_API_KEY where OpenCode runs.");
+  });
+
+  it("shows the sign-in problem OpenCode reports and opens Claude Agent's setup to fix it", async () => {
+    const user = userEvent.setup();
+    renderProviders(withClaudeAgent());
+    const card = screen.getByRole("article", { name: "Claude Agent connections" });
+    expect(within(card).getAllByText("Needs sign-in").length).toBeGreaterThan(0);
+    const problem = within(card).getByRole("alert");
+    expect(problem.textContent).toContain("Claude Agent needs sign-in");
+    expect(problem.textContent).toContain(SIGNED_OUT.message.replaceAll("`", ""));
+    expect(
+      within(card).getByRole("group", { name: "Claude Code login (claude auth login) connection" })
+        .textContent,
+    ).toContain("Claude Code login");
+    // Each check replaces the last connection, so there is no second credential to add.
+    expect(within(card).queryByRole("button", { name: "Add credential" })).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "Fix Claude Code setup" }));
+    const dialog = await screen.findByRole("dialog", { name: "Set up Claude Agent" });
+    expect(within(dialog).getByText("Claude Code isn't signed in")).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Check again" })).toBeTruthy();
+  });
+
+  it("links to where a provider asks people to sign in again", () => {
+    const value = snapshot();
+    value.integrations[0]!.connections[0] = {
+      ...value.integrations[0]!.connections[0]!,
+      status: {
+        status: "needs_auth",
+        message: "Your session expired.",
+        url: "https://example.com/login",
+      },
+    };
+    renderProviders(value);
+    const card = screen.getByRole("article", { name: "OpenAI connections" });
+    expect(within(card).getByRole("alert").textContent).toContain("Your session expired.");
+    expect(within(card).getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe(
+      "https://example.com/login",
+    );
+  });
+
+  it("opens the connect dialog another surface links to, once", async () => {
+    connectParam.value = "claude-agent";
+    renderProviders(withClaudeAgent());
+    expect(await screen.findByRole("dialog", { name: "Set up Claude Agent" })).toBeTruthy();
+    expect(connectParam.clear).toHaveBeenCalled();
   });
 
   it("shows search matches that are already connected instead of an empty list", async () => {

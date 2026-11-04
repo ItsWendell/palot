@@ -5,6 +5,7 @@ import type { PalotSession } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
 import { useWorkbenchCommands } from "../atoms/workbench";
 import { useSessionProcesses, type SessionProcess } from "../hooks/use-session-processes";
+import { terminalDisplayName } from "../lib/terminal-query";
 import { Button } from "./ui/button";
 import {
   Popover,
@@ -151,7 +152,8 @@ function ScopedProcessFooter({
                     row.sessionID === session.id
                       ? "This conversation"
                       : processes.owners.get(row.sessionID ?? "")?.title || "Child task";
-                  const title = row.kind === "command" ? row.command : row.title || row.command;
+                  const title =
+                    row.kind === "command" ? row.command : terminalDisplayName(row, row.command);
                   return (
                     <button
                       key={`${row.kind}:${row.id}`}

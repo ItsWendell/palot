@@ -149,7 +149,8 @@ describe("running work", () => {
     mocks.processes.mockReturnValue({
       rows: [
         { ...command, active: false, status: "exited" },
-        { ...command, kind: "terminal", id: "pty", title: "Dev server" },
+        // A renamed terminal shows its user title over the shell's automatic one.
+        { ...command, kind: "terminal", id: "pty", title: "zsh", userTitle: "Dev server" },
       ],
       commands: 0,
       terminals: 1,

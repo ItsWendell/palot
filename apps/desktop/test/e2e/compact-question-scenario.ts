@@ -3,7 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
 
-const SINGLE_PROMPT = "Which output style should we use?";
+const STYLE_GUIDE = "https://example.com/style-guide";
+const SINGLE_PROMPT = `Which output style should we use? Samples: ${STYLE_GUIDE}.`;
 const CUSTOM_ANSWER = "A short checklist with examples";
 const LONG_DESCRIPTION =
   "Keep the result brief while preserving the important context, concrete examples, and any caveats that help a reader understand the tradeoffs without opening another document.";
@@ -88,6 +89,13 @@ export const compactQuestionScenario: Scenario = {
     await expect(panel.getByRole("button", { name: "Next", exact: true })).toBeHidden();
     await expect(panel.getByRole("button", { name: "Previous", exact: true })).toBeHidden();
     await capturePresentation(page, panel, runRoot);
+    const guide = panel.getByRole("link", { name: STYLE_GUIDE, exact: true });
+    await guide.click({ button: "right" });
+    const linkMenu = page.getByRole("menu", { name: `Link actions for ${STYLE_GUIDE}` });
+    await expect(linkMenu.getByRole("menuitem", { name: "Copy link", exact: true })).toBeVisible();
+    await page.screenshot({ path: join(runRoot, "compact-question-link-menu.png") });
+    await page.keyboard.press("Escape");
+    await expect(linkMenu).toBeHidden();
 
     await panel.locator('[data-slot="questionnaire-item"]').focus();
     await page.keyboard.press("1");

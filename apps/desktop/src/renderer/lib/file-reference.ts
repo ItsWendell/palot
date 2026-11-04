@@ -478,16 +478,71 @@ export function fileUrl(absolutePath: string, line?: number): string {
   return `file://${encoded}${line ? `#L${line}` : ""}`;
 }
 
+// Home folders
+
+function isHomePath(path: string): boolean {
+  return path === "~" || path.startsWith("~/");
+}
+
+/**
+ * The home folder implied by a server path. OpenCode does not report its home, so its own
+ * app infers it the same way from a location; null when the path shows no home folder.
+ */
+export function inferHomeDirectory(path: string | undefined): string | null {
+  if (!path) return null;
+  const match = /^(\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/]+)(?=\/|$)/.exec(
+    path.replaceAll("\\", "/"),
+  );
+  return match?.[1] ?? null;
+}
+
+/**
+ * Where `~` points on the task's server: this machine's home for a same-machine server,
+ * otherwise the home its locations sit in. Undefined when neither is known.
+ */
+export function serverHomeDirectory(input: {
+  sameMachine: boolean;
+  localHome?: string | null;
+  directories: readonly (string | undefined)[];
+}): string | undefined {
+  if (input.sameMachine && input.localHome) return normalizeFilePath(input.localHome);
+  for (const directory of input.directories) {
+    const home = inferHomeDirectory(directory);
+    if (home) return home;
+  }
+  return undefined;
+}
+
+/** Replaces a leading `~` with `home`; other paths, and `~` without a home, are unchanged. */
+export function expandHomePath(path: string, home: string | undefined): string {
+  const value = path.replaceAll("\\", "/");
+  if (!home || !isHomePath(value)) return path;
+  return joinFilePath(home, value.slice(2) || ".");
+}
+
+/**
+ * The absolute server path a reference names: `~` expands against `home` and relative
+ * paths join `directory`. Null when it cannot be made absolute.
+ */
+export function fileReferenceAbsolutePath(
+  path: string,
+  directory: string | undefined,
+  home?: string,
+): string | null {
+  const value = expandHomePath(path, home).replaceAll("\\", "/");
+  if (value.startsWith("~")) return null;
+  if (isAbsoluteFilePath(value)) return normalizeFilePath(value);
+  return directory ? joinFilePath(directory, value) : null;
+}
+
 /** A `file://` href for copy/drag, or undefined when the path cannot be made absolute. */
 export function fileReferenceHref(
   reference: Pick<FileReference, "path" | "line">,
   directory: string | undefined,
+  home?: string,
 ): string | undefined {
-  const path = reference.path.replaceAll("\\", "/");
-  if (path.startsWith("~")) return undefined;
-  if (isAbsoluteFilePath(path)) return fileUrl(normalizeFilePath(path), reference.line);
-  if (!directory) return undefined;
-  return fileUrl(joinFilePath(directory, path), reference.line);
+  const absolute = fileReferenceAbsolutePath(reference.path, directory, home);
+  return absolute ? fileUrl(absolute, reference.line) : undefined;
 }
 
 // Locations

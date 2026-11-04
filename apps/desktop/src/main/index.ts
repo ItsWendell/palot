@@ -20,7 +20,11 @@ import {
   serializeAppearancePreferences,
 } from "../shared/appearance-contract";
 import { resolveBuildIdentity } from "../shared/build-identity";
-import { IPC_CHANNELS, type PalotOpenTarget } from "../shared/opencode-contract";
+import {
+  HOME_DIRECTORY_ARGUMENT,
+  IPC_CHANNELS,
+  type PalotOpenTarget,
+} from "../shared/opencode-contract";
 import { registerIpcHandlers, shutdownBrowserPane } from "./ipc-handlers";
 import { installBrowserWebviewHost } from "./browser/webview-host";
 import { installLiquidGlass, nativeGlassOptions, resolveWindowChrome } from "./liquid-glass";
@@ -213,6 +217,7 @@ async function createWindow(
       spellcheck: true,
       additionalArguments: [
         `--palot-chrome-tier=${chrome.tier}`,
+        `${HOME_DIRECTORY_ARGUMENT}${app.getPath("home")}`,
         serializeAppearancePreferences(appearance),
         ...(hasStoredAppearance ? [APPEARANCE_STORED_ARGUMENT] : []),
         ...(reducedTransparency ? [REDUCED_TRANSPARENCY_ARGUMENT] : []),

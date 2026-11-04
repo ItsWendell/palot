@@ -5,9 +5,96 @@ file records user-visible changes. Internal refactors belong in Git history
 unless they change behavior, compatibility, security, privacy, or release
 operations.
 
+## 0.23.0
+
+This remains an experimental pre-release, not a supported stable release. 0.22.0 was
+tagged but never published (its packages failed the dependency license check), so this is
+the first release with the 0.22.0 changes below as well.
+
+### Added
+
+- Right-click (or Shift+F10) any file or web link for Palot's link menu: open in the workbench or
+  Palot Browser, open in your editor, show in the file manager, or copy the path, relative path
+  or link. With text selected, the menu starts with Copy.
+- URLs in questions, MCP forms, permission prompts, failed turns and error toasts are clickable.
+- Markdown renders GitHub's raw HTML subset everywhere it appears: agent replies (also while
+  streaming), pull request descriptions, comments and reviews, guide notes and side answers.
+  Details with Markdown inside, `kbd`, `sub`/`sup`, `mark`, HTML tables and lists, aligned blocks
+  and images, and GitHub's light/dark `picture` images (following Palot's theme) show as
+  formatted content instead of literal tags. Component names, generics and other tags such as
+  `<Button>`, `Array<string>` or `<script>` stay readable as literal text.
+- `<https://…>` and `<name@example.com>` autolinks, HTML entities such as `&nbsp;`, hard line
+  breaks from two trailing spaces, and multi-line setext headings.
+
+- A line comment can be sent on its own with "Send now" or Mod+Enter in its popup, without
+  touching the composer's draft or other queued comments. If sending fails, the comment stays
+  in the popup to try again.
+- On the New task screen, Mod+Alt+O opens the "Work in" picker and Mod+Alt+B the new worktree's
+  base branch. Both are shown in the pickers' tooltips and can be changed in Keyboard shortcuts.
+- Rename terminals from their workbench tab: double-click the tab or choose Rename terminal from
+  its menu; leave the name empty to go back to the automatic title. Terminal tabs and Running
+  work show a terminal's name and update when it's renamed from the TUI or another window.
+  Needs OpenCode 2.2.4.
+- Guided Claude Agent setup in Settings → Providers: copy the Claude Code install and
+  `claude auth login` commands, then Check connection to have OpenCode confirm Claude Code is
+  installed and signed in. Palot never runs these commands itself.
+- Provider cards show Needs sign-in with OpenCode's message and a fix action when a connection
+  needs signing in again, and a reply that fails because Claude Code isn't installed, signed in
+  or up to date offers the setup and the command to run.
+- Agent artifacts (OpenCode 2.2.4+, opt in with `"experimental": { "artifacts": true }` in
+  `opencode.json`) show as compact cards in the transcript with their title, kind and last
+  update. Open shows the artifact in the task's Palot Browser, reusing its tab, and cards follow
+  later updates. OpenCode-hosted artifacts open only when OpenCode runs on this computer.
+
+### Changed
+
+- Inbox rows no longer load a task's folder on the server just to show its branch. Folders the
+  server hasn't loaded show the last branch Palot saw, with a "Last seen on" tooltip.
+- Running work and Commands & terminals only poll while their list is open; when closed, counts
+  follow shell and terminal events.
+- A returned subagent's response scrolls with the transcript's overlay scrollbar instead of the
+  system one.
+- `<details>` follows GitHub: Markdown inside renders after a blank line following `</summary>`.
+- Claude Agent is listed with the popular providers and has its own icon.
+- Pinned OpenCode dependencies and the isolated release-smoke runtime to 2.2.5. It keeps MCP
+  servers connected through very large messages, keeps reasoning across model switches, and
+  compacts on LiteLLM context-window errors instead of stopping the task.
+
+### Fixed
+
+- A shell command that exits with a non-zero code shows as failed ("Command failed", and in
+  failure counts), not as completed. OpenCode completes the tool whatever the exit code.
+- Commands from nested folders, such as `/git/commit`, can be typed in the composer: the
+  suggestion list keeps up past the folder's slash, and the full name is sent to OpenCode.
+- Palot notices an OpenCode event stream that never confirms its subscription within 20 seconds
+  and reconnects, and repeated stream failures back off instead of resyncing every few seconds.
+- Opening a task no longer loads its subagents' idle worktrees on the OpenCode server; their
+  running work is read once they're active, or when you open Running work.
+- `~/…` file links resolve to the server's home folder, so clicking, copying and opening them use
+  the full path, and ones inside the task folder open in the workbench.
+- Palot no longer reloads OpenCode locations, restarting their MCP servers, right after OpenCode
+  unloads them for being idle. Before, every unload made Palot refetch every query on the
+  connection.
+- Palot stops asking the server about deleted task folders after the first "not found".
+
+### Security
+
+- Raw HTML in Markdown goes through an allowlist renderer. Only allowlisted lowercase tags become
+  elements; all other tags, including `script`, `style` and `iframe`, show as inert text. Markup
+  is never injected, and event handlers, styles, scripts, frames and forms are never rendered.
+  Links and images use the Markdown URL policy and the remote-image setting. Deeply nested or
+  malformed HTML can no longer stall or crash the view.
+- Relative images in pull request content and fetched web pages resolve against their remote URL
+  and never read local workspace files.
+
+- Opening an artifact hosted by OpenCode adds the server credential, in Palot's main process,
+  only to that artifact's own requests in the task browser, and only for a server on this
+  computer. Other pages and other artifacts in the task never receive it.
+
 ## 0.22.0
 
-This remains an experimental pre-release, not a supported stable release.
+Tagged but not published: the release build stopped at the packaged dependency license
+check. These changes ship in 0.23.0.
 
 ### Added
 
@@ -102,7 +189,7 @@ This remains an experimental pre-release, not a supported stable release.
   4.0.6, which its packages require), and moved Palot to the client's `client.experimental`
   group, so the deprecated method names that 2.3 removes are no longer used. Request paths are
   unchanged, so older 2.x servers still work.
-- Updated Electron to 45.1.0, sql.js to 1.15.2 (SQLite 3.54), Lighthouse, Lucide, officeparser,
+- Updated Electron to 45.1.0, sql.js to 1.15.2 (SQLite 3.54), Lucide, officeparser,
   shadcn and the Bun pin (1.4.4).
 - Upgraded TanStack DB to the 1.0 release candidate (`@tanstack/db` and `@tanstack/react-db`
   1.0.0-rc.1) and dropped the unused `@tanstack/query-db-collection`. Session state behaves the

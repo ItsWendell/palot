@@ -68,6 +68,8 @@ export type KeyboardShortcutID =
   | "composer.history.next"
   | "composer.page.up"
   | "composer.page.down"
+  | "new-task.workspace"
+  | "new-task.branch"
   | "task.find"
   | "task.turn.previous"
   | "task.turn.next"
@@ -296,6 +298,20 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     keys: ["PageDown"],
     note: COMPOSER_PAGING,
     locked: COMPOSER_TYPING,
+  },
+  {
+    id: "new-task.workspace",
+    group: "composer",
+    label: "Choose where a new task works",
+    keys: ["Mod", "Alt", "O"],
+    note: "On the New task screen",
+  },
+  {
+    id: "new-task.branch",
+    group: "composer",
+    label: "Choose a new worktree's base branch",
+    keys: ["Mod", "Alt", "B"],
+    note: "On the New task screen, when it creates a worktree",
   },
   { id: "task.find", group: "task-view", label: "Find in task", keys: ["Mod", "F"] },
   {

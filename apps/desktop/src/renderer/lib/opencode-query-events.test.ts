@@ -1,9 +1,13 @@
 import type { ConfigUpdated, VcsBranchUpdated, WorktreeUpdated } from "@opencode/client";
-import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { describe, expect, it, vi } from "vitest";
 import type { PalotEvent, PalotEventDeliveryMetadata } from "../../shared";
-import { openCodeKeys } from "./opencode-query";
-import { openCodeInvalidationKeys, sessionStatsShouldRevalidate } from "./opencode-query-events";
+import { inboxBranchKeys, openCodeKeys } from "./opencode-query";
+import {
+  markShutdownLocationStale,
+  openCodeInvalidationKeys,
+  sessionStatsShouldRevalidate,
+} from "./opencode-query-events";
 
 describe("OpenCode query event routing", () => {
   it("invalidates only the session whose metadata changed", async () => {
@@ -43,19 +47,45 @@ describe("OpenCode query event routing", () => {
     },
   );
 
-  it("invalidates the evicted connection after location shutdown without touching another server", async () => {
+  it("only marks an evicted location's own reads stale, without re-reading anything", async () => {
     const client = new QueryClient();
-    const target = openCodeKeys.settings("connection");
-    const other = openCodeKeys.settings("other");
-    client.setQueryData(target, {});
-    client.setQueryData(other, {});
-    for (const queryKey of openCodeInvalidationKeys("connection", {
-      type: "location.shutdown",
-      data: {},
-    } as PalotEvent))
-      await client.invalidateQueries({ queryKey });
-    expect(client.getQueryState(target)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(other)?.isInvalidated).toBe(false);
+    const repo = { directory: "/repo", workspaceID: "wt" };
+    const queryFn = vi.fn(async () => ({}));
+    const keys = {
+      catalog: openCodeKeys.composerCatalog("connection", repo),
+      vcs: openCodeKeys.vcsLocation("connection", repo),
+      shells: openCodeKeys.runningShells("connection", repo),
+      usage: openCodeKeys.usageLimits("connection", "/repo"),
+      finished: [...openCodeKeys.all("connection"), "session-process-finished", repo, "shell"],
+      other: openCodeKeys.composerCatalog("connection", { directory: "/other" }),
+      settings: openCodeKeys.settings("connection"),
+      session: openCodeKeys.session("connection", "session"),
+      otherServer: openCodeKeys.composerCatalog("other", repo),
+    };
+    const observers = Object.values(keys).map((queryKey) => {
+      client.setQueryData(queryKey, {});
+      const observer = new QueryObserver(client, { queryKey, queryFn, staleTime: Infinity });
+      return observer.subscribe(() => undefined);
+    });
+    client.setQueryData(openCodeKeys.loadedLocations("connection"), ["/repo", "/other"]);
+    client.setQueryData(inboxBranchKeys.location("connection", repo), {});
+    expect(
+      openCodeInvalidationKeys("connection", {
+        type: "location.shutdown",
+        location: repo,
+        data: {},
+      } as PalotEvent),
+    ).toEqual([]);
+    markShutdownLocationStale(client, "connection", "/repo");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(queryFn).not.toHaveBeenCalled();
+    for (const key of [keys.catalog, keys.vcs, keys.shells, keys.usage, keys.finished])
+      expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    for (const key of [keys.other, keys.settings, keys.session, keys.otherServer])
+      expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+    expect(client.getQueryData(openCodeKeys.loadedLocations("connection"))).toEqual(["/other"]);
+    expect(client.getQueryData(inboxBranchKeys.location("connection", repo))).toBeUndefined();
+    observers.forEach((unsubscribe) => unsubscribe());
     client.clear();
   });
 
@@ -249,6 +279,36 @@ describe("OpenCode query event routing", () => {
     ).toEqual([openCodeKeys.settings("connection-search")]);
   });
 
+  it("refreshes artifact lists in the location whose providers changed", async () => {
+    const client = new QueryClient();
+    const repo = openCodeKeys.artifactsLocation("connection", "/repo");
+    const other = openCodeKeys.artifactsLocation("connection", "/other");
+    const remote = openCodeKeys.artifactsLocation("connection-b", "/repo");
+    for (const key of [repo, other, remote]) client.setQueryData(key, []);
+    const event = {
+      id: "artifact-providers",
+      created: 1,
+      createdAt: 1,
+      receiveSequence: 1,
+      type: "artifact.updated",
+      location: { directory: "/repo" },
+      data: {},
+    } satisfies PalotEvent;
+    for (const queryKey of openCodeInvalidationKeys("connection", event))
+      await client.invalidateQueries({ queryKey });
+    expect(client.getQueryState(repo)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(other)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(remote)?.isInvalidated).toBe(false);
+    for (const queryKey of openCodeInvalidationKeys("connection", {
+      ...event,
+      location: undefined,
+    }))
+      await client.invalidateQueries({ queryKey });
+    expect(client.getQueryState(other)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(remote)?.isInvalidated).toBe(false);
+    client.clear();
+  });
+
   it("refreshes running shells for global shell lifecycle events", () => {
     const event = {
       id: "shell",
@@ -260,8 +320,9 @@ describe("OpenCode query event routing", () => {
       data: { id: "shell-1", status: "exited" },
     } as PalotEvent;
 
+    // Any workspace under the directory.
     expect(openCodeInvalidationKeys("connection-e", event)).toEqual([
-      openCodeKeys.runningShells("connection-e", event.location!),
+      [...openCodeKeys.runningShellsRoot("connection-e"), "/repo"],
     ]);
   });
 

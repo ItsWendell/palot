@@ -683,7 +683,11 @@ describe("MarkdownContent", () => {
       versionMismatch: null,
     };
 
-    function renderInTask(value: string, openFile = vi.fn()) {
+    function renderInTask(
+      value: string,
+      openFile = vi.fn(),
+      props: { baseUrl?: string; passiveMedia?: boolean } = {},
+    ) {
       const store = createStore();
       store.set(runtimeAtom, runtime);
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -695,7 +699,7 @@ describe("MarkdownContent", () => {
               workspaceDirectory="/repo"
               workspaceLocation={{ directory: "/repo" }}
             >
-              <MarkdownContent value={value} />
+              <MarkdownContent value={value} {...props} />
             </MarkdownWorkspaceProvider>
           </Provider>
         </QueryClientProvider>,
@@ -764,6 +768,27 @@ describe("MarkdownContent", () => {
       fireEvent.click(screen.getByRole("button", { name: "Open image /tmp/elsewhere/shot.png" }));
 
       expect(openFile).toHaveBeenCalledWith({ path: "/tmp/elsewhere/shot.png" }, expect.anything());
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it("never reads workspace files for remote content with a base URL", async () => {
+      const read = vi.spyOn(palot, "readWorkspaceFile").mockResolvedValue(new Uint8Array([1]));
+      const baseUrl = "https://github.com/acme/web/pull/7";
+      const value = '![Shot](shot.png)\n\n<img src="docs/raw.png" alt="Raw">';
+      const gated = renderInTask(value, vi.fn(), { baseUrl });
+      expect(gated.view.container.textContent).toContain("[Image: Shot]");
+      expect(gated.view.container.textContent).toContain("[Image: Raw]");
+      cleanup();
+
+      // With remote images allowed, relative sources resolve against the base URL instead.
+      const { view } = renderInTask(value, vi.fn(), { baseUrl, passiveMedia: true });
+      expect(
+        Array.from(view.container.querySelectorAll("img"), (image) => image.getAttribute("src")),
+      ).toEqual([
+        "https://github.com/acme/web/pull/shot.png",
+        "https://github.com/acme/web/pull/docs/raw.png",
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(read).not.toHaveBeenCalled();
     });
 

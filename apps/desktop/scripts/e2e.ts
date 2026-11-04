@@ -273,15 +273,19 @@ try {
     XDG_STATE_HOME: xdgStateHome,
     XDG_CACHE_HOME: path.join(home, ".cache"),
     OPENCODE_TEST_HOME: home,
-    OPENCODE_CONFIG_CONTENT: JSON.stringify(
-      testConfiguration(llm.url, "modelRuntime" in scenario ? scenario.modelRuntime : undefined),
-    ),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      ...testConfiguration(llm.url, "modelRuntime" in scenario ? scenario.modelRuntime : undefined),
+      ...("openCodeConfig" in scenario ? scenario.openCodeConfig : undefined),
+    }),
     OPENCODE_AUTH_CONTENT: "{}",
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
     OPENCODE_PURE: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_DISABLE_AUTOCOMPACT: "1",
     OPENCODE_DISABLE_MODELS_FETCH: "1",
+    ...("serviceEnvironment" in scenario && scenario.serviceEnvironment
+      ? scenario.serviceEnvironment(home)
+      : {}),
   });
   const serviceFile = path.join(xdgStateHome, "opencode/service.json");
   lifecycle.phase("service");

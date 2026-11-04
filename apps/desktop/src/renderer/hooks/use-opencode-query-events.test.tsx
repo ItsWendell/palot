@@ -515,4 +515,87 @@ describe("useOpenCodeQueryEvents", () => {
     expect(statsInvalidations()).toHaveLength(1);
     expect(statsInvalidations()[0]?.[0]).toMatchObject({ refetchType: "active" });
   });
+
+  it("applies terminal renames from other clients in place and re-reads lists on added terminals", async () => {
+    const queryClient = createRendererQueryClient();
+    const info = (title: string, userTitle: string | null) => ({
+      id: "pty_1",
+      sessionID: "session-1",
+      title,
+      userTitle,
+      status: "running" as const,
+      cwd: "/repo",
+      command: "zsh",
+      args: [],
+      pid: 1,
+      foregroundProcess: null,
+      size: { cols: 80, rows: 24 },
+      output: { head: 0, tail: 0 },
+    });
+    const list = vi.fn(async () => [info("zsh", null)]);
+    const unsubscribe = new QueryObserver(queryClient, {
+      queryKey: openCodeKeys.sessionTerminals("connection", "session-1"),
+      queryFn: list,
+      initialData: [info("zsh", null)],
+      staleTime: Infinity,
+    }).subscribe(() => {});
+    const { unmount } = renderHook(() => useOpenCodeQueryEvents(), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      ),
+    });
+    const terminals = () =>
+      queryClient.getQueryData<{ title: string; userTitle: string | null }[]>(
+        openCodeKeys.sessionTerminals("connection", "session-1"),
+      );
+    const send = (sequence: number, event: Record<string, unknown>) =>
+      act(() => {
+        for (const listener of mocks.listeners)
+          listener(
+            batch(sequence, [
+              {
+                id: `event-${sequence}`,
+                created: sequence,
+                createdAt: sequence,
+                receiveSequence: sequence,
+                ...event,
+              },
+            ] as PalotEvent[]),
+          );
+      });
+
+    send(1, {
+      type: "persistent-pty.updated",
+      data: { sessionID: "session-1", terminal: info("build", "build") },
+    });
+    expect(terminals()).toMatchObject([{ title: "build", userTitle: "build" }]);
+    expect(list).not.toHaveBeenCalled();
+    // Another connection's rename of a terminal with the same ID changes nothing here.
+    act(() => {
+      for (const listener of mocks.listeners)
+        listener({
+          ...batch(1, [
+            {
+              id: "elsewhere",
+              type: "persistent-pty.updated",
+              created: 2,
+              createdAt: 2,
+              receiveSequence: 2,
+              data: { sessionID: "session-1", terminal: info("other", "other") },
+            } as PalotEvent,
+          ]),
+          connectionID: "other",
+        });
+    });
+    expect(terminals()).toMatchObject([{ title: "build" }]);
+
+    send(2, {
+      type: "persistent-pty.added",
+      data: { sessionID: "session-1", terminal: info("zsh", null) },
+    });
+    await waitFor(() => expect(list).toHaveBeenCalledOnce());
+    unmount();
+    unsubscribe();
+    queryClient.clear();
+  });
 });

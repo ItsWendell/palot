@@ -27,6 +27,12 @@ import {
 } from "./browser/permissions";
 import { createBrowserNetwork, type BrowserNetwork } from "./browser/network";
 import { destinationOrigin, fileURLWithin, normalizeURL } from "./browser/policy";
+import {
+  artifactAccessOrigin,
+  createArtifactAccess,
+  viewedArtifact,
+  type ArtifactAccess,
+} from "./browser/artifact-access";
 import { browserRestoreKey, createBrowserRestoreStore } from "./browser/restore";
 import { openCodeRuntime } from "./opencode-runtime";
 import { requestBrowserWebviewHost } from "./browser/webview-host";
@@ -58,6 +64,8 @@ type Entry = {
   partition: string;
   network?: BrowserNetwork;
   fileRoots: string[];
+  /** OpenCode-hosted artifacts the task browser may load; only for a server on this computer. */
+  artifacts?: ArtifactAccess;
   lastState?: string;
   storageKey: string;
   clearing: boolean;
@@ -718,6 +726,7 @@ export function createBrowserPane() {
       if (clearingKeys.has(storageKey)) throw new Error("Browser data is being cleared");
       const saved = restore().load(storageKey);
       const partition = `palot-browser-${id}`;
+      const artifactOrigin = artifactAccessOrigin(connection.endpoint.url, localFiles);
       const entry: Entry = {
         id,
         win,
@@ -754,6 +763,12 @@ export function createBrowserPane() {
         // Like OpenCode desktop: files load only from the session's workspace on this machine.
         // Set before any tab restores so a saved file:// page does not race registration.
         fileRoots: localFiles ? [details.location.directory] : [],
+        artifacts: artifactOrigin
+          ? createArtifactAccess({
+              origin: artifactOrigin,
+              authorization: new Headers(connection.headers).get("authorization") ?? undefined,
+            })
+          : undefined,
         cleanup: () => {},
       };
       entry.permissions = installBrowserPermissions(session.fromPartition(partition), {
@@ -778,6 +793,26 @@ export function createBrowserPane() {
         .fromPartition(partition)
         .webRequest.onBeforeRequest({ urls: ["file://*/*"] }, (request, callback) =>
           callback({ cancel: !fileURLWithin(request.url, entry.fileRoots) }),
+        );
+      const artifacts = entry.artifacts;
+      if (artifacts)
+        session.fromPartition(partition).webRequest.onBeforeSendHeaders(
+          {
+            urls: [
+              "http://*/api/experimental/artifacts/*",
+              "https://*/api/experimental/artifacts/*",
+            ],
+          },
+          (request, callback) => {
+            const authorization = artifacts.authorization(request);
+            if (!authorization) return callback({ requestHeaders: request.requestHeaders });
+            const requestHeaders = Object.fromEntries(
+              Object.entries(request.requestHeaders).filter(
+                ([key]) => key.toLowerCase() !== "authorization",
+              ),
+            );
+            callback({ requestHeaders: { ...requestHeaders, Authorization: authorization } });
+          },
         );
       const stop = () => close(entry);
       const navigate = (
@@ -1022,6 +1057,45 @@ export function createBrowserPane() {
         pane,
       );
       if (command.type === "tabs.open") return (result.value as Browser.Tab).id;
+    },
+    /** Shows an OpenCode-hosted artifact, reusing the tab that already shows it. */
+    async openArtifact(
+      win: BrowserWindow,
+      id: string,
+      artifactID: string,
+      pane?: "right" | "bottom",
+    ): Promise<string> {
+      const entry = owned(win, id);
+      if (!entry.artifacts)
+        throw new Error(
+          "Palot Browser opens artifacts hosted by OpenCode only when OpenCode runs on this computer.",
+        );
+      const url = entry.artifacts.grant(artifactID);
+      const signal = new AbortController().signal;
+      const existing = inventory(entry).tabs.find(
+        (tab) => viewedArtifact(tab.url, entry.artifacts!.origin) === artifactID,
+      );
+      if (existing) {
+        await execute(
+          entry,
+          { action: { type: "tabs.focus", tabID: existing.id }, files: [] },
+          signal,
+        );
+        // Navigating to the entry reloads it, so an updated artifact shows its new files.
+        await execute(
+          entry,
+          { action: { type: "navigate", tabID: existing.id, url }, files: [] },
+          signal,
+        );
+        return existing.id;
+      }
+      const result = await execute(
+        entry,
+        { action: { type: "tabs.open", url, focus: true }, files: [] },
+        signal,
+        pane,
+      );
+      return (result.value as Browser.Tab).id;
     },
     pageControl(
       win: BrowserWindow,

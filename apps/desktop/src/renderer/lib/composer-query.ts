@@ -8,7 +8,8 @@ export interface ComposerQueryOptions {
 }
 
 const openingBoundary = /[\s([{"'`<]/;
-const commandCharacter = /[A-Za-z0-9_-]/;
+// OpenCode names commands from nested folders with their path, such as `git/commit`.
+const commandCharacter = /[A-Za-z0-9_/-]/;
 const skillCharacter = /[A-Za-z0-9._-]/;
 const fileCharacter = /[A-Za-z0-9._/\\-]/;
 

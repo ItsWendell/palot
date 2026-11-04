@@ -55,7 +55,7 @@ import {
 import { useWorkbenchCommands, useWorkbenchScope } from "../atoms/workbench";
 import { askBtw } from "../atoms/btw";
 import { draftAfterBtw, parseBtwQuestion } from "../lib/btw";
-import { composerStateAtomFamily } from "../atoms/composer-state";
+import { composerDirectSendAtomFamily, composerStateAtomFamily } from "../atoms/composer-state";
 import { composerScope } from "../lib/composer-scope";
 import {
   messagesForProfileAtom,
@@ -1655,7 +1655,35 @@ function ComposerView({
       }
       return;
     }
-    const submission = projectComposerSubmission(draft);
+    await submitPrompt({
+      submission: projectComposerSubmission(draft),
+      draft,
+      files,
+      comments,
+      browserComments,
+      deliveryOverride,
+      compaction,
+    });
+  }
+
+  /**
+   * Admits prompt contents through the normal send path. `direct` sends contents that are not in
+   * the composer (a review comment sent from its popup) and leaves the draft and attachments alone.
+   */
+  async function submitPrompt(input: {
+    submission: ReturnType<typeof projectComposerSubmission>;
+    draft: typeof draft;
+    files: typeof files;
+    comments: typeof comments;
+    browserComments: typeof browserComments;
+    deliveryOverride?: ComposerDelivery;
+    compaction: "suggested" | "skip";
+    direct?: boolean;
+  }): Promise<boolean> {
+    const { submission, draft, files, comments, browserComments, deliveryOverride, compaction } =
+      input;
+    const direct = input.direct === true;
+    let sent = false;
     const value = submission.text;
     const currentState = store.get(stateAtom);
     if (
@@ -1671,10 +1699,10 @@ function ComposerView({
       composerSelection.blocked ||
       permissionSelection.isBusy()
     )
-      return;
+      return false;
     if (submission.kind === "command" && (comments.length > 0 || browserComments.length > 0)) {
       setAttachmentErrors(["Remove comments before running a slash command."]);
-      return;
+      return false;
     }
     if (
       submission.kind === "command" &&
@@ -1682,9 +1710,9 @@ function ComposerView({
       BUILTIN_COMMANDS.some((command) => command.name === submission.command.toLowerCase())
     ) {
       setAttachmentErrors(["Remove picked attachments before running a slash command."]);
-      return;
+      return false;
     }
-    setAttachmentErrors([]);
+    if (!direct) setAttachmentErrors([]);
 
     if (
       submission.kind === "command" &&
@@ -1694,13 +1722,13 @@ function ComposerView({
         "Replace the current goal? The task keeps its history, and the new objective starts from round 1.",
       )
     )
-      return;
+      return false;
 
     if (
       submission.kind === "command" &&
       (await runBuiltinCommand(submission.command.toLowerCase(), submission.arguments, "draft"))
     )
-      return;
+      return false;
 
     // OpenCode runs a steered compaction before prompts sent after it, so the prompt stays verbatim.
     if (compaction === "suggested" && compactSuggestion !== null) {
@@ -1710,7 +1738,7 @@ function ComposerView({
       } catch (error) {
         setSending(false);
         showErrorToast("Could not compact before sending", error);
-        return;
+        return false;
       }
     }
 
@@ -1781,6 +1809,9 @@ function ComposerView({
       effects: {
         setSending,
         clearLocal: () => {
+          sent = true;
+          // A comment sent on its own was never in the composer; keep the draft as it is.
+          if (direct) return;
           clearSubmittedContents();
           setHistoryState(null);
           saveRecentPrompt(
@@ -1884,13 +1915,42 @@ function ComposerView({
         reportCreationError: (error) => onCreateSessionError?.(error),
         reportDispatchError: (error) => {
           setLocationFailure({ scope: draftScope, error });
+          // The comment editor keeps a direct send's comment and reports the failure itself.
+          if (direct) return;
           setAttachmentErrors([
             error instanceof Error ? error.message : "Palot could not send the attachment.",
           ]);
         },
       },
     });
+    return sent;
   }
+
+  const sendCommentNow = useEffectEvent((comment: ReviewComment) =>
+    submitPrompt({
+      submission: {
+        kind: "prompt",
+        text: "",
+        files: [],
+        skills: [],
+        agents: [],
+        references: [],
+      },
+      draft: emptyComposerDraft(),
+      files: [],
+      comments: [comment],
+      browserComments: [],
+      compaction: "skip",
+      direct: true,
+    }),
+  );
+  const setDirectSender = useSetAtom(composerDirectSendAtomFamily(draftScope));
+  useEffect(() => {
+    // New-task composers have no task to send to yet.
+    if (onCreateSession) return;
+    setDirectSender(() => (comment: ReviewComment) => sendCommentNow(comment));
+    return () => setDirectSender(null);
+  }, [onCreateSession, setDirectSender]);
 
   function selectDiscoveryItem(item: ComposerDiscoveryItem) {
     const element = composerRef.current;

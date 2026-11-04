@@ -3,7 +3,7 @@
 import { useAtom, useAtomValue, useStore } from "jotai";
 import { useQuery } from "@tanstack/react-query";
 import { FolderGit2, GitBranch } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useState } from "react";
 import type { PalotProject, PalotSession } from "../../shared";
 import {
   defaultWorktreeBaseAtom,
@@ -35,6 +35,7 @@ import { Composer, type NewSessionComposerOptions } from "./composer";
 import { DestinationPicker } from "./destination-picker";
 import { PalotBeacon } from "./palot-beacon";
 import { ComposerPicker, type ComposerPickerSection } from "./ui/composer-picker";
+import { matchesShortcut, shortcutKeys } from "../lib/keyboard-shortcuts";
 import { Input } from "./ui/input";
 import { worktreeBranchPrefixAtom } from "../atoms/worktree-preferences";
 import { sourceControl } from "../hooks/use-source-control";
@@ -77,10 +78,14 @@ const WORKSPACE_SECTIONS: ComposerPickerSection<WorkspaceSelection["type"]>[] = 
 function WorkspacePicker({
   project,
   selection,
+  open,
+  onOpenChange,
   onSelect,
 }: {
   project: PalotProject;
   selection: WorkspaceSelection;
+  open: boolean;
+  onOpenChange(open: boolean): void;
   onSelect(selection: WorkspaceSelection): void;
 }) {
   const label = selection.type === "create" ? "New worktree" : "Current checkout";
@@ -91,7 +96,10 @@ function WorkspacePicker({
       ariaLabel={`Work in: ${label}`}
       icon={<FolderGit2 className="shrink-0 text-muted-foreground" aria-hidden="true" />}
       triggerClassName="max-w-48"
-      triggerProps={{ title: label }}
+      tooltip="Choose where this task works"
+      shortcuts={["new-task.workspace"]}
+      open={open}
+      onOpenChange={onOpenChange}
       side="bottom"
       title="Work in"
       description="Choose where OpenCode creates this task."
@@ -114,12 +122,16 @@ function BranchPicker({
   branches,
   value,
   search,
+  open,
+  onOpenChange,
   onSearchChange,
   onSelect,
 }: {
   branches: string[];
   value: string;
   search: string;
+  open: boolean;
+  onOpenChange(open: boolean): void;
   onSearchChange(value: string): void;
   onSelect(branch: string): void;
 }) {
@@ -139,6 +151,10 @@ function BranchPicker({
       ariaLabel={`Source branch: ${value}`}
       icon={<GitBranch className="shrink-0 text-muted-foreground" aria-hidden="true" />}
       triggerClassName="max-w-52"
+      tooltip="Choose the base branch"
+      shortcuts={["new-task.branch"]}
+      open={open}
+      onOpenChange={onOpenChange}
       side="bottom"
       title="Source branch"
       description="Choose the ref for the new detached worktree."
@@ -259,6 +275,27 @@ export function NewTask({
   const branchOptions = selectedSourceBranch
     ? [selectedSourceBranch, ...branches.filter((branch) => branch !== selectedSourceBranch)]
     : branches;
+  const [openPicker, setOpenPicker] = useState<"workspace" | "branch" | null>(null);
+  const canChooseWorkspace = Boolean(selectedProject);
+  // Like the picker itself, the base branch applies only to a new worktree.
+  const canChooseBranch =
+    canChooseWorkspace && workspaceSelection.type === "create" && branchOptions.length > 0;
+  const openPickerShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    const picker = matchesShortcut(event, shortcutKeys("new-task.workspace"))
+      ? "workspace"
+      : matchesShortcut(event, shortcutKeys("new-task.branch"))
+        ? "branch"
+        : null;
+    if (!picker || (picker === "workspace" ? !canChooseWorkspace : !canChooseBranch)) return;
+    event.preventDefault();
+    setOpenPicker((current) => (current === picker ? null : picker));
+  });
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => openPickerShortcut(event);
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, []);
 
   useEffect(() => {
     if (
@@ -532,6 +569,8 @@ export function NewTask({
                     <WorkspacePicker
                       project={selectedProject}
                       selection={workspaceSelection}
+                      open={openPicker === "workspace"}
+                      onOpenChange={(open) => setOpenPicker(open ? "workspace" : null)}
                       onSelect={(selection) => {
                         const mode = selection.type === "current" ? "current" : "worktree";
                         setWorkspaceOverride({
@@ -559,6 +598,8 @@ export function NewTask({
                         branches={branchOptions}
                         value={selectedSourceBranch ?? branchOptions[0]!}
                         search={branchSearch}
+                        open={openPicker === "branch"}
+                        onOpenChange={(open) => setOpenPicker(open ? "branch" : null)}
                         onSearchChange={setBranchSearch}
                         onSelect={(branch) => {
                           setWorkspaceOverride({

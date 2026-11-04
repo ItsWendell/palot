@@ -68,6 +68,15 @@ import { retainedTranscriptLayouts } from "../lib/transcript-layout-cache";
 import { useSessionTranscript } from "../hooks/use-session-transcript";
 import { useBrowserSession } from "../hooks/use-browser-session";
 import { openFileInBrowser, workspaceFileTarget } from "../lib/browser-files";
+import { fileUrl, serverHomeDirectory } from "../lib/file-reference";
+import { fileUriPath } from "../lib/composer-restoration";
+import {
+  FileLinkMenu,
+  LinkActionsProvider,
+  LinkedText,
+  type LinkActions,
+  type WebLinkDestination,
+} from "./link-actions";
 import { useSessionTranscriptProjection } from "../hooks/use-session-transcript-projection";
 import { useMcpElicitations } from "../hooks/use-mcp-elicitations";
 import { useSessionRequests, useSessionFamilyRequestViews } from "../hooks/use-session-requests";
@@ -88,6 +97,7 @@ import { BoundedScroll } from "./transcript/bounded-scroll";
 import { EditFromHereProvider, EditFromHereButton } from "./transcript/edit-from-here";
 import { firstUnseenMessage } from "../lib/transcript-unread";
 import { NewMessagesDivider, UnreadContext } from "./transcript/unread-divider";
+import { TranscriptArtifactContext } from "./transcript/artifact-context";
 import { createMarkdownSessionOpener } from "../lib/markdown-session-links";
 import { writeClipboardText } from "../lib/clipboard";
 import { likelyCacheBusts, type LikelyCacheBust } from "../lib/cache-bust";
@@ -98,6 +108,7 @@ import { canFetchOpenCode } from "../lib/opencode-runtime-query";
 import { reviewOfferUserMessageID } from "../lib/turn-review-offer";
 import { TurnReviewOffer } from "./turn-review-offer";
 import { UsageLimitActions } from "./usage-limit-actions";
+import { ClaudeCodeFailureActions } from "./claude-code-failure-actions";
 import {
   ResponseSelectionAsk,
   responseAnchorSelector,
@@ -105,6 +116,7 @@ import {
   responseSelectionSource,
 } from "./response-selection-ask";
 import { projectToolExecution } from "../lib/tool-executions";
+import { projectArtifactCalls } from "../lib/artifact-calls";
 import { recordStreamingCommit } from "../lib/streaming-latency";
 import {
   composerTranscriptPageDirection,
@@ -175,6 +187,8 @@ import {
   isLocalMarkdownWebLink,
   MarkdownContent,
   MarkdownWorkspaceProvider,
+  useWorkspaceDirectory,
+  useWorkspaceFileOpener,
 } from "./markdown-content";
 import { NewTask } from "./new-task";
 import { OpenInSelector } from "./open-in-selector";
@@ -1167,6 +1181,15 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [workbench],
   );
   const localPathActions = runtime?.capabilities?.localPathActions === true;
+  const homeDirectory = useMemo(
+    () =>
+      serverHomeDirectory({
+        sameMachine: localPathActions,
+        localHome: window.palot?.homeDirectory,
+        directories: [session.location.directory],
+      }),
+    [localPathActions, session.location.directory],
+  );
   const browserBindingID = browser?.bindingID;
   const openHtmlInBrowser = useCallback(
     async (absolutePath: string) => {
@@ -1186,13 +1209,14 @@ const SessionThreadContents = memo(function SessionThreadContents({
     location: session.location,
     connectionID: runtime?.connectionID,
     localPathActions,
+    homeDirectory,
     getMessages: getFileReferenceMessages,
     openTab: openFileTab,
     openHtml: openHtmlInBrowser,
   });
   const openWorkspaceFile = fileReferences.open;
   const openWebLink = useCallback(
-    (href: string) => {
+    (href: string, requested?: WebLinkDestination) => {
       let url: URL;
       try {
         url = new URL(href, "https://palot.invalid");
@@ -1205,7 +1229,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
       }
 
       const local = isLocalMarkdownWebLink(url);
-      const destination = local ? localLinks : webLinks;
+      const destination = requested ?? (local ? localLinks : webLinks);
       if (destination === "external") {
         if (local && runtime?.topology !== "same-machine") {
           showErrorToast(
@@ -1282,20 +1306,61 @@ const SessionThreadContents = memo(function SessionThreadContents({
       ),
     [compactionWindowsKey],
   );
+  const artifactScope = useMemo(
+    () => ({
+      connectionID: transcript.connectionID,
+      sessionID: session.id,
+      location: session.location,
+    }),
+    [session.id, session.location, transcript.connectionID],
+  );
   const compactionActions = useMemo<CompactionTranscriptActions>(
     () => ({ retryableCompactionID, retry: retryCompaction, windows: compactionWindows }),
     [compactionWindows, retryCompaction, retryableCompactionID],
   );
 
+  const openLinkFileInBrowser = useMemo(
+    () =>
+      browserEnabled && localPathActions && runtime?.connected && browserBindingID
+        ? (absolutePath: string) => openFileInBrowser(browserBindingID, absolutePath)
+        : undefined,
+    [browserBindingID, browserEnabled, localPathActions, runtime?.connected],
+  );
+  const linkActions = useMemo<LinkActions>(
+    () => ({
+      connectionID: runtime?.connectionID,
+      sessionID: session.id,
+      taskDirectory: session.location.directory,
+      homeDirectory,
+      localPathActions,
+      openFileInBrowser: openLinkFileInBrowser,
+      openWebLink,
+      browserAvailable: browserEnabled && Boolean(browserBindingID),
+    }),
+    [
+      browserBindingID,
+      browserEnabled,
+      homeDirectory,
+      localPathActions,
+      openLinkFileInBrowser,
+      openWebLink,
+      runtime?.connectionID,
+      session.id,
+      session.location.directory,
+    ],
+  );
+  const openPreferredWebLink = useCallback((href: string) => openWebLink(href), [openWebLink]);
+
   const contents = createElement(
     MarkdownWorkspaceProvider,
     {
       onOpenFile: openWorkspaceFile,
-      onOpenWebLink: openWebLink,
+      onOpenWebLink: openPreferredWebLink,
       onOpenSession: openReferencedSession,
       workspaceDirectory: session.location.directory,
       workspaceLocation: session.location,
       allowHomePaths: localPathActions,
+      homeDirectory,
       runCode,
       previewHTML,
     },
@@ -1694,7 +1759,11 @@ const SessionThreadContents = memo(function SessionThreadContents({
   );
   return (
     <EditFromHereProvider session={session} running={isWorking || Boolean(activity?.active)}>
-      <UnreadContext.Provider value={unreadContext}>{contents}</UnreadContext.Provider>
+      <UnreadContext.Provider value={unreadContext}>
+        <TranscriptArtifactContext.Provider value={artifactScope}>
+          <LinkActionsProvider value={linkActions}>{contents}</LinkActionsProvider>
+        </TranscriptArtifactContext.Provider>
+      </UnreadContext.Provider>
     </EditFromHereProvider>
   );
 });
@@ -2784,10 +2853,30 @@ function TurnActivitySummary({ turn }: { turn: TranscriptTurn }) {
   );
 }
 
-function subagentAnchors(group: TurnActivityGroup): TurnActivityGroup[] {
-  if (group.presentation !== "grouped") return [];
-  return group.entries.flatMap((entry) => {
-    if (!isTool(entry.part) || projectToolExecution(entry.part, entry.index).kind !== "subagent") {
+function activityAnchors(group: TurnActivityGroup): TurnActivityGroup[] {
+  return group.entries.flatMap((entry): TurnActivityGroup[] => {
+    if (!isTool(entry.part)) return [];
+    // A published artifact is a deliverable: its card stays in view when the activity folds.
+    if (
+      projectArtifactCalls(entry.part, entry.index)?.calls.some(
+        (call) => call.operation === "create" || call.operation === "update",
+      )
+    ) {
+      return [
+        {
+          id: `artifact:${entryID(entry)}`,
+          kind: "tools",
+          title: "Artifact",
+          status: group.status,
+          entries: [entry],
+          presentation: "individual",
+        },
+      ];
+    }
+    if (
+      group.presentation !== "grouped" ||
+      projectToolExecution(entry.part, entry.index).kind !== "subagent"
+    ) {
       return [];
     }
     return [
@@ -2857,7 +2946,7 @@ export function TurnActivity({
 
   const pinnedActivity = turn.activity.flatMap((group) => {
     if (group.pinned || group.kind === "subagent" || group.kind === "subagent-tool") return [group];
-    return subagentAnchors(group);
+    return activityAnchors(group);
   });
 
   if (pinnedActivity.length > 0) {
@@ -3076,7 +3165,7 @@ export function ActivityGroup({
   const forcedOpen = group.forceOpen === true;
   const open = forcedOpen ? true : (persistedOpen ?? defaultOpen);
   const shimmer = live || group.kind === "compaction";
-  const visibleAnchors = subagentAnchors(group);
+  const visibleAnchors = activityAnchors(group);
 
   useEffect(() => {
     if (revealGeneration <= appliedRevealGeneration.current) return;
@@ -3500,10 +3589,11 @@ function StandardTimelineBoundary({
                 failed ? "text-destructive/80" : "text-muted-foreground/70",
               )}
             >
-              {detail}
+              <LinkedText text={detail} />
             </p>
           ) : null}
           {failed ? <UsageLimitActions message={group.entries[0]?.message} /> : null}
+          {failed ? <ClaudeCodeFailureActions detail={detail} /> : null}
         </div>
       </div>
     );
@@ -3523,7 +3613,7 @@ function StandardTimelineBoundary({
       </div>
       {detail ? (
         <p className={cn("m-0 text-center text-xs/relaxed", "text-muted-foreground/55")}>
-          {detail}
+          <LinkedText text={detail} />
         </p>
       ) : null}
     </div>
@@ -4041,14 +4131,7 @@ function MessageReferences({
   return (
     <div className="mb-2 flex max-w-full flex-wrap justify-end gap-1.5" aria-label="References">
       {files.map((file, index) => (
-        <span
-          key={`${file.uri}:${file.mention.start}:${index}`}
-          className="flex max-w-64 items-center gap-1.5 rounded-md border border-foreground/10 bg-background/45 px-2 py-1 text-xs"
-          title={file.uri}
-        >
-          <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="truncate">@{file.name}</span>
-        </span>
+        <MessageFileReference key={`${file.uri}:${file.mention.start}:${index}`} file={file} />
       ))}
       {skills.map((skill, index) => (
         <span
@@ -4060,6 +4143,65 @@ function MessageReferences({
         </span>
       ))}
     </div>
+  );
+}
+
+const MESSAGE_REFERENCE_CLASS =
+  "flex max-w-64 items-center gap-1.5 rounded-md border border-foreground/10 bg-background/45 px-2 py-1 text-xs";
+
+/** A mentioned file opens like a transcript file link; other references only offer their path. */
+function MessageFileReference({
+  file,
+}: {
+  file: NonNullable<PalotMessage["fileReferences"]>[number];
+}) {
+  const opener = useWorkspaceFileOpener();
+  const directory = useWorkspaceDirectory();
+  const path = fileUriPath(file.uri);
+  const content = (
+    <>
+      <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="truncate">@{file.name}</span>
+    </>
+  );
+  if (!path) {
+    return (
+      <span className={MESSAGE_REFERENCE_CLASS} title={file.uri}>
+        {content}
+      </span>
+    );
+  }
+  // A workspace file's URI ends with the path it mentions; a reference names a folder elsewhere.
+  const mentioned = file.mention.text.replace(/^@/, "");
+  const workspaceFile = path.replaceAll("\\", "/").endsWith(`/${mentioned}`);
+  if (!opener || !workspaceFile) {
+    return (
+      <FileLinkMenu reference={{ path }} directory={directory}>
+        <span className={MESSAGE_REFERENCE_CLASS} title={path}>
+          {content}
+        </span>
+      </FileLinkMenu>
+    );
+  }
+  const open = (event: React.MouseEvent | React.KeyboardEvent) => {
+    event.preventDefault();
+    opener({ path }, event);
+  };
+  return (
+    <FileLinkMenu reference={{ path }} directory={directory} onOpen={opener}>
+      <a
+        href={fileUrl(path)}
+        title={path}
+        aria-label={`Open ${path}`}
+        onClick={open}
+        className={cn(
+          MESSAGE_REFERENCE_CLASS,
+          "cursor-pointer text-foreground outline-none hover:bg-background/70 focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70",
+        )}
+      >
+        {content}
+      </a>
+    </FileLinkMenu>
   );
 }
 
@@ -4400,7 +4542,11 @@ function PermissionRequestCard({
     <RequestCard request={request}>
       {request.permissionPreview ? <PermissionPreview preview={request.permissionPreview} /> : null}
       <AlertDescription className="flex flex-col gap-2 text-left text-pretty">
-        {request.detail ? <span>{request.detail}</span> : null}
+        {request.detail ? (
+          <span>
+            <LinkedText text={request.detail} />
+          </span>
+        ) : null}
         {request.resources.length > 0 ? (
           <span className="flex flex-col gap-1">
             <span className="text-micro font-medium text-foreground">Requested</span>
@@ -4575,7 +4721,9 @@ function QuestionRequestCard({
             required
             disabled={disabled}
           >
-            <QuestionnaireTitle className="w-full pr-12">{question.question}</QuestionnaireTitle>
+            <QuestionnaireTitle className="w-full pr-12">
+              <LinkedText text={question.question} />
+            </QuestionnaireTitle>
             {question.multiple ? (
               <QuestionnaireDescription>Select multiple</QuestionnaireDescription>
             ) : null}
@@ -4735,7 +4883,9 @@ function FormRequestCard({
   return (
     <RequestCard request={request} compact={compact}>
       {request.detail ? (
-        <AlertDescription className="text-left text-pretty">{request.detail}</AlertDescription>
+        <AlertDescription className="text-left text-pretty">
+          <LinkedText text={request.detail} />
+        </AlertDescription>
       ) : null}
       <div className="flex flex-col gap-3">
         {visibleFields.map((field) => (
@@ -4797,7 +4947,9 @@ function FormFieldControl({
       <div className="flex flex-col gap-1.5">
         {label}
         {field.description ? (
-          <span className="text-micro text-muted-foreground">{field.description}</span>
+          <span className="text-micro text-muted-foreground">
+            <LinkedText text={field.description} />
+          </span>
         ) : null}
         {field.url ? (
           <Button size="xs" variant="outline" render={<a href={field.url} />}>
@@ -4813,7 +4965,9 @@ function FormFieldControl({
         <span className="flex min-w-0 flex-col gap-0.5">
           {label}
           {field.description ? (
-            <span className="text-micro text-muted-foreground">{field.description}</span>
+            <span className="text-micro text-muted-foreground">
+              <LinkedText text={field.description} />
+            </span>
           ) : null}
         </span>
         <Switch
@@ -4830,7 +4984,9 @@ function FormFieldControl({
       <fieldset className="flex flex-col gap-1.5">
         <legend>{label}</legend>
         {field.description ? (
-          <span className="text-micro text-muted-foreground">{field.description}</span>
+          <span className="text-micro text-muted-foreground">
+            <LinkedText text={field.description} />
+          </span>
         ) : null}
         {field.options.map((option) => {
           const optionValue = option.value ?? option.label;
@@ -4894,7 +5050,9 @@ function FormFieldControl({
     <label className="flex flex-col gap-1.5">
       {label}
       {field.description ? (
-        <span className="text-micro text-muted-foreground">{field.description}</span>
+        <span className="text-micro text-muted-foreground">
+          <LinkedText text={field.description} />
+        </span>
       ) : null}
       {field.type === "string" && field.options.length > 0 && !field.custom ? (
         <select

@@ -13,16 +13,20 @@ const EDIT_PROMPT = "Make the scripted review fixture edit.";
 const FIRST_COMMENT = "Check the revised wording.";
 const DRAFT_COMMENT = "This comment will be removed.";
 const FINAL_COMMENT = "Keep the revised wording.";
+const QUEUED_COMMENT = "Revisit this after the release.";
+const DIRECT_COMMENT = "Send this one straight away.";
+const DRAFT_TEXT = "An unfinished thought";
 
 export const reviewCommentsScenario: Scenario = {
   description:
-    "select a real diff line, edit/remove review drafts, send a comment-only prompt, and inspect persisted metadata and turn changes",
+    "select a real diff line, edit/remove review drafts, send a comment-only prompt, send one comment directly from its popup, and inspect persisted metadata and turn changes",
   prompt: "",
-  expectedModelCalls: 3,
+  expectedModelCalls: 4,
   arrange(llm) {
     llm.tool("shell", { command: `printf 'first line\\nrevised line\\nlast line\\n' > ${FILE}` });
     llm.text("The review fixture edit is complete.");
     llm.text("The line review was received.");
+    llm.text("The direct comment was received.");
   },
   async prepareProject({ projectDirectory }) {
     await writeFile(join(projectDirectory, FILE), OLD);
@@ -117,9 +121,35 @@ export const reviewCommentsScenario: Scenario = {
     expect(sent.metadata?.comments).toHaveLength(1);
     await expect(pending).toHaveCount(0);
     await expect(composer).toHaveValue("");
+
+    // Send one comment straight from its popup: the draft and the queued comment stay put.
+    await composer.fill(DRAFT_TEXT);
+    await addLineComment(page, diff, QUEUED_COMMENT);
+    await expect(pending).toContainText(QUEUED_COMMENT);
+    await diff
+      .locator('diffs-container [data-column-number="2"][data-line-type="change-addition"]')
+      .click();
+    const editor = page.getByRole("form", { name: `Comment on ${FILE}` });
+    const field = editor.getByRole("textbox", { name: "Line comment" });
+    await field.fill(DIRECT_COMMENT);
+    await expect(editor.getByRole("button", { name: /^Send now/ })).toBeEnabled();
+    await field.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByText("The direct comment was received.", { exact: true })).toBeVisible();
+    await client.experimental.session.wait({ sessionID: session.id });
+    const direct = (await client.message.list({ sessionID: session.id, order: "asc" })).data
+      .filter((message) => message.type === "user")
+      .at(-1)!;
+    expect(direct.text).toBe(
+      `The user made the following comment regarding line 2 of ${FILE}: ${DIRECT_COMMENT}`,
+    );
+    expect(direct.metadata?.comments).toHaveLength(1);
+    await expect(composer).toHaveValue(DRAFT_TEXT);
+    await expect(pending).toContainText(QUEUED_COMMENT);
+    await expect(pending).not.toContainText(DIRECT_COMMENT);
   },
   async assert(page) {
-    await expect(page.getByText("The line review was received.", { exact: true })).toBeVisible();
+    await expect(page.getByText("The direct comment was received.", { exact: true })).toBeVisible();
   },
 };
 

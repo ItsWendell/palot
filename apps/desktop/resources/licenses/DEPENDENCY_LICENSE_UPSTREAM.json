@@ -99,6 +99,90 @@
   },
   {
     "repository": "anomalyco/opencode",
+    "commit": "958f965d35ed44d32b018fd55b02a5357a7748fd",
+    "release": "npm latest dist-tag and GitHub release workflow run 41135857908 (release.yml run_number 410, workflow_dispatch) identify version 2.2.5 and input github.sha; the v2.2.5 release commit 9bbb8ce18c80f099e0e448775f59d965ead40a21 has that input as its parent and changes only package manifest versions, bun.lock and CHANGELOG.md. Source manifests are rewritten by the release script; npm archive integrity and published manifest hashes were independently verified on 2026-11-01.",
+    "files": [
+      {
+        "source": "LICENSE",
+        "file": "opencode.LICENSE.txt",
+        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+      }
+    ],
+    "packages": [
+      {
+        "name": "@opencode/ai",
+        "version": "2.2.5",
+        "license": "MIT",
+        "sourceManifest": "packages/ai/package.json",
+        "sourceManifestSha256": "2dd1ebdccc0302cb4b6e2fe939262e9e23e0ab0e100a7f93d2241340f9a94dad",
+        "archive": "https://registry.npmjs.org/@opencode/ai/-/ai-2.2.5.tgz",
+        "integrity": "sha512-TolUvNR615vpkc6FPf2np5PbAbO7k1gaVlrtZ5Wx5tN7Y8K2uSer0BZEiajJ2uBsF6RXJFfjjX1GZbcf85GtGQ==",
+        "manifestSha256": "61f4ac629d0a2c7f93422143a9aa2441d2ef8e986e69ad05cca2410668db1320"
+      },
+      {
+        "name": "@opencode/client",
+        "version": "2.2.5",
+        "license": "MIT",
+        "sourceManifest": "packages/client/package.json",
+        "sourceManifestSha256": "be77746caada069d8e4c889cb0a0bc1b56d6bb20fc9e2d6e6c4f266894cc1509",
+        "archive": "https://registry.npmjs.org/@opencode/client/-/client-2.2.5.tgz",
+        "integrity": "sha512-EjYrFGWHURsIbjtmQdIsGSPmYZGaulxqwEfYxQH5t9838508BCIvDX9f7/ZsgNGHYXM0punA3W8hTt6GjxIEaw==",
+        "manifestSha256": "7d295f0f71a9c78e1868f4393418157114106061eb1f86d1862c764577140cbf"
+      },
+      {
+        "name": "@opencode/plugin",
+        "version": "2.2.5",
+        "license": "MIT",
+        "sourceManifest": "packages/plugin/package.json",
+        "sourceManifestSha256": "4470318b233419857c0c3eed1f7fccf249654183a7eaf23cbe28a882c2e42820",
+        "archive": "https://registry.npmjs.org/@opencode/plugin/-/plugin-2.2.5.tgz",
+        "integrity": "sha512-DHtmC55UM5NbtZwyayLxI/ygTMt3n+6xXYYBkOdNxmZ+rLcIbpjmeJvySqdxFmT3K7Pk/2pHsuocxhquu6sysA==",
+        "manifestSha256": "afbb80312bc93be7e2862377d416e31c77d7c9c06df3e34d01a8b37d85815414"
+      },
+      {
+        "name": "@opencode/plugin-browser",
+        "version": "2.2.5",
+        "license": "MIT",
+        "sourceManifest": "packages/plugin-browser/package.json",
+        "sourceManifestSha256": "323187fe28e5b472783eef41196220c3798b75686f1b8a54501ef21d369e0805",
+        "archive": "https://registry.npmjs.org/@opencode/plugin-browser/-/plugin-browser-2.2.5.tgz",
+        "integrity": "sha512-kr3G+h1SYV7hFSkX+TKifvlmR4fka2hZlgyIlo4ysCJ1FFpsWP39WgdzDQDPXRIEL/E2M0J8/35tjl3EZM4Xqg==",
+        "manifestSha256": "7442c02aca1362e6db2acc922116b0d9019b635ba5d238e9366df58ab2c3ca99"
+      },
+      {
+        "name": "@opencode/protocol",
+        "version": "2.2.5",
+        "license": "MIT",
+        "sourceManifest": "packages/protocol/package.json",
+        "sourceManifestSha256": "0413f30a757b40e19abaa95bb592c966a0be33a2c27ba140445feaf9af4f2659",
+        "archive": "https://registry.npmjs.org/@opencode/protocol/-/protocol-2.2.5.tgz",
+        "integrity": "sha512-T3ET0kS1kj8sv7/d+c1T2he7TXoZ4Rki7zTqHuv8b0kWhg3Vk6o0t+T9KsEQdEat7PFksgH5haC2iSSdJOB7/w==",
+        "manifestSha256": "625b7c771d178eaf9bac9fb397a5057e94aed4750e4f8bbd1835d3bdee046669"
+      },
+      {
+        "name": "@opencode/schema",
+        "version": "2.2.5",
+        "license": "MIT",
+        "sourceManifest": "packages/schema/package.json",
+        "sourceManifestSha256": "c5a393c1eb1f232e34a20ad2e25678146394a12519fffbeebf85ce7b54df0d46",
+        "archive": "https://registry.npmjs.org/@opencode/schema/-/schema-2.2.5.tgz",
+        "integrity": "sha512-hlKk6cX28BwvOMOVG3Mtt4tEHxwY68Z6Gz5/cL32N8qfZexykCKsZai49Jms4/2gD8BzvVuBERnnlLDbdLstUA==",
+        "manifestSha256": "9435ae9be1c0ea5b9517993800393618a7759b8045ccd32a44cde91ef807125a"
+      },
+      {
+        "name": "@opencode/util",
+        "version": "2.2.5",
+        "license": "MIT",
+        "sourceManifest": "packages/util/package.json",
+        "sourceManifestSha256": "62916c8dd75e542e9fc2a1cfb5cbcf5a302395a0d0db701c7bb9462008209cb3",
+        "archive": "https://registry.npmjs.org/@opencode/util/-/util-2.2.5.tgz",
+        "integrity": "sha512-RqbJ2EwxOs6oQMH1P4Yenkejit0oiAyxBTPXhzx4n6j4SOV0+Duz6lhftlJkAjTbq7Rw2b0Mzx4duOJUdw6s5A==",
+        "manifestSha256": "9d104aad54a8e78395399bee4098c5f64a16a4525819dde461592c2821b715da"
+      }
+    ]
+  },
+  {
+    "repository": "anomalyco/opencode",
     "commit": "92b2ca0dd727942e00aba3523ed141d53e78ea28",
     "release": "npm latest dist-tag and GitHub release workflow run 41029302623 (release.yml run_number 359, workflow_dispatch) identify version 2.2.3 and input github.sha; the v2.2.3 release commit 082ac6281fd395c2d0c17fd3c38214db2f89621f has that input as its parent and changes only package manifest versions, bun.lock and CHANGELOG.md. Source manifests are rewritten by the release script; npm archive integrity and published manifest hashes were independently verified on 2026-10-30.",
     "files": [

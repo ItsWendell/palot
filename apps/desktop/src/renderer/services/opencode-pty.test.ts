@@ -5,7 +5,14 @@ import {
   setOpenCodeClientForTest,
   setFocusedOpenCodeRuntime,
 } from "./opencode-client";
-import { getPty, removePty, resizePty, snapshotPty } from "./opencode-pty";
+import {
+  getPty,
+  listSessionTerminals,
+  removePty,
+  renamePty,
+  resizePty,
+  snapshotPty,
+} from "./opencode-pty";
 import { palot } from "./palot";
 import type { OpenCodeRuntimeStatus, PalotApi } from "../../shared";
 
@@ -121,5 +128,30 @@ describe("renderer OpenCode persistent PTY service", () => {
       size: { cols: 100, rows: 24 },
     });
     expect(remove).toHaveBeenCalledWith({ ptyID: "pty_persistent_1" });
+  });
+
+  it("renames or clears a persistent terminal's user title without resizing it", async () => {
+    const renamed = { id: "pty_persistent_1", title: "build", userTitle: "build" };
+    const update = vi
+      .fn()
+      .mockResolvedValueOnce(renamed)
+      .mockResolvedValueOnce({ ...renamed, title: "zsh", userTitle: null });
+    const list = vi.fn().mockResolvedValue([renamed]);
+    setOpenCodeClientForTest({
+      experimental: { persistentPty: { update, list } },
+    } as unknown as OpenCodeClient);
+
+    await expect(renamePty("pty_persistent_1", "build")).resolves.toEqual(renamed);
+    await expect(renamePty("pty_persistent_1", null)).resolves.toMatchObject({
+      title: "zsh",
+      userTitle: null,
+    });
+    expect(update.mock.calls).toEqual([
+      [{ ptyID: "pty_persistent_1", title: "build" }],
+      [{ ptyID: "pty_persistent_1", title: null }],
+    ]);
+    const signal = new AbortController().signal;
+    await expect(listSessionTerminals("ses_1", undefined, signal)).resolves.toEqual([renamed]);
+    expect(list).toHaveBeenCalledWith({ sessionID: "ses_1" }, { signal });
   });
 });

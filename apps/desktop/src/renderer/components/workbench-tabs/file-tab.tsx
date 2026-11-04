@@ -26,6 +26,7 @@ import {
   isAbsoluteFilePath,
   joinFilePath,
   normalizeFilePath,
+  serverHomeDirectory,
 } from "../../lib/file-reference";
 import { showErrorToast } from "../../lib/toast-error";
 import type {
@@ -37,6 +38,7 @@ import type {
 import { palot } from "../../services/palot";
 import { pierreViewerStyle, pierreViewerTheme } from "../file-viewer-theme";
 import { useFileReferenceOpener } from "../file-reference-opener";
+import { LinkActionsProvider } from "../link-actions";
 import {
   MarkdownContent,
   MarkdownWorkspaceProvider,
@@ -83,11 +85,19 @@ function MarkdownDocumentPreview({
     (input: OpenWorkbenchTabInput) => workbench.openTab(input, pane ? { pane } : undefined),
     [pane, workbench],
   );
+  const connectionID =
+    runtime?.profileID === tab.resource.profileID ? runtime.connectionID : undefined;
+  const homeDirectory = serverHomeDirectory({
+    sameMachine: localPathActions,
+    localHome: window.palot?.homeDirectory,
+    directories: [location.directory],
+  });
   const opener = useFileReferenceOpener({
     sessionID: scope.sessionID,
     location,
-    connectionID: runtime?.profileID === tab.resource.profileID ? runtime.connectionID : undefined,
+    connectionID,
     localPathActions,
+    homeDirectory,
     getMessages: NO_MESSAGES,
     openTab,
   });
@@ -104,15 +114,28 @@ function MarkdownDocumentPreview({
       ),
     [folder, open],
   );
+  const linkActions = useMemo(
+    () => ({
+      connectionID,
+      sessionID: scope.sessionID,
+      taskDirectory: location.directory,
+      homeDirectory,
+      localPathActions,
+    }),
+    [connectionID, homeDirectory, localPathActions, location.directory, scope.sessionID],
+  );
   return (
-    <MarkdownWorkspaceProvider
-      onOpenFile={openFromDocument}
-      workspaceDirectory={folder}
-      allowHomePaths={localPathActions}
-    >
-      {opener.picker}
-      <MarkdownContent value={text} onTaskEdit={onTaskEdit} className="mx-auto max-w-4xl" />
-    </MarkdownWorkspaceProvider>
+    <LinkActionsProvider value={linkActions}>
+      <MarkdownWorkspaceProvider
+        onOpenFile={openFromDocument}
+        workspaceDirectory={folder}
+        allowHomePaths={localPathActions}
+        homeDirectory={homeDirectory}
+      >
+        {opener.picker}
+        <MarkdownContent value={text} onTaskEdit={onTaskEdit} className="mx-auto max-w-4xl" />
+      </MarkdownWorkspaceProvider>
+    </LinkActionsProvider>
   );
 }
 
@@ -577,6 +600,15 @@ export function FileTab({
             review.add(tab.resource.path, commentRange, text);
             setCommentRange(null);
           }}
+          onSend={
+            review.send
+              ? (text) =>
+                  review.send?.(tab.resource.path, commentRange, text).then((sent) => {
+                    if (sent) setCommentRange(null);
+                    return sent;
+                  }) ?? Promise.resolve(false)
+              : undefined
+          }
           onCancel={() => setCommentRange(null)}
         />
       ) : null}

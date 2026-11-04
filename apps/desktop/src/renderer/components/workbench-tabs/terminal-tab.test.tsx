@@ -23,6 +23,7 @@ const ghostty = vi.hoisted(() => ({
   bracketedPaste: false,
   pasteChecks: 0,
   pastes: [] as string[],
+  focuses: 0,
 }));
 
 vi.mock("../../atoms/workspace", async () => ({
@@ -40,7 +41,9 @@ vi.mock("ghostty-web", () => ({
     rows = 24;
     loadAddon() {}
     open() {}
-    focus() {}
+    focus() {
+      ghostty.focuses += 1;
+    }
     hasBracketedPaste() {
       ghostty.pasteChecks += 1;
       return ghostty.bracketedPaste;
@@ -110,6 +113,7 @@ afterEach(() => {
   ghostty.bracketedPaste = false;
   ghostty.pasteChecks = 0;
   ghostty.pastes.length = 0;
+  ghostty.focuses = 0;
   resetShortcutBindings();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -117,6 +121,43 @@ afterEach(() => {
 });
 
 describe("TerminalTab", () => {
+  it.each([true, false])(
+    "takes focus as it attaches unless a tab rename is in progress (renaming: %s)",
+    async (renaming) => {
+      const store = createStore();
+      store.set(runtimeAtom, {
+        connected: true,
+        profileID: "profile-1",
+        connectionID: "focus-owner",
+      } as never);
+      vi.spyOn(palot, "resizePty").mockResolvedValue();
+      const recover = vi
+        .spyOn(workbenchTerminal, "recoverWorkbenchTerminal")
+        .mockImplementation(() => ({
+          connectionID: () => null,
+          reconnect() {},
+          exit() {},
+          stop() {},
+        }));
+      const field = document.createElement("input");
+      field.setAttribute("data-workbench-tab-rename", "");
+      document.body.append(field);
+      if (renaming) field.focus();
+      try {
+        render(
+          <Provider store={store}>
+            <TerminalTab tab={{ ...tab, resource: { ...tab.resource, transport: "legacy" } }} />
+          </Provider>,
+        );
+        await waitFor(() => expect(recover).toHaveBeenCalled());
+        expect(ghostty.focuses).toBe(renaming ? 0 : 1);
+        if (renaming) expect(document.activeElement).toBe(field);
+      } finally {
+        field.remove();
+      }
+    },
+  );
+
   it("waits for safe shell paste, consumes exactly once, and never adds Enter", async () => {
     const store = createStore();
     store.set(runtimeAtom, {

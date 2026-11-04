@@ -1321,7 +1321,7 @@
     list-style-type: decimal;
   }
 
-  .markdown :where(h1, h2, h3, h4) {
+  .markdown :where(h1, h2, h3, h4, h5, h6) {
     @apply mt-5 mb-2 font-semibold tracking-tight text-foreground;
   }
 
@@ -1333,7 +1333,7 @@
     @apply text-base;
   }
 
-  .markdown :where(h3, h4) {
+  .markdown :where(h3, h4, h5, h6) {
     @apply text-sm;
   }
 
@@ -1424,6 +1424,78 @@
 
   .markdown-details-content > :last-child {
     margin-bottom: 0;
+  }
+
+  .markdown-details-summary {
+    min-width: 0;
+  }
+
+  /* GitHub summaries often wrap their label in a heading or paragraph. */
+  .markdown-details-summary :where(p, h1, h2, h3, h4, h5, h6) {
+    display: inline;
+    margin: 0;
+    font-size: inherit;
+  }
+
+  /* Raw HTML elements from GitHub-flavored Markdown (see markdown-html-tree.ts). */
+  .markdown kbd {
+    @apply rounded-[0.3em] border border-b-2 bg-muted/45 px-[0.4em] py-px font-mono text-[0.85em] text-foreground;
+  }
+
+  .markdown mark {
+    border-radius: 2px;
+    padding-inline: 0.15em;
+    color: inherit;
+    background: color-mix(in oklch, var(--warning) 32%, transparent);
+  }
+
+  .markdown dl {
+    margin-block: 0 var(--typeset-flow, 1em);
+  }
+
+  .markdown dt {
+    @apply font-semibold text-foreground;
+  }
+
+  .markdown dd {
+    margin-bottom: 0.35em;
+    padding-left: 1.35rem;
+  }
+
+  .markdown figcaption {
+    @apply mt-1 text-meta text-muted-foreground;
+  }
+
+  .markdown ol:where([type="a" s]) {
+    list-style-type: lower-alpha;
+  }
+
+  .markdown ol:where([type="A" s]) {
+    list-style-type: upper-alpha;
+  }
+
+  .markdown ol:where([type="i" s]) {
+    list-style-type: lower-roman;
+  }
+
+  .markdown ol:where([type="I" s]) {
+    list-style-type: upper-roman;
+  }
+
+  .markdown-float-left {
+    float: left;
+    margin: 0.15em 0.75rem 0.5rem 0;
+  }
+
+  .markdown-float-right {
+    float: right;
+    margin: 0.15em 0 0.5rem 0.75rem;
+  }
+
+  .markdown:has(.markdown-float)::after {
+    display: block;
+    clear: both;
+    content: "";
   }
 
   /* Token colors are inline styles from the active code theme; unstyled text uses its foreground. */

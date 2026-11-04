@@ -1,6 +1,6 @@
 {
   "name": "palot-2",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "private": true,
   "license": "MIT",
   "workspaces": [
@@ -78,7 +78,9 @@
     "@shikijs/themes": "4.5.0",
     "@shikijs/types": "4.5.0",
     "katex": "0.19.1",
+    "legacy-javascript": "0.0.1",
     "shiki": "4.5.0",
+    "third-party-web": "0.30.0",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0"
   },
   "engines": {

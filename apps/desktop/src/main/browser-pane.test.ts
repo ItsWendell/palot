@@ -241,7 +241,7 @@ describe("browser attachment", () => {
     mocks.stored.sessions = {};
     mocks.inertWindows.length = 0;
     mocks.partition.mockReturnValue({
-      webRequest: { onBeforeRequest: vi.fn() },
+      webRequest: { onBeforeRequest: vi.fn(), onBeforeSendHeaders: vi.fn() },
       clearStorageData: vi.fn(async () => {}),
       clearCache: vi.fn(async () => {}),
       setPermissionRequestHandler: vi.fn(),
@@ -304,6 +304,75 @@ describe("browser attachment", () => {
         };
       },
     );
+  });
+
+  it("opens a hosted artifact for a server on this computer and reuses its tab", async () => {
+    const artifactID = "art_019a3b2c4d5eAbCdEfGhIjKlMn";
+    const url = `http://127.0.0.1:4096/api/experimental/artifacts/${artifactID}/view/`;
+    const scoped = mocks.runtime.scopedConnection() as { runtimeStatus: () => object };
+    mocks.runtime.scopedConnection.mockReturnValue({
+      ...scoped,
+      runtimeStatus: () => ({
+        ...scoped.runtimeStatus(),
+        capabilities: { localPathActions: true },
+      }),
+    });
+    mocks.runtime.requestConnection.mockResolvedValue({
+      endpoint: { url: "http://127.0.0.1:4096" },
+      headers: { authorization: "Basic local" },
+      validate: vi.fn(),
+    });
+    const { pane, win, binding, state } = await attachedPane();
+    const partition = mocks.partition.mock.results[0]!.value;
+    const [filter, listener] = partition.webRequest.onBeforeSendHeaders.mock.calls[0]!;
+    expect(filter.urls).toEqual([
+      "http://*/api/experimental/artifacts/*",
+      "https://*/api/experimental/artifacts/*",
+    ]);
+    const send = (request: object) => {
+      const callback = vi.fn();
+      listener({ method: "GET", requestHeaders: { authorization: "page" }, ...request }, callback);
+      return callback.mock.calls[0]![0].requestHeaders;
+    };
+    // Nothing is sent before the person opens the artifact.
+    expect(send({ url, resourceType: "mainFrame" })).toEqual({ authorization: "page" });
+
+    const tabID = await pane.openArtifact(win as never, binding, artifactID);
+    const page = mocks.page.mock.results[0]!.value;
+    expect(page.execute).toHaveBeenLastCalledWith(
+      { action: { type: "navigate", tabID, url }, files: [] },
+      expect.anything(),
+    );
+    expect(send({ url, resourceType: "mainFrame" })).toEqual({ Authorization: "Basic local" });
+    expect(
+      send({
+        url: `${url}app.js`,
+        resourceType: "script",
+        webContents: { getURL: () => "https://example.test/" },
+      }),
+    ).toEqual({ authorization: "page" });
+
+    const shown = page.state();
+    page.state = () => ({ ...shown, url: `${url}details.html` });
+    await expect(pane.openArtifact(win as never, binding, artifactID)).resolves.toBe(tabID);
+    expect(mocks.page).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(state().focusedTabID).toBe(tabID));
+    expect(page.execute).toHaveBeenLastCalledWith(
+      { action: { type: "navigate", tabID, url }, files: [] },
+      expect.anything(),
+    );
+    await pane.dispose();
+  });
+
+  it("refuses hosted artifacts when the server is not on this computer", async () => {
+    const { pane, win, binding } = await attachedPane();
+    const partition = mocks.partition.mock.results[0]!.value;
+    expect(partition.webRequest.onBeforeSendHeaders).not.toHaveBeenCalled();
+    await expect(
+      pane.openArtifact(win as never, binding, "art_019a3b2c4d5eAbCdEfGhIjKlMn"),
+    ).rejects.toThrow("only when OpenCode runs on this computer");
+    expect(mocks.page).not.toHaveBeenCalled();
+    await pane.dispose();
   });
 
   it("refuses a background or changed window owner before attaching", async () => {

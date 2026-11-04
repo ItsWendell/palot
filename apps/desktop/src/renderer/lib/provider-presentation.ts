@@ -4,6 +4,7 @@ export const POPULAR_PROVIDER_IDS = [
   "opencode",
   "opencode-go",
   "anthropic",
+  "claude-agent",
   "github-copilot",
   "openai",
   "google",

@@ -30,9 +30,9 @@ You can combine styles in the same sentence: **bold with _nested italic_**, _ita
 
 Here are some less common inline forms: H~~2~~O, x^2^, ==highlight-like text==, escaped \*asterisks\*, an ampersand `&`, and a Unicode emoji: 🧪
 
-Raw inline HTML stays visible as source rather than becoming active DOM: <kbd>⌘</kbd> + <kbd>K</kbd>.
+Raw inline HTML from GitHub's safe subset renders as elements: <kbd>⌘</kbd> + <kbd>K</kbd>.
 
-The same safety rule applies to superscript and subscript HTML: E = mc<sup>2</sup>, and CO<sub>2</sub> is carbon dioxide.
+Superscript and subscript HTML work too: E = mc<sup>2</sup>, and CO<sub>2</sub> is carbon dioxide.
 
 ## Headings
 
@@ -276,16 +276,16 @@ Entity references can be written literally: &amp; &lt; &gt; &quot;.
 
 ## HTML
 
-Arbitrary inline HTML is rendered as inert source. This sentence includes <strong>strong HTML text</strong>, <em>emphasized HTML text</em>, and <mark>marked text</mark> to verify that boundary.
+Allowed inline HTML renders through a sanitizing allowlist. This sentence includes <strong>strong HTML text</strong>, <em>emphasized HTML text</em>, and <mark>marked text</mark>, while <script>alert("never runs")</script> and a <Button> component name stay literal text.
 
 <details>
 <summary>Click to reveal more</summary>
 
-This is a collapsible native HTML details block. It contains **Markdown-looking source**, but HTML blocks may be treated differently from normal Markdown paragraphs.
+This is a collapsible native HTML details block. The blank lines around this paragraph make its **Markdown** render, as on GitHub.
 
 </details>
 
-The raw block below should also remain inert source:
+The raw block below renders as an HTML blockquote:
 
 <blockquote>
   <p>This is an HTML blockquote.</p>
@@ -363,7 +363,7 @@ Markdown is a text format, but a good chat renderer has to handle a lot of inter
 | Diff blocks                            |      ✅       |
 | Nested code fences                     |      ✅       |
 | Horizontal rules and escapes           |      ✅       |
-| Arbitrary HTML remains inert           |      ✅       |
+| Unsafe HTML is stripped                |      ✅       |
 | Safe details / summary disclosure      |      ✅       |
 | Inline and block math                  |      ✅       |
 | Footnotes                              |      ✅       |

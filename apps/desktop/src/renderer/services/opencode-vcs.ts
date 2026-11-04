@@ -1,5 +1,6 @@
 import type { LocationRef, VcsFileStatus } from "@opencode/client";
-import { openCodeClient } from "./opencode-client";
+import { rememberBranch } from "../lib/branch-memory";
+import { openCodeClient, openCodeProfileID } from "./opencode-client";
 import { openCodeRequestSignal } from "./opencode-request";
 
 export interface OpenCodeVcsInfo {
@@ -38,10 +39,14 @@ export async function getOpenCodeVcsInfo(
     },
     { signal: openCodeRequestSignal(requestSignal) },
   );
-  return {
+  const info = {
     currentBranch: response.data.branch.current ?? null,
     defaultBranch: response.data.branch.default ?? null,
   };
+  // Every read refreshes the label Inbox rows show while the directory is not loaded.
+  const profileID = openCodeProfileID(connectionID);
+  if (profileID) rememberBranch(profileID, location.directory, info.currentBranch);
+  return info;
 }
 
 export async function getOpenCodeVcsStatus(

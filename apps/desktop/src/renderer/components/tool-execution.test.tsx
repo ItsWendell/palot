@@ -887,6 +887,26 @@ describe("ToolExecution", () => {
     expect(screen.getByText("Command exited with code 1")).toBeTruthy();
   });
 
+  it("titles a completed shell command that exited non-zero as failed", () => {
+    const part: PalotMessageContent = {
+      type: "tool",
+      id: "shell-exit",
+      name: "shell",
+      state: {
+        status: "completed",
+        input: { command: "bun run test" },
+        metadata: { output: "1 failed", exit: 1 },
+      },
+    };
+    const result = render(
+      <Provider store={createStore()}>
+        <ToolExecution part={part} index={0} />
+      </Provider>,
+    );
+    expect(result.container.textContent).toContain("Command failed");
+    expect(result.container.textContent).toContain("exit 1");
+  });
+
   it("shows the webfetch URL and renders markdown output", () => {
     const store = createStore();
     const part: PalotMessageContent = {

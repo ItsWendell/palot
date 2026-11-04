@@ -3,18 +3,12 @@
 import { isFileNotFoundError, type LocationRef } from "@opencode/client";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { FileCode2 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PalotMessage } from "../../shared";
 import { workspaceFileQueryOptions } from "../hooks/use-workspace-file";
 import { isHtmlFilePath } from "../lib/browser-files";
 import {
+  expandHomePath,
   fileReferenceBases,
   fileReferenceLabel,
   isAbsoluteFilePath,
@@ -38,6 +32,7 @@ import {
   DropdownMenuLabel,
 } from "./ui/dropdown-menu";
 import { toast } from "./ui/toast";
+import type { FileOpenTrigger } from "./link-actions";
 
 const FIND_LIMIT = 200;
 
@@ -76,6 +71,8 @@ interface FileReferenceOpenerInput {
   connectionID: string | undefined;
   /** The server shares this machine's filesystem, so external apps can open its paths. */
   localPathActions: boolean;
+  /** Where `~` points on the task's server; `~/…` stays unresolved without it. */
+  homeDirectory?: string;
   getMessages(): readonly PalotMessage[];
   openTab(input: {
     kind: "file";
@@ -102,13 +99,14 @@ interface PickerState {
   endLine?: number;
 }
 
-type OpenEvent = ReactMouseEvent | ReactKeyboardEvent;
+type OpenEvent = FileOpenTrigger;
 
 export function useFileReferenceOpener({
   sessionID,
   location,
   connectionID,
   localPathActions,
+  homeDirectory,
   getMessages,
   openTab,
   openHtml,
@@ -189,9 +187,11 @@ export function useFileReferenceOpener({
   );
 
   const open = useCallback(
-    (reference: FileReference, event?: OpenEvent) => {
+    (input: FileReference, event?: OpenEvent) => {
       const controller = begin();
       setPicker(null);
+      // `~` resolves on the task's server, so an expanded path checks the workspace like any other.
+      const reference = { ...input, path: expandHomePath(input.path, homeDirectory) };
 
       const anchor = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
       const messageID =
@@ -279,6 +279,7 @@ export function useFileReferenceOpener({
       begin,
       connectionID,
       getMessages,
+      homeDirectory,
       localPathActions,
       location,
       openExternally,

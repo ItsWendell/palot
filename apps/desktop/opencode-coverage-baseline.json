@@ -1,10 +1,15 @@
 {
-  "contractFingerprint": "f00a1b17862cc1a045cb84559d9758ee26b0cded709cd44598a967274b4cc121",
-  "contractVersion": "2.2.3",
+  "contractFingerprint": "1d92ef14b61ac85ca5ced182e62895061859e77b0940dbc84c9bb0f8ff923887",
+  "contractVersion": "2.2.5",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
       "payloadFingerprint": "e9bcec3c502e8a92e1f4e292d6d5ea52993409073a4290b516d23cd3aab54682"
+    },
+    "artifact.updated": {
+      "expectedProductionMention": true,
+      "note": "OpenCode 2.2.5 sends it when a location's artifact providers change, without an artifact ID; Palot refreshes that location's artifact list. Cards also refresh it when an artifact tool call finishes.",
+      "payloadFingerprint": "831142d7ce891eebc6970b9d4fd634e6b01f5960e4dd95d222796a21dc74fae9"
     },
     "command.updated": {
       "expectedProductionMention": true,
@@ -82,13 +87,17 @@
       "payloadFingerprint": "767234076bc0bc798ac35a3d13f1a5457611abd627ba98cef6057c7202978408"
     },
     "persistent-pty.added": {
-      "expectedProductionMention": false,
-      "note": "Creation and reconnect use authoritative PTY responses and socket state. Delayed added events must not reset an attached terminal; the former explicit no-op branch was removed in 2.0.25 adoption.",
-      "payloadFingerprint": "c3cc441968ef9fcdce8f430f8c659a66eb8d7f29dd6aed77889f24831a30980d"
+      "expectedProductionMention": true,
+      "note": "Only re-reads the session's terminal list for names; attached terminals keep their authoritative PTY responses and socket state.",
+      "payloadFingerprint": "85bd74149468d9e59bc197859c4ae410cf539ebc3078845deec2dc10ddee617a"
     },
     "persistent-pty.removed": {
       "expectedProductionMention": true,
       "payloadFingerprint": "155f9919b36c38f855be095305c376f69e4807090c004939685edfc5d89123d1"
+    },
+    "persistent-pty.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "da62165dda7db0b305320f755b71ab2296d8e02fe7c6557a510296ba2e00511d"
     },
     "plugin.updated": {
       "expectedProductionMention": true,
@@ -461,6 +470,41 @@
     "event.subscribe": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "experimental.artifacts.create": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Agents publish, update, and delete through OpenCode's artifact tools; Palot renders those calls and has no artifact authoring UI."
+    },
+    "experimental.artifacts.delete": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Agents publish, update, and delete through OpenCode's artifact tools; Palot renders those calls and has no artifact authoring UI."
+    },
+    "experimental.artifacts.get": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Cards use the session list; file contents stay with the agent's artifact_read tool."
+    },
+    "experimental.artifacts.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Transcript artifact cards read the project's list by location for the current title, entry, URL, and update time, matching by artifact ID."
+    },
+    "experimental.artifacts.providers": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "No provider picker; tool calls and the list name each artifact's provider."
+    },
+    "experimental.artifacts.update": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Agents publish, update, and delete through OpenCode's artifact tools; Palot renders those calls and has no artifact authoring UI."
+    },
+    "experimental.artifacts.view": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "Palot Browser loads this route by URL in the task partition; main attaches the server credential only to artifacts opened from the transcript (main/browser/artifact-access.ts). Page loads never use the generated client."
     },
     "experimental.config.update": {
       "disposition": "integrated",

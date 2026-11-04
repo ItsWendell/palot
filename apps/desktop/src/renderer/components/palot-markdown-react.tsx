@@ -33,6 +33,21 @@ import {
   useState,
 } from "react";
 import { parseInlineMathMarker } from "../lib/markdown-math";
+import { decodeEntities } from "../lib/markdown-html";
+import { htmlText, type HtmlTreeElement } from "../lib/markdown-html-tree";
+import {
+  buildBlockHtmlTree,
+  buildInlineHtmlTree,
+  hasRawHtmlBlock,
+  hasRawInlineHtml,
+  htmlDepth,
+  isRawInlineHtml,
+  renderHtmlElement,
+  renderHtmlNodes,
+  renderHtmlParagraph,
+  withHtmlDepth,
+  type HtmlTreeRenderer,
+} from "./markdown-html-react";
 
 const MAX_ANIMATION_BACKLOG_MS = 320;
 const MAX_ACTIVE_ANIMATION_GROUPS = 64;
@@ -118,11 +133,7 @@ export function PalotMarkdown({ children, streaming = false, ...options }: Palot
       source: children,
     });
   }
-  return createElement(
-    Fragment,
-    null,
-    document.children.map((node, index) => renderBlockReact(node, options, `b:${index}`)),
-  );
+  return createElement(Fragment, null, renderBlocks(document.children, options, "b"));
 }
 
 function StreamingMarkdownDocument({
@@ -143,21 +154,76 @@ function StreamingMarkdownDocument({
     animationRuntime.commit(animationPass);
   });
 
+  const blocks = document.children;
+  const leaf = (index: number, key: string, depth = 0) =>
+    createElement(StreamingMarkdownBlock, {
+      key,
+      animationPlan: animationPass.plans[index],
+      node: blocks[index]!,
+      options: withHtmlDepth(options, depth),
+      settled: animationPass.settledBlocks[index] ?? false,
+      signature: animationPass.signatures[index]!,
+    });
+  if (!hasRawHtmlBlock(blocks))
+    return createElement(
+      Fragment,
+      null,
+      blocks.map((_, index) => leaf(index, `b:${index}`)),
+    );
+
+  // Tags in HTML blocks wrap the Markdown blocks between them. Each element renders as a section
+  // memoized over its source block range, so a delta re-renders only the still-open tail.
+  const renderer: StreamingHtmlRenderer = {
+    options,
+    pass: animationPass,
+    leaf,
+    element: (element) =>
+      createElement(StreamingHtmlSection, { key: element.key, element, renderer }),
+  };
   return createElement(
     Fragment,
     null,
-    document.children.map((node, index) =>
-      createElement(StreamingMarkdownBlock, {
-        key: `b:${index}`,
-        animationPlan: animationPass.plans[index],
-        node,
-        options,
-        settled: animationPass.settledBlocks[index] ?? false,
-        signature: animationPass.signatures[index]!,
-      }),
-    ),
+    renderHtmlNodes(buildBlockHtmlTree(blocks, "b", { streamingTail: true }).children, renderer),
   );
 }
+
+interface StreamingHtmlRenderer extends HtmlTreeRenderer<number> {
+  pass: StreamingAnimationRenderPass;
+}
+
+const StreamingHtmlSection = memo(
+  function StreamingHtmlSection({
+    element,
+    renderer,
+  }: {
+    element: HtmlTreeElement<number>;
+    renderer: StreamingHtmlRenderer;
+  }) {
+    return renderHtmlElement(element, renderer);
+  },
+  (previous, next) => {
+    const { element } = next;
+    if (
+      previous.element.first !== element.first ||
+      previous.element.last !== element.last ||
+      previous.element.context !== element.context ||
+      !sameMarkdownOptions(previous.renderer.options, next.renderer.options)
+    )
+      return false;
+    const before = previous.renderer.pass;
+    const after = next.renderer.pass;
+    for (let index = element.first; index <= element.last; index += 1) {
+      if (
+        before.plans[index] !== undefined ||
+        after.plans[index] !== undefined ||
+        before.signatures[index] !== after.signatures[index] ||
+        before.settledBlocks[index] !== after.settledBlocks[index]
+      )
+        return false;
+    }
+    return true;
+  },
+);
 
 const StreamingMarkdownBlock = memo(
   function StreamingMarkdownBlock({
@@ -217,6 +283,14 @@ function renderBlockReact(
         renderHeadingAnchorReact(node.id, options),
       );
     case "paragraph":
+      if (hasRawInlineHtml(node.children))
+        return renderHtmlParagraph(
+          buildInlineHtmlTree(node.children, "i", htmlDepth(options)),
+          node.children,
+          inlineRenderer(node.children, options, animationPlan),
+          key,
+          (paragraphKey, children) => h(options, "p", { key: paragraphKey }, children),
+        );
       return h(options, "p", { key }, renderInlines(node.children, options, animationPlan));
     case "code":
       return renderCodeBlockReact(node, options, key, animationPlan);
@@ -255,9 +329,7 @@ function renderBlockReact(
         options,
         "blockquote",
         { key },
-        node.children.map((child, index) =>
-          renderBlockReact(child, options, `${key}:${index}`, animationPlan),
-        ),
+        renderBlocks(node.children, options, `${key}`, animationPlan),
       );
     case "table":
       return h(
@@ -312,9 +384,8 @@ function renderBlockReact(
     case "thematicBreak":
       return h(options, "hr", { key });
     case "html":
-      return options.allowHtml
-        ? h(options, "div", { key, dangerouslySetInnerHTML: { __html: node.value } })
-        : h(options, "p", { key }, node.value);
+      // Block lists render HTML blocks together (renderBlocks); a lone one renders by itself.
+      return createElement(Fragment, { key }, renderBlocks([node], options, `${key}`));
     case "callout":
       return h(
         options,
@@ -325,9 +396,7 @@ function renderBlockReact(
           options,
           "div",
           { className: "markdown-alert-content" },
-          node.children.map((child, index) =>
-            renderBlockReact(child, options, `${key}:${index}`, animationPlan),
-          ),
+          renderBlocks(node.children, options, `${key}`, animationPlan),
         ),
       );
     case "component":
@@ -390,7 +459,7 @@ function renderInlineReact(
       return h(
         options,
         "a",
-        { key, href: node.href, ...(node.title ? { title: node.title } : {}) },
+        { key, href: node.href, ...(node.title ? { title: decodeEntities(node.title) } : {}) },
         renderInlines(node.children, options, animationPlan),
       );
     case "image":
@@ -398,7 +467,7 @@ function renderInlineReact(
         key,
         src: node.src,
         alt: node.alt,
-        ...(node.title ? { title: node.title } : {}),
+        ...(node.title ? { title: decodeEntities(node.title) } : {}),
       });
     case "break":
       return h(options, "br", { key });
@@ -407,9 +476,10 @@ function renderInlineReact(
       if (math !== null) {
         return h(options, "palot-inline-math", { key, "data-math": math });
       }
-      return options.allowHtml
-        ? h(options, "span", { key, dangerouslySetInnerHTML: { __html: node.value } })
-        : node.value;
+      // Inline lists render raw tags together (renderInlines); a lone one renders by itself.
+      return isRawInlineHtml(node)
+        ? createElement(Fragment, { key }, renderInlines([node], options, animationPlan))
+        : null;
   }
 }
 
@@ -477,7 +547,46 @@ function renderInlines(
   options: MarkdownReactOptions,
   animationPlan?: StreamingAnimationPlan,
 ): ReactNode[] {
+  if (hasRawInlineHtml(nodes))
+    return renderHtmlNodes(
+      buildInlineHtmlTree(nodes, "i", htmlDepth(options)).children,
+      inlineRenderer(nodes, options, animationPlan),
+    );
   return nodes.map((node, index) => renderInlineReact(node, options, `i:${index}`, animationPlan));
+}
+
+function inlineRenderer(
+  nodes: InlineNode[],
+  options: MarkdownReactOptions,
+  animationPlan?: StreamingAnimationPlan,
+): HtmlTreeRenderer<number> {
+  return {
+    options,
+    leaf: (index, key, depth) =>
+      renderInlineReact(nodes[index]!, withHtmlDepth(options, depth), key, animationPlan),
+  };
+}
+
+/** Render a block list; raw HTML blocks wrap the Markdown blocks between their tags. */
+function renderBlocks(
+  nodes: BlockNode[],
+  options: MarkdownReactOptions,
+  keyPrefix: string,
+  animationPlan?: StreamingAnimationPlan,
+  renderLeaf: (node: BlockNode, key: string, options: MarkdownReactOptions) => ReactNode = (
+    node,
+    key,
+    leafOptions,
+  ) => renderBlockReact(node, leafOptions, key, animationPlan),
+): ReactNode[] {
+  if (!hasRawHtmlBlock(nodes))
+    return nodes.map((node, index) => renderLeaf(node, `${keyPrefix}:${index}`, options));
+  const depth = htmlDepth(options);
+  return renderHtmlNodes(buildBlockHtmlTree(nodes, keyPrefix, { depth }).children, {
+    options,
+    leaf: (index, key, leafDepth) =>
+      renderLeaf(nodes[index]!, key, withHtmlDepth(options, leafDepth)),
+  });
 }
 
 function renderCodeBlockReact(
@@ -573,7 +682,10 @@ function inlineText(nodes: InlineNode[]): string {
         case "break":
           return "\n";
         case "inlineHtml":
-          return parseInlineMathMarker(node.value) ?? "";
+          return (
+            parseInlineMathMarker(node.value) ??
+            (node.value === "<br>" || /^<br[\s/]/.test(node.value) ? " " : htmlText(node.value))
+          );
         case "link":
         case "strong":
         case "emphasis":
@@ -628,18 +740,37 @@ function renderListItemChildrenReact(
     const content = [...task, ...renderInlines(first.children, options, animationPlan)];
     return [
       ...(loose ? [h(options, "p", { key: `${key}:paragraph` }, content)] : content),
-      ...rest.flatMap((child, childIndex) =>
-        renderListChildReact(child, loose, options, `${key}:${childIndex + 1}`, animationPlan),
-      ),
+      ...renderListChildrenReact(rest, loose, options, key, 1, animationPlan),
     ];
   }
 
-  return [
-    ...task,
-    ...children.flatMap((child, childIndex) =>
-      renderListChildReact(child, loose, options, `${key}:${childIndex}`, animationPlan),
-    ),
-  ];
+  return [...task, ...renderListChildrenReact(children, loose, options, key, 0, animationPlan)];
+}
+
+function renderListChildrenReact(
+  children: BlockNode[],
+  loose: boolean | undefined,
+  options: MarkdownReactOptions,
+  key: string,
+  offset: number,
+  animationPlan?: StreamingAnimationPlan,
+): ReactNode[] {
+  if (!hasRawHtmlBlock(children))
+    return children.flatMap((child, childIndex) =>
+      renderListChildReact(child, loose, options, `${key}:${childIndex + offset}`, animationPlan),
+    );
+  return renderBlocks(
+    children,
+    options,
+    `${key}:${offset}`,
+    animationPlan,
+    (child, childKey, leafOptions) =>
+      createElement(
+        Fragment,
+        { key: childKey },
+        ...renderListChildReact(child, loose, leafOptions, childKey, animationPlan),
+      ),
+  );
 }
 
 function renderListChildReact(
@@ -790,9 +921,7 @@ function renderComponentReact(
     { key, ...props },
     node.type === "inlineComponent"
       ? renderInlines(node.children, options, animationPlan)
-      : node.children.map((child, index) =>
-          renderBlockReact(child, options, `${key}:${index}`, animationPlan),
-        ),
+      : renderBlocks(node.children, options, `${key}`, animationPlan),
   );
 }
 

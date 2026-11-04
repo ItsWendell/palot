@@ -8,6 +8,7 @@ import { usePalotNavigation } from "../hooks/use-navigation";
 import { useChildSessions } from "../hooks/use-session-catalog";
 import { useSessionProcesses, type SessionProcess } from "../hooks/use-session-processes";
 import { useSessionFamilyRequestViews } from "../hooks/use-session-requests";
+import { terminalDisplayName } from "../lib/terminal-query";
 import { openCodeClient } from "../services/opencode-client";
 import type { BackgroundWorkItem, SubagentWorkItem } from "./subagent-activity";
 import { processCountLabel, processStatus } from "./process-footer-control";
@@ -138,7 +139,9 @@ function ScopedRunningWorkControl({
                 {group.rows.map((row) => (
                   <RunningWorkRow
                     key={`${row.kind}:${row.id}`}
-                    title={row.kind === "command" ? row.command : row.title || row.command}
+                    title={
+                      row.kind === "command" ? row.command : terminalDisplayName(row, row.command)
+                    }
                     detail={`${row.sessionID === session.id ? "This conversation" : processes.owners.get(row.sessionID ?? "")?.title || "Child task"} · ${processStatus(row)}`}
                     available={Boolean(available)}
                     owner={owner}

@@ -5,6 +5,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { resolvedAppearanceAtom } from "../../atoms/appearance";
 import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { prepareCodeFont } from "../../lib/font-loading";
+import { openCodeKeys } from "../../lib/opencode-query";
+import { rendererQueryClient } from "../../lib/query-client";
 import {
   formatShortcut,
   matchesShortcut,
@@ -285,7 +287,8 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
       }
       if (cancelled || removed) return;
       if (!readOnly) {
-        terminal.focus();
+        // A tab rename in progress keeps focus while a terminal opens or reattaches beside it.
+        if (!document.activeElement?.closest("[data-workbench-tab-rename]")) terminal.focus();
         // A failed resize must not throw away the view or prevent reattachment.
         void palot
           .resizePty(
@@ -302,6 +305,13 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
         cursor: () => seekRef.current,
         onStatus: (status, error) => {
           if (cancelled) return;
+          // No event reports a persistent terminal's shell exiting; keep Running work's count
+          // current without it polling.
+          if (status === "exited" && tab.resource.sessionID)
+            void rendererQueryClient.invalidateQueries({
+              queryKey: openCodeKeys.sessionTerminals(ownerConnectionID, tab.resource.sessionID),
+              exact: true,
+            });
           setStatus(status);
           setErrorMessage(error instanceof Error ? error.message : undefined);
         },

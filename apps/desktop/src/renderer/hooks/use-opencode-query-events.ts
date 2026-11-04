@@ -1,6 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { rememberBranch } from "../lib/branch-memory";
 import {
+  locationIsLoadedBy,
+  markShutdownLocationStale,
   openCodeInvalidationKeys,
   sessionStatsShouldRevalidate,
   sessionTranscriptShouldRevalidate,
@@ -12,6 +15,8 @@ import {
   sessionActivityCompletionHint,
 } from "../lib/session-activity-query";
 import { sessionRequestEventSessionID } from "../lib/session-request-query";
+import { syncTerminalInfo } from "../lib/terminal-query";
+import { openCodeProfileID } from "../services/opencode-client";
 import { palot } from "../services/palot";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { createQueryInvalidationQueue } from "../lib/query-invalidation-queue";
@@ -25,6 +30,13 @@ export function useOpenCodeQueryEvents(): void {
     const sessionStatsTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const invalidations = createQueryInvalidationQueue(queryClient);
     const invalidate = invalidations.invalidate;
+    // Live work proves its location is loaded, so its rows can read branches before the next poll.
+    const addLoadedLocation = (connectionID: string, directory: string) => {
+      const queryKey = openCodeKeys.loadedLocations(connectionID);
+      const current = queryClient.getQueryData<readonly string[]>(queryKey);
+      if (current && !current.includes(directory))
+        queryClient.setQueryData(queryKey, [...current, directory]);
+    };
     const confirmActivity = (connectionID: string, delay = 0) => {
       const current = confirmTimers.get(connectionID);
       if (current) clearTimeout(current);
@@ -108,6 +120,19 @@ export function useOpenCodeQueryEvents(): void {
               } else invalidate(queryKey);
             }
           }
+          // Renames from the TUI or another window carry the whole terminal; apply it in place.
+          if (event.type === "persistent-pty.updated") {
+            syncTerminalInfo(queryClient, batch.connectionID, event.data.terminal);
+          }
+          if (event.type === "location.shutdown" && event.location) {
+            markShutdownLocationStale(queryClient, batch.connectionID, event.location.directory);
+          } else if (locationIsLoadedBy(event) && event.location) {
+            addLoadedLocation(batch.connectionID, event.location.directory);
+          }
+          if (event.type === "vcs.branch.updated" && event.location && event.data.branch) {
+            const profileID = openCodeProfileID(batch.connectionID);
+            if (profileID) rememberBranch(profileID, event.location.directory, event.data.branch);
+          }
           for (const queryKey of openCodeInvalidationKeys(batch.connectionID, event)) {
             invalidate(queryKey);
           }
@@ -134,10 +159,19 @@ export function useOpenCodeQueryEvents(): void {
           batch.streamEpoch === 1 &&
           admitted.events.length > 0 &&
           admitted.events.every((event) => event.type === "server.connected");
+        // Evictions may have been missed while disconnected; the list itself boots nothing.
+        if (
+          admitted.gap ||
+          admitted.streamChanged ||
+          admitted.events.some((event) => event.type === "server.connected")
+        ) {
+          invalidate(openCodeKeys.loadedLocations(batch.connectionID));
+        }
         if (admitted.gap || (admitted.streamChanged && !initialConnectedOnly)) {
           confirmActivity(batch.connectionID);
           revalidateSessionStats(batch.connectionID);
           invalidate(openCodeKeys.runningShellsRoot(batch.connectionID));
+          invalidate(openCodeKeys.terminals(batch.connectionID));
           invalidate(openCodeKeys.requests(batch.connectionID));
           invalidate(openCodeKeys.settings(batch.connectionID));
           invalidate(openCodeKeys.models(batch.connectionID));

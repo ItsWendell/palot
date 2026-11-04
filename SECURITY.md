@@ -1,6 +1,6 @@
 # Security policy
 
-Palot 0.22.0 is pre-release software. Public packages are experimental, not
+Palot 0.23.0 is pre-release software. Public packages are experimental, not
 supported stable releases. Security fixes target the current `main` branch.
 Older commits and locally built packages may not receive fixes.
 
@@ -34,6 +34,28 @@ Treat remote OpenCode server URLs and credentials as sensitive. Only connect to
 servers you trust, and review permission requests before allowing file, shell,
 network, or Git operations.
 
+### Markdown and raw HTML
+
+Agent replies, pull request descriptions, comments, reviews and other Markdown
+can contain raw HTML written by anyone. Palot renders GitHub's subset through an
+allowlist renderer and never inserts Markdown HTML as markup: fragments are
+tokenized, assembled into an element tree and turned into React elements. Only
+allowlisted tags written in lowercase become elements (formatting, headings,
+lists, tables, `details`/`summary`, `kbd`, `sub`/`sup`, `picture`/`source`,
+links and images). Every other tag, including `script`, `style`, `iframe`, `svg`
+and component-like names such as `<Button>`, stays visible as inert literal text
+exactly as written; unlike GitHub, nothing is silently stripped. HTML comments
+render nothing. Each element keeps only its own enumerated attributes, never
+event handlers, `style`, `class`, `id`, `srcdoc` or form attributes. Links and
+images use the Markdown URL policy: entity references are decoded once, then
+only http(s), mailto, tel and relative links survive, plus inert
+`data:image`/`blob:` images. Remote images stay behind the remote-media setting,
+and relative images in content with a remote origin (pull requests, fetched
+pages) resolve against that origin, never local workspace files. Anchors never
+nest, text inside tags is never autolinked, and at most 64 raw HTML elements
+nest before further tags stay literal text. The renderer does
+not sandbox content; a link still opens whatever site it names.
+
 ### Experimental browser
 
 The task browser is off by default and requires the connected OpenCode server's
@@ -48,6 +70,19 @@ Node integration or the app's privileged preload bridge. Each task attachment
 uses a separate in-memory Chromium partition for cookies and site storage.
 These controls do not make page content trustworthy or prevent the agent from
 interacting with accounts signed in within that task's browser.
+
+OpenCode's opt-in artifacts (`"experimental": { "artifacts": true }` in
+`opencode.json`) are agent-written pages. The local provider serves them from the
+OpenCode API behind the server's credential. When you choose **Open** on an
+artifact card, Palot's main process adds that credential to the artifact's own
+document and the requests that document makes in the task's browser partition.
+It does this only for a server on this computer reached over loopback, and only
+for artifacts opened from the transcript. Pages never receive the credential, and
+other sites or artifacts in the same task browser cannot use it. OpenCode serves
+artifacts with a `sandbox allow-scripts` content security policy, so their scripts
+run in an opaque origin. That does not make their content trustworthy. Palot does
+not open OpenCode-hosted artifacts from remote servers; artifacts hosted by
+another provider open as ordinary web pages.
 
 Saved tab URLs and inventory persist locally after disabling or detaching the
 browser. Captures and downloads use local temporary storage. Use **Clear task

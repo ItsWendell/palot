@@ -205,6 +205,15 @@ function FileDiffContent({
             review.add(diff.file, selection, text);
             setSelection(null);
           }}
+          onSend={
+            review.send
+              ? (text) =>
+                  review.send?.(diff.file, selection, text).then((sent) => {
+                    if (sent) setSelection(null);
+                    return sent;
+                  }) ?? Promise.resolve(false)
+              : undefined
+          }
           onCancel={() => setSelection(null)}
         />
       ) : null}

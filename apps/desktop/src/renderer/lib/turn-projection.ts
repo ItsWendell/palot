@@ -5,6 +5,7 @@ import type { JsonValue, PalotMessage, PalotMessageContent } from "../../shared"
 import type { SessionExecutionState, SessionRuntimeStatus } from "../atoms/workspace";
 import { compareMessages } from "./message-reconcile";
 import { projectToolExecution } from "./tool-executions";
+import { projectArtifactCalls } from "./artifact-calls";
 import { usageLimitResetText, usageLimitTitle } from "./usage-limit-reset";
 import { transcriptPromptLabel, type TranscriptPromptAnchor } from "./transcript-outline";
 import {
@@ -948,6 +949,8 @@ function semanticActivityTitle(entries: TurnPart[]): string {
   let delegation = 0;
   let skills = 0;
   let other = 0;
+  let published = 0;
+  let updated = 0;
   const readFiles = new Set<string>();
   const listedDirectories = new Set<string>();
   const changedFiles = new Set<string>();
@@ -990,9 +993,19 @@ function semanticActivityTitle(entries: TurnPart[]): string {
       case "delegation":
         delegation += 1;
         break;
-      case "other":
-        other += 1;
+      case "other": {
+        const artifacts = projectArtifactCalls(entry.part, entry.index);
+        if (!artifacts?.only) {
+          other += 1;
+          break;
+        }
+        for (const call of artifacts.calls) {
+          if (call.operation === "create") published += 1;
+          else if (call.operation === "update") updated += 1;
+          else other += 1;
+        }
         break;
+      }
       case "reasoning":
         break;
     }
@@ -1013,6 +1026,8 @@ function semanticActivityTitle(entries: TurnPart[]): string {
     ...(web ? [`Researched ${web} ${web === 1 ? "source" : "sources"}`] : []),
     ...(delegation ? [`Delegated ${delegation} ${delegation === 1 ? "task" : "tasks"}`] : []),
     ...(skills ? [`Loaded ${skills} ${skills === 1 ? "skill" : "skills"}`] : []),
+    ...(published ? [`Published ${published} ${published === 1 ? "artifact" : "artifacts"}`] : []),
+    ...(updated ? [`Updated ${updated} ${updated === 1 ? "artifact" : "artifacts"}`] : []),
     ...(other ? [`Used ${other} other ${other === 1 ? "tool" : "tools"}`] : []),
   ]);
 }

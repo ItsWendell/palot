@@ -36,6 +36,7 @@ import { useSessionCatalog } from "../hooks/use-session-catalog";
 import { cn } from "../lib/cn";
 import { writeClipboardText } from "../lib/clipboard";
 import { fileReferenceHref } from "../lib/file-reference";
+import { FileLinkMenu, useLinkActions } from "./link-actions";
 import {
   projectToolExecution,
   formatToolDetailValue,
@@ -72,6 +73,8 @@ import { ReadImagePreview } from "./read-image-preview";
 import { StreamingPatchView } from "./streaming-patch-view";
 import { TerminalOutput } from "./terminal-output";
 import { isPlanToolPart, planItems, summarizePlan } from "./transcript/plan";
+import { ArtifactCard } from "./transcript/artifact-card";
+import { projectArtifactCalls } from "../lib/artifact-calls";
 
 const MAX_HIGHLIGHTED_JSON_LENGTH = 256_000;
 const MAX_CACHED_DETAIL_HEIGHTS = 512;
@@ -237,6 +240,7 @@ function WorkspaceFileTarget({
   const label = children ?? baseName(path);
   const title = line === undefined ? path : `${path} (line ${line})`;
   const directory = useWorkspaceDirectory();
+  const { homeDirectory } = useLinkActions();
   const open = (event: React.MouseEvent | React.KeyboardEvent) => {
     opener?.({ path, ...(line === undefined ? {} : { line }) }, event);
   };
@@ -249,33 +253,51 @@ function WorkspaceFileTarget({
     );
   }
 
-  const fileHref = path.startsWith("file://") ? path : fileReferenceHref({ path, line }, directory);
+  const fileHref = path.startsWith("file://")
+    ? path
+    : fileReferenceHref({ path, line }, directory, homeDirectory);
+  const reference = fileUriReference(path, line);
 
   return (
-    <a
-      role="link"
-      href={fileHref}
-      tabIndex={0}
-      title={`Open ${title}`}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        open(event);
-      }}
-      onKeyDown={(event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        event.stopPropagation();
-        open(event);
-      }}
-      className={cn(
-        "cursor-pointer text-info underline-offset-2 hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70",
-        className,
-      )}
-    >
-      {label}
-    </a>
+    <FileLinkMenu reference={reference} directory={directory} onOpen={opener}>
+      <a
+        role="link"
+        href={fileHref}
+        tabIndex={0}
+        title={`Open ${title}`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          open(event);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          event.stopPropagation();
+          open(event);
+        }}
+        className={cn(
+          "cursor-pointer text-info underline-offset-2 hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70",
+          className,
+        )}
+      >
+        {label}
+      </a>
+    </FileLinkMenu>
   );
+}
+
+/** Tool targets may be `file://` URLs; the menu acts on the path they name. */
+function fileUriReference(path: string, line: number | undefined) {
+  let value = path;
+  if (path.startsWith("file://")) {
+    try {
+      value = decodeURIComponent(new URL(path).pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+    } catch {
+      value = path;
+    }
+  }
+  return { path: value, ...(line === undefined ? {} : { line }) };
 }
 
 function WorkspaceFileTargets({ files, opener }: { files: string[]; opener: WorkspaceFileOpener }) {
@@ -569,6 +591,18 @@ export const ToolExecution = memo(function ToolExecution({
     const items = planItems(part);
     return items ? summarizePlan(view.id, items) : null;
   }, [part, view.id]);
+  const artifacts = useMemo(() => projectArtifactCalls(part, index), [index, part]);
+  if (artifacts) {
+    // The cards say everything an artifact-only call did; other calls keep their own row.
+    return (
+      <>
+        {artifacts.only ? null : <ToolExecutionCard view={view} defaultOpen={defaultOpen} />}
+        {artifacts.calls.map((call) => (
+          <ArtifactCard key={call.key} call={call} />
+        ))}
+      </>
+    );
+  }
   if (isPlanToolPart(part)) {
     // The pinned plan card lists the items; the transcript only records the update.
     const active = view.status === "running" || view.status === "pending";

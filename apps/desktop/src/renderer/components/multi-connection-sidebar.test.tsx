@@ -23,9 +23,9 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../hooks/use-connection-overview", () => ({ useConnectionOverview: mocks.overview }));
 vi.mock("../hooks/use-navigation", () => ({ usePalotNavigation: () => mocks }));
-vi.mock("../hooks/use-vcs-info", () => ({
-  useOwnedVcsInfoMap: mocks.vcs,
-  ownedVcsLocationKey: (value: unknown) => JSON.stringify(value),
+vi.mock("../hooks/use-inbox-branches", () => ({
+  useInboxBranches: mocks.vcs,
+  inboxBranchOwnerKey: (value: unknown) => JSON.stringify(value),
 }));
 
 type Overview = ReturnType<typeof useConnectionOverview>;

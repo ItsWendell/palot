@@ -54,8 +54,8 @@ import {
   visibleProjects,
 } from "../lib/view-models";
 import { palotBuild } from "../lib/build";
-import { openCodeKeys } from "../lib/opencode-query";
 import { writeClipboardText } from "../lib/clipboard";
+import { reloadOpenCodeConfiguration } from "../lib/configuration-reload";
 import type { GlobalCommand } from "../lib/global-commands";
 import { boundShortcutKeys, useShortcutOverrides } from "../lib/keyboard-shortcuts";
 import {
@@ -651,21 +651,14 @@ export function useGlobalCommands({
       kind: "action",
       run: () =>
         void toast
-          .promise(
-            palot
-              .reloadConfiguration(reloadConnectionID)
-              .then(() =>
-                queryClient.invalidateQueries({ queryKey: openCodeKeys.all(reloadConnectionID) }),
-              ),
-            {
-              loading: { title: "Reloading configuration…" },
-              success: { title: "Configuration reloaded" },
-              error: (cause: unknown) => ({
-                title: "Could not reload configuration",
-                description: actionableErrorMessage(cause, "OpenCode refused the reload."),
-              }),
-            },
-          )
+          .promise(reloadOpenCodeConfiguration(queryClient, reloadConnectionID), {
+            loading: { title: "Reloading configuration…" },
+            success: { title: "Configuration reloaded" },
+            error: (cause: unknown) => ({
+              title: "Could not reload configuration",
+              description: actionableErrorMessage(cause, "OpenCode refused the reload."),
+            }),
+          })
           .catch(() => undefined),
     });
   }

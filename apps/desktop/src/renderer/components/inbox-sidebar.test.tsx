@@ -9,9 +9,12 @@ import { inboxFiltersAtom, inboxViewPreferencesAtom } from "../atoms/ui";
 import { runtimeAtom } from "../atoms/workspace";
 import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
-import { openCodeKeys } from "../lib/opencode-query";
 import { projectSessionInbox } from "../lib/session-inbox";
-import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
+import {
+  registerOpenCodeRuntime,
+  resetOpenCodeClientForTest,
+  setOpenCodeClientForTest,
+} from "../services/opencode-client";
 import { palot } from "../services/palot";
 import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router";
 import { InboxCompactRowSurface, InboxSidebarContent } from "./inbox-sidebar";
@@ -686,11 +689,19 @@ describe("InboxSidebarContent", () => {
     const getVcs = vi.fn().mockResolvedValue({
       data: { branch: { current: null, default: "main" } },
     });
+    const listLocations = vi
+      .fn()
+      .mockResolvedValue([{ directory: "/data/opencode/worktree/projec/quiet-river" }]);
     setOpenCodeClientForTest({
       vcs: {
         get: getVcs,
       },
+      debug: { location: { list: listLocations } },
     } as unknown as OpenCodeClient);
+    registerOpenCodeRuntime({
+      connectionID: "connection-1",
+      profileID: "local-default",
+    } as OpenCodeRuntimeStatus);
     const store = createStore();
     store.set(runtimeAtom, {
       connectionID: "connection-1",
@@ -746,15 +757,13 @@ describe("InboxSidebarContent", () => {
       queryClient,
     );
 
+    // Only a directory the server has loaded is read.
     await waitFor(() => expect(getVcs).toHaveBeenCalledOnce());
+    expect(listLocations).toHaveBeenCalledOnce();
     await waitFor(() =>
-      expect(
-        queryClient.getQueryData(
-          openCodeKeys.vcsLocation("connection-1", {
-            directory: "/data/opencode/worktree/projec/quiet-river",
-          }),
-        ),
-      ).toEqual({ currentBranch: null, defaultBranch: "main" }),
+      expect(screen.getByTitle("/data/opencode/worktree/projec/quiet-river").textContent).toBe(
+        "quiet-river",
+      ),
     );
     const label = await screen.findByTitle("/data/opencode/worktree/projec/quiet-river");
     expect(label.textContent).toBe("quiet-river");

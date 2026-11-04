@@ -499,6 +499,28 @@ describe("NewTask", () => {
     );
   });
 
+  it("opens the workspace and base-branch pickers from their shortcuts", async () => {
+    const user = userEvent.setup();
+    const store = createDraftStore();
+    render(
+      <Provider store={store}>
+        <NewTask projectID="project-1" />
+      </Provider>,
+    );
+
+    await user.keyboard("{Control>}{Alt>}b{/Alt}{/Control}");
+    expect(await screen.findByRole("combobox", { name: "Search branches" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+
+    await user.keyboard("{Control>}{Alt>}o{/Alt}{/Control}");
+    await user.click(await screen.findByRole("option", { name: /^Current checkout/ }));
+    expect(await screen.findByRole("button", { name: "Work in: Current checkout" })).toBeTruthy();
+
+    // A current checkout has no base branch to choose.
+    await user.keyboard("{Control>}{Alt>}b{/Alt}{/Control}");
+    expect(screen.queryByRole("combobox", { name: "Search branches" })).toBeNull();
+  });
+
   it("remembers each project's workspace choice across project switches and remounts", async () => {
     catalog.projects.push({
       ...catalog.projects[0]!,

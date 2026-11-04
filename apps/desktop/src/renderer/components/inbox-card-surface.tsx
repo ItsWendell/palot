@@ -12,6 +12,7 @@ import {
   sessionActivityAt,
   sessionIsAdditionalCheckout,
 } from "../lib/view-models";
+import type { RememberedBranch } from "../lib/branch-memory";
 import type { OpenCodeVcsInfo } from "../services/opencode-vcs";
 import { PulseDot } from "./ui/pulse-dot";
 import { sidebarItemVariants } from "./ui/sidebar-styles";
@@ -24,6 +25,7 @@ export function InboxCardSurface({
   item,
   selected,
   vcs,
+  branchLastSeen,
   buttonProps,
   titleEditor,
   actions,
@@ -37,6 +39,8 @@ export function InboxCardSurface({
   item: InboxSessionView;
   selected: boolean;
   vcs?: OpenCodeVcsInfo;
+  /** Set when `vcs` is the last branch seen in a directory the server has not loaded. */
+  branchLastSeen?: RememberedBranch;
   buttonProps: ComponentProps<"button">;
   titleEditor?: ReactNode;
   actions?: ReactNode;
@@ -145,7 +149,11 @@ export function InboxCardSurface({
             )}
             <span
               className="min-w-0 -translate-y-px truncate"
-              title={item.session.location.directory}
+              title={
+                branchLastSeen?.branch
+                  ? `${item.session.location.directory}\nLast seen on ${branchLastSeen.branch}`
+                  : item.session.location.directory
+              }
             >
               {branchLabel(vcs, item)}
             </span>

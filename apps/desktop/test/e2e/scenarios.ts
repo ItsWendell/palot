@@ -26,6 +26,7 @@ import { processPickerScenario } from "./process-picker-scenario.ts";
 import { reviewBaseScenario } from "./review-base-scenario.ts";
 import { reviewCommentsScenario } from "./review-comments-scenario.ts";
 import { browserNativeHttpScenario, browserNativeScenario } from "./browser-native-scenario.ts";
+import { artifactsScenario } from "./artifacts-scenario.ts";
 import { themeEditorScenario } from "./theme-editor-scenario.ts";
 import { btwScenario } from "./btw-scenario.ts";
 import { quoteSourceScenario } from "./quote-source-scenario.ts";
@@ -48,6 +49,7 @@ import { composerContextScenario } from "./composer-context-scenario.ts";
 import { composerRichScenario } from "./composer-rich-scenario.ts";
 import { composerKeysScenario } from "./composer-keys-scenario.ts";
 import { themePresetsScenario } from "./theme-presets-scenario.ts";
+import { markdownHtmlScenario } from "./markdown-html-scenario.ts";
 import { markdownRichScenario } from "./markdown-rich-scenario.ts";
 import { transcriptFeaturesScenario } from "./transcript-features-scenario.ts";
 import { workspacePreviewScenario } from "./workspace-preview-scenario.ts";
@@ -64,11 +66,14 @@ import { sessionWindowDragScenario } from "./session-window-drag-scenario.ts";
 import { sshConnectionScenario } from "./ssh-connection-scenario.ts";
 import { remoteAttachmentsScenario } from "./remote-attachments-scenario.ts";
 import { remoteTerminalScenario } from "./remote-terminal-scenario.ts";
+import { terminalRenameScenario } from "./terminal-rename-scenario.ts";
+import { closeTerminalTab } from "./workbench-terminal.ts";
 import { sharedServiceScenario } from "./shared-service-scenario.ts";
 import { openCodeReleaseChannelScenario } from "./opencode-release-channel-scenario.ts";
 import { openCodeRuntimeAcquisitionScenario } from "./opencode-runtime-acquisition-scenario.ts";
 import { openCodeLoginSettingsScenario } from "./opencode-login-settings-scenario.ts";
 import { openCodeApiMigrationScenario } from "./opencode-api-migration-scenario.ts";
+import { claudeAgentSetupScenario } from "./claude-agent-setup-scenario.ts";
 import { externalCredentialsScenario } from "./external-credentials-scenario.ts";
 import { shortTranscriptScenario } from "./short-transcript-scenario.ts";
 import { coldSessionNavigationScenario } from "./cold-session-navigation-scenario.ts";
@@ -170,10 +175,14 @@ export interface Scenario {
   expectedModelCalls: number;
   onboarding?: boolean;
   modelRuntime?: "native-openai";
+  /** Top-level OpenCode settings merged over the isolated test configuration. */
+  openCodeConfig?: Record<string, unknown>;
   /** Keep the isolated home outside this checkout, so its folders are not in a repository. */
   homeOutsideCheckout?: boolean;
   arrange(llm: TestLLMServer): void;
   prepare?(home: string): Promise<void>;
+  /** Extra environment for the isolated OpenCode service, such as a controlled PATH. */
+  serviceEnvironment?(home: string): Record<string, string>;
   prepareProject?(context: ScenarioSeedContext): Promise<void>;
   seed?(client: OpenCodeClient, context: ScenarioSeedContext): Promise<void>;
   run?(page: Page, context: ScenarioContext): Promise<void>;
@@ -207,6 +216,7 @@ export const scenarios = {
   "settings-source-updates": sourceUpdatesScenario,
   "theme-presets": themePresetsScenario,
   "markdown-rich": markdownRichScenario,
+  "markdown-html": markdownHtmlScenario,
   "workspace-preview": workspacePreviewScenario,
   "file-viewer-2": fileViewer2Scenario,
   "composer-context": composerContextScenario,
@@ -220,6 +230,7 @@ export const scenarios = {
   "opencode-runtime-acquisition": openCodeRuntimeAcquisitionScenario,
   "opencode-login-settings": openCodeLoginSettingsScenario,
   "opencode-api-migration": openCodeApiMigrationScenario,
+  "claude-agent-setup": claudeAgentSetupScenario,
   "external-credentials": externalCredentialsScenario,
   "short-transcript": shortTranscriptScenario,
   "cold-session-navigation": coldSessionNavigationScenario,
@@ -234,6 +245,7 @@ export const scenarios = {
   "ssh-connection": sshConnectionScenario,
   "remote-attachments": remoteAttachmentsScenario,
   "remote-terminal": remoteTerminalScenario,
+  "terminal-rename": terminalRenameScenario,
   "conversation-tools": conversationToolsScenario,
   "transcript-rail": transcriptRailScenario,
   "transcript-rail-streaming": transcriptRailStreamingScenario,
@@ -247,6 +259,7 @@ export const scenarios = {
   "review-base": reviewBaseScenario,
   "review-comments": reviewCommentsScenario,
   "browser-native": browserNativeScenario,
+  artifacts: artifactsScenario,
   "theme-editor": themeEditorScenario,
   btw: btwScenario,
   "quote-source": quoteSourceScenario,
@@ -1519,7 +1532,7 @@ export const scenarios = {
         await expect.poll(async () => (await runningTerminals()).legacy).toBe(0);
       }
 
-      await page.getByRole("button", { name: "Close Terminal" }).click();
+      await closeTerminalTab(page);
       await expect
         .poll(async () => {
           const running = await runningTerminals();
@@ -2652,9 +2665,7 @@ export const scenarios = {
       llm.text("The task continued while the shell command remained in the background.");
     },
     async assert(page) {
-      await page
-        .getByRole("button", { name: "Commands & terminals: 1 command", exact: true })
-        .waitFor();
+      await page.getByRole("button", { name: "Running work: 1 running", exact: true }).waitFor();
       if (
         await page
           .getByRole("button", {
@@ -2695,9 +2706,7 @@ export const scenarios = {
       llm.text("The steering message continued after the shell moved to the background.");
     },
     async assert(page) {
-      await page
-        .getByRole("button", { name: "Commands & terminals: 1 command", exact: true })
-        .waitFor();
+      await page.getByRole("button", { name: "Running work: 1 running", exact: true }).waitFor();
       const sessionHash = await page.evaluate(
         () => (globalThis as unknown as { location: { hash: string } }).location.hash,
       );

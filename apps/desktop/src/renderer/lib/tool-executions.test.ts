@@ -521,6 +521,29 @@ describe("projectToolExecution", () => {
     });
   });
 
+  it("treats a completed shell command with a non-zero exit as failed", () => {
+    const shell = (exit: number | undefined, status = "completed") =>
+      projectToolExecution(
+        {
+          type: "tool",
+          id: `shell-${exit}`,
+          name: "shell",
+          state: {
+            status,
+            input: { command: "bun run test" },
+            metadata: { output: "1 failed", ...(exit === undefined ? {} : { exit }) },
+          },
+        },
+        0,
+      );
+    // OpenCode completes the tool whatever the exit code.
+    expect(shell(1)).toMatchObject({ kind: "shell", status: "error", exitCode: 1 });
+    expect(shell(0)).toMatchObject({ status: "complete", exitCode: 0 });
+    // Background shells and older servers report no exit code.
+    expect(shell(undefined)).toMatchObject({ status: "complete", exitCode: null });
+    expect(shell(1, "running")).toMatchObject({ status: "running" });
+  });
+
   it("removes ANSI before parsing shell commands classified as searches", () => {
     expect(
       projectToolExecution(
@@ -741,6 +764,23 @@ describe("projectToolExecution", () => {
     expect(
       projectToolExecution(tool("palot_wait_tasks", { taskIds: ["a", "b"] }, "{}"), 0),
     ).toMatchObject({ title: "Wait for tasks", label: "2 tasks" });
+  });
+
+  it("names OpenCode's artifact tools for mixed programs and direct calls", () => {
+    expect(
+      projectToolExecution(
+        tool("execute", { code: "..." }, "{}", {
+          toolCalls: [
+            { tool: "read", status: "completed", input: { path: "report.json" } },
+            { tool: "opencode.artifact_update", status: "completed", input: { id: "art_1" } },
+          ],
+        }),
+        0,
+      ),
+    ).toMatchObject({ calls: [{ title: "Read" }, { title: "Update artifact" }] });
+    expect(
+      projectToolExecution(tool("opencode_artifact_create", { title: "Report" }, ""), 0),
+    ).toMatchObject({ kind: "generic", title: "Publish artifact" });
   });
 
   it("accepts normalized output and durable structured execute progress", () => {

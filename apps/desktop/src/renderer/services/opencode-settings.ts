@@ -444,6 +444,15 @@ function mapIntegration(integration: IntegrationInfo): PalotIntegration {
       ...(connection.type === "credential" && connection.method
         ? { method: connection.method }
         : {}),
+      ...(connection.status?.status === "needs_auth"
+        ? {
+            status: {
+              status: "needs_auth" as const,
+              message: connection.status.message,
+              url: connection.status.url ?? null,
+            },
+          }
+        : {}),
     })),
     ...(integration.metadata ? { metadata: toJson(integration.metadata) } : {}),
   };

@@ -1,4 +1,9 @@
-import { isPtyNotFoundError, type LocationRef, type Pty } from "@opencode/client";
+import {
+  isPtyNotFoundError,
+  type LocationRef,
+  type PersistentPtyInfo,
+  type Pty,
+} from "@opencode/client";
 import type { PalotApi, PalotPty, PalotPtySnapshot, PalotPtyTransport } from "../../shared";
 import { openCodeClient } from "./opencode-client";
 
@@ -90,6 +95,29 @@ export async function resizePty(
     return;
   }
   await openCodeClient(connectionID).pty.update({ ptyID, location: location(value), size });
+}
+
+export function listSessionTerminals(
+  sessionID: string,
+  connectionID?: string,
+  signal?: AbortSignal,
+): Promise<PersistentPtyInfo[]> {
+  return openCodeClient(connectionID).experimental.persistentPty.list(
+    { sessionID },
+    signal ? { signal } : undefined,
+  );
+}
+
+/**
+ * Sets a persistent terminal's user title; `null` clears it so the automatic title shows again.
+ * Legacy terminals have no user title.
+ */
+export function renamePty(
+  ptyID: string,
+  title: string | null,
+  connectionID?: string,
+): Promise<PersistentPtyInfo> {
+  return openCodeClient(connectionID).experimental.persistentPty.update({ ptyID, title });
 }
 
 export async function removePty(

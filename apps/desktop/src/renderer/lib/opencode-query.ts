@@ -46,6 +46,9 @@ export const openCodeKeys = {
   sessionRequests: (connectionID: string, sessionID: string) =>
     [...openCodeKeys.requests(connectionID), sessionID] as const,
   projects: (connectionID: string) => [...openCodeKeys.all(connectionID), "projects"] as const,
+  artifacts: (connectionID: string) => [...openCodeKeys.all(connectionID), "artifacts"] as const,
+  artifactsLocation: (connectionID: string, directory: string) =>
+    [...openCodeKeys.artifacts(connectionID), directory] as const,
   usageLimits: (connectionID: string, directory: string) =>
     [...openCodeKeys.all(connectionID), "usage-limits", directory] as const,
   sessions: (connectionID: string) => [...openCodeKeys.all(connectionID), "sessions"] as const,
@@ -81,6 +84,10 @@ export const openCodeKeys = {
       location.directory,
       location.workspaceID ?? "",
     ] as const,
+  terminals: (connectionID: string) => [...openCodeKeys.all(connectionID), "terminals"] as const,
+  /** A session's persistent terminals, shared by the Running work list and terminal tab labels. */
+  sessionTerminals: (connectionID: string, sessionID: string) =>
+    [...openCodeKeys.terminals(connectionID), "session", sessionID] as const,
   session: (connectionID: string, sessionID: string) =>
     [...openCodeKeys.sessions(connectionID), "detail", sessionID] as const,
   sessionContext: (connectionID: string, sessionID: string) =>
@@ -123,7 +130,46 @@ export const openCodeKeys = {
     [...openCodeKeys.vcsBranches(connectionID, location), search] as const,
   worktrees: (connectionID: string, projectID: string) =>
     [...openCodeKeys.all(connectionID), "worktrees", projectID] as const,
+  /** Directories the server has booted, from a global route that boots nothing. */
+  loadedLocations: (connectionID: string) =>
+    [...openCodeKeys.all(connectionID), "loaded-locations"] as const,
 };
+
+/**
+ * Inbox row branch reads live outside the connection prefix so connection-wide refreshes
+ * (reconnects, configuration reloads) never re-read, and so re-boot, every row's directory.
+ */
+export const inboxBranchKeys = {
+  connection: (connectionID: string) => ["palot", "inbox-branch", connectionID] as const,
+  directory: (connectionID: string, directory: string) =>
+    [...inboxBranchKeys.connection(connectionID), directory] as const,
+  location: (connectionID: string, location: LocationRef) =>
+    [
+      ...inboxBranchKeys.directory(connectionID, location.directory),
+      location.workspaceID ?? "",
+    ] as const,
+};
+
+/**
+ * Whether a connection's query reads from one directory. Location-scoped keys carry the
+ * directory as a plain part (or inside a location object) after the connection prefix.
+ */
+export function isLocationQueryKey(
+  queryKey: readonly unknown[],
+  connectionID: string,
+  directory: string,
+): boolean {
+  if (queryKey[0] !== "opencode" || queryKey[1] !== connectionID) return false;
+  return queryKey
+    .slice(2)
+    .some(
+      (part) =>
+        part === directory ||
+        (typeof part === "object" &&
+          part !== null &&
+          (part as { directory?: unknown }).directory === directory),
+    );
+}
 
 export function locationKey(location: LocationRef): string {
   return `${location.directory}\u0000${location.workspaceID ?? ""}`;

@@ -297,6 +297,19 @@ const PALOT_TOOL_TITLES: Record<string, string> = {
   create_pull_request: "Create pull request",
 };
 
+/** OpenCode's experimental artifact tools, called directly or through Code Mode. */
+const ARTIFACT_TOOL_TITLES: Record<string, string> = {
+  create: "Publish artifact",
+  read: "Read artifact",
+  update: "Update artifact",
+  delete: "Delete artifact",
+};
+
+function artifactToolTitle(name: string): string | null {
+  const match = name.match(/^opencode[._]artifact_(create|read|update|delete)$/);
+  return match ? ARTIFACT_TOOL_TITLES[match[1]!]! : null;
+}
+
 /** What a Palot tool call is doing, in the terms Palot's sidebar and Scheduled page use. */
 function palotSummary(tool: string, input: RecordValue): { label: string | null; args: string[] } {
   const value = (key: string) => genericScalar(input[key]);
@@ -797,7 +810,7 @@ function executeCalls(value: JsonValue | undefined): ExecuteExecution["calls"] {
         tool,
         title: palot
           ? (PALOT_TOOL_TITLES[palot] ?? readableToolName(palot))
-          : readableToolName(tool),
+          : (artifactToolTitle(tool) ?? readableToolName(tool)),
         status: call.status as ExecuteExecution["calls"][number]["status"],
         args: [...(summary.label ? [summary.label] : []), ...summary.args],
       },
@@ -910,8 +923,15 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
       };
     }
     const output = lazyTerminalOutput(rawOutput);
+    const exitCode = number(value.metadata.exit);
     return {
       ...value.value,
+      // OpenCode completes the shell tool whatever the command's exit code; a non-zero exit
+      // is a failed command for the reader (and for failure counts).
+      status:
+        value.value.status === "complete" && exitCode !== null && exitCode !== 0
+          ? "error"
+          : value.value.status,
       kind: "shell",
       command,
       scriptPresentation: pythonShellPresentation(command),
@@ -926,7 +946,7 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
       get terminal() {
         return output().terminal;
       },
-      exitCode: number(value.metadata.exit),
+      exitCode,
       truncated: boolean(value.metadata.truncated),
       timedOut: boolean(value.metadata.timeout),
     };
@@ -1034,7 +1054,7 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
     kind: "generic",
     title: palot
       ? (PALOT_TOOL_TITLES[palot] ?? readableToolName(palot))
-      : readableToolName(value.value.name),
+      : (artifactToolTitle(value.value.name) ?? readableToolName(value.value.name)),
     label: summary.label,
     args: summary.args,
   };

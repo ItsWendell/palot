@@ -402,6 +402,43 @@ describe("projectTranscriptTurns", () => {
     ]);
   });
 
+  it("names published artifacts instead of counting them as other tools", () => {
+    const artifactCall = (id: string, tool: string): PalotMessageContent => ({
+      type: "tool",
+      id,
+      name: "execute",
+      state: {
+        status: "completed",
+        input: { code: "..." },
+        metadata: { toolCalls: [{ tool, status: "completed", input: { title: "Report" } }] },
+      },
+    });
+    const assistant = message({
+      id: "assistant",
+      type: "assistant",
+      finish: "stop",
+      content: [
+        artifactCall("publish", "opencode.artifact_create"),
+        artifactCall("update", "opencode.artifact_update"),
+        { type: "text", id: "final", text: "Done" },
+      ],
+    });
+
+    const turn = projectTranscriptTurns(
+      [assistant],
+      null,
+      [],
+      [],
+      null,
+      null,
+      SESSION_PROJECTION_PRESETS["code-focus"],
+    )[0]!;
+
+    expect(turn.activity).toMatchObject([
+      { title: "Published 1 artifact and updated 1 artifact", categories: ["other"] },
+    ]);
+  });
+
   it("uses the latest reasoning title for completed groups when configured", () => {
     const assistant = message({
       id: "assistant",

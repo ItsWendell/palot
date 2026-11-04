@@ -30,6 +30,11 @@ export function registerOpenCodeRuntime(runtime: OpenCodeRuntimeStatus): void {
   );
 }
 
+/** The server profile behind a connection; the focused one when omitted. */
+export function openCodeProfileID(connectionID?: string): string | undefined {
+  return (connectionID === undefined ? focusedTarget : targets.get(connectionID))?.profileID;
+}
+
 export function setFocusedOpenCodeRuntime(runtime: OpenCodeRuntimeStatus | null): void {
   if (runtime) registerOpenCodeRuntime(runtime);
   focusedTarget = runtime ? targets.get(runtime.connectionID)! : null;
@@ -43,6 +48,55 @@ function readBudget(target: Target | null) {
     budgets.set(key, budget);
   }
   return budget;
+}
+
+interface MissingLocationResponse {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: ArrayBuffer | null;
+}
+
+/**
+ * Directories each connection answered `LocationNotFoundError` for. Reads scoped to them are
+ * answered locally with that same response until a request for the directory succeeds (the
+ * task's missing-folder check, `GET /api/location`, always reaches the server), so a deleted
+ * worktree stops costing a round trip per poll.
+ */
+const missingLocations = new Map<string, Map<string, MissingLocationResponse>>();
+const LOCATION_PROBE_PATH = "/api/location";
+
+function requestDirectory(request: Request, url: URL): string | null {
+  const query = url.searchParams.get("location[directory]");
+  if (query) return query;
+  const header = request.headers.get("x-opencode-directory");
+  if (!header) return null;
+  try {
+    return decodeURIComponent(header);
+  } catch {
+    return header;
+  }
+}
+
+function locationNotFoundDirectory(body: ArrayBuffer | null): string | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as {
+      _tag?: unknown;
+      location?: { directory?: unknown };
+    };
+    return parsed?._tag === "LocationNotFoundError" &&
+      typeof parsed.location?.directory === "string"
+      ? parsed.location.directory
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a connection's reads for a directory are short-circuited as not found. */
+export function isOpenCodeLocationMissing(connectionID: string, directory: string): boolean {
+  return missingLocations.get(connectionID)?.has(directory) ?? false;
 }
 
 function bridge(): PalotApi {
@@ -89,6 +143,21 @@ function targetedFetch(target: Target | null): typeof globalThis.fetch {
     });
     let release: (() => void) | undefined;
     let abort: (() => void) | undefined;
+    const url = new URL(request.url);
+    const directory = requestDirectory(request, url);
+    const missing = missingLocations.get(target?.connectionID ?? "");
+    const skipped =
+      directory && request.method === "GET" && url.pathname !== LOCATION_PROBE_PATH
+        ? missing?.get(directory)
+        : undefined;
+    if (skipped) {
+      logRequest("debug", "request skipped", { id, method: request.method, path: label });
+      return new Response(skipped.body?.slice(0) ?? null, {
+        status: skipped.status,
+        statusText: skipped.statusText,
+        headers: skipped.headers,
+      });
+    }
     logRequest("debug", "request started", {
       id,
       method: request.method,
@@ -131,6 +200,22 @@ function targetedFetch(target: Target | null): typeof globalThis.fetch {
         durationMs,
         main: result.timings,
       };
+      if (directory) {
+        const key = target?.connectionID ?? "";
+        const notFound = result.status === 404 ? locationNotFoundDirectory(result.body) : null;
+        if (notFound) {
+          const entries = missingLocations.get(key) ?? new Map<string, MissingLocationResponse>();
+          entries.set(notFound, {
+            status: result.status,
+            statusText: result.statusText,
+            headers: result.headers,
+            body: result.body?.slice(0) ?? null,
+          });
+          missingLocations.set(key, entries);
+        } else if (result.status < 400) {
+          missingLocations.get(key)?.delete(directory);
+        }
+      }
       if (result.status >= 400 || durationMs >= 1_000) {
         logRequest("warn", "response", details);
       } else {
@@ -196,6 +281,7 @@ export function resetOpenCodeClientForTest(): void {
   targets.clear();
   clients.clear();
   budgets.clear();
+  missingLocations.clear();
   requestSequence = 0;
 }
 

@@ -929,7 +929,7 @@ describe("OpenCodeRuntimeLifecycle stream watchdog", () => {
     vi.useRealTimers();
   });
 
-  function fixture(failures: number[] = [], repair?: () => Promise<void>) {
+  function fixture(failures: number[] = [], repair?: () => Promise<void>, silent: number[] = []) {
     const subscriptions: Array<{ signal: AbortSignal; activity(): void; at: number }> = [];
     let active = 0;
     let peakActive = 0;
@@ -939,8 +939,8 @@ describe("OpenCodeRuntimeLifecycle stream watchdog", () => {
       peakActive = Math.max(peakActive, active);
       try {
         if (failures.includes(subscriptions.length)) throw new Error("subscribe failed");
+        if (!silent.includes(subscriptions.length)) yield connectedEvent();
         await waitForAbort(signal);
-        yield* [];
       } finally {
         active -= 1;
       }
@@ -983,6 +983,48 @@ describe("OpenCodeRuntimeLifecycle stream watchdog", () => {
     expect(onReconnect).toHaveBeenCalledOnce();
     expect(runtime.streamEpoch()).toBe(2);
     expect(peakActive()).toBe(1);
+    expect(runtime.status().connected).toBe(true);
+  });
+
+  it("fails a subscription that never confirms server.connected even while heartbeats arrive", async () => {
+    const { runtime, subscriptions, wait, onReconnect } = fixture([], undefined, [1]);
+    await runtime.connect();
+    await vi.advanceTimersByTimeAsync(15_000);
+    subscriptions[0]!.activity();
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(subscriptions[0]!.signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(subscriptions[0]!.signal.aborted).toBe(true);
+    expect(runtime.status()).toMatchObject({
+      connected: false,
+      error: "OpenCode event stream did not confirm its subscription",
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(subscriptions.map(({ at }) => at)).toEqual([0, 21_000]);
+    expect(wait.mock.calls.map(([delay]) => delay)).toEqual([1_000]);
+    expect(onReconnect).toHaveBeenCalledOnce();
+    // The confirmed replacement is only bounded by the heartbeat watchdog.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(subscriptions).toHaveLength(2);
+    expect(runtime.status().connected).toBe(true);
+  });
+
+  it("keeps escalating backoff across replacements that fail before proving stable", async () => {
+    const { runtime, subscriptions, wait, onReconnect } = fixture([], undefined, [2, 3, 4]);
+    await runtime.connect();
+    // Stream 1 is confirmed, then goes silent: a long-lived stream restarts at 1s.
+    await vi.advanceTimersByTimeAsync(46_000);
+    expect(subscriptions.map(({ at }) => at)).toEqual([0, 46_000]);
+    // Streams 2-4 never confirm. Each successful re-establish would otherwise reset to
+    // 1s and resync snapshots every ~21s; the delay keeps doubling instead.
+    await vi.advanceTimersByTimeAsync(20_000 + 2_000 + 20_000 + 4_000 + 20_000 + 8_000);
+    expect(subscriptions.map(({ at }) => at)).toEqual([0, 46_000, 68_000, 92_000, 120_000]);
+    expect(wait.mock.calls.map(([delay]) => delay)).toEqual([1_000, 2_000, 4_000, 8_000]);
+    expect(onReconnect).toHaveBeenCalledTimes(4);
+    // Stream 5 confirms and lives past the stable threshold, so the next stall restarts at 1s.
+    await vi.advanceTimersByTimeAsync(45_000 + 1_000);
+    expect(subscriptions.at(-1)!.at).toBe(166_000);
+    expect(wait.mock.calls.at(-1)![0]).toBe(1_000);
     expect(runtime.status().connected).toBe(true);
   });
 
@@ -1112,8 +1154,8 @@ describe("OpenCodeRuntimeLifecycle heartbeat recovery", () => {
         makeClient: () =>
           streamClient(async function* (input) {
             subscriptions.push(input);
+            yield connectedEvent();
             await waitForAbort(input.signal);
-            yield* [];
           }),
         wait: (_ms, signal) =>
           new Promise<void>((resolve) => {
@@ -1211,6 +1253,10 @@ describe("OpenCodeRuntimeLifecycle heartbeat recovery", () => {
     expect(runtime.status().connected).toBe(true);
   });
 });
+
+function connectedEvent(): OpenCodeEvent {
+  return { id: `connected-${Date.now()}`, type: "server.connected", data: {} } as OpenCodeEvent;
+}
 
 async function waitForAbort(signal: AbortSignal): Promise<void> {
   if (signal.aborted) return;

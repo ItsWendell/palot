@@ -24,7 +24,7 @@ import {
 import { runtimeAtom } from "../atoms/workspace";
 import { workbenchStateAtom } from "../atoms/workbench";
 import { composerActionRequestAtom, globalCommandRequestAtom } from "../atoms/command-requests";
-import { composerStateAtomFamily } from "../atoms/composer-state";
+import { composerDirectSendAtomFamily, composerStateAtomFamily } from "../atoms/composer-state";
 import { composerScope } from "../lib/composer-scope";
 import { createWorkbenchState, workbenchScopeKey, type WorkbenchTab } from "../lib/workbench-tabs";
 import { openCodeReconciler, sessionInfoFromPalot } from "../lib/open-code-reconciler";
@@ -239,6 +239,77 @@ describe("Composer discovery", () => {
     fireEvent.change(input, { target: { value: "Next message" } });
     await act(async () => response.resolve({ text: "Side answer" }));
     expect((input as HTMLTextAreaElement).value).toBe("Next message");
+  });
+
+  it("sends a review comment on its own and leaves the draft and queued comments alone", async () => {
+    const send = vi.spyOn(palot, "sendComposerPrompt").mockResolvedValue({
+      id: "msg-direct-comment",
+      sessionID: session.id,
+      type: "user",
+      delivery: "steer",
+      createdAt: 3,
+    });
+    const store = createStore();
+    const scope = composerScope("test-profile", `session:${session.id}`);
+    const state = composerStateAtomFamily(scope);
+    const queued = {
+      id: "queued",
+      path: "src/other.ts",
+      selection: { startLine: 1, startChar: 0, endLine: 1, endChar: 0 },
+      comment: "Later",
+      side: "additions" as const,
+    };
+    store.set(state, (current) => ({ ...current, comments: [queued] }));
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    fireEvent.change(input, { target: { value: "Unfinished thought" } });
+    const sender = store.get(composerDirectSendAtomFamily(scope));
+    expect(sender).toBeTypeOf("function");
+    let sent = false;
+    await act(async () => {
+      sent = await sender!({
+        id: "now",
+        path: "src/a.ts",
+        selection: { startLine: 2, startChar: 0, endLine: 4, endChar: 0 },
+        comment: "Handle null",
+        side: "additions",
+      });
+    });
+    expect(sent).toBe(true);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0]![0]).toMatchObject({
+      sessionID: session.id,
+      text: "",
+      comments: [
+        {
+          path: "src/a.ts",
+          comment: "Handle null",
+          selection: { startLine: 2, startChar: 0, endLine: 4, endChar: 0 },
+          origin: "review",
+        },
+      ],
+    });
+    expect(input.value).toBe("Unfinished thought");
+    expect(store.get(state).comments).toEqual([queued]);
+  });
+
+  it("reports a failed direct comment send without touching the composer's errors", async () => {
+    vi.spyOn(palot, "sendComposerPrompt").mockRejectedValue(new Error("offline"));
+    const store = createStore();
+    const scope = composerScope("test-profile", `session:${session.id}`);
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    let sent = true;
+    await act(async () => {
+      sent = await store.get(composerDirectSendAtomFamily(scope))!({
+        id: "now",
+        path: "src/a.ts",
+        selection: { startLine: 2, startChar: 0, endLine: 2, endChar: 0 },
+        comment: "Handle null",
+        side: "additions",
+      });
+    });
+    expect(sent).toBe(false);
+    expect(screen.queryByText("offline")).toBeNull();
   });
 
   it("rejects an empty /btw without normal submission or clearing text", () => {
@@ -1111,6 +1182,43 @@ describe("Composer discovery", () => {
           text: "auth",
           delivery: "steer",
         },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
+  });
+
+  it("finds and runs a command from a nested folder by its path", async () => {
+    const user = userEvent.setup();
+    const runCommand = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(
+      client({
+        command: {
+          list: vi.fn().mockResolvedValue({
+            data: [
+              { name: "git/commit", description: "Commit staged changes" },
+              { name: "review", description: "Review current changes" },
+            ],
+          }),
+        },
+        session: { command: runCommand },
+      }),
+    );
+
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    // Typing past the folder's slash keeps the suggestion list on that command.
+    await user.type(input, "/git/co");
+    await user.click(await screen.findByRole("option", { name: /\/git\/commit/i }));
+    expect(input.value).toBe("/git/commit ");
+
+    await user.type(input, "fix typo");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(runCommand).toHaveBeenCalledWith(
+        { sessionID: session.id, name: "git/commit", text: "fix typo", delivery: "steer" },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );

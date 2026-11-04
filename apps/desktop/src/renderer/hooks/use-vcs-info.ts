@@ -10,7 +10,6 @@ import {
   getOpenCodeVcsBase,
   getOpenCodeVcsStatus,
   listOpenCodeVcsBranches,
-  type OpenCodeVcsInfo,
 } from "../services/opencode-vcs";
 
 export function vcsLocationKey(location: LocationRef): string {
@@ -25,16 +24,10 @@ export function vcsQueryKey(connectionID: string, location: LocationRef) {
   return openCodeKeys.vcsLocation(connectionID, location);
 }
 
-function vcsQueryOptions(
-  connectionID: string,
-  location: LocationRef,
-  enabled: boolean,
-  ownerConnectionID?: string,
-) {
+function vcsQueryOptions(connectionID: string, location: LocationRef, enabled: boolean) {
   return queryOptions({
     queryKey: vcsQueryKey(connectionID, location),
-    queryFn: ({ signal }) =>
-      getOpenCodeVcsInfo(location, signal, ownerConnectionID ?? connectionID),
+    queryFn: ({ signal }) => getOpenCodeVcsInfo(location, signal, connectionID),
     enabled,
     // Branch events invalidate immediately; remounts need not re-read Git after five seconds.
     staleTime: 60_000,
@@ -93,71 +86,6 @@ export function useReviewBase(location: LocationRef, enabled = true) {
     inferred,
     setManual: (value: string | null) => setChoice(scope, value),
   };
-}
-
-export function useVcsInfoMap(locations: LocationRef[]): ReadonlyMap<string, OpenCodeVcsInfo> {
-  const runtime = useAtomValue(runtimeAtom);
-  const connectionID = runtime?.connectionID ?? "disconnected";
-  const enabled = Boolean(runtime?.connected && runtime.connectionID !== "preview");
-  const values = useQueries({
-    queries: locations.map((location) => ({
-      ...vcsQueryOptions(connectionID, location, enabled),
-      notifyOnChangeProps: ["data"] as const,
-    })),
-    combine: (results) => results.map((result) => result.data),
-  });
-  return useMemo(() => {
-    const byLocation = new Map<string, OpenCodeVcsInfo>();
-    values.forEach((value, index) => {
-      const location = locations[index];
-      if (location && value) byLocation.set(vcsLocationKey(location), value);
-    });
-    return byLocation;
-  }, [locations, values]);
-}
-
-export interface OwnedVcsLocation {
-  connectionID: string;
-  location: LocationRef;
-}
-
-export function ownedVcsLocationKey({ connectionID, location }: OwnedVcsLocation): string {
-  return JSON.stringify(vcsQueryKey(connectionID, location));
-}
-
-/** Only pass mounted/visible card locations. No discovery or polling is performed. */
-export function useOwnedVcsInfoMap(
-  locations: readonly OwnedVcsLocation[],
-): ReadonlyMap<string, OpenCodeVcsInfo> {
-  const unique = useMemo(
-    () => [...new Map(locations.map((owner) => [ownedVcsLocationKey(owner), owner])).values()],
-    [locations],
-  );
-  const values = useQueries({
-    queries: unique.map(({ connectionID, location }) => ({
-      ...vcsQueryOptions(
-        connectionID,
-        location,
-        Boolean(
-          location.directory &&
-          connectionID &&
-          connectionID !== "preview" &&
-          connectionID !== "disconnected",
-        ),
-        connectionID,
-      ),
-      notifyOnChangeProps: ["data"] as const,
-    })),
-    combine: (results) => results.map((result) => result.data),
-  });
-  return useMemo(() => {
-    const byOwner = new Map<string, OpenCodeVcsInfo>();
-    values.forEach((value, index) => {
-      const owner = unique[index];
-      if (owner && value) byOwner.set(ownedVcsLocationKey(owner), value);
-    });
-    return byOwner;
-  }, [unique, values]);
 }
 
 export function useVcsStatusMap(

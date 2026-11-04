@@ -500,6 +500,59 @@ describe("renderer OpenCode settings service", () => {
     ]);
   });
 
+  it("keeps the sign-in problem an integration reports on a connection", async () => {
+    setOpenCodeClientForTest(
+      client({
+        integration: {
+          list: vi.fn().mockResolvedValue({
+            location,
+            data: [
+              {
+                id: "claude-agent",
+                name: "Claude Agent",
+                methods: [{ id: "claude-login", type: "external", label: "Claude Code login" }],
+                connections: [
+                  {
+                    type: "credential",
+                    id: "missing",
+                    label: "Claude Code",
+                    method: "external",
+                    status: {
+                      status: "needs_auth",
+                      message: "Claude Code is not installed.",
+                      url: "https://code.claude.com/docs/en/setup",
+                    },
+                  },
+                  {
+                    type: "credential",
+                    id: "signed-out",
+                    label: "Older",
+                    method: "external",
+                    status: { status: "needs_auth", message: "Claude Code is not logged in." },
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+    );
+
+    const result = await loadSettings({
+      projectID: "project-1",
+      directory: "/repo",
+      capabilities: ["integrations"],
+    });
+    expect(result.integrations[0]?.connections.map((connection) => connection.status)).toEqual([
+      {
+        status: "needs_auth",
+        message: "Claude Code is not installed.",
+        url: "https://code.claude.com/docs/en/setup",
+      },
+      { status: "needs_auth", message: "Claude Code is not logged in.", url: null },
+    ]);
+  });
+
   it("connects an external method on its settings owner after resolving the location", async () => {
     const connect = vi.fn().mockResolvedValue(undefined);
     const key = vi.fn();

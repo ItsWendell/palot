@@ -1,13 +1,19 @@
-import type { LocationRef, PersistentPtyInfo } from "@opencode/client";
-import { useQueries } from "@tanstack/react-query";
+import {
+  isLocationNotFoundError,
+  type LocationRef,
+  type PersistentPtyInfo,
+} from "@opencode/client";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PalotRunningShell, PalotSession } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
 import { openCodeKeys } from "../lib/opencode-query";
 import { openCodeClient } from "../services/opencode-client";
 import { runningShellsQueryOptions } from "./use-running-shells";
 import { useSessionCatalog } from "./use-session-catalog";
+import { useLoadedLocations } from "./use-loaded-locations";
+import { sessionTerminalsQueryOptions } from "./use-session-terminals";
 
 export interface SessionCommand extends PalotRunningShell {
   kind: "command";
@@ -23,6 +29,8 @@ export interface SessionTerminal extends PersistentPtyInfo {
 }
 export type SessionProcess = SessionCommand | SessionTerminal;
 const RECENT_MS = 30_000;
+export const SHELL_POLL_MS = 2_000;
+export const TERMINAL_POLL_MS = 3_000;
 const MAX_RECENT = 20;
 
 interface ProcessHistory {
@@ -117,27 +125,56 @@ export function useSessionProcesses(
     [owners],
   );
   const scope = JSON.stringify([connectionID, session.id, [...owners.keys()].sort(), locations]);
+  // Shell lists are location-scoped: reading one boots its directory on the server. Subagents
+  // often run in other worktrees, so while the list is closed only the task's own directory
+  // and directories the server already has loaded are read. Live work there (shell.created,
+  // session.status) marks the directory loaded, which enables its read without booting it.
+  // Opening the list is an explicit request and reads every family directory.
+  const ownDirectory = session.location.directory;
+  const loaded = useLoadedLocations(
+    connectionID,
+    enabled && locations.some((location) => location.directory !== ownDirectory),
+  );
+  const readable = (location: LocationRef) =>
+    open || location.directory === ownDirectory || loaded?.has(location.directory) === true;
+  // Closed, the counts follow shell and terminal events after one read on mount. Only the open
+  // list polls, for output-free changes such as a terminal's foreground process. A deleted
+  // directory stops polling until it is read again.
   const shells = useQueries({
     queries: locations.map((location) => ({
-      ...runningShellsQueryOptions(connectionID, location, enabled),
+      ...runningShellsQueryOptions(connectionID, location, enabled && readable(location)),
       notifyOnChangeProps: undefined,
       refetchOnMount: true,
-      refetchInterval: enabled ? 2_000 : false,
+      refetchInterval: (query: { state: { error: unknown } }) =>
+        enabled && open && !isLocationNotFoundError(query.state.error) ? SHELL_POLL_MS : false,
       retry: false,
     })),
   });
   const terminalsSupported = runtime?.capabilities?.pty === "persistent";
+  const queryClient = useQueryClient();
+  const refreshKeys = useMemo(
+    () => [
+      ...locations.map((location) => openCodeKeys.runningShells(connectionID, location)),
+      ...[...owners.keys()].map((sessionID) =>
+        openCodeKeys.sessionTerminals(connectionID, sessionID),
+      ),
+    ],
+    [connectionID, locations, owners],
+  );
+  const latestRefreshKeys = useRef(refreshKeys);
+  latestRefreshKeys.current = refreshKeys;
+  useEffect(() => {
+    // Opening shows current detail at once instead of after the first poll interval.
+    if (!open || !enabled) return;
+    for (const queryKey of latestRefreshKeys.current)
+      void queryClient.invalidateQueries({ queryKey, exact: true }, { cancelRefetch: false });
+  }, [enabled, open, queryClient]);
   const terminals = useQueries({
     queries: [...owners.keys()].map((sessionID) => ({
-      queryKey: [...openCodeKeys.all(connectionID), "session-process-terminals", sessionID],
-      queryFn: ({ signal }: { signal: AbortSignal }) =>
-        openCodeClient(connectionID).experimental.persistentPty.list({ sessionID }, { signal }),
-      enabled: enabled && terminalsSupported,
-      retry: false,
-      refetchOnWindowFocus: false,
+      ...sessionTerminalsQueryOptions(connectionID, sessionID, enabled && terminalsSupported),
       refetchOnMount: false,
       refetchInterval: (query: { state: { error: unknown } }) =>
-        enabled && !query.state.error ? 3_000 : false,
+        enabled && open && !query.state.error ? TERMINAL_POLL_MS : false,
     })),
   });
   const current: SessionProcess[] = enabled
@@ -237,7 +274,10 @@ export function useSessionProcesses(
     retry: async () => {
       if (!enabled) return;
       await Promise.all(
-        [...shells, ...(terminalsSupported ? terminals : [])]
+        [
+          ...shells.filter((_, index) => readable(locations[index]!)),
+          ...(terminalsSupported ? terminals : []),
+        ]
           .filter((query) => query.isError)
           .map((query) => query.refetch()),
       );

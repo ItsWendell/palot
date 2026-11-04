@@ -156,3 +156,18 @@ export function composerStateAtomFamily(scope: string) {
   states.set(scope, state);
   return state;
 }
+
+/** Sends one review comment as its own message, leaving the composer's draft untouched. */
+export type DirectCommentSender = (comment: ReviewComment) => Promise<boolean>;
+
+const directSenders = new Map<string, ReturnType<typeof atom<DirectCommentSender | null>>>();
+
+/** Registered by the composer for its scope while it is mounted. */
+export function composerDirectSendAtomFamily(scope: string) {
+  let sender = directSenders.get(scope);
+  if (!sender) {
+    sender = atom<DirectCommentSender | null>(null);
+    directSenders.set(scope, sender);
+  }
+  return sender;
+}

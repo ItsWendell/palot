@@ -16,6 +16,7 @@ import type {
   PalotIntegrationMethod,
 } from "../../shared";
 import { useSettingsOwner } from "../hooks/use-settings-owner";
+import { isClaudeAgent } from "../lib/claude-agent-setup";
 import {
   defaultFormAnswers,
   formFieldVisible,
@@ -29,6 +30,7 @@ import {
 import { cn } from "../lib/cn";
 import { showErrorToast } from "../lib/toast-error";
 import { palot } from "../services/palot";
+import { ClaudeAgentSetupDialog } from "./claude-agent-setup-dialog";
 import { Banner } from "./ui/banner";
 import { Button } from "./ui/button";
 import { CheckList } from "./ui/check-list";
@@ -48,21 +50,31 @@ import { ProviderIcon } from "./ui/provider-icon";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { toast } from "./ui/toast";
 
-export function ProviderConnectionDialog({
-  integration,
-  projectID,
-  location,
-  onOpenChange,
-  onComplete,
-  owner,
-}: {
+interface ProviderConnectionDialogProps {
   integration: PalotIntegration | null;
   projectID: string;
   location: LocationRef;
   onOpenChange(open: boolean): void;
   onComplete(): Promise<void>;
   owner?: OpenCodeRuntimeStatus | null;
-}) {
+}
+
+/** Connects a provider integration. Claude Agent explains its Claude Code setup first. */
+export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  if (props.integration && isClaudeAgent(props.integration.id)) {
+    return <ClaudeAgentSetupDialog {...props} integration={props.integration} />;
+  }
+  return <IntegrationConnectionDialog {...props} />;
+}
+
+function IntegrationConnectionDialog({
+  integration,
+  projectID,
+  location,
+  onOpenChange,
+  onComplete,
+  owner,
+}: ProviderConnectionDialogProps) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [methodID, setMethodID] = useState<string>(() => {

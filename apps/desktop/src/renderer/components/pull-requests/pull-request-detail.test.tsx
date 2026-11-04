@@ -286,7 +286,62 @@ describe("pull request summary", () => {
     renderDetail({ body: "" });
     expect(await screen.findByText("No description.")).toBeTruthy();
   });
+
+  it("renders a Dependabot description's GitHub HTML without literal tags", async () => {
+    renderDetail({ body: DEPENDABOT_BODY });
+    const notes = (await screen.findByText("Release notes")).closest("details")!;
+    const description = notes.closest(".markdown")!;
+    expect(description.querySelectorAll("details > summary")).toHaveLength(2);
+    expect(within(notes as HTMLElement).getByRole("heading", { name: "v4.1.6" })).toBeTruthy();
+    expect(notes.querySelector("blockquote ul li")?.textContent).toContain(
+      "Reject mismatched JWE CEK lengths by @\u200Bakshithg",
+    );
+    expect(notes.querySelector("p em")?.textContent).toBe(
+      "Sourced from github.com/go-jose/go-jose/v4's releases.",
+    );
+    expect(
+      Array.from(description.querySelectorAll("a"), (link) => link.getAttribute("href")),
+    ).toEqual([
+      "https://github.com/go-jose/go-jose",
+      "https://github.com/go-jose/go-jose/releases",
+      "https://github.com/akshithg",
+      "https://redirect.github.com/go-jose/go-jose/pull/266",
+      "https://github.com/go-jose/go-jose/commit/a0111f8",
+    ]);
+    expect(description.querySelector("kbd")?.textContent).toBe("Ctrl");
+    expect(description.querySelector("sub")?.textContent).toBe("sub");
+    // Disallowed tags stay visible as inert text; nothing else leaks as literal markup.
+    expect(description.querySelector("script")).toBeNull();
+    expect(description.textContent).toContain("<script>alert(1)</script>");
+    expect(description.textContent?.replace("<script>alert(1)</script>", "")).not.toMatch(
+      /<\/?[a-z]+[\s>]|href=/,
+    );
+  });
 });
+
+const DEPENDABOT_BODY = `Bumps the go_modules group with 1 update in the /go-platform directory: [github.com/go-jose/go-jose/v4](https://github.com/go-jose/go-jose).
+
+Updates \`github.com/go-jose/go-jose/v4\` from 4.1.4 to 4.1.6
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/go-jose/go-jose/releases">github.com/go-jose/go-jose/v4's releases</a>.</em></p>
+<blockquote>
+<h2>v4.1.6</h2>
+<h2>Fixed Security Issues</h2>
+<ul>
+<li>Reject mismatched JWE CEK lengths by <a href="https://github.com/akshithg"><code>@&#8203;akshithg</code></a> in <a href="https://redirect.github.com/go-jose/go-jose/pull/266">go-jose/go-jose#266</a></li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/go-jose/go-jose/commit/a0111f8"><code>a0111f8</code></a> Merge commit from fork</li>
+</ul>
+</details>
+<br />
+
+Text with <kbd>Ctrl</kbd> and a <sub>sub</sub> inline, plus <img src="https://example.com/x.png" width="20"> and <script>alert(1)</script>.`;
 
 describe("pull request header", () => {
   it("converts to draft, closes after confirming, refreshes, and shows viewed counts", async () => {

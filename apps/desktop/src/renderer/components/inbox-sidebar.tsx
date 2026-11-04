@@ -61,7 +61,12 @@ import {
   useSessionCatalog,
 } from "../hooks/use-session-catalog";
 import { catalogSessionIsUnread } from "../hooks/use-session-info";
-import { useVcsInfoMap, vcsLocationKey } from "../hooks/use-vcs-info";
+import {
+  inboxBranchOwnerKey,
+  useInboxBranches,
+  type InboxBranch,
+} from "../hooks/use-inbox-branches";
+import { vcsLocationKey } from "../hooks/use-vcs-info";
 import { cn } from "../lib/cn";
 import { ScrollArea } from "./ui/scroll-area";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
@@ -83,7 +88,6 @@ import {
 } from "../lib/session-inbox";
 import { usePointerFreeze, useStableOrder } from "../hooks/use-stable-order";
 import { formatRelativeTime, orderProjects, sessionActivityAt } from "../lib/view-models";
-import type { OpenCodeVcsInfo } from "../services/opencode-vcs";
 import { listRootSessionInfo } from "../services/opencode-catalog";
 import { mapSession } from "../services/opencode-mappers";
 import { AddProjectDialog } from "./add-project-dialog";
@@ -236,15 +240,28 @@ export function InboxSidebarContent() {
   useLayoutEffect(() => {
     actionContext.current = { filtered, mutationsDisabled, selectedID };
   }, [filtered, mutationsDisabled, selectedID]);
-  const branchLocations = useMemo(() => {
+  const branchConnectionID = canFetchOpenCode(runtime) ? (runtime?.connectionID ?? null) : null;
+  const branchOwners = useMemo(() => {
+    if (!branchConnectionID) return [];
     const locations = new Map<string, LocationRef>();
     for (const item of [...filtered.pinned, ...filtered.inbox]) {
       if (item.kind === "chat") continue;
       locations.set(vcsLocationKey(item.session.location), item.session.location);
     }
-    return [...locations.values()];
-  }, [filtered.inbox, filtered.pinned]);
-  const branches = useVcsInfoMap(branchLocations);
+    return [...locations.values()].map((location) => ({
+      connectionID: branchConnectionID,
+      location,
+    }));
+  }, [branchConnectionID, filtered.inbox, filtered.pinned]);
+  const ownedBranches = useInboxBranches(branchOwners);
+  const branches = useMemo(() => {
+    const byLocation = new Map<string, InboxBranch>();
+    for (const owner of branchOwners) {
+      const branch = ownedBranches.get(inboxBranchOwnerKey(owner));
+      if (branch) byLocation.set(vcsLocationKey(owner.location), branch);
+    }
+    return byLocation;
+  }, [branchOwners, ownedBranches]);
   // One links query backs every row's PR badge.
   const pullRequests = usePullRequestLinksBySession().data;
 
@@ -888,7 +905,7 @@ interface SectionProps {
   onAction(item: InboxSessionView, action: "settle" | "inbox" | "pin" | "unpin" | "wake"): void;
   onSnooze?(item: InboxSessionView, until: number): void;
   actionsDisabled: boolean;
-  branches?: ReadonlyMap<string, OpenCodeVcsInfo>;
+  branches?: ReadonlyMap<string, InboxBranch>;
   /** Linked pull requests by session, from the list's single links query. */
   pullRequests?: ReadonlyMap<string, PullRequestLink[]>;
 }
@@ -910,7 +927,7 @@ const InboxCard = memo(function InboxCard({
   const [moveOpen, setMoveOpen] = useState(false);
   const windowDrag = useSessionWindowDrag(item.session.id);
   const selected = selectedID === item.session.id;
-  const vcs = branches?.get(vcsLocationKey(item.session.location));
+  const branch = branches?.get(vcsLocationKey(item.session.location));
   const row = (
     <InboxCardSurface
       {...sidebarFluidRowProps}
@@ -918,7 +935,8 @@ const InboxCard = memo(function InboxCard({
       data-inbox-sweep-key={item.session.id}
       item={item}
       selected={selected}
-      vcs={vcs}
+      vcs={branch?.vcs}
+      branchLastSeen={branch?.lastSeen}
       hint={windowDrag.hint}
       pullRequest={
         item.kind !== "chat" ? (

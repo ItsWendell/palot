@@ -21,7 +21,7 @@ import { useConnectionOverview } from "../hooks/use-connection-overview";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionWindowDrag } from "../hooks/use-session-window-drag";
 import { useInboxSweep } from "../hooks/use-inbox-sweep";
-import { useOwnedVcsInfoMap, ownedVcsLocationKey } from "../hooks/use-vcs-info";
+import { inboxBranchOwnerKey, useInboxBranches } from "../hooks/use-inbox-branches";
 import {
   CHATS_PROJECT_FILTER,
   groupInboxSections,
@@ -291,13 +291,14 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
           richRemaining -= rows.length;
           return rows.flatMap((item) => {
             const owner = item.connection.runtime;
-            return owner?.connected && item.connection.phase === "ready"
+            // A chat's folder has no branch to show.
+            return item.kind !== "chat" && owner?.connected && item.connection.phase === "ready"
               ? [{ connectionID: owner.connectionID, location: item.session.location }]
               : [];
           });
         })
       : [];
-  const branches = useOwnedVcsInfoMap(richLocations);
+  const branches = useInboxBranches(richLocations);
   // Source control is local-only: one links query per visible local server.
   const pullRequestsByProfile = useOwnedPullRequestLinks(
     visible
@@ -409,6 +410,14 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
         through: item.activityThrough,
       });
     const pullRequestLinks = pullRequestsByProfile.get(connection.profile.id)?.get(session.id);
+    const branch = connection.runtime
+      ? branches.get(
+          inboxBranchOwnerKey({
+            connectionID: connection.runtime.connectionID,
+            location: session.location,
+          }),
+        )
+      : undefined;
     const badge =
       connection.profile.kind === "local" ? null : (
         <ConnectionBadge
@@ -564,16 +573,8 @@ export function MultiConnectionSidebar({ mode: modeOverride }: { mode?: SidebarM
                 data-inbox-sweep-key={rowKey(item)}
                 item={item}
                 hint={windowDrag.hint}
-                vcs={
-                  connection.runtime
-                    ? branches.get(
-                        ownedVcsLocationKey({
-                          connectionID: connection.runtime.connectionID,
-                          location: session.location,
-                        }),
-                      )
-                    : undefined
-                }
+                vcs={branch?.vcs}
+                branchLastSeen={branch?.lastSeen}
                 selected={selected}
                 profileID={connection.profile.id}
                 connectionBadge={badge}
