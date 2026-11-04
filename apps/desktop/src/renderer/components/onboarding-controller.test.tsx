@@ -6,10 +6,16 @@ import { ONBOARDING_VERSION, onboardingCompletedVersionAtom } from "../atoms/onb
 import { phaseAtom, runtimeAtom } from "../atoms/workspace";
 import { OnboardingController } from "./onboarding-controller";
 
-const state = vi.hoisted(() => ({ pathname: "/", ready: true, navigate: vi.fn() }));
+const state = vi.hoisted(() => ({
+  pathname: "/",
+  status: "idle",
+  ready: true,
+  navigate: vi.fn(),
+}));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
-  useRouterState: () => state.pathname,
+  useRouterState: ({ select }: { select: (value: unknown) => unknown }) =>
+    select({ location: { pathname: state.pathname }, status: state.status }),
 }));
 vi.mock("../hooks/use-session-catalog", () => ({
   useProjectCatalogState: () => ({ ready: state.ready }),
@@ -18,6 +24,7 @@ vi.mock("../services/palot", () => ({ palot: { isPreview: () => false } }));
 
 beforeEach(() => {
   state.pathname = "/";
+  state.status = "idle";
   state.ready = true;
   state.navigate.mockClear();
 });
@@ -84,6 +91,17 @@ it("waits for the initial catalog before onboarding", () => {
   state.ready = true;
   app.rerender();
   expect(state.navigate).toHaveBeenCalledTimes(1);
+});
+
+it("waits for the launch redirect to finish loading before onboarding", () => {
+  // Otherwise the pending /new load commits after /welcome and replaces it.
+  state.pathname = "/new";
+  state.status = "pending";
+  const app = setup();
+  expect(state.navigate).not.toHaveBeenCalled();
+  state.status = "idle";
+  app.rerender();
+  expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/welcome", replace: true });
 });
 
 it("respects an explicit launch target", () => {

@@ -62,6 +62,8 @@ the first release with the 0.22.0 changes below as well.
 
 ### Fixed
 
+- A fresh install opens onboarding again. It could be replaced by the launch screen's
+  "Choose a task destination" when both navigated during the first route load.
 - A shell command that exits with a non-zero code shows as failed ("Command failed", and in
   failure counts), not as completed. OpenCode completes the tool whatever the exit code.
 - Commands from nested folders, such as `/git/commit`, can be typed in the composer: the

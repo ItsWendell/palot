@@ -15,6 +15,9 @@ export function OnboardingController({
 }) {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // Navigating during an unfinished router load (the launch redirect to /new) is lost: the
+  // pending load commits afterwards and replaces /welcome.
+  const routerIdle = useRouterState({ select: (state) => state.status === "idle" });
   const phase = useAtomValue(phaseAtom);
   const runtime = useAtomValue(runtimeAtom);
   const completed = useAtomValue(onboardingCompletedVersionAtom);
@@ -33,7 +36,7 @@ export function OnboardingController({
       decided.current = true;
       return;
     }
-    if (phase !== "ready" || !runtime?.connected || !projects.ready) return;
+    if (phase !== "ready" || !runtime?.connected || !projects.ready || !routerIdle) return;
     decided.current = true;
     void navigate({ to: "/welcome", replace: true });
   }, [
@@ -44,6 +47,7 @@ export function OnboardingController({
     pathname,
     phase,
     projects.ready,
+    routerIdle,
     runtime,
   ]);
 
