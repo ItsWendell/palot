@@ -38,11 +38,11 @@ import {
   sessionCatalogReadyAtom,
   sessionTriageSnapshotAtom,
 } from "../atoms/inbox";
-import { sidebarModeAtom } from "../atoms/ui";
 import { disabledProfileIDsAtom } from "../atoms/connections";
 import {
   EMPTY_SESSION_REQUEST_SNAPSHOT,
   mergeAttentionRequests,
+  sessionRequestsQueryOptions,
   setSessionRequestSnapshot,
 } from "../lib/session-request-query";
 import { openCodeKeys } from "../lib/opencode-query";
@@ -63,6 +63,10 @@ import { listProjectInfo } from "../services/opencode-catalog";
 import { useCatalogSession } from "./use-session-catalog";
 import { registerOpenCodeRuntime, setFocusedOpenCodeRuntime } from "../services/opencode-client";
 import { openCodeReconciler, type OpenCodeAppliedBatch } from "../lib/open-code-reconciler";
+
+// Waits between attempts to read the open task again after the event stream reconnected.
+// The stream drops what was published while it was down, so these reads are the only catch-up.
+const CATCH_UP_BACKOFF_MS = [500, 1_000, 2_000, 5_000];
 
 function record(value: unknown): Record<string, JsonValue> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -142,6 +146,15 @@ export function useWorkspaceController(selectedSessionID: string | null) {
   const cancelledInputIDs = useRef(new Map<string, Set<string>>());
   const attentionGeneration = useRef(0);
   const attentionRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const catchUpGeneration = useRef(0);
+  const catchUpRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recoveringSessionIDs = useRef(new Set<string>());
+
+  const cancelCatchUp = useCallback(() => {
+    catchUpGeneration.current += 1;
+    if (catchUpRetry.current) clearTimeout(catchUpRetry.current);
+    catchUpRetry.current = null;
+  }, []);
 
   const cancelAttention = useCallback(() => {
     attentionGeneration.current += 1;
@@ -251,12 +264,14 @@ export function useWorkspaceController(selectedSessionID: string | null) {
     setActiveShells((current) => retainSessionViews(current, retained));
   }, [queryClient, selectedSessionID, setActiveShells, setMessages, store]);
 
+  /** Resolves false when a read failed while it was still current, true otherwise. */
   const loadSession = useCallback(
     async (
       session: PalotSession,
       targets: SessionReconcileTargets = { messages: true, requests: false, diffs: false },
       messageMode: "rooted" | "recent" = "rooted",
-    ) => {
+      reportFailure = true,
+    ): Promise<boolean> => {
       const token = synchronization.current.beginSessionSnapshot(session.id, targets);
       const connectionID = connectionIDRef.current;
       const transcriptToken =
@@ -274,7 +289,7 @@ export function useWorkspaceController(selectedSessionID: string | null) {
           !alive.current ||
           (connectionID && store.get(runtimeAtom)?.connectionID !== connectionID)
         )
-          return;
+          return true;
         if (
           result.messages &&
           synchronization.current.isCurrentSessionResource(token, "messages")
@@ -333,16 +348,69 @@ export function useWorkspaceController(selectedSessionID: string | null) {
           }
         }
       } catch (error) {
-        if (
+        const current =
           (targets.messages &&
             synchronization.current.isCurrentSessionResource(token, "messages")) ||
-          (targets.diffs && synchronization.current.isCurrentSessionResource(token, "diffs"))
-        ) {
+          (targets.diffs && synchronization.current.isCurrentSessionResource(token, "diffs"));
+        if (current && reportFailure) {
           showErrorToast(`Could not load task "${session.title || session.id}"`, error);
         }
+        return !current;
       }
+      return true;
     },
     [queryClient, setActiveShells, setMessages, store],
+  );
+
+  // Reads the open task's transcript and pending input again after live events were lost (a
+  // reconnect, a batch gap, a message the stream never introduced), retrying a failed read with
+  // a bounded backoff while the task stays open on the same live connection. An inbox read that
+  // a live request change overtook was not applied, so it fails too.
+  const catchUp = useCallback(
+    async (session: PalotSession, diffs = false) => {
+      cancelCatchUp();
+      const generation = catchUpGeneration.current;
+      const connectionID = connectionIDRef.current;
+      if (!connectionID) return;
+      const isCurrent = () => {
+        const runtime = store.get(runtimeAtom);
+        return (
+          alive.current &&
+          catchUpGeneration.current === generation &&
+          selectedSessionRef.current?.id === session.id &&
+          runtime?.connectionID === connectionID &&
+          runtime.connected
+        );
+      };
+      let transcript = false;
+      let inbox = false;
+      for (const delay of [...CATCH_UP_BACKOFF_MS, undefined]) {
+        const last = delay === undefined;
+        [transcript, inbox] = await Promise.all([
+          transcript ||
+            loadSession(session, { messages: true, requests: false, diffs }, "recent", last),
+          inbox ||
+            queryClient
+              .fetchQuery({
+                ...sessionRequestsQueryOptions(queryClient, connectionID, session.id),
+                staleTime: 0,
+              })
+              .then(
+                () => true,
+                () => false,
+              ),
+        ]);
+        if ((transcript && inbox) || last || !isCurrent()) return;
+        await new Promise<void>((resolve) => {
+          catchUpRetry.current = setTimeout(() => {
+            catchUpRetry.current = null;
+            resolve();
+          }, delay);
+        });
+        if (!isCurrent()) return;
+      }
+    },
+    [cancelCatchUp, loadSession, queryClient, store],
   );
 
   const hydrate = useCallback(
@@ -453,6 +521,10 @@ export function useWorkspaceController(selectedSessionID: string | null) {
               connectionIDRef.current = runtime.connectionID;
               setRuntime(runtime);
               // Labels and detailed execution replay are independent of the recent-root view.
+              // A later or remounted hydration of the same connection shares this fetch (the query
+              // is shared, and Project settings reads it), so only a move to another connection
+              // discards it. Failing it then left settings with no projects and nothing to
+              // refetch them.
               void queryClient
                 .fetchQuery({
                   ...projectsQueryOptions(queryClient, runtime.connectionID),
@@ -460,7 +532,11 @@ export function useWorkspaceController(selectedSessionID: string | null) {
                     const reconciler = openCodeReconciler(queryClient);
                     const snapshotToken = reconciler.beginSnapshot(runtime.connectionID);
                     const projects = await listProjectInfo(signal, runtime.connectionID);
-                    if (signal.aborted || !isCurrent()) throw new Error("Workspace focus changed");
+                    if (
+                      signal.aborted ||
+                      store.get(runtimeAtom)?.connectionID !== runtime.connectionID
+                    )
+                      throw new Error("Workspace focus changed");
                     reconciler.replaceProjects(runtime.connectionID, projects, snapshotToken);
                     return projects;
                   },
@@ -600,10 +676,18 @@ export function useWorkspaceController(selectedSessionID: string | null) {
     return () => {
       alive.current = false;
       cancelAttention();
+      cancelCatchUp();
       unsubscribeFocus();
       synchronization.current.dispose();
     };
-  }, [cancelAttention, queryClient, setAttentionSyncState, setSessionCatalogReady, store]);
+  }, [
+    cancelAttention,
+    cancelCatchUp,
+    queryClient,
+    setAttentionSyncState,
+    setSessionCatalogReady,
+    store,
+  ]);
 
   useEffect(() => {
     const recovery = {
@@ -698,16 +782,21 @@ export function useWorkspaceController(selectedSessionID: string | null) {
           ingestion.gapSessionIDs.includes(currentSession.id)
         ) {
           targets.messages = true;
+          // Events were lost, so only a read recovers them: retry it like a reconnect.
+          recoveringSessionIDs.current.add(currentSession.id);
         }
         if (targets.messages || targets.requests || targets.diffs) {
           synchronization.current.scheduleSessionReconcile(
             currentSession.id,
             targets,
             (sessionID, pendingTargets) => {
+              const recovering = recoveringSessionIDs.current.delete(sessionID);
               const session = sessionCatalogInfo(queryClient, batch.connectionID)
                 .map(mapSession)
                 .find((candidate) => candidate.id === sessionID);
-              if (session) void loadSession(session, pendingTargets, "recent");
+              if (!session) return;
+              if (recovering) void catchUp(session, pendingTargets.diffs);
+              else void loadSession(session, pendingTargets, "recent");
             },
           );
         }
@@ -732,15 +821,19 @@ export function useWorkspaceController(selectedSessionID: string | null) {
       }
 
       const profileID = store.get(runtimeAtom)?.profileID;
-      if (store.get(sidebarModeAtom) === "inbox" && profileID) {
-        const knownSessions = sessionCatalogInfo(queryClient, batch.connectionID).map(mapSession);
-        for (const event of batch.events) {
+      if (profileID) {
+        const triageEvents = batch.events.filter(
+          (event) => event.type === "session.deleted" || event.type === "session.inbox.enqueued",
+        );
+        // Most batches only stream transcript deltas; read the catalog only when one needs it.
+        const knownSessions =
+          triageEvents.length > 0
+            ? sessionCatalogInfo(queryClient, batch.connectionID).map(mapSession)
+            : [];
+        for (const event of triageEvents) {
           const data = record(event.data);
           const sessionID = typeof data?.sessionID === "string" ? data.sessionID : undefined;
           if (!sessionID) continue;
-          if (event.type !== "session.deleted" && event.type !== "session.inbox.enqueued") {
-            continue;
-          }
           const isCurrent = () =>
             alive.current && store.get(runtimeAtom)?.connectionID === batch.connectionID;
           void resolveSessionRoot(sessionID, knownSessions, batch.connectionID)
@@ -782,7 +875,7 @@ export function useWorkspaceController(selectedSessionID: string | null) {
         synchronization.current.scheduleWorkspaceReconcile(() => {
           void hydrate(true).then(() => {
             const selected = selectedSessionRef.current;
-            if (selected) void loadSession(selected, undefined, "recent");
+            if (selected) void catchUp(selected);
           });
         });
       }
@@ -791,6 +884,7 @@ export function useWorkspaceController(selectedSessionID: string | null) {
     return unsubscribe;
   }, [
     refreshAttention,
+    catchUp,
     hydrate,
     loadSession,
     queryClient,

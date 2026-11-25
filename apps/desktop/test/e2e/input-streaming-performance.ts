@@ -1,5 +1,6 @@
 import type { OpenCodeClient } from "@opencode/client";
 import { expect, type Page } from "@playwright/test";
+import type { ComposerEditorElement } from "../../src/renderer/lib/composer-editor-element.ts";
 
 // Fixed ASCII keyboard traffic: real keydown/keypress/input/keyup events, not fill().
 // Keep this bounded and separate from the parallel benchmark's per-frame scroll probe.
@@ -84,14 +85,14 @@ export async function inputUnderStreaming(
       )
       .toBe(true);
     await expect(transcript).toContainText("ALPHA stream 0.");
-    await expect(composer).toHaveValue("");
+    await expect(composer).toHaveJSProperty("value", "");
     const transcriptBefore = await transcript.textContent();
     // Do not let an automatic composer focus turn the measured click into a no-op.
     await composer.evaluate((element) => (element as HTMLElement).blur());
     await expect(composer).not.toBeFocused();
 
     await composer.evaluate((element, expected) => {
-      const editor = element as HTMLTextAreaElement;
+      const editor = element as ComposerEditorElement;
       const browser = globalThis as unknown as { __palotInputProbe?: InputProbe };
       browser.__palotInputProbe?.stop();
       let frame: number | undefined;
@@ -174,7 +175,7 @@ export async function inputUnderStreaming(
     ]);
     const typingCompletedAt = Date.now();
     const activeAtTypingEnd = !workloadCompleted;
-    await expect(composer).toHaveValue(DRAFT);
+    await expect(composer).toHaveJSProperty("value", DRAFT);
     await expect(composer).toBeFocused();
     await expect.poll(() => transcript.textContent()).not.toBe(transcriptBefore);
     await page.evaluate(
@@ -210,7 +211,7 @@ export async function inputUnderStreaming(
     await workload;
     if (workloadError) throw workloadError;
     if (subscriptionError) throw subscriptionError;
-    await expect(composer).toHaveValue(DRAFT);
+    await expect(composer).toHaveJSProperty("value", DRAFT);
     await expect(composer).toBeFocused();
     await expect(transcript).toContainText("ALPHA PARALLEL STREAM 1 COMPLETE");
     const input = await page.evaluate(() => {

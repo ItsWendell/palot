@@ -18,3 +18,11 @@ it("requests just the user-anchored turn through the selected connection", async
     { signal: expect.any(AbortSignal) },
   );
 });
+
+it("asks for hunk context only when the caller gives it", async () => {
+  await listTurnDiffs("session-1", "user-1", undefined, "connection-1", 3);
+  expect(mocks.diff).toHaveBeenLastCalledWith(
+    { sessionID: "session-1", from: "user-1", context: 3 },
+    { signal: expect.any(AbortSignal) },
+  );
+});

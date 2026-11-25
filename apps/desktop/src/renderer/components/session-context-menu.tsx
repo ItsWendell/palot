@@ -5,12 +5,17 @@ import {
   Check,
   ClipboardCopy,
   Clock3,
+  Copy,
   Download,
   FileUp,
   FolderGit2,
+  FolderInput,
   GitFork,
   History,
+  Link2,
   LoaderCircle,
+  Mail,
+  MailOpen,
   MoreHorizontal,
   PanelsTopLeft,
   Plus,
@@ -22,11 +27,16 @@ import { useAtomValue, useStore } from "jotai";
 import { useCallback, useState, type ReactElement, type ReactNode } from "react";
 import type { OpenCodeRuntimeStatus, PalotProject, PalotSession } from "../../shared";
 import { usePalotNavigation } from "../hooks/use-navigation";
+import { isTaskLinkSessionID, taskLink } from "../../shared/task-link";
+import { writeClipboardText } from "../lib/clipboard";
 import { showErrorToast } from "../lib/toast-error";
 import { palot } from "../services/palot";
 import { useSessionFork } from "../hooks/use-session-fork";
+import { useSetUnreadMark, useTaskReadToggle } from "../hooks/use-task-unread";
 import { SessionForkHistoryDialog } from "./session-history-dialog";
 import { SessionCopyDialog } from "./session-copy-dialog";
+import { MoveToFolderDialog } from "./move-to-folder-dialog";
+import { isChatSession } from "../lib/chats";
 import { useGuestSharing } from "./guest-links";
 import { useCacheSession } from "../hooks/use-session-catalog";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
@@ -46,6 +56,7 @@ import {
   ContextMenuItem,
   ContextMenuLabel,
   ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuSub,
   ContextMenuSubContent,
   ContextMenuSubTrigger,
@@ -84,6 +95,7 @@ export function SessionContextMenu({
   snoozeDisabled = false,
   onSnooze,
   onRename,
+  showReadItem = true,
   children,
 }: {
   trigger: ReactElement;
@@ -96,6 +108,8 @@ export function SessionContextMenu({
   snoozeDisabled?: boolean;
   onSnooze?: (until: number) => void | Promise<void>;
   onRename?: () => void;
+  /** False when the caller's own entries already offer Mark as read or unread. */
+  showReadItem?: boolean;
   children?: ReactNode;
 }) {
   const { openNewTask, openScheduled } = usePalotNavigation();
@@ -112,6 +126,10 @@ export function SessionContextMenu({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const transfer = useSessionTransfer(session, owner, unavailable);
   const sessionMove = useSessionMove(session, project, owner, unavailable || moveDisabled);
+  const [moveFolderOpen, setMoveFolderOpen] = useState(false);
+  // A chat has its own Move to project; a subagent moves with its task.
+  const canMoveFolder = !isChatSession(session) && !session.parentID;
+  const setUnreadMark = useSetUnreadMark();
 
   const fork = useCallback(async () => {
     if (unavailable || forking) return;
@@ -130,6 +148,7 @@ export function SessionContextMenu({
     try {
       await palot.removeSession(session.id, runtime?.connectionID);
       removeCatalogSession(queryClient, runtime?.connectionID ?? "disconnected", session.id);
+      if (runtime?.profileID) setUnreadMark(runtime.profileID, session.id, false);
       setDeleteOpen(false);
       if (
         selectedSessionID === session.id &&
@@ -152,6 +171,7 @@ export function SessionContextMenu({
     selectedSessionID,
     session.id,
     session.projectID,
+    setUnreadMark,
     unavailable,
   ]);
   return (
@@ -175,6 +195,19 @@ export function SessionContextMenu({
               <PanelsTopLeft aria-hidden="true" />
               Open in new window
             </ContextMenuItem>
+            <ContextMenuItem
+              disabled={unavailable}
+              onClick={() =>
+                void openSessionWindow(session.id, runtime?.connectionID, { background: true })
+              }
+            >
+              <PanelsTopLeft aria-hidden="true" />
+              Open in background
+              <ContextMenuShortcut aria-hidden="true">Middle-click</ContextMenuShortcut>
+            </ContextMenuItem>
+            {showReadItem ? (
+              <TaskReadItem session={session} runtime={runtime} disabled={unavailable} />
+            ) : null}
             <ContextMenuItem disabled={unavailable || forking} onClick={() => void fork()}>
               {forking ? (
                 <LoaderCircle className="animate-spin" aria-hidden="true" />
@@ -214,6 +247,15 @@ export function SessionContextMenu({
               <SessionSnoozeMenu disabled={unavailable || snoozeDisabled} onSnooze={onSnooze} />
             ) : null}
             <SessionMoveMenu session={session} project={project} owner={owner} move={sessionMove} />
+            {canMoveFolder ? (
+              <ContextMenuItem
+                disabled={unavailable || moveDisabled}
+                onClick={() => setMoveFolderOpen(true)}
+              >
+                <FolderInput aria-hidden="true" />
+                Move to folder…
+              </ContextMenuItem>
+            ) : null}
           </ContextMenuGroup>
           <ContextMenuSeparator />
           <ContextMenuItem
@@ -226,6 +268,13 @@ export function SessionContextMenu({
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
+      {moveFolderOpen ? (
+        <MoveToFolderDialog
+          session={session}
+          owner={owner}
+          onClose={() => setMoveFolderOpen(false)}
+        />
+      ) : null}
       {forkHistoryOpen ? (
         <SessionForkHistoryDialog
           session={session}
@@ -277,9 +326,15 @@ function MenuShortcut({ id }: { id: KeyboardShortcutID }) {
   return <DropdownMenuShortcut aria-hidden="true">{formatShortcut(keys)}</DropdownMenuShortcut>;
 }
 
-async function openSessionWindow(sessionID: string, connectionID?: string): Promise<void> {
+async function openSessionWindow(
+  sessionID: string,
+  connectionID?: string,
+  options?: { background?: boolean },
+): Promise<void> {
   try {
-    await palot.openSessionWindow(sessionID, connectionID);
+    await (options
+      ? palot.openSessionWindow(sessionID, connectionID, options)
+      : palot.openSessionWindow(sessionID, connectionID));
   } catch (error) {
     showErrorToast("Could not open task in a new window", error);
   }
@@ -292,7 +347,8 @@ export function SessionExportMenu({
   session: PalotSession;
   historyActions?: SessionHistoryActions;
 }) {
-  const connectionID = useAtomValue(runtimeAtom)?.connectionID;
+  const runtime = useAtomValue(runtimeAtom);
+  const connectionID = runtime?.connectionID;
   const transfer = useSessionTransfer(session);
   const guest = useGuestSharing(session);
   return (
@@ -319,6 +375,7 @@ export function SessionExportMenu({
               <PanelsTopLeft aria-hidden="true" />
               Open in new window
             </DropdownMenuItem>
+            <TaskReadItem session={session} runtime={runtime} dropdown />
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           {historyActions ? (
@@ -346,7 +403,8 @@ export function SessionExportMenu({
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={historyActions.openTimeline}>
                   <History aria-hidden="true" />
-                  Prompt timeline
+                  Jump to message…
+                  <MenuShortcut id="task.jump" />
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={historyActions.forkFromPrompt}>
                   <GitFork aria-hidden="true" />
@@ -362,6 +420,28 @@ export function SessionExportMenu({
         </DropdownMenuContent>
       </DropdownMenu>
     </>
+  );
+}
+
+/** "Mark as unread" for a read task, "Mark as read" for an unread one. */
+function TaskReadItem({
+  session,
+  runtime,
+  disabled = false,
+  dropdown = false,
+}: {
+  session: PalotSession;
+  runtime: OpenCodeRuntimeStatus | null | undefined;
+  disabled?: boolean;
+  dropdown?: boolean;
+}) {
+  const read = useTaskReadToggle(session, runtime);
+  const Item = dropdown ? DropdownMenuItem : ContextMenuItem;
+  return (
+    <Item disabled={disabled || read.pending || !read.available} onClick={() => void read.toggle()}>
+      {read.unread ? <MailOpen aria-hidden="true" /> : <Mail aria-hidden="true" />}
+      {read.label}
+    </Item>
   );
 }
 
@@ -430,11 +510,32 @@ function useSessionTransfer(
       setTransferring(null);
     }
   }, [session.id, transferring, runtime?.connectionID, unavailable]);
+  // The ID is known locally, so copying it works without a connection.
+  const copyID = useCallback(async () => {
+    try {
+      await writeClipboardText(session.id);
+      toast.add({ type: "success", title: "Task ID copied" });
+    } catch (error) {
+      showErrorToast("Could not copy task ID", error);
+    }
+  }, [session.id]);
+  const linkable = isTaskLinkSessionID(session.id);
+  const profileID = runtime?.profileID;
+  const copyLink = useCallback(async () => {
+    try {
+      await writeClipboardText(taskLink(session.id, profileID));
+      toast.add({ type: "success", title: "Task link copied" });
+    } catch (error) {
+      showErrorToast("Could not copy task link", error);
+    }
+  }, [profileID, session.id]);
   return {
     transferring,
     unavailable,
     exportSession,
     copySession,
+    copyID,
+    copyLink: linkable ? copyLink : null,
     importSession,
     openServerCopy: () => {
       if (runtime?.connected) setServerCopy({ session, source: runtime });
@@ -468,6 +569,16 @@ function SessionTransferItems({
         {transferring === "copy" ? <LoaderCircle className="animate-spin" /> : <ClipboardCopy />}
         Copy conversation as Markdown
       </Item>
+      <Item onClick={() => void transfer.copyID()}>
+        <Copy />
+        Copy task ID
+      </Item>
+      {transfer.copyLink ? (
+        <Item onClick={() => void transfer.copyLink?.()}>
+          <Link2 />
+          Copy link
+        </Item>
+      ) : null}
       <Item disabled={unavailable || Boolean(transferring)} onClick={transfer.openServerCopy}>
         <PanelsTopLeft />
         Copy task to server…

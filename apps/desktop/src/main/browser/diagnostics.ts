@@ -1,5 +1,6 @@
 // Derived from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser/diagnostics.ts
+// See UPSTREAM.md.
 import { Browser } from "@opencode/plugin-browser/rpc";
 import type { Protocol } from "devtools-protocol";
 import type { Cdp } from "./cdp";

@@ -1,6 +1,7 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Provider, createStore } from "jotai";
 import type { ContextUsage } from "../lib/context-usage";
 import { ContextMeter, type ContextMeterProps } from "./context-meter";
 
@@ -19,28 +20,30 @@ function usage(percentage: number, overrides: Partial<ContextUsage> = {}): Conte
   };
 }
 
-function renderMeter(props: Partial<ContextMeterProps> = {}) {
+function renderMeter(props: Partial<ContextMeterProps> = {}, store = createStore()) {
   const onCompact = vi.fn();
   const onOpenDetails = vi.fn();
   render(
-    <ContextMeter
-      usage={usage(45)}
-      sessionTokens={{
-        input: 2,
-        output: 3_000,
-        reasoning: 0,
-        cache: { read: 2_400_000, write: 0 },
-      }}
-      cost={1.2345}
-      lastCompactedAt={null}
-      compacting={false}
-      compactDisabledReason={null}
-      onCompact={onCompact}
-      onOpenDetails={onOpenDetails}
-      {...props}
-    />,
+    <Provider store={store}>
+      <ContextMeter
+        usage={usage(45)}
+        sessionTokens={{
+          input: 2,
+          output: 3_000,
+          reasoning: 0,
+          cache: { read: 2_400_000, write: 0 },
+        }}
+        cost={1.2345}
+        lastCompactedAt={null}
+        compacting={false}
+        compactDisabledReason={null}
+        onCompact={onCompact}
+        onOpenDetails={onOpenDetails}
+        {...props}
+      />
+    </Provider>,
   );
-  return { onCompact, onOpenDetails };
+  return { onCompact, onOpenDetails, store };
 }
 
 beforeEach(() => {
@@ -51,26 +54,17 @@ afterEach(cleanup);
 
 describe("ContextMeter", () => {
   it.each([
-    [45, "normal", "Context window: 45% used (55% left)"],
-    [70, "warning", "Context window: 70% full"],
-    [93, "critical", "Context window: 93% full"],
-  ])("names the ring and colors it by threshold at %i%%", (percentage, status, name) => {
-    renderMeter({ usage: usage(percentage) });
-    expect(screen.getByRole("button", { name }).getAttribute("data-status")).toBe(status);
-  });
-
-  it.each([
-    ["a paid model before usage", { usage: null, cost: 0 }, "0·$0.00"],
-    ["a paid model", { cost: 4.55 }, "450k·$4.55"],
-    ["a free model", { cost: 0, freeModel: true }, "450k"],
-    ["earlier paid spend on a free model", { cost: 1.25, freeModel: true }, "450k·$1.25"],
-    ["unknown cost", { cost: null }, "450k"],
-  ] satisfies [string, Partial<ContextMeterProps>, string][])(
-    "shows compact tokens and cost beside the ring for %s",
-    (_, props, text) => {
-      renderMeter(props);
-      const trigger = screen.getByRole("button", { name: /^Context window/ });
-      expect(trigger.textContent).toBe(text);
+    [45, "normal", "normal", "", "Context window: 45% used (55% left)"],
+    [70, "warning", "label", "70%", "Context window: 70% full"],
+    [93, "critical", "warning", "93%", "Context window: 93% full"],
+  ])(
+    "names the pie and shows its percentage from 70%% (%i%%)",
+    (percentage, status, tone, text, name) => {
+      renderMeter({ usage: usage(percentage) });
+      const pie = screen.getByRole("button", { name });
+      expect(pie.getAttribute("data-status")).toBe(status);
+      expect(pie.getAttribute("data-tone")).toBe(tone);
+      expect(pie.textContent).toBe(text);
     },
   );
 

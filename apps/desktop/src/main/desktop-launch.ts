@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { PalotOpenTarget } from "../shared/opencode-contract";
+import { isPalotLink, parseTaskLink } from "../shared/task-link";
 
 export const DESKTOP_HELP = `Palot desktop
 
@@ -7,6 +8,7 @@ export const DESKTOP_HELP = `Palot desktop
   --new-task             Open a new task draft
   --project <directory>  Start a task in a local project folder
   --task <session-id>    Open an existing task
+  palot://task/<id>      Open an existing task from a link (other links are ignored)
   --attach <file>        Attach a file to --project (repeatable)
   --diagnostics          Print desktop/Electron diagnostics and exit
   --help                 Show this help
@@ -18,8 +20,16 @@ export function parseDesktopLaunch(
   args: readonly string[],
   cwd: string,
 ): (PalotOpenTarget & { attachmentPaths?: string[] }) | null {
+  // The Linux desktop entry runs `palot --show %U`, so a link arrives after --show; a valid
+  // link wins, and a malformed one leaves --show to bring the window forward.
+  const hasLink = args.some((arg) => isPalotLink(arg) && parseTaskLink(arg));
   const actions = args.flatMap<PalotOpenTarget>((arg, index) => {
-    if (arg === "--show") return [{ type: "open" } as const];
+    if (isPalotLink(arg)) {
+      // Links arrive from other apps; a malformed one is ignored rather than failing the launch.
+      const link = parseTaskLink(arg);
+      return link ? [{ type: "session", ...link } as const] : [];
+    }
+    if (arg === "--show") return hasLink ? [] : [{ type: "open" } as const];
     if (arg === "--new-task") return [{ type: "new-task" } as const];
     if (arg !== "--project" && arg !== "--task") return [];
     const value = args[index + 1];

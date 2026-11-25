@@ -1,4 +1,4 @@
-import type { FileDiffInfo, ModelRef } from "@opencode/client";
+import type { FileDiffInfo } from "@opencode/client";
 import { useMutation } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { ArrowDown, ArrowUp, ChevronRight, MoreHorizontal, Sparkles } from "lucide-react";
@@ -19,6 +19,10 @@ import type {
 import type { PalotSession } from "../../../shared";
 import { runtimeAtom } from "../../atoms/workspace";
 import { useSessionCatalogSelector } from "../../hooks/use-session-catalog";
+import {
+  useTextGenerationModel,
+  type TextGenerationTarget,
+} from "../../hooks/use-text-generation-model";
 import {
   SourceControlError,
   useGitCommit,
@@ -92,12 +96,18 @@ export interface ChangesSourceControlInput {
   sessionID?: string;
 }
 
-function sameModel(left: ModelRef | null, right: ModelRef | null): boolean {
+type GenerationTarget = TextGenerationTarget | null;
+
+function sameTarget(left: GenerationTarget, right: GenerationTarget): boolean {
   return (
     left === right ||
-    (left?.id === right?.id &&
-      left?.providerID === right?.providerID &&
-      left?.variant === right?.variant)
+    (left !== null &&
+      right !== null &&
+      left.projectID === right.projectID &&
+      JSON.stringify(left.location) === JSON.stringify(right.location) &&
+      left.model?.id === right.model?.id &&
+      left.model?.providerID === right.model?.providerID &&
+      left.model?.variant === right.model?.variant)
   );
 }
 
@@ -146,17 +156,26 @@ export function useChangesSourceControl(input: ChangesSourceControlInput) {
   const pull = useGitPull();
   const sync = useGitSync();
   const runtime = useAtomValue(runtimeAtom);
-  const selectModel = useCallback(
-    (sessions: PalotSession[]) =>
-      input.sessionID
-        ? (sessions.find((session) => session.id === input.sessionID)?.model ?? null)
-        : null,
-    [input.sessionID],
+  const selectTarget = useCallback(
+    (sessions: PalotSession[]): GenerationTarget => {
+      const session = input.sessionID
+        ? sessions.find((candidate) => candidate.id === input.sessionID)
+        : undefined;
+      // Without a task, OpenCode's default for the folder (no Palot project default applies).
+      return session
+        ? { model: session.model, projectID: session.projectID, location: session.location }
+        : { model: null, projectID: "", location: { directory } };
+    },
+    [directory, input.sessionID],
   );
-  const model = useSessionCatalogSelector(selectModel, sameModel);
+  const target = useSessionCatalogSelector(selectTarget, sameTarget);
+  const resolveModel = useTextGenerationModel(target);
   const generate = useMutation({
-    mutationFn: (prompt: string) =>
-      generateOpenCodeText({ prompt, model }, runtime?.connectionID ?? undefined),
+    mutationFn: async (prompt: string) =>
+      generateOpenCodeText(
+        { prompt, model: await resolveModel() },
+        runtime?.connectionID ?? undefined,
+      ),
   });
 
   const [message, setMessage] = useState("");
@@ -280,7 +299,7 @@ export function useChangesSourceControl(input: ChangesSourceControlInput) {
   return {
     profileID,
     sessionID: input.sessionID,
-    model,
+    resolveModel,
     connectionID: runtime?.connectionID,
     availability,
     tree,
@@ -510,7 +529,7 @@ export function ChangesSourceControlPanel({ controller }: { controller: ChangesS
             key={`${controller.sessionID}:${branch.name}`}
             profileID={controller.profileID}
             sessionID={controller.sessionID}
-            model={controller.model}
+            resolveModel={controller.resolveModel}
             connectionID={controller.connectionID}
             pushing={controller.pushing}
             push={controller.pushForPullRequest}

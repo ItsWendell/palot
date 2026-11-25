@@ -1,11 +1,11 @@
 import type { SessionInfo } from "@opencode/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
+import type { PalotSession } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
 import { markSessionViewed, sessionQueryOptions } from "../lib/session-catalog-query";
 import { viewSession } from "../services/opencode-catalog";
-import type { PalotSession } from "../../shared";
 import { useOpenCodeRecords } from "./use-open-code-records";
 
 export function sessionIsUnread(session: SessionInfo | null | undefined): boolean {
@@ -13,11 +13,6 @@ export function sessionIsUnread(session: SessionInfo | null | undefined): boolea
   if (idle === undefined) return false;
   const viewed = session?.time.viewed;
   return viewed === undefined || viewed < idle;
-}
-
-export function catalogSessionIsUnread(session: PalotSession | null | undefined): boolean {
-  if (session?.idleAt === undefined) return false;
-  return session.viewedAt === undefined || session.viewedAt < session.idleAt;
 }
 
 export function useSessionInfo(sessionID: string | null) {
@@ -33,10 +28,39 @@ export function useSessionInfo(sessionID: string | null) {
   return { ...query, data: records[0]?.value ?? query.data };
 }
 
-export function useAcknowledgeSessionView(sessionID: string): void {
+/** The task's read state when it was opened, before opening it marked it viewed. */
+export type OpenedSessionView = Pick<PalotSession, "idleAt" | "viewedAt">;
+
+/**
+ * Marks the focused task viewed, and returns its read state from just before that: null until
+ * OpenCode has answered a fresh read of the session, so a stale cached copy decides neither what
+ * counts as unseen nor what is marked viewed. Without a connection, or when that read fails, the
+ * cached copy stands in.
+ */
+export function useAcknowledgeSessionView(sessionID: string): OpenedSessionView | null {
   const runtime = useAtomValue(runtimeAtom);
   const queryClient = useQueryClient();
-  const session = useSessionInfo(sessionID).data;
+  const connectionID = runtime?.connectionID ?? "disconnected";
+  const enabled = Boolean(sessionID && runtime?.connected);
+  const query = useQuery({
+    ...sessionQueryOptions(queryClient, connectionID, sessionID),
+    enabled,
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnMount: "always",
+  });
+  const records = useOpenCodeRecords(connectionID, "session", sessionID);
+  const session = records[0]?.value ?? query.data;
+  const fresh = query.isFetchedAfterMount && !query.isFetching && query.isSuccess;
+  const settled = fresh || !enabled || (query.isError && !query.isFetching);
+  const [opened, setOpened] = useState<OpenedSessionView | null>(null);
+  if (opened === null && settled) {
+    // The fresh read itself, not the record merged with this view's acknowledgement.
+    const time = (fresh ? query.data : session)?.time;
+    setOpened({
+      ...(time?.idle === undefined ? {} : { idleAt: time.idle }),
+      ...(time?.viewed === undefined ? {} : { viewedAt: time.viewed }),
+    });
+  }
   const mutation = useMutation({
     mutationFn: ({ idle }: { idle: number }) => viewSession(sessionID, idle),
     onSuccess: (_value, { idle }) => {
@@ -47,6 +71,7 @@ export function useAcknowledgeSessionView(sessionID: string): void {
   const acknowledge = useEffectEvent(() => {
     const idle = session?.time.idle;
     if (
+      opened === null ||
       idle === undefined ||
       !sessionIsUnread(session) ||
       mutation.isPending ||
@@ -67,5 +92,7 @@ export function useAcknowledgeSessionView(sessionID: string): void {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [sessionID, session?.time.idle, session?.time.viewed]);
+  }, [sessionID, opened, session?.time.idle, session?.time.viewed]);
+
+  return opened;
 }

@@ -9,7 +9,35 @@ Use the smallest loop that can prove or disprove the suspected cost. Preserve UX
 
 Read repository-root `../../../docs/desktop-testing.md` for harness commands and measurement contracts. Read `references/main-thread-budget.md` for current main-thread investigation rules; historical measurements are not evidence for the current checkout.
 
+## Decide With strobe
+
+Whether a change made Palot faster or slower is decided with [strobe](https://github.com/anomalyco/strobe), not with
+single runs or `perf:compare`. The `strobe` skill covers its commands; `apps/desktop/perf/README.md` covers Palot's
+setup. Strobe builds both variants, alternates fresh launches, and refuses setups it cannot defend.
+
+1. Run benches on a private X display: `Xvfb :91 -screen 0 1440x920x24 -nolisten tcp &`, then
+   `DISPLAY=:91` with `WAYLAND_DISPLAY` unset. Strobe checks Electron windows through X11; it cannot see a private
+   Weston, and its headless sway serves native targets only. Under Xvfb frame and GPU metrics are refused.
+2. Check a changed bench file first: `strobe bench apps/desktop/perf/<area>.bench.ts --head . --check`.
+3. Compare: `strobe bench apps/desktop/perf/<area>.bench.ts --base main --head .`. Read the primary's verdict
+   (`faster`, `slower`, `same`, `unclear`, `underpowered`, `refused`); `unclear` and `underpowered` are not "no change".
+4. Leaks: `strobe bench apps/desktop/perf/tasks.bench.ts --head . --probes memory --repeat 10`, then
+   `strobe query <rec> leaks`.
+5. The installed app from outside: `strobe record pid:<palot main pid> --for 30s`, then `query <rec> threads|memory`.
+
+Benches: `session-switch` (switch between long tasks), `stream` (a reply streaming into a long task), `tasks` (visit
+six long tasks; leaks), `idle` (a long task left open), `typing` (type while a reply streams), `burst` (a reply
+arriving 16 deltas at a time, with and without typing), `interactions` (switch away and back, scroll up and return,
+Stop, each mid-reply). A first-launch bench is missing: strobe launch cases on a
+`command()` target stall Palot's renderer ~20 s before it connects, which strobe causes, not Palot.
+
+Paste `strobe report experiment <exp> --format pr` output for results; never hand-copied numbers. Visual changes
+(glass, blur, animation) still need the E2E harness on a real display, since Xvfb renders in software.
+
 ## Choose The Loop
+
+The harness below stays the tool for diagnosis (React profiling, selector stats, frame sampling, video) and for
+correctness under load.
 
 - Static React health: run `bun run perf:doctor` for changed code and `bun run perf:react-check` for React Compiler compatibility diagnostics.
 - Full static baseline: run `bun run perf:doctor:full`. Treat it as advisory until the documented baseline has been paid down.
@@ -21,7 +49,7 @@ Read repository-root `../../../docs/desktop-testing.md` for harness commands and
 - Streaming geometry: `bun run perf:stability` (or `perf:stability:video`) adds bounded active-turn/composer/scroll geometry sampling. Use it for bottom-follow jumps, not as a clean input benchmark. Inspect rAF and resize-observer phases separately; transient DOM measurements are not presented-frame proof.
 - Streaming throughput and scroll correctness: run `bun run perf:parallel`; use `bun run perf:parallel:trace` for whole-app attribution. `bun run perf:parallel:memory` repeats accumulating workloads with forced GC to investigate retention, not independent latency samples.
 - Style attribution: run `bun run perf:selectors`. Phase-separated React render attribution: run `bun run perf:scan:render`. Both add observer overhead and are not neutral benchmarks.
-- Repeated comparison: `bun run perf:compare <baseline.json...> -- <candidate.json...>` checks matched report metadata and summarizes run-level medians/ranges. It requires at least two independent runs per group (five recommended), rejects legacy/memory-cycle reports, and does not launch tests or declare regression budgets.
+- Repeated comparison (until strobe covers the scenario): `bun run perf:compare <baseline.json...> -- <candidate.json...>` checks matched report metadata and summarizes run-level medians/ranges. Strobe covers session switch, a task tour, idle, streaming (Markdown, steady and bursty), typing while a reply streams, and switching, scrolling and stopping mid-reply, each with one stream into the open task. Use `perf:compare` only for what strobe does not cover: the four-stream E2E profiles (their per-action DOM timings and renderer batch report) and stability geometry. It requires at least two independent runs per group (five recommended), rejects legacy/memory-cycle reports, and does not launch tests or declare regression budgets.
 - Attribution trace: run `bun run perf:trace`. It repeats the deterministic scenario with React's profiling build and writes `performance-trace.json` beside `performance.json`.
 - Render overlay: enable React Scan in Settings > Diagnostics or run `bun run dev:scan`. The dev client starts hidden; use `PALOT_REACT_SCAN=1 bun run dev:visible` for visible inspection without taking focus, and `PALOT_REACT_SCAN=1 bun run dev:focus` only when focus behavior matters. Palot reloads so React Scan can install before React. Use it to find candidate rerenders, then disable it before measuring.
 - Compiler experiment: run `bun run perf:compiler` for whole-renderer `infer` mode or `bun run perf:compiler:annotation` to validate opt-in mode. The normal build does not enable React Compiler.
@@ -89,4 +117,4 @@ Read `references/poll-driven-renders.md` when polling appears to trigger expensi
 
 ## Completion Gate
 
-A performance change is complete when the exact scenario and build mode are recorded, before/after artifacts exist, UX and visual behavior are unchanged or explicitly approved, the smallest relevant correctness checks pass, and the result identifies remaining uncertainty without claiming more than the data proves.
+A performance change is complete when a strobe A/B on the affected bench (or a new bench case) has a decided primary verdict, the exact scenario and build mode are recorded, before/after artifacts exist, UX and visual behavior are unchanged or explicitly approved, the smallest relevant correctness checks pass, and the result identifies remaining uncertainty without claiming more than the data proves.

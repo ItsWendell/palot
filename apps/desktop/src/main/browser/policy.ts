@@ -1,5 +1,6 @@
 // Derived from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser/policy.ts
+// See UPSTREAM.md.
 // URL policy shared by the pane and page. Electron-free so it stays unit-testable under Bun.
 
 import { realpathSync } from "node:fs";

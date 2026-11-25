@@ -10,21 +10,10 @@ const identifiers = (value: unknown): value is string[] =>
   new Set(value).size === value.length &&
   value.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 512);
 
-const booleans = (value: unknown): value is Record<string, boolean> =>
-  Boolean(value) &&
-  typeof value === "object" &&
-  !Array.isArray(value) &&
-  Object.values(value as Record<string, unknown>).every((entry) => typeof entry === "boolean");
-
 export const attentionSeenIDsAtom = persistedAtom({
   key: "attention.seen-request-ids",
   initialValue: [] as string[],
   validate: identifiers,
-});
-export const sidebarSectionsAtom = persistedAtom({
-  key: "ui.sidebar-sections",
-  initialValue: { attention: true, recents: true, projects: true } as Record<string, boolean>,
-  validate: booleans,
 });
 export const attentionTargetAtom = atom<{
   sessionID: string;

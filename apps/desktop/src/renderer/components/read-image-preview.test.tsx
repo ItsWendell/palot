@@ -1,8 +1,46 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createStore, Provider } from "jotai";
+import type { OpenCodeClient } from "@opencode/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OpenCodeRuntimeStatus } from "../../shared";
+import { runtimeAtom } from "../atoms/workspace";
+import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { ImageLightbox, ReadImagePreview } from "./read-image-preview";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  resetOpenCodeClientForTest();
+});
+
+function renderStored(hash: string, get: () => Promise<Uint8Array>) {
+  setOpenCodeClientForTest({ experimental: { media: { get } } } as unknown as OpenCodeClient);
+  const store = createStore();
+  store.set(runtimeAtom, { connectionID: "media-connection" } as OpenCodeRuntimeStatus);
+  return render(
+    <Provider store={store}>
+      <ReadImagePreview src={`media:${hash.repeat(64)}`} name="shot.png" mime="image/png" />
+    </Provider>,
+  );
+}
+
+describe("ReadImagePreview", () => {
+  it("loads a stored image reference, showing a placeholder until it arrives", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:shot");
+    renderStored("1", async () => new Uint8Array([1]));
+    expect(screen.getByLabelText("Loading shot.png")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Open preview of shot.png" }));
+    expect(screen.getByRole("img", { name: "shot.png" }).getAttribute("src")).toBe("blob:shot");
+  });
+
+  it("says a stored image is unavailable when its bytes cannot be read", async () => {
+    renderStored("2", async () => {
+      throw new Error("FileNotFoundError");
+    });
+    expect(await screen.findByText("shot.png is unavailable")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open preview of shot.png" })).toBeNull();
+  });
+});
 
 describe("ImageLightbox", () => {
   it("copies and downloads through guarded desktop APIs", async () => {

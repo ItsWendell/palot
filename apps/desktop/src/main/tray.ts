@@ -1,5 +1,6 @@
 import path from "node:path";
 import { isChatDirectory } from "../shared/chat-folders";
+import { mapSessionInfo } from "../shared/session-mapper";
 import type { OpenCodeEvent, Project, SessionInfo } from "@opencode/client";
 import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions } from "electron";
 import type {
@@ -25,6 +26,7 @@ import {
   type TrayTaskSection,
   type TrayTaskSections,
 } from "./tray-menu";
+import { truncateEnd } from "../shared/text-cut";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const RECENT_SESSION_LIMIT = 50;
@@ -527,7 +529,7 @@ function taskItem(session: SessionInfo, detail: string, profileID: string): Tray
 
 function sessionTitle(session: Pick<SessionInfo, "title"> | Pick<PalotSession, "title">): string {
   const title = session.title?.trim() || "Untitled task";
-  return title.length <= 64 ? title : `${title.slice(0, 61)}...`;
+  return truncateEnd(title, 64, "...");
 }
 
 function connectionName(profileID: string): string {
@@ -541,7 +543,7 @@ function attentionSnapshotInput(
   connectionID: string,
   sessions: Iterable<SessionInfo>,
 ): AttentionSnapshotInput {
-  const mappedSessions = [...sessions].map(mapSession);
+  const mappedSessions = [...sessions].map((session) => mapSessionInfo(session));
   return { connectionID, sessions: mappedSessions };
 }
 
@@ -559,41 +561,6 @@ function rootSessionFromMap(
     session = parent;
   }
   return session;
-}
-
-function mapSession(session: SessionInfo): PalotSession {
-  return {
-    id: session.id,
-    parentID: session.parentID ?? null,
-    projectID: session.projectID,
-    title: session.title ?? null,
-    agent: session.agent ?? null,
-    model: session.model ? { ...session.model } : null,
-    location: { ...session.location },
-    createdAt: session.time.created,
-    updatedAt: session.time.updated,
-    ...(session.time.idle === undefined ? {} : { idleAt: session.time.idle }),
-    ...(session.time.viewed === undefined ? {} : { viewedAt: session.time.viewed }),
-    ...(session.outcome ? { outcome: session.outcome } : {}),
-    archivedAt: session.time.archived ?? null,
-    cost: session.cost,
-    tokens: {
-      input: session.tokens.input,
-      output: session.tokens.output,
-      reasoning: session.tokens.reasoning,
-      cache: { ...session.tokens.cache },
-    },
-    ...(session.revert
-      ? {
-          revert: {
-            ...session.revert,
-            ...(session.revert.files
-              ? { files: session.revert.files.map((file) => ({ ...file })) }
-              : {}),
-          },
-        }
-      : {}),
-  };
 }
 
 function projectName(project: Project): string {

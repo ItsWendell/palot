@@ -1,5 +1,6 @@
 // Derived from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser-chromium.ts
+// See browser/UPSTREAM.md.
 import { Browser } from "@opencode/plugin-browser/rpc";
 import electron, { type BrowserWindow, type WebContents } from "electron";
 import type { Protocol } from "devtools-protocol";
@@ -362,16 +363,17 @@ export function createBrowserPage(
     ]).catch(() => undefined);
   });
   cdp.on("Target.detachedFromTarget", ({ sessionId }) => {
-    invalidatePickedDocument();
-    for (const [ref, element] of picked) {
-      if (element.sessionID === sessionId) picked.delete(ref);
-    }
+    // Forget the detached session first so the inspect reset never targets it.
     sessions.forEach((id, frameID) => {
       if (id === sessionId) {
         sessions.delete(frameID);
         parents.delete(frameID);
       }
     });
+    invalidatePickedDocument();
+    for (const [ref, element] of picked) {
+      if (element.sessionID === sessionId) picked.delete(ref);
+    }
   });
   cdp.on("Overlay.inspectNodeRequested", ({ backendNodeId }, sessionID) => {
     if (!inspecting) return;

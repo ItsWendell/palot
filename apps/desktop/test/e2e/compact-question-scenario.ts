@@ -53,41 +53,38 @@ export const compactQuestionScenario: Scenario = {
   },
   async run(page, { client, session, llm, runRoot }) {
     const panel = page.locator("[data-palot-composer-request]");
-    const attach = page.getByRole("button", { name: "Attach files", exact: true });
-    const model = page.locator(".palot-model-trigger");
-    const reasoning = page.getByRole("button", { name: /^Reasoning:/ });
+    const field = page.getByRole("textbox", { name: "Message Palot" });
+    const attach = page.getByRole("button", { name: "Add files, commands and more", exact: true });
+    // The one model pill also carries the effort.
+    const model = page.getByRole("button", { name: /^Model: Test Model/ });
     await expect(attach).toBeVisible();
     await expect(model).toBeVisible();
-    // Count only after the catalog names the model: its variants decide whether a Reasoning
-    // control exists. Preserve whatever the real catalog exposes instead of inventing one.
-    await expect(page.getByRole("button", { name: /^Model: Test Model/ })).toBeVisible();
-    const reasoningCount = await reasoning.count();
 
-    async function assertBlockedComposer() {
-      await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeHidden();
-      await expect(attach).toBeHidden();
-      await expect(model).toBeHidden();
-      await expect(reasoning).toHaveCount(0);
+    // The question opens a panel above the text field; the field and the row stay usable.
+    async function assertComposerBeside() {
+      await expect(field).toBeVisible();
+      await expect(attach).toBeVisible();
+      await expect(model).toBeVisible();
       await expect(page.getByRole("button", { name: "Stop task", exact: true })).toBeEnabled();
       await expect(panel.getByRole("button", { name: "Dismiss", exact: true })).toBeEnabled();
     }
 
     async function assertRestoredComposer() {
       await expect(panel).toBeHidden();
-      await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeVisible();
+      await expect(field).toBeVisible();
+      await expect(field).toHaveAttribute("data-placeholder", "Do anything");
       await expect(attach).toBeVisible();
       await expect(model).toBeVisible();
-      await expect(reasoning).toHaveCount(reasoningCount);
     }
 
     await client.session.prompt({ sessionID: session.id, text: this.prompt });
-    await assertQuestion(panel, SINGLE_PROMPT, "1/1");
-    await assertBlockedComposer();
+    await assertQuestion(panel, SINGLE_PROMPT, null);
+    await assertComposerBeside();
     await expect(panel.getByText("Output style", { exact: true })).toBeHidden();
-    await expect(panel.getByPlaceholder("Other answer…", { exact: true })).toBeVisible();
+    // The empty field doubles as the typed answer.
+    await expect(field).toHaveAttribute("data-placeholder", "Type your own answer…");
     await expect(panel.getByText(LONG_DESCRIPTION, { exact: true })).toBeVisible();
-    await expect(panel.getByRole("button", { name: "Next", exact: true })).toBeHidden();
-    await expect(panel.getByRole("button", { name: "Previous", exact: true })).toBeHidden();
+    await expect(panel.getByRole("button", { name: "Back", exact: true })).toBeHidden();
     await capturePresentation(page, panel, runRoot);
     const guide = panel.getByRole("link", { name: STYLE_GUIDE, exact: true });
     await guide.click({ button: "right" });
@@ -97,41 +94,44 @@ export const compactQuestionScenario: Scenario = {
     await page.keyboard.press("Escape");
     await expect(linkMenu).toBeHidden();
 
-    await panel.locator('[data-slot="questionnaire-item"]').focus();
+    // 1–9 pick from the empty field; typing then gives the answer in your own words.
+    await field.focus();
     await page.keyboard.press("1");
     await expect(panel.locator('input[value="Concise"]')).toBeChecked();
-    await expect(panel.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+    await expect(field).toHaveJSProperty("value", "");
+    const submit = page.getByRole("button", { name: "Submit answer", exact: true });
+    await expect(submit).toBeEnabled();
     expect(llm.requests).toHaveLength(1);
-    await panel.getByPlaceholder("Other answer…", { exact: true }).fill(CUSTOM_ANSWER);
+    await field.fill(CUSTOM_ANSWER);
     await expect(panel).toBeVisible();
     expect(llm.requests).toHaveLength(1);
-    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await submit.click();
     await client.experimental.session.wait({ sessionID: session.id });
     await expect(page.getByText("COMPACT SINGLE ANSWER RECEIVED", { exact: true })).toBeVisible();
     await assertRestoredComposer();
 
     await client.session.prompt({ sessionID: session.id, text: "Ask for destination and extras." });
-    await assertQuestion(panel, MULTI_PROMPTS[0]!, "1/2");
-    await assertBlockedComposer();
+    await assertQuestion(panel, MULTI_PROMPTS[0]!, "1 of 2");
+    await assertComposerBeside();
     await panel.locator('[data-slot="questionnaire-item"]:visible').focus();
     await page.keyboard.press("1");
     await expect(panel.locator('input[value="Notebook"]')).toBeChecked();
-    await panel.getByRole("button", { name: "Next", exact: true }).click();
-    await assertQuestion(panel, MULTI_PROMPTS[1]!, "2/2");
+    await page.getByRole("button", { name: "Next question", exact: true }).click();
+    await assertQuestion(panel, MULTI_PROMPTS[1]!, "2 of 2");
     await panel.locator('[data-slot="questionnaire-item"]:visible').focus();
     await page.keyboard.press("1");
     await page.keyboard.press("2");
     await expect(panel.locator('input[value="Examples"]')).toBeChecked();
     await expect(panel.locator('input[value="Caveats"]')).toBeChecked();
-    await panel.getByRole("button", { name: "Previous", exact: true }).click();
-    await assertQuestion(panel, MULTI_PROMPTS[0]!, "1/2");
+    await panel.getByRole("button", { name: "Back", exact: true }).click();
+    await assertQuestion(panel, MULTI_PROMPTS[0]!, "1 of 2");
     await expect(panel.locator('input[value="Notebook"]')).toBeChecked();
-    await panel.getByRole("button", { name: "Next", exact: true }).click();
-    await assertQuestion(panel, MULTI_PROMPTS[1]!, "2/2");
+    await page.getByRole("button", { name: "Next question", exact: true }).click();
+    await assertQuestion(panel, MULTI_PROMPTS[1]!, "2 of 2");
     await expect(panel.locator('input[value="Examples"]')).toBeChecked();
     await expect(panel.locator('input[value="Caveats"]')).toBeChecked();
     expect(llm.requests).toHaveLength(3);
-    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await page.getByRole("button", { name: "Submit answer", exact: true }).click();
     await client.experimental.session.wait({ sessionID: session.id });
     await assertRestoredComposer();
   },
@@ -159,18 +159,11 @@ export const compactQuestionScenario: Scenario = {
   },
 };
 
-async function assertQuestion(panel: Locator, prompt: string, count: string) {
+async function assertQuestion(panel: Locator, prompt: string, count: string | null) {
   await expect(panel).toBeVisible();
   const title = panel.locator('[data-slot="questionnaire-title"]:visible');
   await expect(title).toHaveText(prompt);
-  const progress = panel.getByText(count, { exact: true });
-  await expect(progress).toBeVisible();
-  const titleBox = await title.boundingBox();
-  const progressBox = await progress.boundingBox();
-  expect(titleBox).not.toBeNull();
-  expect(progressBox).not.toBeNull();
-  expect(progressBox!.y).toBeLessThan(titleBox!.y + titleBox!.height);
-  expect(progressBox!.y + progressBox!.height).toBeGreaterThan(titleBox!.y);
+  if (count) await expect(panel.getByText(count, { exact: true })).toBeVisible();
   await expect(
     panel.getByText(/^(Questions?|Choose one answer\.|Choose one or type your own answer\.)$/),
   ).toBeHidden();

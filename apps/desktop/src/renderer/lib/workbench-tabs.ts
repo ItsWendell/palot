@@ -39,6 +39,8 @@ export type WorkbenchTab =
         error?: string;
         quote?: BtwQuote;
         followUps?: BtwFollowUp[];
+        /** An answer (or failure) arrived while the tab was not in view; cleared once seen. */
+        unread?: boolean;
       };
     })
   | (TabBase & {
@@ -105,6 +107,8 @@ export type WorkbenchTab =
         location: LocationRef;
         sessionID: string;
         userMessageID: string;
+        /** The file to scroll to; `request` changes on every open so a repeat scrolls again. */
+        file?: { path: string; request: number };
       };
     })
   | (TabBase & {
@@ -156,7 +160,7 @@ export type OpenWorkbenchTabInput =
     }
   | { kind: "file"; location: LocationRef; path: string; line?: number; endLine?: number }
   | { kind: "workspace-files"; location: LocationRef }
-  | { kind: "turn-diff"; location: LocationRef; userMessageID: string }
+  | { kind: "turn-diff"; location: LocationRef; userMessageID: string; file?: string }
   | {
       kind: "terminal";
       location: LocationRef;
@@ -275,7 +279,7 @@ export function openWorkbenchTab(
 ): { state: WorkbenchState; result: OpenWorkbenchTabResult } {
   const key = workbenchScopeKey(scope);
   const previous = state.scopes[key] ?? emptyContext(now);
-  const candidate = tabFromInput(scope, input, createID());
+  const candidate = tabFromInput(scope, input, createID(), now);
   const resourceKey = workbenchTabResourceKey(candidate);
   const context = forgetClosedResource(previous, resourceKey);
   const existing = findTab(context, (tab) => workbenchTabResourceKey(tab) === resourceKey);
@@ -686,6 +690,7 @@ function tabFromInput(
   scope: WorkbenchScope,
   input: OpenWorkbenchTabInput,
   id: string,
+  now = Date.now(),
 ): WorkbenchTab {
   if (input.kind === "html-preview") {
     return {
@@ -808,6 +813,7 @@ function tabFromInput(
         location: input.location,
         sessionID: scope.sessionID,
         userMessageID: input.userMessageID,
+        ...(input.file ? { file: { path: input.file, request: now } } : {}),
       },
     };
   }
@@ -860,6 +866,21 @@ function updateTabTarget(
         ...context[pane],
         tabs: context[pane].tabs.map((tab) =>
           tab.id === existing.id ? { ...existing, resource: candidate.resource } : tab,
+        ),
+      },
+    };
+  }
+  if (existing.kind === "turn-diff" && candidate.kind === "turn-diff") {
+    // Opening the whole turn keeps the tab where it is; opening at a file scrolls to it.
+    if (!candidate.resource.file) return context;
+    return {
+      ...context,
+      [pane]: {
+        ...context[pane],
+        tabs: context[pane].tabs.map((tab) =>
+          tab.id === existing.id
+            ? { ...existing, resource: { ...existing.resource, file: candidate.resource.file } }
+            : tab,
         ),
       },
     };
@@ -971,6 +992,52 @@ function withScope(
         .filter(([, context], index) => index < MAX_WORKBENCH_SCOPES || hasBtwTabs(context)),
     ),
   };
+}
+
+/**
+ * The "Keep the side panel when switching tasks" setting: the next task's right pane takes the
+ * previous one's open state, and its surface when every task has one (Changes, Files, Context).
+ * Task-owned tabs (side questions, browser pages, files) stay with their task; the pane then shows
+ * the next task's own tab, or its New tab page.
+ */
+export function carryRightPane(
+  state: WorkbenchState,
+  from: WorkbenchScope,
+  to: WorkbenchScope,
+  location: LocationRef,
+  now = Date.now(),
+  createID: () => string = defaultTabID,
+): WorkbenchState {
+  const previous = state.scopes[workbenchScopeKey(from)]?.right;
+  if (!previous || workbenchScopeKey(from) === workbenchScopeKey(to)) return state;
+  const key = workbenchScopeKey(to);
+  const context = state.scopes[key] ?? emptyContext(now);
+  if (!previous.requestedOpen) {
+    return context.right.requestedOpen
+      ? withScope(
+          state,
+          key,
+          { ...context, right: { ...context.right, requestedOpen: false } },
+          now,
+        )
+      : state;
+  }
+  const active = previous.tabs.find((tab) => tab.id === previous.activeTabID);
+  const input: OpenWorkbenchTabInput | null =
+    active?.kind === "changes"
+      ? { kind: "changes", location, mode: active.resource.mode }
+      : active?.kind === "workspace-files"
+        ? { kind: "workspace-files", location }
+        : active?.kind === "context"
+          ? { kind: "context", location }
+          : null;
+  if (input) {
+    const opened = openWorkbenchTab(state, to, input, { pane: "right" }, now, createID);
+    if (opened.result.ok) return opened.state;
+  }
+  return context.right.requestedOpen
+    ? state
+    : withScope(state, key, { ...context, right: { ...context.right, requestedOpen: true } }, now);
 }
 
 /** Side answers are retained until their tabs close, even when other scopes age out. */

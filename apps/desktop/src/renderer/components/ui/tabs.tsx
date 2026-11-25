@@ -6,11 +6,7 @@ import * as React from "react";
 
 import { cn } from "@/lib/cn";
 import { FluidHoverHighlight } from "@/components/ui/fluid-hover-highlight";
-import {
-  FluidSelectionPill,
-  chainHandlers,
-  useFluidList,
-} from "@/components/ui/fluid-list";
+import { FluidSelectionPill, chainHandlers, useFluidList } from "@/components/ui/fluid-list";
 
 function Tabs({ className, orientation = "horizontal", ...props }: TabsPrimitive.Root.Props) {
   return (
@@ -58,12 +54,7 @@ function TabsList({ className, variant = "default", ...props }: TabsListProps) {
 
 const isSelectedTab = (element: HTMLElement) => element.getAttribute("aria-selected") === "true";
 
-function SubtleTabsList({
-  className,
-  children,
-  ref,
-  ...props
-}: Omit<TabsListProps, "variant">) {
+function SubtleTabsList({ className, children, ref, ...props }: Omit<TabsListProps, "variant">) {
   const fluid = useFluidList(ref, {
     itemSelector: '[role="tab"]',
     axis: "x",
@@ -99,7 +90,7 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
       className={cn(
-        "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium whitespace-nowrap text-foreground/75 transition-all group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start group-data-vertical/tabs:py-[calc(--spacing(1.25))] hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-1 has-data-[icon=inline-start]:pl-1 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-muted-foreground dark:hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+        "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium whitespace-nowrap text-foreground/75 transition-[color,background-color,border-color,box-shadow,opacity] group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start group-data-vertical/tabs:py-[calc(--spacing(1.25))] hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-1 has-data-[icon=inline-start]:pl-1 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-muted-foreground dark:hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
         "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-active:bg-transparent dark:group-data-[variant=line]/tabs-list:data-active:border-transparent dark:group-data-[variant=line]/tabs-list:data-active:bg-transparent",
         // Subtle tabs draw no fill of their own; the list's pills sit behind them.
         "group-data-[variant=subtle]/tabs-list:text-muted-foreground group-data-[variant=subtle]/tabs-list:data-active:border-transparent group-data-[variant=subtle]/tabs-list:data-active:bg-transparent group-data-[variant=subtle]/tabs-list:data-active:text-foreground dark:group-data-[variant=subtle]/tabs-list:data-active:border-transparent dark:group-data-[variant=subtle]/tabs-list:data-active:bg-transparent",

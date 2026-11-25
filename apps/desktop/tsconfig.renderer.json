@@ -12,6 +12,9 @@
     "src/renderer/**/*.ts",
     "src/renderer/**/*.tsx",
     "src/preload/api.d.ts",
-    "src/shared/**/*.ts"
-  ]
+    "src/shared/**/*.ts",
+    "prototypes/**/*.ts",
+    "prototypes/**/*.tsx"
+  ],
+  "exclude": ["prototypes/*/vite.config.ts"]
 }

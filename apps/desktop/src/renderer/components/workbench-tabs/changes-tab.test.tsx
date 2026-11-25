@@ -1,23 +1,31 @@
 import type { FileDiffInfo, OpenCodeClient } from "@opencode/client";
+import type { CodeViewItem } from "@pierre/diffs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
-import type { ReactNode } from "react";
+import { useEffect, useImperativeHandle, useRef, type ReactNode, type Ref } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus } from "../../../shared";
 import { runtimeAtom } from "../../atoms/workspace";
+import {
+  DEFAULT_DIFF_VIEW_PREFERENCES,
+  diffViewPreferencesAtom,
+} from "../../atoms/diff-preferences";
 import { openCodeKeys } from "../../lib/opencode-query";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import {
   resetOpenCodeClientForTest,
   setOpenCodeClientForTest,
 } from "../../services/opencode-client";
+import { resetViewedMarksCache } from "../../lib/changes-viewed";
 import { useTaskViewShortcuts } from "../transcript-find";
 import { ChangesTab } from "./changes-tab";
 
 const mocks = vi.hoisted(() => ({
   openTab: vi.fn(),
   diffs: {} as Record<string, unknown>,
+  items: [] as CodeViewItem<undefined>[],
+  openSearch: vi.fn(),
 }));
 vi.mock("../../atoms/workbench", () => ({
   useWorkbenchCommands: () => ({ openTab: mocks.openTab }),
@@ -43,7 +51,40 @@ vi.mock("@pierre/trees/react", () => ({
   useFileTree: () => ({ model: { resetPaths: vi.fn(), setGitStatus: vi.fn() } }),
 }));
 vi.mock("@pierre/diffs/react", () => ({
-  CodeView: () => <div role="region" aria-label="Diff content" tabIndex={0} />,
+  CodeView: (props: {
+    items: CodeViewItem<undefined>[];
+    renderCustomHeader?(item: CodeViewItem<undefined>): ReactNode;
+    options?: { searchOptions?: { disableShortcuts?: boolean } };
+    ref?: Ref<unknown>;
+  }) => {
+    mocks.items = props.items;
+    useImperativeHandle(props.ref, () => ({
+      openSearch: mocks.openSearch,
+      scrollTo: () => {},
+      getInstance: () => undefined,
+    }));
+    const root = useRef<HTMLDivElement>(null);
+    const disabled = props.options?.searchOptions?.disableShortcuts === true;
+    useEffect(() => {
+      // As @pierre/diffs does: CodeView binds Mod+F and Mod+Alt+F on its root, capturing.
+      const element = root.current;
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (disabled || !event.ctrlKey || event.key !== "f") return;
+        event.preventDefault();
+        event.stopPropagation();
+        mocks.openSearch();
+      };
+      element?.addEventListener("keydown", onKeyDown, true);
+      return () => element?.removeEventListener("keydown", onKeyDown, true);
+    }, [disabled]);
+    return (
+      <div ref={root} role="region" aria-label="Diff content" tabIndex={0}>
+        {props.items.map((item) => (
+          <div key={item.id}>{props.renderCustomHeader?.(item)}</div>
+        ))}
+      </div>
+    );
+  },
 }));
 
 afterEach(() => {
@@ -51,6 +92,7 @@ afterEach(() => {
   vi.clearAllMocks();
   resetOpenCodeClientForTest();
   mocks.diffs = {};
+  mocks.items = [];
 });
 
 const scope = { profileID: "profile", sessionID: "session" };
@@ -86,16 +128,15 @@ function loadedDiffs(data: FileDiffInfo[], reviewBase: string | null = "main") {
   };
 }
 
-function renderWithProviders(children: ReactNode) {
+function renderWithProviders(children: ReactNode, store = createStore()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const store = createStore();
   store.set(runtimeAtom, runtime);
   const view = render(
     <QueryClientProvider client={queryClient}>
       <Provider store={store}>{children}</Provider>
     </QueryClientProvider>,
   );
-  return { ...view, queryClient };
+  return { ...view, queryClient, store };
 }
 
 it("switches review scope through a pressed-toggle group", () => {
@@ -165,7 +206,7 @@ it("shows Initialize Git failures inline and allows a retry", async () => {
 });
 
 function TranscriptHarness({ onFind }: { onFind(): void }) {
-  useTaskViewShortcuts({ onFind, onTurn: () => {} });
+  useTaskViewShortcuts({ onFind, onTurn: () => {}, onJump: () => {} });
   return (
     <div data-palot-task-view="">
       <button type="button">Transcript</button>
@@ -213,6 +254,8 @@ it("finds and steps through diff matches without taking the transcript's Mod+F",
     false,
   );
   expect(transcriptFind).toHaveBeenCalledOnce();
+  // CodeView's own search panel does not take Mod+F; it stays on Mod+Alt+F.
+  expect(mocks.openSearch).not.toHaveBeenCalled();
   const input = screen.getByRole("textbox", { name: "Find in diff" });
   const status = () => screen.getByRole("status").textContent;
 
@@ -233,4 +276,115 @@ it("finds and steps through diff matches without taking the transcript's Mod+F",
 
   fireEvent.keyDown(input, { key: "Escape" });
   expect(screen.queryByRole("search", { name: "Find in diff" })).toBeNull();
+
+  fireEvent.keyDown(screen.getByRole("region", { name: "Diff content" }), {
+    ...findKey,
+    altKey: true,
+  });
+  expect(mocks.openSearch).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("search", { name: "Find in diff" })).toBeNull();
+});
+
+function changedFile(file: string, additions: number, deletions: number): FileDiffInfo {
+  return {
+    file,
+    status: "modified",
+    additions,
+    deletions,
+    patch: [`--- a/${file}`, `+++ b/${file}`, "@@ -1 +1 @@", "-old", "+new"].join("\n"),
+  } as FileDiffInfo;
+}
+
+const quietDiffs = [
+  changedFile("src/app.ts", 10, 2),
+  changedFile("bun.lock", 300, 120),
+  changedFile("src/app.test.ts", 5, 0),
+];
+const collapsed = () => Object.fromEntries(mocks.items.map((item) => [item.id, item.collapsed]));
+
+it("starts lockfiles collapsed, labels them, and counts them apart", () => {
+  mocks.diffs = loadedDiffs(quietDiffs);
+  renderWithProviders(<ChangesTab tab={changesTab("working")} pane="right" scope={scope} />);
+
+  expect(collapsed()).toEqual({ "src/app.ts": false, "bun.lock": true, "src/app.test.ts": false });
+  const lockHeader = screen.getByTitle("bun.lock");
+  expect(lockHeader.getAttribute("aria-expanded")).toBe("false");
+  expect(lockHeader.textContent).toContain("Lockfile");
+  expect(screen.getByTitle("src/app.test.ts").textContent).toContain("Test");
+  expect(screen.getByTitle("src/app.ts").textContent).not.toMatch(/Lockfile|Test|Generated/);
+
+  // The header counts the two files the change is about and names the lockfile separately.
+  const note = screen.getByTitle("1 lockfile: +300 −120");
+  const counts = note.parentElement!;
+  expect(counts.textContent).toContain("2 files");
+  expect(counts.textContent).toContain("+15");
+  expect(counts.textContent).toContain("-2");
+  expect(note.textContent).toContain("+ 1 lockfile");
+});
+
+it("keeps a lockfile the reader opened open across refreshes", () => {
+  mocks.diffs = loadedDiffs(quietDiffs);
+  const view = renderWithProviders(
+    <ChangesTab tab={changesTab("working")} pane="right" scope={scope} />,
+  );
+  fireEvent.click(screen.getByTitle("bun.lock"));
+  expect(collapsed()["bun.lock"]).toBe(false);
+
+  // New diff data for the same files (a refetch) must not fold it again.
+  mocks.diffs = loadedDiffs(quietDiffs.map((file) => ({ ...file })));
+  view.rerender(
+    <QueryClientProvider client={view.queryClient}>
+      <Provider store={view.store}>
+        <ChangesTab tab={changesTab("working")} pane="right" scope={scope} />
+      </Provider>
+    </QueryClientProvider>,
+  );
+  expect(collapsed()["bun.lock"]).toBe(false);
+});
+
+it("leaves lockfiles open when the collapse setting is off", () => {
+  mocks.diffs = loadedDiffs(quietDiffs);
+  const store = createStore();
+  store.set(diffViewPreferencesAtom, {
+    ...DEFAULT_DIFF_VIEW_PREFERENCES,
+    collapseQuietFiles: false,
+  });
+  renderWithProviders(<ChangesTab tab={changesTab("working")} pane="right" scope={scope} />, store);
+
+  expect(collapsed()).toEqual({ "src/app.ts": false, "bun.lock": false, "src/app.test.ts": false });
+  // Labels and the separate count stay: the setting only changes what starts folded.
+  expect(screen.getByTitle("bun.lock").textContent).toContain("Lockfile");
+  expect(screen.getByTitle("1 lockfile: +300 −120")).toBeTruthy();
+});
+it("folds a file marked viewed, counts it, and flags it once its diff changes", () => {
+  window.localStorage.clear();
+  resetViewedMarksCache();
+  mocks.diffs = loadedDiffs(quietDiffs);
+  const view = renderWithProviders(
+    <ChangesTab tab={changesTab("working")} pane="right" scope={scope} />,
+  );
+  expect(screen.getByText("0 of 3 viewed")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Mark src/app.ts as viewed" }));
+  expect(collapsed()["src/app.ts"]).toBe(true);
+  expect(screen.getByText("1 of 3 viewed")).toBeTruthy();
+
+  // A new mount of the tab (another window, a restart) reads the mark back folded.
+  cleanup();
+  resetViewedMarksCache();
+  renderWithProviders(<ChangesTab tab={changesTab("working")} pane="right" scope={scope} />);
+  expect(collapsed()["src/app.ts"]).toBe(true);
+  expect(screen.getByText("1 of 3 viewed")).toBeTruthy();
+
+  // The agent edits the file again: the mark no longer applies and the file opens.
+  mocks.diffs = loadedDiffs([
+    { ...quietDiffs[0]!, patch: quietDiffs[0]!.patch.replace("+new", "+newer") },
+    ...quietDiffs.slice(1),
+  ]);
+  cleanup();
+  renderWithProviders(<ChangesTab tab={changesTab("working")} pane="right" scope={scope} />);
+  expect(collapsed()["src/app.ts"]).toBe(false);
+  expect(screen.getByText("0 of 3 viewed")).toBeTruthy();
+  expect(screen.getByTitle("src/app.ts").textContent).toContain("Changed since viewed");
+  void view;
 });

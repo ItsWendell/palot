@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
 
@@ -13,6 +14,9 @@ export const workbenchResizeScenario: Scenario = {
         (_, index) => `Transcript line ${index + 1}: ${"content ".repeat(5)}`,
       ).join("\n\n"),
     );
+  },
+  async prepareProject({ projectDirectory }) {
+    await writeFile(join(projectDirectory, "changed.ts"), "export const changed = true;\n");
   },
   async assert(page, { runRoot, client, session }) {
     await page.setViewportSize({ width: 1440, height: 850 });
@@ -48,21 +52,19 @@ export const workbenchResizeScenario: Scenario = {
     const bounds = await separator.boundingBox();
     if (!bounds) throw new Error("Right workbench separator is not visible");
 
-    // A few pixels to the transcript side of the line must still belong to the
-    // divider, not the adjacent scrollport or its overlaid scrollbar.
+    // The separator is the 1px line; its pointer hit area is the library's, over the
+    // neighbouring panes. A few pixels to the transcript side, above the scrollport and
+    // its overlaid scrollbar, must still grab the divider rather than the scrollbar.
     const x = bounds.x + bounds.width / 2 - 3;
     const y = bounds.y + bounds.height / 2;
-    const hitSeparator = await separator.evaluate(
-      (element, point) => element === document.elementFromPoint(point.x, point.y),
-      { x, y },
-    );
     await page.screenshot({ path: join(runRoot, "workbench-resize-before.png") });
     const width = (await panel.boundingBox())!.width;
     await page.mouse.move(x, y);
+    await expect(separator).toHaveAttribute("data-separator", "hover");
     await page.mouse.down();
+    await expect(separator).toHaveAttribute("data-separator", "active");
     await page.mouse.move(x - 100, y, { steps: 8 });
     await page.mouse.up();
-    expect(hitSeparator).toBe(true);
     await expect.poll(async () => (await panel.boundingBox())!.width).toBeGreaterThan(width + 60);
     await transcript.evaluate((viewport) => {
       viewport.scrollTop = viewport.scrollHeight;
@@ -75,6 +77,18 @@ export const workbenchResizeScenario: Scenario = {
     await page.mouse.move(wider.x + wider.width / 2 + 93, y, { steps: 8 });
     await page.mouse.up();
     await expect.poll(async () => (await panel.boundingBox())!.width).toBeLessThan(width + 40);
+
+    // A second toggle during the closing animation must reverse it, not be lost.
+    const rightToggle = page.getByRole("button", {
+      name: /^(Show changes|Hide right workbench)$/,
+    });
+    await rightToggle.click();
+    await rightToggle.click();
+    await expect(rightToggle).toHaveAttribute("aria-pressed", "true");
+    await expect(pane).toBeVisible();
+    await expect
+      .poll(() => panel.evaluate((element) => element.getBoundingClientRect().width))
+      .toBeGreaterThan(290);
 
     await page.setViewportSize({ width: 1040, height: 850 });
     await expect
@@ -89,8 +103,8 @@ export const workbenchResizeScenario: Scenario = {
 
     const center = page.locator('[data-shell-panel="center"]');
     const navigation = page.locator('[data-shell-panel="navigation"]');
-    const navigationWidth = await navigation.evaluate(
-      (element) => element.getBoundingClientRect().width,
+    const { width: navigationWidth, right: navigationRight } = await navigation.evaluate(
+      (element) => element.getBoundingClientRect().toJSON() as DOMRect,
     );
     await page.getByRole("button", { name: "Expand right workbench" }).click();
     await expect(page.getByRole("button", { name: "Hide navigation" })).toBeVisible();
@@ -100,9 +114,10 @@ export const workbenchResizeScenario: Scenario = {
     await expect
       .poll(async () => (await navigation.boundingBox())!.width)
       .toBeCloseTo(navigationWidth, 0);
+    // The navigation rail sits left of the navigation panel, so measure from its right edge.
     await expect
       .poll(() => panel.evaluate((element) => element.getBoundingClientRect().width))
-      .toBeGreaterThan(1040 - navigationWidth - 16);
+      .toBeGreaterThan(1040 - navigationRight - 16);
     await page.screenshot({ path: join(runRoot, "workbench-fullscreen.png") });
 
     await page.getByRole("button", { name: "Hide navigation" }).click();
@@ -162,8 +177,61 @@ export const workbenchResizeScenario: Scenario = {
       .toBeGreaterThanOrEqual(360);
 
     await assertWorkspaceHeaderInsets(page, runRoot);
+    await assertChangesFitWithTaskList(page, runRoot);
   },
 };
+
+/**
+ * At the minimum window size the task list, transcript and Changes pane all stay on screen
+ * when Changes is opened with the task list showing.
+ */
+async function assertChangesFitWithTaskList(page: Page, runRoot: string) {
+  const panel = page.locator('[data-shell-panel="right-workbench"]');
+  const layout = () =>
+    page.evaluate(() => {
+      const box = (name: string) =>
+        document.querySelector(`[data-shell-panel="${name}"]`)!.getBoundingClientRect();
+      const navigation = box("navigation");
+      const center = box("center");
+      const right = box("right-workbench");
+      return {
+        innerWidth,
+        navigation: navigation.width,
+        center: center.width,
+        centerLeft: center.left,
+        navigationRight: navigation.right,
+        right: right.width,
+        rightEdge: right.right,
+      };
+    });
+  for (const viewport of [
+    { width: 920, height: 640 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const navigation = page.getByRole("button", { name: /^(Show|Hide) navigation$/ });
+    if ((await navigation.getAttribute("aria-pressed")) !== "true") await navigation.click();
+    const changes = page.getByRole("button", { name: /^(Show changes|Hide right workbench)$/ });
+    if ((await changes.getAttribute("aria-pressed")) !== "true") await changes.click();
+    await expect(page.getByRole("region", { name: "Right workbench", exact: true })).toBeVisible();
+    await expect
+      .poll(() => panel.evaluate((element) => element.getBoundingClientRect().width))
+      .toBeGreaterThan(290);
+    await expect
+      .poll(async () => {
+        const box = await layout();
+        return (
+          box.navigation >= 200 &&
+          box.center >= 240 &&
+          box.centerLeft >= box.navigationRight - 1 &&
+          box.right >= 290 &&
+          box.rightEdge <= box.innerWidth + 1
+        );
+      })
+      .toBe(true);
+    await page.screenshot({ path: join(runRoot, `changes-with-task-list-${viewport.width}.png`) });
+  }
+}
 
 export async function assertWorkspaceHeaderInsets(page: Page, runRoot: string) {
   const inheritedInsets = await page

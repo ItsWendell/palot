@@ -8,9 +8,12 @@ import {
 } from "./streaming-patch-input";
 import {
   classifyShellCommand,
+  executeNestedParts,
   parsePatchTargetFiles,
   projectToolExecution,
+  toolStoppedBeforeInput,
   readableToolName,
+  toolExecutionMachines,
 } from "./tool-executions";
 
 function tool(
@@ -31,6 +34,22 @@ function tool(
     },
   };
 }
+
+describe("toolExecutionMachines", () => {
+  it("names the machine a call's path or workdir is on", () => {
+    const machines = (part: PalotMessageContent) =>
+      toolExecutionMachines(projectToolExecution(part, 0));
+    expect(machines(tool("read", { path: "devbox:/srv/app/a.ts" }, "1: a"))).toEqual(["devbox"]);
+    expect(machines(tool("edit", { path: "gpu:~/notes.md" }, "ok"))).toEqual(["gpu"]);
+    expect(machines(tool("shell", { command: "ls", workdir: "devbox:/srv" }, "a"))).toEqual([
+      "devbox",
+    ]);
+    expect(machines(tool("grep", { pattern: "x", path: "devbox:/srv" }, ""))).toEqual(["devbox"]);
+    expect(machines(tool("read", { path: "C:/repo/a.ts" }, "1: a"))).toEqual([]);
+    expect(machines(tool("read", { path: "local:/srv/a.ts" }, "1: a"))).toEqual([]);
+    expect(machines(tool("shell", { command: "ls" }, "a"))).toEqual([]);
+  });
+});
 
 describe("projectToolExecution", () => {
   it("reuses a projection for the same immutable tool part and index", () => {
@@ -246,6 +265,22 @@ describe("projectToolExecution", () => {
         },
       ],
     });
+  });
+
+  it("projects stored image references alongside inline images", () => {
+    const ref = `media:${"c".repeat(64)}`;
+    const view = projectToolExecution(
+      {
+        ...tool("read", { path: "shot.png" }, "Image read successfully"),
+        state: {
+          status: "completed",
+          input: { path: "shot.png" },
+          content: [{ type: "file", uri: ref, mime: "image/png" }],
+        },
+      },
+      0,
+    );
+    expect(view).toMatchObject({ images: [{ uri: ref, mime: "image/png", name: null }] });
   });
 
   it("normalizes current file diff metadata", () => {
@@ -521,6 +556,98 @@ describe("projectToolExecution", () => {
     });
   });
 
+  it("treats a tool OpenCode stopped mid-run as interrupted, not failed", () => {
+    expect(
+      projectToolExecution(
+        {
+          type: "tool",
+          id: "shell-stopped",
+          name: "shell",
+          state: {
+            status: "error",
+            input: { command: "sleep 60" },
+            error: { type: "aborted", message: "Tool execution interrupted: shell" },
+          },
+        },
+        0,
+      ),
+    ).toMatchObject({ kind: "shell", status: "interrupted" });
+    expect(
+      projectToolExecution(
+        {
+          type: "tool",
+          id: "shell-failed",
+          name: "shell",
+          state: {
+            status: "error",
+            input: { command: "false" },
+            error: { type: "tool.execution", message: "boom" },
+          },
+        },
+        0,
+      ),
+    ).toMatchObject({ status: "error" });
+  });
+
+  it("treats a command the shell reports as cancelled as stopped, not failed", () => {
+    const shell = (error: JsonValue) =>
+      projectToolExecution(
+        {
+          type: "tool",
+          id: "shell",
+          name: "shell",
+          state: { status: "error", input: { command: "git push" }, error },
+        },
+        0,
+      ).status;
+    expect(shell({ type: "unknown", message: "Command cancelled" })).toBe("interrupted");
+    expect(shell({ type: "unknown", message: "Command cancelled: timeout" })).toBe("error");
+    expect(shell("Command cancelled")).toBe("error");
+  });
+
+  it("treats a command its timeout or a kill ended as stopped, whatever its exit code", () => {
+    const shell = (status: string, metadata: Record<string, JsonValue>) =>
+      projectToolExecution(
+        {
+          type: "tool",
+          id: "shell",
+          name: "shell",
+          state: { status, input: { command: "sleep 600" }, metadata },
+        },
+        0,
+      );
+    expect(shell("completed", { timeout: true, signal: "SIGTERM" })).toMatchObject({
+      status: "interrupted",
+      timedOut: true,
+      killed: false,
+    });
+    expect(shell("completed", { killed: true, exit: 137 })).toMatchObject({
+      status: "interrupted",
+      killed: true,
+    });
+    expect(shell("error", { killed: "Process daemon stopped" })).toMatchObject({
+      status: "interrupted",
+      killed: true,
+    });
+    expect(shell("completed", { exit: 1, timeout: false })).toMatchObject({
+      status: "error",
+      timedOut: false,
+    });
+  });
+
+  it("knows a stopped call whose input was never written", () => {
+    const stopped = { type: "aborted", message: "Tool execution interrupted" };
+    expect(toolStoppedBeforeInput({ status: "error", input: {}, error: stopped })).toBe(true);
+    expect(toolStoppedBeforeInput({ status: "error", error: stopped })).toBe(true);
+    expect(toolStoppedBeforeInput({ status: "error", input: "", error: stopped })).toBe(true);
+    expect(
+      toolStoppedBeforeInput({ status: "error", input: { command: "x" }, error: stopped }),
+    ).toBe(false);
+    expect(
+      toolStoppedBeforeInput({ status: "error", input: {}, error: { type: "tool.execution" } }),
+    ).toBe(false);
+  });
+
   it("treats a completed shell command with a non-zero exit as failed", () => {
     const shell = (exit: number | undefined, status = "completed") =>
       projectToolExecution(
@@ -726,6 +853,73 @@ describe("projectToolExecution", () => {
         { tool: "bad.tool", title: "Bad tool", status: "error", args: ["reason=test"] },
       ],
     });
+  });
+
+  it("gives a script's edit rows the diffs OpenCode 2.4 lists in metadata.files", () => {
+    const patch = "@@ -1 +1 @@\n-old\n+new\n";
+    const script = tool(
+      "execute",
+      { code: "await tools.edit(…); await Bun.write('out.txt', 'x')" },
+      "done",
+      {
+        toolCalls: [
+          { tool: "edit", status: "completed", input: { path: "src/a.ts", oldString: "old" } },
+          { tool: "write", status: "completed", input: { path: "/repo/big.ts", content: "…" } },
+        ],
+        // In change order; big.ts is past the patch budget, so it keeps only its counts.
+        files: [
+          { file: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch },
+          { file: "big.ts", status: "added", additions: 9000 },
+          { file: "out.txt", status: "added", additions: 1, deletions: 0, patch: "@@ +1 @@\n+x\n" },
+        ],
+      },
+    );
+    // The script's attachments live in structured.files and must not be read as changes.
+    (script.state as Record<string, JsonValue>).structured = {
+      files: [{ data: "AAAA", mime: "image/png", name: "shot.png" }],
+    };
+    const rows = executeNestedParts(script, 0).map((part) => projectToolExecution(part, 0));
+    expect(rows).toMatchObject([
+      {
+        kind: "file-change",
+        operation: "edit",
+        files: [{ file: "src/a.ts", patch, additions: 1 }],
+      },
+      // Counts only: no diff of its own, so the turn diff stands in.
+      { kind: "file-change", operation: "write", files: [], targetFiles: ["/repo/big.ts"] },
+      // Bun.write made no call: its change gets a row of its own after the calls.
+      { kind: "file-change", files: [{ file: "out.txt", status: "added" }] },
+    ]);
+  });
+
+  it("keeps a one-call script's own row for a tool without a view, with the script's output", () => {
+    const script = tool(
+      "execute",
+      { code: "return await tools.opencode.session.rename({…})" },
+      '{"title":"Ship it"}',
+      {
+        toolCalls: [
+          { tool: "opencode.session.rename", status: "completed", input: { title: "Ship it" } },
+        ],
+      },
+    );
+    const [row] = executeNestedParts(script, 0);
+    expect(projectToolExecution(row!, 0)).toMatchObject({
+      kind: "generic",
+      title: "Rename task",
+      label: "Ship it",
+    });
+    expect((row!.state as Record<string, JsonValue>).content).toEqual([
+      { type: "text", text: '{"title":"Ship it"}' },
+    ]);
+    // Two such calls stay one script row.
+    const two = tool("execute", { code: "…" }, "done", {
+      toolCalls: [
+        { tool: "opencode.session.rename", status: "completed", input: { title: "A" } },
+        { tool: "opencode.session.move", status: "completed", input: { directory: "/b" } },
+      ],
+    });
+    expect(executeNestedParts(two, 0)).toEqual([]);
   });
 
   it("describes Palot's own tools in the terms its sidebar uses", () => {

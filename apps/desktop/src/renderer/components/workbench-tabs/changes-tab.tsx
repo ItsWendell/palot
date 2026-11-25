@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   Copy,
   ExternalLink,
+  Eye,
   FileCode2,
   Files,
   FolderGit2,
@@ -42,6 +43,24 @@ import { resolveFileDiff } from "../../lib/file-diffs";
 import { hasTwoSidedChanges, resolveDiffLayout } from "../../lib/diff-layout";
 import { presentFileDiff, type PresentedFileDiff } from "../../lib/diff-whitespace";
 import { canCommentOnRange } from "../../lib/review-comments";
+import {
+  changedFileKindLabel,
+  classifyChangedFile,
+  isQuietKind,
+  summarizeChanges,
+  type ChangedFileKind,
+} from "../../lib/changed-file-kind";
+import { useGeneratedAttributes } from "../../hooks/use-generated-attributes";
+import { ChangedFileKindBadge, ChangeSummaryCounts } from "../changed-file-kind";
+import {
+  changesViewedScope,
+  diffFingerprint,
+  setFileViewed,
+  useViewedMarks,
+  viewedState,
+} from "../../lib/changes-viewed";
+import { ChangedSinceViewed } from "../pull-requests/code/pull-request-file-list";
+import { Checkbox } from "../ui/checkbox";
 import { cn } from "../../lib/cn";
 import { writeClipboardText } from "../../lib/clipboard";
 import { pierreReviewTheme, pierreViewerStyle } from "../file-viewer-theme";
@@ -59,7 +78,8 @@ import { Spinner } from "../ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ReviewBasePicker, ReviewBaseStatus } from "./review-base-picker";
-import { DiffFindBar, useDiffFind } from "./diff-find";
+import { DIFF_FIND_CODE_VIEW_SEARCH, DiffFindBar, useDiffFind } from "./diff-find";
+import { DiffChangeRail, codeViewRailSource } from "./diff-change-rail";
 import {
   ChangesSourceControlPanel,
   StageCheckbox,
@@ -68,6 +88,9 @@ import {
 import { DiffViewOptionsMenu, useDiffViewPreferences } from "./diff-view-options";
 import { ReviewCommentEditor, useReviewComments } from "../review-comment-editor";
 import { ChangedFileNavigationControls, useChangedFileNavigation } from "./changed-file-navigation";
+
+/** CodeView metrics below, so the change rail places each file's rows under its header. */
+const CODE_VIEW_RAIL_METRICS = { headerHeight: 32, gap: 2, paddingBottom: 4 };
 
 /** Tree selection and previous/next file share one item scroll offset. */
 const FILE_SCROLL_OFFSET = 34;
@@ -94,6 +117,27 @@ const treeStyle = {
 } as CSSProperties;
 
 const EMPTY_DIFFS: FileDiffInfo[] = [];
+
+/**
+ * Quiet files (lockfiles, generated files, migrations) fade in the tree. Their decoration
+ * carries a marker custom property, since tree rows expose no attribute of their own for it.
+ */
+const QUIET_TREE_MARKER = "--palot-quiet-file";
+const quietTreeCSS = `
+[data-type="item"]:has(> [data-item-section="decoration"] [style*="${QUIET_TREE_MARKER}"]) > :is([data-item-section="content"], [data-item-section="icon"]) {
+  opacity: 0.55;
+}`;
+
+function treeDecoration(kind: ChangedFileKind | undefined) {
+  const label = kind ? changedFileKindLabel(kind) : null;
+  if (!kind || !label) return null;
+  if (!isQuietKind(kind)) return { text: label };
+  return {
+    text: label,
+    title: `${label}, collapsed by default`,
+    parts: [{ text: label, color: `var(${QUIET_TREE_MARKER}, var(--trees-fg-muted))` }],
+  };
+}
 
 export function ChangesTab({
   tab,
@@ -122,9 +166,47 @@ export function ChangesTab({
   const [showTree, setShowTree] = useState(pane === "bottom");
   const [preferences] = useDiffViewPreferences();
   const [lineWrap, setLineWrap] = useState(false);
-  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(() => new Set());
+  // What the reader folded or opened; files without an entry follow their kind.
+  const [collapseOverrides, setCollapseOverrides] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
   const codeViewRef = useRef<CodeViewHandle<undefined, undefined>>(null);
   const paths = useMemo(() => diffs.map((file) => file.file), [diffs]);
+  const attributeRules = useGeneratedAttributes(tab.resource.location, active && diffs.length > 0);
+  const kinds = useMemo(
+    () => new Map(paths.map((path) => [path, classifyChangedFile(path, attributeRules)])),
+    [attributeRules, paths],
+  );
+  const kindsRef = useRef(kinds);
+  const viewedScope = changesViewedScope(
+    tab.resource.profileID,
+    tab.resource.sourceSessionID ?? tab.resource.location.directory,
+    tab.resource.mode,
+  );
+  const viewedMarks = useViewedMarks(viewedScope);
+  // Raw patches, not the whitespace-folded view, so the display option never resets a mark.
+  const fingerprints = useMemo(
+    () => new Map(diffs.map((file) => [file.file, diffFingerprint(file.patch, file.status)])),
+    [diffs],
+  );
+  const viewed = useMemo(
+    () =>
+      new Map(paths.map((path) => [path, viewedState(viewedMarks, path, fingerprints.get(path))])),
+    [fingerprints, paths, viewedMarks],
+  );
+  const viewedCount = paths.filter((path) => viewed.get(path) === "viewed").length;
+  const collapsedPaths = useMemo(
+    () =>
+      new Set(
+        paths.filter(
+          (path) =>
+            collapseOverrides.get(path) ??
+            (viewed.get(path) === "viewed" ||
+              (preferences.collapseQuietFiles && isQuietKind(kinds.get(path) ?? "regular"))),
+        ),
+      ),
+    [collapseOverrides, kinds, paths, preferences.collapseQuietFiles, viewed],
+  );
   // Without Git, OpenCode reports no changes and no review base; ask only then.
   const repositoryCheck =
     active &&
@@ -152,6 +234,9 @@ export function ChangesTab({
   useLayoutEffect(() => {
     pathSetRef.current = new Set(paths);
   }, [paths]);
+  useLayoutEffect(() => {
+    kindsRef.current = kinds;
+  }, [kinds]);
   const gitStatus = useMemo<GitStatusEntry[]>(
     () => diffs.map((file) => ({ path: file.file, status: file.status })),
     [diffs],
@@ -178,32 +263,47 @@ export function ChangesTab({
     renaming: false,
     search: true,
     stickyFolders: true,
+    renderRowDecoration: ({ item }) =>
+      item.kind === "file" ? treeDecoration(kindsRef.current.get(item.path)) : null,
+    unsafeCSS: quietTreeCSS,
     onSelectionChange(selectedPaths) {
       const path = selectedPaths.at(-1);
       if (!path || !pathSetRef.current.has(path)) return;
       goToFile(path);
     },
   });
-  const totals = useMemo(
+  const summary = useMemo(
     () =>
-      presented.reduce(
-        (sum, file) => ({
-          additions: sum.additions + file.additions,
-          deletions: sum.deletions + file.deletions,
-        }),
-        { additions: 0, deletions: 0 },
+      summarizeChanges(
+        presented.map((file) => ({
+          kind: kinds.get(file.file) ?? "regular",
+          additions: file.additions,
+          deletions: file.deletions,
+        })),
       ),
-    [presented],
+    [kinds, presented],
   );
   const allCollapsed = diffs.length > 0 && collapsedPaths.size === diffs.length;
-  const togglePath = useCallback((path: string) => {
-    setCollapsedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+  const setCollapsed = useCallback((path: string, collapsed: boolean) => {
+    setCollapseOverrides((current) => {
+      if (current.get(path) === collapsed) return current;
+      const next = new Map(current);
+      next.set(path, collapsed);
       return next;
     });
   }, []);
+  const togglePath = useCallback(
+    (path: string) => setCollapsed(path, !collapsedPaths.has(path)),
+    [collapsedPaths, setCollapsed],
+  );
+  const markViewed = useCallback(
+    (path: string, value: boolean) => {
+      // Ticking a file folds it away; unticking brings it back, as in the pull request Code tab.
+      setCollapsed(path, value);
+      setFileViewed(viewedScope, path, value ? (fingerprints.get(path) ?? null) : null, paths);
+    },
+    [fingerprints, paths, setCollapsed, viewedScope],
+  );
   const [codeViewContainer, setCodeViewContainer] = useState<HTMLDivElement | null>(null);
   const diffWidth = useElementWidth(codeViewContainer);
   const findSources = useMemo(
@@ -216,17 +316,16 @@ export function ChangesTab({
     [findSources],
   );
   const diffStyle = resolveDiffLayout(preferences.layout, { width: diffWidth, twoSided });
+  const railItems = useMemo(
+    () => findSources.map((source) => ({ ...source, collapsed: collapsedPaths.has(source.id) })),
+    [collapsedPaths, findSources],
+  );
   const find = useDiffFind({
     sources: findSources,
     codeView: codeViewRef,
     container: codeViewContainer,
-    onRevealItem: (path) =>
-      setCollapsedPaths((current) => {
-        if (!current.has(path)) return current;
-        const next = new Set(current);
-        next.delete(path);
-        return next;
-      }),
+    // Find searches folded files too and opens the one holding the match.
+    onRevealItem: (path) => setCollapsed(path, false),
   });
   useEffect(() => {
     // CodeView keeps its internal ref callback stable, so changing our callback
@@ -241,13 +340,16 @@ export function ChangesTab({
   }, [codeViewContainer, modeLabel]);
 
   useEffect(() => {
+    // Rows read their kind label while rendering, so a late .gitattributes read (a new
+    // `kinds`) redraws them along with the paths.
+    void kinds;
     tree.resetPaths(paths);
     tree.setGitStatus(gitStatus);
-  }, [gitStatus, paths, tree]);
+  }, [gitStatus, kinds, paths, tree]);
 
   useEffect(() => {
-    setCollapsedPaths((current) => {
-      const next = new Set([...current].filter((path) => pathSetRef.current.has(path)));
+    setCollapseOverrides((current) => {
+      const next = new Map([...current].filter(([path]) => pathSetRef.current.has(path)));
       return next.size === current.size ? current : next;
     });
   }, [paths]);
@@ -340,17 +442,27 @@ export function ChangesTab({
           <span className="hidden @min-[28rem]/workbench:inline">Files</span>
         </Button>
         <ChangedFileNavigationControls navigation={navigation} />
+        <span
+          className="ml-1 flex shrink-0 items-center gap-1 text-meta text-muted-foreground tabular-nums"
+          aria-live="polite"
+          data-palot-changes-viewed=""
+          title={`${viewedCount} of ${paths.length} viewed`}
+        >
+          {/* Narrow panes keep the count as an eye and "1/8", apart from the file position;
+              the sentence is what assistive tech reads. */}
+          <Eye aria-hidden="true" className="size-3 @min-[34rem]/workbench:hidden" />
+          <span aria-hidden="true" className="@min-[34rem]/workbench:hidden">
+            {viewedCount}/{paths.length}
+          </span>
+          <span className="sr-only @min-[34rem]/workbench:not-sr-only">
+            {viewedCount} of {paths.length} viewed
+          </span>
+        </span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          <div className="hidden shrink-0 items-center gap-2 font-mono text-diff tabular-nums @min-[46rem]/workbench:flex">
-            <span className="text-muted-foreground">
-              {diffs.length} {diffs.length === 1 ? "file" : "files"}
-            </span>
-            <span className="text-success">+{totals.additions}</span>
-            <span className="text-destructive">-{totals.deletions}</span>
-          </div>
+          <ChangeSummaryCounts summary={summary} className="hidden @min-[46rem]/workbench:flex" />
           <div className="mx-0.5 hidden h-4 w-px bg-border @min-[46rem]/workbench:block" />
           <DiffContextToggle expanded={expandUnchanged} onExpandedChange={setExpandUnchanged} />
-          <DiffViewOptionsMenu layout={diffStyle} onFind={find.openFind} />
+          <DiffViewOptionsMenu layout={diffStyle} onFind={find.openFind} collapseQuietAvailable />
           <Tooltip>
             <TooltipTrigger
               render={
@@ -376,7 +488,9 @@ export function ChangesTab({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={allCollapsed ? "Expand all diffs" : "Collapse all diffs"}
-                  onClick={() => setCollapsedPaths(allCollapsed ? new Set() : new Set(paths))}
+                  onClick={() =>
+                    setCollapseOverrides(new Map(paths.map((path) => [path, !allCollapsed])))
+                  }
                 />
               }
             >
@@ -423,9 +537,7 @@ export function ChangesTab({
         >
           <div className="flex h-8 shrink-0 items-center border-b border-border px-2">
             <Files className="mr-1.5 size-3 text-muted-foreground" aria-hidden="true" />
-            <span className="text-micro font-semibold tracking-wide text-muted-foreground uppercase">
-              Changed files
-            </span>
+            <span className="text-meta font-medium text-muted-foreground">Changed files</span>
             <Button
               type="button"
               variant="ghost"
@@ -454,7 +566,7 @@ export function ChangesTab({
         <DiffFindBar controller={find} />
         <div
           className={cn(
-            "min-h-0 min-w-0 overflow-hidden bg-card",
+            "flex min-h-0 min-w-0 overflow-hidden bg-card",
             !showTree && "@min-[46rem]/workbench:col-span-2",
           )}
           aria-label={tab.resource.mode === "branch" ? "Branch review" : "Working tree review"}
@@ -494,12 +606,15 @@ export function ChangesTab({
               lineHoverHighlight: "line",
               stickyHeaders: true,
               enableLineSelection: review.enabled,
+              searchOptions: DIFF_FIND_CODE_VIEW_SEARCH,
             }}
-            className="size-full overflow-auto"
+            className="h-full min-w-0 flex-1 overflow-auto"
             style={pierreViewerStyle}
             renderCustomHeader={(item) => {
               const file = diffByPath.get(item.id);
               const collapsed = collapsedPaths.has(item.id);
+              const kind = kinds.get(item.id) ?? "regular";
+              const quiet = isQuietKind(kind);
               const { directory, name } = filePathParts(item.id);
               return (
                 <div
@@ -526,8 +641,16 @@ export function ChangesTab({
                       {directory ? (
                         <span className="text-muted-foreground">{directory}/</span>
                       ) : null}
-                      <span className="font-medium text-foreground">{name}</span>
+                      <span
+                        className={cn(
+                          "font-medium",
+                          quiet ? "text-muted-foreground" : "text-foreground",
+                        )}
+                      >
+                        {name}
+                      </span>
                     </span>
+                    <ChangedFileKindBadge kind={kind} className="self-center" />
                     {file ? (
                       <span className="flex shrink-0 items-center gap-1 font-mono text-diff tabular-nums">
                         <span className="text-success">+{file.additions}</span>
@@ -540,6 +663,7 @@ export function ChangesTab({
                       {file?.whitespaceOnly ? "Whitespace changes hidden" : "Patch unavailable"}
                     </span>
                   ) : null}
+                  {viewed.get(item.id) === "changed" ? <ChangedSinceViewed /> : null}
                   <span className="ml-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/header:opacity-100 group-focus-within/header:opacity-100">
                     <Tooltip>
                       <TooltipTrigger
@@ -611,9 +735,34 @@ export function ChangesTab({
                       <TooltipContent>{collapsed ? "Expand file" : "Collapse file"}</TooltipContent>
                     </Tooltip>
                   </span>
+                  {/* The header folds the file; the checkbox keeps its press to itself. A span,
+                      not a label: a label would toggle the checkbox a second time. */}
+                  <span
+                    title="Viewed"
+                    className="flex shrink-0 items-center gap-1.5 text-micro text-muted-foreground select-none"
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
+                    <Checkbox
+                      aria-label={`Mark ${item.id} as viewed`}
+                      checked={viewed.get(item.id) === "viewed"}
+                      onCheckedChange={(checked) => markViewed(item.id, checked)}
+                    />
+                    <span aria-hidden="true" className="hidden @min-[32rem]/workbench:inline">
+                      Viewed
+                    </span>
+                  </span>
                 </div>
               );
             }}
+          />
+          <DiffChangeRail
+            container={codeViewContainer}
+            source={codeViewRailSource(codeViewRef, railItems, CODE_VIEW_RAIL_METRICS)}
+            layout={diffStyle}
+            expandUnchanged={expandUnchanged}
+            matches={find.open ? find.matches : undefined}
+            layoutKey={railItems}
           />
         </div>
       </div>

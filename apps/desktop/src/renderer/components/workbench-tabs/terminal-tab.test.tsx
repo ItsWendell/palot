@@ -1,5 +1,7 @@
 import { createStore, Provider } from "jotai";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as renderView, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
 import { composerDraftAtomFamily } from "../../atoms/ui";
 import { composerScope } from "../../lib/composer-scope";
@@ -12,6 +14,16 @@ import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import { palot } from "../../services/palot";
 import * as workbenchTerminal from "../../services/workbench-terminal";
 import { TerminalTab } from "./terminal-tab";
+
+// TerminalTab opens file links through the shared file-reference opener, which reads queries.
+function render(ui: ReactElement) {
+  const client = new QueryClient();
+  return renderView(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
 
 const ghostty = vi.hoisted(() => ({
   data: null as ((data: string) => void) | null,
@@ -41,6 +53,7 @@ vi.mock("ghostty-web", () => ({
     rows = 24;
     loadAddon() {}
     open() {}
+    registerLinkProvider() {}
     focus() {
       ghostty.focuses += 1;
     }

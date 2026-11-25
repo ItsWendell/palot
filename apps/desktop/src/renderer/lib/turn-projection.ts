@@ -2,12 +2,35 @@
 
 import type { FileDiffInfo, LocationRef, ModelRef } from "@opencode/client";
 import type { JsonValue, PalotMessage, PalotMessageContent } from "../../shared";
-import type { SessionExecutionState, SessionRuntimeStatus } from "../atoms/workspace";
+import type { RetryError, SessionExecutionState, SessionRuntimeStatus } from "../atoms/workspace";
+import {
+  subagentReportHasBackgroundWork,
+  subagentReportWaitsOnlyForSubagents,
+} from "../../shared/family-completion";
 import { compareMessages } from "./message-reconcile";
-import { projectToolExecution } from "./tool-executions";
+import {
+  executeFailureShownByCalls,
+  executeKeepsOwnRow,
+  executeNestedParts,
+  projectToolExecution,
+  scriptCallOrigin,
+  shellStopReason,
+  toolStateInterrupted,
+  toolStoppedBeforeInput,
+} from "./tool-executions";
 import { projectArtifactCalls } from "./artifact-calls";
-import { usageLimitResetText, usageLimitTitle } from "./usage-limit-reset";
+import { providerLimit } from "../../shared/provider-limit";
+import {
+  limitResetText,
+  resettingLimit,
+  usageLimitResetAt,
+  usageLimitResetsText,
+  usageLimitResetText,
+  usageLimitRetryLabel,
+  usageLimitTitle,
+} from "./usage-limit-reset";
 import { transcriptPromptLabel, type TranscriptPromptAnchor } from "./transcript-outline";
+import { turnChangedFiles } from "./turn-changed-files";
 import {
   ACTIVITY_CATEGORIES,
   SESSION_PROJECTION_PRESETS,
@@ -16,6 +39,10 @@ import {
   type ResolvedSessionProjectionPolicy,
 } from "./session-projection-policy";
 import { isTool, messageText, type PendingRequestView } from "./view-models";
+import { describeModelSwitch, TRANSCRIPT_MODEL_SWITCH_WORDING } from "./context-usage";
+import { sentenceCase } from "./model-picker";
+import { truncateEnd } from "../../shared/text-cut";
+import { parseBackgroundResult } from "../../shared/background-result";
 
 export interface TurnPart {
   message: PalotMessage;
@@ -25,21 +52,15 @@ export interface TurnPart {
 
 export interface TurnActivityGroup {
   id: string;
-  kind:
-    | "content"
-    | "reasoning"
-    | "tools"
-    | "compaction"
-    | "input"
-    | "boundary"
-    | "subagent"
-    | "subagent-tool";
+  kind: "content" | "reasoning" | "tools" | "compaction" | "input" | "boundary" | "subagent-tool";
   title: string;
   status: "pending" | "running" | "completed" | "failed" | "interrupted";
   entries: TurnPart[];
   messages?: PalotMessage[];
   categories?: ActivityCategory[];
   presentation?: "grouped" | "individual";
+  /** A grouped group in a settled turn that shows its rows without a header of its own. */
+  headerless?: boolean;
   defaultOpen?: boolean;
   forceOpen?: boolean;
   detailsDefaultOpen?: boolean;
@@ -78,6 +99,8 @@ export interface TranscriptTurn {
   completedAt: number | null;
   canCollapse: boolean;
   shouldAutoCollapse: boolean;
+  /** Files the turn's steps changed, from their snapshot data; set by the projection. */
+  changedFiles?: readonly string[];
   shell?: TurnPart;
   context?: {
     agent: string | null;
@@ -194,24 +217,47 @@ function messageData(message: PalotMessage): Record<string, JsonValue> {
 function structuredError(message: PalotMessage): {
   type: string | null;
   message: string | null;
+  status?: number;
   retryAfterMs?: number;
+  body?: string;
 } | null {
   const error = recordValue(messageData(message).error);
   const nested = recordValue(error.data);
   const type = stringValue(error.type) ?? stringValue(error.name);
   const detail = stringValue(error.message) ?? stringValue(nested.message);
+  const status = typeof error.status === "number" ? error.status : undefined;
   const retryAfterMs = typeof error.retryAfterMs === "number" ? error.retryAfterMs : undefined;
+  const body = stringValue(recordValue(error.response).body);
   return type || detail
-    ? { type, message: detail, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) }
+    ? {
+        type,
+        message: detail,
+        ...(status !== undefined ? { status } : {}),
+        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+        ...(body ? { body } : {}),
+      }
     : null;
 }
 
-/** A failure's text, with when a usage or rate limit resets when the provider said. */
+/** A failure's text, with when a usage, budget or rate limit resets when OpenCode said. */
 function failureText(
   message: PalotMessage,
-  error: { message: string | null; retryAfterMs?: number },
+  error: {
+    type: string | null;
+    message: string | null;
+    status?: number;
+    retryAfterMs?: number;
+    body?: string;
+  },
 ): string | undefined {
-  const reset = usageLimitResetText(message.completedAt ?? message.createdAt, error.retryAfterMs);
+  const failedAt = message.completedAt ?? message.createdAt;
+  const limit = providerLimit(error, failedAt);
+  // An empty balance never resets, whatever wait the provider sent.
+  const reset = limit
+    ? limit.resets
+      ? limitResetText(limit.resetsAt)
+      : null
+    : usageLimitResetText(failedAt, error.retryAfterMs);
   if (!reset) return error.message ?? undefined;
   return error.message ? `${error.message}\n\n${reset}` : reset;
 }
@@ -252,22 +298,355 @@ function boundaryPart(message: PalotMessage): PalotMessageContent | null {
     const metadata = recordValue(data.metadata);
     const visibleSystemDescription =
       message.type !== "system" || data.userVisible === true || metadata.userVisible === true;
-    return description && visibleSystemDescription
-      ? {
-          type: "timeline-boundary",
-          id: message.id,
-          name: description,
-          data: { kind: message.type, tone: "neutral" },
-        }
-      : null;
+    if (!description || !visibleSystemDescription) return null;
+    const notice = noticeOf(message, description, metadata);
+    return {
+      type: "timeline-boundary",
+      id: message.id,
+      name: notice?.name ?? description,
+      ...(notice?.detail ? { text: notice.detail } : {}),
+      data: { kind: message.type, tone: "neutral", ...notice?.data },
+    };
   }
   if (message.type === "skill") return null;
   return null;
 }
 
+/** Notice kinds with their own row, read from the metadata OpenCode writes on the notice. */
+export type TranscriptNoticeKind =
+  | "goal"
+  | "fork"
+  | "restart"
+  | "instructions"
+  | "shell"
+  | "image"
+  | "video"
+  | "console-watch"
+  | "codemode";
+
+const VIDEO_EXTENSION = /\.(?:mp4|m4v|mov|webm|mkv|avi)$/i;
+
+function isVideoNotice(source: string, path: string): boolean {
+  return /video/i.test(source) || VIDEO_EXTENSION.test(path);
+}
+
+const BACKGROUND_SHELL_STATES = ["completed", "failed", "error", "interrupted", "cancelled"];
+
+/** OpenCode (2.3.0+) names the notice it queues for a new fork after the fork's session ID. */
+const FORK_NOTICE_PREFIX = "msg_fork_notice_";
+
+function noticeOf(
+  message: PalotMessage,
+  description: string,
+  metadata: Record<string, JsonValue>,
+): {
+  name?: string;
+  detail?: string;
+  data: { notice: TranscriptNoticeKind } & Record<string, JsonValue>;
+} | null {
+  // OpenCode tells the agent its task is a fork in a long notice meant for the model. The user
+  // gets one quiet row; the transcript names the source task from `sessionID`. A notice copied
+  // in from an earlier fork has a new ID, so only its text marks it.
+  if (
+    message.type === "synthetic" &&
+    (message.id.startsWith(FORK_NOTICE_PREFIX) ||
+      (message.text ?? stringValue(messageData(message).text) ?? "")
+        .trimStart()
+        .startsWith("<fork-notice>"))
+  ) {
+    return {
+      name: "Forked from another task",
+      data: {
+        notice: "fork",
+        ...(message.id.startsWith(FORK_NOTICE_PREFIX)
+          ? { sessionID: message.id.slice(FORK_NOTICE_PREFIX.length) }
+          : {}),
+      },
+    };
+  }
+  const source = stringValue(metadata.source);
+  if (source === "goal") {
+    return {
+      name: /^goal:/i.test(description) ? description : `Goal: ${description}`,
+      data: { notice: "goal" },
+    };
+  }
+  if (metadata.notice === "restart") {
+    return { name: "OpenCode restarted", detail: description, data: { notice: "restart" } };
+  }
+  const sources = Array.isArray(metadata.instructionSources)
+    ? metadata.instructionSources.flatMap((value) => stringValue(value) ?? [])
+    : [];
+  if (metadata.notice === "instructions") {
+    return {
+      name: "Loaded instructions",
+      detail: sources.length
+        ? sources.join(", ")
+        : description.replace(/^instructions updated:\s*/i, ""),
+      data: { notice: "instructions" },
+    };
+  }
+  // Instruction files OpenCode reads on its own say "Loaded AGENTS.md, …" and carry their paths.
+  if (message.type === "synthetic" && Array.isArray(recordValue(metadata.instruction).paths)) {
+    return {
+      name: "Loaded instructions",
+      detail: description.replace(/^loaded\s+/i, ""),
+      data: { notice: "instructions" },
+    };
+  }
+  const state = stringValue(metadata.state);
+  if (source === "shell" && state && BACKGROUND_SHELL_STATES.includes(state)) {
+    return {
+      data: {
+        notice: "shell",
+        state,
+        ...(typeof metadata.exit === "number" ? { exit: metadata.exit } : {}),
+        ...(shellStopReason(metadata) ? { stopped: shellStopReason(metadata)! } : {}),
+      },
+    };
+  }
+  if (source === "console.watch") return { data: { notice: "console-watch" } };
+  // A background Code Mode script whose card is not in this turn: say how it ended and keep
+  // its result as the detail. (In the same turn its card takes the result instead.)
+  const script = codemodeReturn(message);
+  if (script) {
+    const name =
+      script.state === "completed"
+        ? "Background script finished"
+        : script.state === "cancelled" || script.state === "interrupted"
+          ? "Background script stopped"
+          : "Background script failed";
+    return {
+      name,
+      ...(script.body ? { detail: fencedResult(script.body) } : {}),
+      data: { notice: "codemode", state: script.state },
+    };
+  }
+  // OpenCode 2.4.0's `generate_video` notice has the image notice's shape.
+  const path = stringValue(metadata.path);
+  if (source && stringValue(metadata.jobID) && path && isVideoNotice(source, path)) {
+    const failed = state === "error" || state === "failed";
+    const stopped = state === "cancelled" || state === "interrupted";
+    const detail =
+      state === "completed"
+        ? `![Generated video](<${path}>)`
+        : parseBackgroundResult(message.text ?? "", "video")?.body.trim();
+    return {
+      name: failed
+        ? "Video generation failed"
+        : stopped
+          ? "Video generation stopped"
+          : state === "completed"
+            ? "Generated video"
+            : description,
+      // Expanding a finished notice plays the video when the task's workspace can read it.
+      ...(detail ? { detail } : {}),
+      data: { notice: "video", ...(state ? { state } : {}), path },
+    };
+  }
+  if (source && stringValue(metadata.jobID) && path) {
+    return {
+      data: {
+        notice: "image",
+        ...(state ? { state } : {}),
+        path: stringValue(metadata.path)!,
+      },
+    };
+  }
+  return null;
+}
+
+/**
+ * Background work that reported back on its own: a subagent or a shell command. A subagent that
+ * reported with work of its own still running (OpenCode 2.3.0 lists it) is `waiting`, not
+ * finished; `waitingOnSubagents` when that work is only its own subagents.
+ */
+export interface BackgroundReport {
+  kind: "subagent" | "shell";
+  outcome: "finished" | "waiting" | "stopped" | "failed";
+  waitingOnSubagents?: boolean;
+  description: string;
+  childID: string | null;
+  agent: string | null;
+  exit: number | null;
+}
+
+export function backgroundReport(part: PalotMessageContent): BackgroundReport | null {
+  const data = recordValue(part.data);
+  if (part.type === "subagent-response") {
+    return {
+      kind: "subagent",
+      outcome:
+        part.status === "failed"
+          ? "failed"
+          : part.status === "interrupted"
+            ? "stopped"
+            : data.backgroundWork === true
+              ? "waiting"
+              : "finished",
+      ...(data.waitingOnSubagents === true ? { waitingOnSubagents: true } : {}),
+      description: part.name ?? "Subagent",
+      childID: stringValue(data.childID),
+      agent: stringValue(data.agent),
+      exit: null,
+    };
+  }
+  if (part.type !== "timeline-boundary" || data.notice !== "shell") return null;
+  const state = stringValue(data.state);
+  const exit = typeof data.exit === "number" ? data.exit : null;
+  return {
+    kind: "shell",
+    outcome:
+      state === "interrupted" || state === "cancelled" || stringValue(data.stopped)
+        ? "stopped"
+        : state === "completed" && (exit === null || exit === 0)
+          ? "finished"
+          : "failed",
+    description: part.name ?? "Shell command",
+    childID: null,
+    agent: null,
+    exit,
+  };
+}
+
+/**
+ * One report per child: a subagent that reported several times (OpenCode after 2.2.7 reports
+ * each time it goes idle) is one item, its latest report.
+ */
+export function distinctBackgroundReports(reports: BackgroundReport[]): BackgroundReport[] {
+  const byChild = new Map<string, number>();
+  const distinct: BackgroundReport[] = [];
+  for (const report of reports) {
+    const index = report.childID === null ? undefined : byChild.get(report.childID);
+    if (index === undefined) {
+      if (report.childID !== null) byChild.set(report.childID, distinct.length);
+      distinct.push(report);
+    } else {
+      distinct[index] = report;
+    }
+  }
+  return distinct;
+}
+
+/**
+ * "Finished 2 subagents", "Stopped 1 command", "1 command failed", and for subagents that
+ * reported while their own work still ran, "1 subagent waiting for its subagent".
+ */
+export function backgroundReportTitle(reports: BackgroundReport[]): string {
+  const first = reports[0];
+  if (!first) return "Background work";
+  const distinct = distinctBackgroundReports(reports);
+  const count = distinct.length;
+  if (first.outcome === "waiting") {
+    const subject = count === 1 ? "1 subagent" : `${count} subagents`;
+    if (!distinct.every((report) => report.waitingOnSubagents)) {
+      return `${subject} waiting for background work`;
+    }
+    return `${subject} waiting for ${count === 1 ? "its subagent" : "their subagents"}`;
+  }
+  const noun =
+    first.kind === "subagent"
+      ? count === 1
+        ? "subagent"
+        : "subagents"
+      : count === 1
+        ? "command"
+        : "commands";
+  if (first.outcome === "failed") return `${count} ${noun} failed`;
+  return `${first.outcome === "stopped" ? "Stopped" : "Finished"} ${count} ${noun}`;
+}
+
+/** The reports a group holds, when every entry is one. */
+export function groupBackgroundReports(group: TurnActivityGroup): BackgroundReport[] | null {
+  return entryBackgroundReports(group.entries);
+}
+
+function entryBackgroundReports(entries: TurnPart[]): BackgroundReport[] | null {
+  if (entries.length === 0) return null;
+  const reports: BackgroundReport[] = [];
+  for (const entry of entries) {
+    const report = backgroundReport(entry.part);
+    if (!report) return null;
+    reports.push(report);
+  }
+  return reports;
+}
+
+function sameReportRun(left: BackgroundReport, right: BackgroundReport): boolean {
+  return left.kind === right.kind && left.outcome === right.outcome;
+}
+
+/** A notice message that reports finished background work. */
+function messageReport(message: PalotMessage): BackgroundReport | null {
+  if (message.type !== "synthetic") return null;
+  const part = messageProjectionFacts(message).latestParts[0];
+  return part ? backgroundReport(part) : null;
+}
+
+function switchMessage(message: PalotMessage | undefined): boolean {
+  return message?.type === "model-switched" || message?.type === "agent-switched";
+}
+
+function jsonModel(model: ModelRef): Record<string, JsonValue> {
+  return {
+    id: model.id,
+    providerID: model.providerID,
+    ...(model.variant ? { variant: model.variant } : {}),
+  };
+}
+
+/**
+ * A model switch as a neutral boundary. The name uses model IDs; the transcript swaps in catalog
+ * names from `data.model` and `data.previous` when it has them.
+ */
+function modelSwitchPart(
+  message: PalotMessage,
+  model: ModelRef,
+  previous: ModelRef | null,
+): PalotMessageContent {
+  return {
+    type: "timeline-boundary",
+    id: message.id,
+    name: describeModelSwitch(model, previous, TRANSCRIPT_MODEL_SWITCH_WORDING),
+    data: {
+      kind: "model-switch",
+      tone: "neutral",
+      model: jsonModel(model),
+      ...(previous ? { previous: jsonModel(previous) } : {}),
+    },
+  };
+}
+
+function agentSwitchPart(message: PalotMessage, agent: string): PalotMessageContent {
+  return {
+    type: "timeline-boundary",
+    id: message.id,
+    name: `Switched to ${sentenceCase(agent)} agent`,
+    data: { kind: "agent-switch", tone: "neutral", agent },
+  };
+}
+
+const switchMarkerCache = new WeakMap<PalotMessage, PalotMessage>();
+
+/** The switch record with its marker as content, kept stable while the marker reads the same. */
+function switchMarkerMessage(source: PalotMessage, part: PalotMessageContent): PalotMessage {
+  const cached = switchMarkerCache.get(source);
+  const prior = cached?.content[0];
+  if (
+    cached &&
+    prior &&
+    prior.name === part.name &&
+    JSON.stringify(prior.data) === JSON.stringify(part.data)
+  ) {
+    return cached;
+  }
+  const marker = { ...source, content: [part] };
+  switchMarkerCache.set(source, marker);
+  return marker;
+}
+
 function subagentResponseBody(value: string): string {
-  const match = value.match(/^<subagent\b[^>]*>\s*([\s\S]*?)\s*<\/subagent>\s*$/);
-  return (match?.[1] ?? value).trim();
+  return (parseBackgroundResult(value, "subagent")?.body ?? value).trim();
 }
 
 function subagentResponsePart(message: PalotMessage): PalotMessageContent | null {
@@ -284,7 +663,8 @@ function subagentResponsePart(message: PalotMessage): PalotMessageContent | null
         : state === "interrupted" || state === "cancelled"
           ? "interrupted"
           : "completed";
-  const response = subagentResponseBody(message.text ?? stringValue(data.text) ?? "");
+  const raw = message.text ?? stringValue(data.text) ?? "";
+  const response = subagentResponseBody(raw);
   return {
     type: "subagent-response",
     id: message.id,
@@ -295,6 +675,13 @@ function subagentResponsePart(message: PalotMessage): PalotMessageContent | null
       ...(stringValue(metadata.childID) ? { childID: stringValue(metadata.childID)! } : {}),
       ...(stringValue(metadata.agent) ? { agent: stringValue(metadata.agent)! } : {}),
       state,
+      // The subagent went idle with work of its own still running: not finished yet.
+      ...(state === "completed" && subagentReportHasBackgroundWork(raw)
+        ? {
+            backgroundWork: true,
+            ...(subagentReportWaitsOnlyForSubagents(raw) ? { waitingOnSubagents: true } : {}),
+          }
+        : {}),
     },
   };
 }
@@ -312,12 +699,22 @@ function backgroundShellReturn(
   return { shellID, state, metadata };
 }
 
+/**
+ * A shell call whose command went on in the background, so a later notice carries its result:
+ * the model asked for the background, or the call returned with the command still running
+ * (`metadata.status: "running"`). OpenCode returns that when the user moves a command to the
+ * background, and, after 2.2.7, when a foreground command outlives its timeout (behind
+ * `shell_timeout_background` at first, then by default). A background command that outlives an
+ * explicit timeout is stopped, and its return says so (`timeout: true`).
+ */
 function backgroundShellTool(part: PalotMessageContent, shellID: string): boolean {
   if (!isTool(part) || (part.name !== "shell" && part.name !== "local_shell")) return false;
   const state = recordValue(part.state);
+  const metadata = recordValue(state.metadata);
+  if (stringValue(metadata.shellID) !== shellID) return false;
   return (
-    recordValue(state.input).background === true &&
-    stringValue(recordValue(state.metadata).shellID) === shellID
+    recordValue(state.input).background === true ||
+    (state.status === "completed" && metadata.status === "running")
   );
 }
 
@@ -330,7 +727,11 @@ function shellToolWithReturn(
   const result = backgroundShellReturn(returned)!;
   const { metadata } = result;
   const exit = typeof metadata.exit === "number" ? metadata.exit : null;
-  const failed = result.state !== "completed" || (exit !== null && exit !== 0);
+  const signal = stringValue(metadata.signal);
+  // Stopped by its timeout or a kill: the shared stopped rule (`toolStateInterrupted`) reads it
+  // from the metadata below, so it is not a failure whatever its exit code.
+  const stopped = shellStopReason(metadata);
+  const failed = !stopped && (result.state !== "completed" || (exit !== null && exit !== 0));
   const output = unwrapShellTransport(returned.text ?? "");
   return {
     ...part,
@@ -347,7 +748,10 @@ function shellToolWithReturn(
         ...recordValue(state.metadata),
         status: result.state,
         ...(exit === null ? {} : { exit }),
+        ...(signal ? { signal } : {}),
         ...(typeof metadata.truncated === "boolean" ? { truncated: metadata.truncated } : {}),
+        ...(stopped === "timeout" ? { timeout: true } : {}),
+        ...(stopped === "killed" ? { killed: true } : {}),
       },
       ...(failed
         ? {
@@ -360,6 +764,85 @@ function shellToolWithReturn(
             },
           }
         : {}),
+    },
+  };
+}
+
+const CODEMODE_RETURN_STATES = ["completed", "error", "failed", "cancelled", "interrupted"];
+
+/**
+ * The notice OpenCode (with `full_codemode`) posts when a Code Mode script that went on in the
+ * background ends: `<codemode id state>` (`<background-result kind="codemode" …>` from 2.4.0)
+ * around the script's result or error.
+ */
+function codemodeReturn(
+  message: PalotMessage,
+): { jobID: string; state: string; body: string } | null {
+  if (message.type !== "synthetic") return null;
+  const metadata = recordValue(messageData(message).metadata);
+  const jobID = stringValue(metadata.jobID);
+  const state = stringValue(metadata.state);
+  if (metadata.source !== "codemode" || !jobID || !state) return null;
+  if (!CODEMODE_RETURN_STATES.includes(state)) return null;
+  return {
+    jobID,
+    state,
+    body: codemodeBody(message.text ?? stringValue(messageData(message).text) ?? ""),
+  };
+}
+
+/** A script result as a Markdown code block, so the notice detail shows it verbatim. */
+function fencedResult(body: string): string {
+  let fence = "```";
+  while (body.includes(fence)) fence += "`";
+  let json = false;
+  try {
+    JSON.parse(body);
+    json = true;
+  } catch {
+    // Not JSON: a thrown error or plain text.
+  }
+  return `${fence}${json ? "json" : "text"}\n${body}\n${fence}`;
+}
+
+function codemodeBody(text: string): string {
+  return (parseBackgroundResult(text, "codemode")?.body ?? text).trim();
+}
+
+/** A Code Mode script that went on in the background as the job `jobID`. */
+function backgroundExecuteTool(part: PalotMessageContent, index: number, jobID: string): boolean {
+  if (!isTool(part)) return false;
+  const execution = projectToolExecution(part, index);
+  return execution.kind === "execute" && execution.background?.jobID === jobID;
+}
+
+/** The script's card with its later result, so the notice needs no row of its own. */
+function executeToolWithReturn(
+  part: PalotMessageContent,
+  startedAt: number,
+  returned: PalotMessage,
+): PalotMessageContent {
+  const state = recordValue(part.state);
+  const result = codemodeReturn(returned)!;
+  const stopped = result.state === "cancelled" || result.state === "interrupted";
+  const failed = !stopped && result.state !== "completed";
+  return {
+    ...part,
+    time: {
+      created: part.time?.created ?? startedAt,
+      ...part.time,
+      completed: returned.createdAt,
+    },
+    state: {
+      ...state,
+      status: failed || stopped ? "error" : "completed",
+      content: [{ type: "text", text: result.body }],
+      metadata: { ...recordValue(state.metadata), backgroundState: result.state },
+      ...(failed
+        ? { error: { type: "CodeModeJobError", message: result.body || "Script failed" } }
+        : {}),
+      // The stopped rule (`toolStateInterrupted`) reads an aborted error as a stop, not a failure.
+      ...(stopped ? { error: { type: "aborted", message: result.body || "Script stopped" } } : {}),
     },
   };
 }
@@ -393,6 +876,7 @@ function shellPart(message: PalotMessage): PalotMessageContent {
         ...(typeof output.cursor === "number" ? { cursor: output.cursor } : {}),
         ...(typeof output.size === "number" ? { size: output.size } : {}),
         ...(status === "timeout" ? { timeout: true } : {}),
+        ...(status === "killed" ? { killed: true } : {}),
       },
       ...(failed
         ? {
@@ -413,10 +897,9 @@ function shellPart(message: PalotMessage): PalotMessageContent {
 
 function unwrapShellTransport(value: string | null): string | null {
   if (!value) return value;
-  const match = value.match(
-    /^<shell\b(?=[^>]*\bid="[^"]+")(?=[^>]*\bstate="[^"]+")(?=[^>]*\bcommand="[^"]*")[^>]*>\s*([\s\S]*?)\s*<\/shell>\s*$/,
-  );
-  return match?.[1] ?? value;
+  const result = parseBackgroundResult(value, "shell");
+  const { id, state, command } = result?.attributes ?? {};
+  return result && id && state && command !== undefined ? result.body.trim() : value;
 }
 
 function assistantBoundaryParts(
@@ -427,20 +910,24 @@ function assistantBoundaryParts(
   const retry = retryData(message);
   if (retry && latestAssistant) {
     const error = recordValue(retry.error);
-    const attempt = typeof retry.attempt === "number" ? retry.attempt : null;
+    const type = stringValue(error.type);
     return [
-      {
-        type: "timeline-boundary",
+      retryBoundary({
         id: `${message.id}:retry`,
-        name: attempt === null ? "Retrying response" : `Retrying response, attempt ${attempt}`,
-        text: stringValue(error.message) ?? undefined,
-        status: "running",
-        data: {
-          kind: "retry",
-          tone: "progress",
-          ...(typeof retry.at === "number" ? { at: retry.at } : {}),
-        },
-      },
+        attempt: typeof retry.attempt === "number" ? retry.attempt : null,
+        at: typeof retry.at === "number" ? retry.at : null,
+        message: stringValue(error.message),
+        error: type
+          ? {
+              type,
+              ...(typeof error.status === "number" ? { status: error.status } : {}),
+              ...(typeof error.retryAfterMs === "number"
+                ? { retryAfterMs: error.retryAfterMs }
+                : {}),
+            }
+          : undefined,
+        scheduledAt: typeof retry.scheduledAt === "number" ? retry.scheduledAt : undefined,
+      }),
     ];
   }
   const error = structuredError(message);
@@ -453,7 +940,7 @@ function assistantBoundaryParts(
       id: `${message.id}:${interrupted ? "interrupted" : "error"}`,
       name: interrupted
         ? "Response interrupted"
-        : (usageLimitTitle(error.type) ?? "Response failed"),
+        : (usageLimitTitle(error.type, error.status, error.body) ?? "Response failed"),
       text: interrupted ? interruptionDetail(error.message) : failureText(message, error),
       status: interrupted ? "interrupted" : "failed",
       data: {
@@ -469,13 +956,21 @@ function projectedPartsUncached(
   latestAssistant: boolean,
 ): PalotMessageContent[] {
   if (message.type === "shell") return [shellPart(message)];
+  // OpenCode's switch records carry no content; `switchMarkerMessage` adds the marker when one shows.
+  if (switchMessage(message)) {
+    return message.content.filter((part) => part.type === "timeline-boundary");
+  }
   const subagentResponse = subagentResponsePart(message);
   if (subagentResponse) return [subagentResponse];
   const boundary = boundaryPart(message);
   if (boundary) return [boundary];
   if (message.type !== "assistant" && message.type !== "compaction") return [];
   return [
-    ...parts(message).filter((part) => part.type !== "text" || messageText(message, part).trim()),
+    ...parts(message).filter((part) =>
+      part.type === "text"
+        ? Boolean(messageText(message, part).trim())
+        : !(isTool(part) && toolStoppedBeforeInput(part.state)),
+    ),
     ...assistantBoundaryParts(message, latestAssistant),
   ];
 }
@@ -483,7 +978,6 @@ function projectedPartsUncached(
 interface MessageProjectionFacts {
   latestParts: PalotMessageContent[];
   historicalParts: PalotMessageContent[];
-  activityOnly: boolean;
   subagentResponse: boolean;
   subagentTools: TranscriptBackgroundToolSource[];
   subagentResponses: TranscriptBackgroundResponseSource[];
@@ -499,14 +993,6 @@ function messageProjectionFacts(message: PalotMessage): MessageProjectionFacts {
   const latestParts = projectedPartsUncached(message, true);
   const historicalParts =
     message.type === "assistant" ? projectedPartsUncached(message, false) : latestParts;
-  const visible = latestParts.filter(
-    (part) =>
-      part.type === "reasoning" ||
-      part.type === "text" ||
-      part.type === "tool" ||
-      part.type === "compaction",
-  );
-  const last = visible.at(-1);
   const subagentTools: TranscriptBackgroundToolSource[] = [];
   const subagentResponses: TranscriptBackgroundResponseSource[] = [];
   const shellTools: TranscriptBackgroundToolSource[] = [];
@@ -524,11 +1010,6 @@ function messageProjectionFacts(message: PalotMessage): MessageProjectionFacts {
   const facts = {
     latestParts,
     historicalParts,
-    activityOnly:
-      message.type === "assistant" &&
-      !structuredError(message) &&
-      !retryData(message) &&
-      (message.finish === "tool-calls" || !last || last.type !== "text"),
     subagentResponse: subagentResponses.length > 0,
     subagentTools,
     subagentResponses,
@@ -545,13 +1026,62 @@ function projectedParts(message: PalotMessage, latestAssistant = true): PalotMes
 
 function runtimeBoundaryPart(status: SessionRuntimeStatus | null): PalotMessageContent | null {
   if (status?.type !== "retry") return null;
+  return retryBoundary({
+    id: "runtime:retry",
+    attempt: status.attempt,
+    at: status.next,
+    message: status.message,
+    error: status.error,
+    scheduledAt: status.scheduledAt,
+  });
+}
+
+/**
+ * The row while OpenCode waits to retry. A usage or rate limit says so in the warning tone, with
+ * when it resets if the provider said; an empty balance (HTTP 402) is "Out of credits".
+ */
+function retryBoundary(input: {
+  id: string;
+  attempt: number | null;
+  at: number | null;
+  message: string | null;
+  error: RetryError | undefined;
+  scheduledAt: number | undefined;
+}): PalotMessageContent {
+  const at: Record<string, JsonValue> = input.at === null ? {} : { at: input.at };
+  const limit = usageLimitTitle(input.error?.type, input.error?.status);
+  if (!limit) {
+    return {
+      type: "timeline-boundary",
+      id: input.id,
+      name:
+        input.attempt === null
+          ? "Retrying response"
+          : `Retrying response, attempt ${input.attempt}`,
+      text: input.message ?? undefined,
+      status: "running",
+      data: { kind: "retry", tone: "progress", ...at },
+    };
+  }
+  const resetsAt =
+    input.scheduledAt !== undefined && resettingLimit(input.error?.type, input.error?.status)
+      ? usageLimitResetAt(input.scheduledAt, input.error?.retryAfterMs)
+      : null;
+  const text = [input.message, usageLimitResetsText(resetsAt)].filter(Boolean).join("\n\n");
   return {
     type: "timeline-boundary",
-    id: "runtime:retry",
-    name: `Retrying response, attempt ${status.attempt}`,
-    text: status.message,
+    id: input.id,
+    name: usageLimitRetryLabel(limit, input.attempt),
+    ...(text ? { text } : {}),
     status: "running",
-    data: { kind: "retry", tone: "progress", at: status.next },
+    data: {
+      kind: "retry",
+      tone: "warning",
+      limit,
+      attempt: input.attempt,
+      ...at,
+      ...(resetsAt === null ? {} : { resetsAt }),
+    },
   };
 }
 
@@ -566,6 +1096,8 @@ function executionBoundaryPart(
     execution.status === "interrupted" || interruptedError(execution.error ?? null);
   if (
     messages.some((message) => {
+      // An idle marker records the error but does not show it; only steps do.
+      if (message.type === "idle") return false;
       const error = structuredError(message);
       return error !== null && interruptedError(error) === interrupted;
     })
@@ -577,7 +1109,8 @@ function executionBoundaryPart(
     id: interrupted ? "execution:interrupted" : "execution:error",
     name: interrupted
       ? "Response interrupted"
-      : (usageLimitTitle(execution.error?.type) ?? "Response failed"),
+      : (usageLimitTitle(execution.error?.type, execution.error?.status, execution.error?.body) ??
+        "Response failed"),
     text: interrupted
       ? interruptionDetail(execution.error?.message ?? null)
       : execution.error?.message,
@@ -597,24 +1130,98 @@ function visibleReasoning(entry: TurnPart): boolean {
   return entry.part.type === "reasoning" && Boolean(messageText(entry.message, entry.part).trim());
 }
 
-function visibleCompaction(entry: TurnPart): boolean {
-  return entry.part.type === "compaction";
-}
-
 function toolStatus(part: PalotMessageContent): {
-  normalized: "pending" | "running" | "complete" | "error";
+  normalized: "pending" | "running" | "complete" | "error" | "interrupted";
   raw: JsonValue | undefined;
 } {
   const raw = recordValue(part.state).status;
   return {
     raw,
-    normalized:
-      raw === "completed" || raw === "complete"
+    normalized: toolStateInterrupted(part.state)
+      ? "interrupted"
+      : raw === "completed" || raw === "complete"
         ? "complete"
         : raw === "running" || raw === "error"
           ? raw
           : "pending",
   };
+}
+
+const failedScriptParts = new WeakMap<object, PalotMessageContent>();
+
+/**
+ * A Code Mode script that threw ends `completed` with `metadata.error`; as a failed call, it
+ * fails its row, group and turn like any other failed call, with the thrown error as the reason.
+ */
+function failedScriptPart(part: PalotMessageContent, index: number): PalotMessageContent {
+  if (!isTool(part)) return part;
+  const execution = projectToolExecution(part, index);
+  if (execution.kind !== "execute" || !execution.runtimeError || execution.status !== "complete")
+    return part;
+  const cached = failedScriptParts.get(part as object);
+  if (cached) return cached;
+  const state = recordValue(part.state);
+  const failed: PalotMessageContent = {
+    ...part,
+    state: {
+      ...state,
+      status: "error",
+      error: { type: "CodeModeError", message: execution.output?.trim() || "The script threw" },
+    },
+  };
+  failedScriptParts.set(part as object, failed);
+  return failed;
+}
+
+/**
+ * A Code Mode script as the rows of the calls it made, so they render, group and count like the
+ * same calls made directly. The script keeps a row after them only to say it failed, stopped or
+ * went to the background (or to hold artifact cards); a script with no recognised calls is one
+ * row.
+ */
+function flattenScriptEntry(entry: TurnPart): TurnPart[] {
+  if (!isTool(entry.part)) return [entry];
+  const part = failedScriptPart(entry.part, entry.index);
+  const script = part === entry.part ? entry : { ...entry, part };
+  const nested = executeNestedParts(part, entry.index);
+  if (nested.length === 0) return [script];
+  return [
+    ...nested.map((call) => ({ message: entry.message, part: call, index: entry.index })),
+    ...(executeKeepsOwnRow(part, entry.index) ? [script] : []),
+  ];
+}
+
+const scriptCallDiffTargets = new WeakMap<object, ScriptCallDiffTarget>();
+
+/** Where a script's file change finds its diff: the turn's diff, for the files it names. */
+export interface ScriptCallDiffTarget {
+  /** The user message that opened the turn; OpenCode resolves it to the turn's diff. */
+  userMessageID: string;
+  files: string[];
+}
+
+/**
+ * The turn diff a script's file-change row shows, since the call reports none. Only a file's last
+ * such row in the turn gets it, so a file edited twice shows its turn change once.
+ */
+export function scriptCallDiffTarget(part: PalotMessageContent): ScriptCallDiffTarget | null {
+  return scriptCallDiffTargets.get(part as object) ?? null;
+}
+
+function assignScriptCallDiffTargets(entries: TurnPart[], userMessageID: string | null): void {
+  const claimed = new Set<string>();
+  for (const entry of entries.toReversed()) {
+    if (!isTool(entry.part) || !scriptCallOrigin(entry.part)) continue;
+    const execution = projectToolExecution(entry.part, entry.index);
+    if (execution.kind !== "file-change" || execution.files.length > 0 || !userMessageID) {
+      scriptCallDiffTargets.delete(entry.part as object);
+      continue;
+    }
+    const files = execution.targetFiles.filter((file) => !claimed.has(file));
+    files.forEach((file) => claimed.add(file));
+    if (files.length > 0) scriptCallDiffTargets.set(entry.part as object, { userMessageID, files });
+    else scriptCallDiffTargets.delete(entry.part as object);
+  }
 }
 
 function entryID(entry: TurnPart): string {
@@ -670,7 +1277,7 @@ export function createReasoningTitle(value: string): string {
   if (title) return title;
   const fallback = text.replace(/\s+/g, " ");
   if (!fallback) return "Reasoning";
-  return fallback.length > 96 ? `${fallback.slice(0, 95)}…` : fallback;
+  return truncateEnd(fallback, 96);
 }
 
 const TOOL_ACTIVITY_TITLES = {
@@ -714,8 +1321,7 @@ function fileName(value: string): string {
 
 function quoted(value: string, limit = 72): string {
   const compact = value.replace(/\s+/g, " ").trim();
-  const shortened = compact.length > limit ? `${compact.slice(0, limit - 1)}…` : compact;
-  return `'${shortened}'`;
+  return `'${truncateEnd(compact, limit)}'`;
 }
 
 function targetedToolTitle(entry: TurnPart, activity: ToolActivity): string | null {
@@ -754,6 +1360,10 @@ function targetedToolTitle(entry: TurnPart, activity: ToolActivity): string | nu
   if (activity === "skill") {
     const skill = stringValue(input.name) ?? stringValue(input.id);
     if (skill) return `Loading ${quoted(skill)}`;
+  }
+  if (activity === "orchestrate" && entry.part.name?.toLowerCase() === "execute") {
+    // A Code Mode script before its first call, or one whose calls have no rows of their own.
+    return "Running a script";
   }
   return null;
 }
@@ -877,8 +1487,10 @@ function activityTitle(
   status: TurnActivityGroup["status"],
 ): string {
   if (kind === "compaction") return "Compacting context";
-  if (kind === "boundary") return entries[0]?.part.name ?? "Session update";
-  if (kind === "subagent") return entries[0]?.part.name ?? "Subagent response";
+  if (kind === "boundary") {
+    const reports = entryBackgroundReports(entries);
+    return reports ? backgroundReportTitle(reports) : (entries[0]?.part.name ?? "Session update");
+  }
   if (kind === "subagent-tool") return inferredToolTitle(entries);
   if (kind === "reasoning") {
     return latestReasoningTitle(entries) ?? "Thinking";
@@ -924,7 +1536,14 @@ function activityStatus(entries: TurnPart[]): TurnActivityGroup["status"] {
   if (tools.length > 0 && tools.every((entry) => toolStatus(entry.part).normalized === "pending")) {
     return "pending";
   }
-  if (entries.some((entry) => entry.part.status === "interrupted")) return "interrupted";
+  if (
+    entries.some(
+      (entry) =>
+        entry.part.status === "interrupted" ||
+        (isTool(entry.part) && toolStatus(entry.part).normalized === "interrupted"),
+    )
+  )
+    return "interrupted";
   return "completed";
 }
 
@@ -951,6 +1570,8 @@ function semanticActivityTitle(entries: TurnPart[]): string {
   let other = 0;
   let published = 0;
   let updated = 0;
+  let backgroundScripts = 0;
+  let scripts = 0;
   const readFiles = new Set<string>();
   const listedDirectories = new Set<string>();
   const changedFiles = new Set<string>();
@@ -995,15 +1616,22 @@ function semanticActivityTitle(entries: TurnPart[]): string {
         break;
       case "other": {
         const artifacts = projectArtifactCalls(entry.part, entry.index);
-        if (!artifacts?.only) {
-          other += 1;
+        // A script whose other calls have rows of their own is counted through them.
+        const flattened = executeNestedParts(entry.part, entry.index).length > 0;
+        if (artifacts && (artifacts.only || flattened)) {
+          for (const call of artifacts.calls) {
+            if (call.operation === "create") published += 1;
+            else if (call.operation === "update") updated += 1;
+            else other += 1;
+          }
           break;
         }
-        for (const call of artifacts.calls) {
-          if (call.operation === "create") published += 1;
-          else if (call.operation === "update") updated += 1;
-          else other += 1;
+        if (execution.kind === "execute" && execution.name.toLowerCase() === "execute") {
+          if (execution.background) backgroundScripts += 1;
+          else if (!flattened) scripts += 1;
+          break;
         }
+        other += 1;
         break;
       }
       case "reasoning":
@@ -1013,23 +1641,66 @@ function semanticActivityTitle(entries: TurnPart[]): string {
 
   const editCount = changedFiles.size + editsWithoutFiles;
   const readCount = readFiles.size + readsWithoutPaths;
+  const changed =
+    editsWithoutFiles === 0 && changedFiles.size > 0 && changedFiles.size <= 3
+      ? `Changed ${changedFileNames([...changedFiles])}`
+      : `Changed ${editCount} ${editCount === 1 ? "file" : "files"}`;
+  // What the work changed or set off comes first; looking around comes last.
+  const clauses: Array<{ label: string; count: number }> = [
+    { label: changed, count: editCount },
+    { label: `Ran ${commands} ${commands === 1 ? "command" : "commands"}`, count: commands },
+    {
+      label: `Delegated ${delegation} ${delegation === 1 ? "task" : "tasks"}`,
+      count: delegation,
+    },
+    {
+      label: `Started ${backgroundScripts} background ${backgroundScripts === 1 ? "script" : "scripts"}`,
+      count: backgroundScripts,
+    },
+    { label: `Ran ${scripts} ${scripts === 1 ? "script" : "scripts"}`, count: scripts },
+    { label: `Used ${other} other ${other === 1 ? "tool" : "tools"}`, count: other },
+    { label: `Read ${readCount} ${readCount === 1 ? "file" : "files"}`, count: readCount },
+    {
+      label: `Listed ${listedDirectories.size} ${listedDirectories.size === 1 ? "directory" : "directories"}`,
+      count: listedDirectories.size,
+    },
+    { label: `Searched code ${searches} ${searches === 1 ? "time" : "times"}`, count: searches },
+    { label: `Researched ${web} ${web === 1 ? "source" : "sources"}`, count: web },
+    { label: `Loaded ${skills} ${skills === 1 ? "skill" : "skills"}`, count: skills },
+    {
+      label: `Published ${published} ${published === 1 ? "artifact" : "artifacts"}`,
+      count: published,
+    },
+    { label: `Updated ${updated} ${updated === 1 ? "artifact" : "artifacts"}`, count: updated },
+  ].filter((clause) => clause.count > 0);
+  if (clauses.length <= 3) return joinedSummary(clauses.map((clause) => clause.label));
+  const folded = clauses.slice(2).reduce((sum, clause) => sum + clause.count, 0);
   return joinedSummary([
-    ...(readCount ? [`Read ${readCount} ${readCount === 1 ? "file" : "files"}`] : []),
-    ...(listedDirectories.size
-      ? [
-          `Listed ${listedDirectories.size} ${listedDirectories.size === 1 ? "directory" : "directories"}`,
-        ]
-      : []),
-    ...(searches ? [`Searched code ${searches} ${searches === 1 ? "time" : "times"}`] : []),
-    ...(editCount ? [`Changed ${editCount} ${editCount === 1 ? "file" : "files"}`] : []),
-    ...(commands ? [`Ran ${commands} ${commands === 1 ? "command" : "commands"}`] : []),
-    ...(web ? [`Researched ${web} ${web === 1 ? "source" : "sources"}`] : []),
-    ...(delegation ? [`Delegated ${delegation} ${delegation === 1 ? "task" : "tasks"}`] : []),
-    ...(skills ? [`Loaded ${skills} ${skills === 1 ? "skill" : "skills"}`] : []),
-    ...(published ? [`Published ${published} ${published === 1 ? "artifact" : "artifacts"}`] : []),
-    ...(updated ? [`Updated ${updated} ${updated === 1 ? "artifact" : "artifacts"}`] : []),
-    ...(other ? [`Used ${other} other ${other === 1 ? "tool" : "tools"}`] : []),
+    ...clauses.slice(0, 2).map((clause) => clause.label),
+    `${folded} other ${folded === 1 ? "action" : "actions"}`,
   ]);
+}
+
+/** Base names, with the parent folder for names that would otherwise read the same. */
+function changedFileNames(files: string[]): string {
+  const names = files.map((file) => {
+    const base = fileName(file);
+    if (!files.some((other) => other !== file && fileName(other) === base)) return base;
+    return file.replaceAll("\\", "/").split("/").filter(Boolean).slice(-2).join("/");
+  });
+  if (names.length <= 2) return names.join(" and ");
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+/** Tool calls in a group that failed. A call the user or the runtime stopped is not a failure. */
+export function activityFailureCount(group: TurnActivityGroup): number {
+  return group.entries.filter(
+    (entry) =>
+      isTool(entry.part) &&
+      toolStatus(entry.part).normalized === "error" &&
+      // A failed script's row adds no failure to the failed calls that show where it failed.
+      !executeFailureShownByCalls(entry.part, entry.index),
+  ).length;
 }
 
 function groupActivity(
@@ -1040,6 +1711,8 @@ function groupActivity(
     interruptedEntryID: string | null;
     blockingMessageIDs: Set<string>;
     protectAllForBlocking: boolean;
+    /** Subagents the turn launched; their reports become the launch row's result instead. */
+    launchedSubagents: Set<string>;
   },
 ): TurnActivityGroup[] {
   const groups: TurnActivityGroup[] = [];
@@ -1058,8 +1731,10 @@ function groupActivity(
         : current.defaultOpen;
     current.currentAction =
       current.status === "running" ? currentActivityAction(current.entries) : undefined;
+    // A group with failed calls keeps its counted title; the header adds how many failed.
     current.title =
-      current.presentation === "grouped" && current.status === "completed"
+      current.presentation === "grouped" &&
+      (current.status === "completed" || current.status === "failed")
         ? policy.groupTitle === "latest-reasoning"
           ? (leadingReasoningTitle(current.entries) ?? semanticActivityTitle(current.entries))
           : semanticActivityTitle(current.entries) === "Worked"
@@ -1178,12 +1853,37 @@ function groupActivity(
     currentFailed = status === "failed";
   };
 
+  // Adjacent reports of the same kind and outcome share one row.
+  const appendReport = (entry: TurnPart, report: BackgroundReport) => {
+    flush();
+    const previous = groups.at(-1);
+    const previousReports = previous?.kind === "boundary" ? groupBackgroundReports(previous) : null;
+    const pinned = report.kind === "subagent" || report.outcome === "failed";
+    if (previous && previousReports?.every((other) => sameReportRun(other, report))) {
+      previous.entries.push(entry);
+      previous.title = backgroundReportTitle([...previousReports, report]);
+      previous.status = activityStatus(previous.entries);
+      previous.pinned ||= pinned;
+      return;
+    }
+    current = {
+      id: entryID(entry),
+      kind: "boundary",
+      title: backgroundReportTitle([report]),
+      status: activityStatus([entry]),
+      entries: [entry],
+      pinned,
+    };
+    flush();
+  };
+
   for (const item of items) {
     if (!("part" in item)) {
       if (current?.kind === "input") {
         current.messages?.push(item.message);
       } else {
         flush();
+        // A steer is the user's own words: it stays in view when the turn's work folds.
         current = {
           id: item.message.id,
           kind: "input",
@@ -1191,6 +1891,7 @@ function groupActivity(
           status: "completed",
           entries: [],
           messages: [item.message],
+          pinned: true,
         };
       }
       continue;
@@ -1198,14 +1899,21 @@ function groupActivity(
     const entry = item;
     if (entry.part.type === "compaction") {
       flush();
+      // What the agent remembers changes here, so the row stays in view when the turn's work folds.
       current = {
         id: entryID(entry),
         kind: "compaction",
         title: "Compacting context",
         status: activityStatus([entry]),
         entries: [entry],
+        pinned: true,
       };
       flush();
+      continue;
+    }
+    const report = backgroundReport(entry.part);
+    if (report && !(report.childID !== null && safeguards.launchedSubagents.has(report.childID))) {
+      appendReport(entry, report);
       continue;
     }
     if (entry.part.type === "timeline-boundary") {
@@ -1220,18 +1928,9 @@ function groupActivity(
       flush();
       continue;
     }
-    if (entry.part.type === "subagent-response") {
-      flush();
-      current = {
-        id: entryID(entry),
-        kind: "subagent",
-        title: entry.part.name ?? "Subagent response",
-        status: activityStatus([entry]),
-        entries: [entry],
-      };
-      flush();
-      continue;
-    }
+    // A report from a subagent this turn launched is that launch row's result, however many the
+    // child sends (OpenCode after 2.2.7 reports every time the child goes idle).
+    if (entry.part.type === "subagent-response") continue;
 
     if (entry.part.type === "reasoning") {
       if (!visibleReasoning(entry)) continue;
@@ -1275,7 +1974,8 @@ export function isPlainReadEntry(entry: TurnPart): boolean {
     execution.entries.length === 0 &&
     !execution.error &&
     !(Array.isArray(metadata.loaded) && metadata.loaded.length > 0) &&
-    !execution.rawOutput?.includes("<system-reminder>")
+    !execution.rawOutput?.includes("<system-reminder>") &&
+    !execution.rawOutput?.includes("<system-update>")
   );
 }
 
@@ -1315,7 +2015,146 @@ function individualPlainReadGroup(group: TurnActivityGroup): boolean {
   return group.entries.length > 0 && group.entries.every(isPlainReadEntry);
 }
 
-function failed(entries: TurnPart[], assistants: PalotMessage[]): boolean {
+export type ActivityDetailRow =
+  | { id: string; kind: "reasoning"; entries: TurnPart[] }
+  | { id: string; kind: "reads"; entries: TurnPart[] }
+  | { id: string; kind: "read"; path: string; entries: TurnPart[] }
+  | { id: string; kind: "compaction"; entry: TurnPart }
+  | { id: string; kind: "part"; entry: TurnPart };
+
+/** The rows an open activity group shows: adjacent reads and adjacent thoughts merge. */
+export function activityDetailRows(
+  entries: TurnPart[],
+  groupSameFileReads = false,
+  showReasoningSummaries = true,
+  groupAdjacentReads = true,
+): ActivityDetailRow[] {
+  const rows: ActivityDetailRow[] = [];
+  for (const [entryIndex, entry] of entries.entries()) {
+    if (groupAdjacentReads && isPlainReadEntry(entry)) {
+      const previous = rows.at(-1);
+      if (previous?.kind === "reads" && previous.entries.at(-1) === entries[entryIndex - 1])
+        previous.entries.push(entry);
+      else rows.push({ id: entryID(entry), kind: "reads", entries: [entry] });
+      continue;
+    }
+    if (entry.part.type === "compaction") {
+      rows.push({
+        id: entry.part.id ?? `${entry.message.id}:compaction:${entry.index}`,
+        kind: "compaction",
+        entry,
+      });
+      continue;
+    }
+    if (entry.part.type !== "reasoning") {
+      const execution =
+        groupSameFileReads && isPlainReadEntry(entry)
+          ? projectToolExecution(entry.part, entry.index)
+          : null;
+      if (execution?.kind === "read" && execution.path !== "Unknown path") {
+        const previous = rows.at(-1);
+        const existing =
+          previous?.kind === "read" && previous.path === execution.path ? previous : null;
+        if (existing) existing.entries.push(entry);
+        else {
+          rows.push({
+            id: entry.part.id ?? `${entry.message.id}:read:${entry.index}`,
+            kind: "read",
+            path: execution.path,
+            entries: [entry],
+          });
+        }
+        continue;
+      }
+      rows.push({
+        id: entry.part.id ?? `${entry.message.id}:${entry.part.type}:${entry.index}`,
+        kind: "part",
+        entry,
+      });
+      continue;
+    }
+    if (!showReasoningSummaries) continue;
+    if (!messageText(entry.message, entry.part).trim()) continue;
+    const previous = rows.at(-1);
+    if (previous?.kind === "reasoning") {
+      previous.entries.push(entry);
+    } else {
+      rows.push({
+        id: entry.part.id ?? `${entry.message.id}:reasoning:${entry.index}`,
+        kind: "reasoning",
+        entries: [entry],
+      });
+    }
+  }
+  return rows;
+}
+
+/** Adjacent thoughts fold into one disclosure unless one of them opens or closes a step. */
+export function reasoningRowMerges(entries: TurnPart[]): boolean {
+  return (
+    entries.length > 1 &&
+    entries.every(
+      (entry) => entry.part.presentation !== "preamble" && entry.part.presentation !== "recap",
+    )
+  );
+}
+
+/**
+ * Most rows a group in a settled turn with several groups may show without its own header. A
+ * header that folds this few rows costs a click without saving space.
+ */
+export const HEADERLESS_ACTIVITY_GROUP_MAX_ROWS = 3;
+
+/** Whether the group renders as a collapsible header over its rows. */
+function rendersActivityHeader(group: TurnActivityGroup): boolean {
+  return (
+    (group.kind === "reasoning" || group.kind === "tools") &&
+    group.presentation === "grouped" &&
+    // Hidden reasoning summaries leave a one-line title with nothing to open.
+    !(
+      group.showReasoningSummaries === false &&
+      group.entries.every((entry) => entry.part.type === "reasoning")
+    )
+  );
+}
+
+function visibleActivityRowCount(group: TurnActivityGroup): number {
+  let count = 0;
+  for (const row of activityDetailRows(
+    group.entries,
+    group.groupSameFileReads,
+    group.showReasoningSummaries,
+  )) {
+    count += row.kind === "reasoning" && !reasoningRowMerges(row.entries) ? row.entries.length : 1;
+  }
+  return count;
+}
+
+/**
+ * Drops group headers that repeat the turn bar or fold only a few rows once the turn settles.
+ * A running turn keeps every header, since the current one carries the live title.
+ */
+function flattenActivityHeaders(
+  activity: TurnActivityGroup[],
+  status: TranscriptTurn["status"],
+): TurnActivityGroup[] {
+  if (status === "working") return activity;
+  const headed = activity.filter(rendersActivityHeader).length;
+  if (headed === 0) return activity;
+  const only = headed === 1;
+  return activity.map((group) => {
+    if (!rendersActivityHeader(group)) return group;
+    const rows = visibleActivityRowCount(group);
+    if (rows === 0 || (!only && rows > HEADERLESS_ACTIVITY_GROUP_MAX_ROWS)) return group;
+    return { ...group, headerless: true };
+  });
+}
+
+/**
+ * Whether a turn without an idle marker failed. A failed command or subagent the agent answered
+ * after is part of the work, not the turn's outcome.
+ */
+function failed(entries: TurnPart[], assistants: PalotMessage[], answered: boolean): boolean {
   const latestAssistant = assistants.findLast((message) => message.type === "assistant");
   if (
     latestAssistant?.finish === "error" &&
@@ -1326,12 +2165,51 @@ function failed(entries: TurnPart[], assistants: PalotMessage[]): boolean {
   }
   return entries.some(
     (entry) =>
-      (isTool(entry.part) && toolStatus(entry.part).normalized === "error") ||
       (entry.part.type === "timeline-boundary" && entry.part.status === "failed") ||
-      (entry.part.type === "subagent-response" && entry.part.status === "failed") ||
-      (entry.part.type === "compaction" && entry.part.status === "failed"),
+      (entry.part.type === "compaction" && entry.part.status === "failed") ||
+      (!answered &&
+        ((isTool(entry.part) && toolStatus(entry.part).normalized === "error") ||
+          (entry.part.type === "subagent-response" && entry.part.status === "failed"))),
   );
 }
+
+type IdleOutcome = "succeeded" | "failed" | "interrupted";
+
+function idleOutcome(message: PalotMessage | null): IdleOutcome | null {
+  if (message?.type !== "idle") return null;
+  const outcome = messageData(message).outcome;
+  return outcome === "succeeded" || outcome === "failed" || outcome === "interrupted"
+    ? outcome
+    : null;
+}
+
+function textPhase(part: PalotMessageContent): string | null {
+  return stringValue(recordValue(part.native).phase);
+}
+
+/**
+ * The turn's answer: the last assistant text after the turn's last tool call and last steer that
+ * the provider did not mark as commentary. Text that a tool call or steer follows is commentary,
+ * whatever its phase. A turn that ends on its work has no answer.
+ */
+function answerEntry(entries: TurnPart[], steerCut: number): TurnPart | null {
+  const start = Math.max(steerCut, entries.findLastIndex((entry) => isTool(entry.part)) + 1);
+  for (let index = entries.length - 1; index >= start; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.message.type !== "assistant" || !visibleText(entry)) continue;
+    if (textPhase(entry.part) === "commentary") continue;
+    return entry;
+  }
+  return null;
+}
+
+/**
+ * A step shorter than MIN_RATE_STEP_MS whose tokens over that time exceed MAX_STEP_RATE arrived
+ * as a burst (a provider that buffers and sends everything at once) and doesn't count toward
+ * tok/s. Short steps at a believable rate, such as a quick one-line answer, still count.
+ */
+const MIN_RATE_STEP_MS = 250;
+const MAX_STEP_RATE = 1_000;
 
 function assistantTokensPerSecond(
   messages: PalotMessage[],
@@ -1352,11 +2230,23 @@ function assistantTokensPerSecond(
     }
     if (message.type !== "assistant") continue;
 
-    outputTokens += message.tokens?.output ?? 0;
+    // OpenCode's own figure: output and reasoning tokens over the time each step streamed, from
+    // its first token (after 2.2.7) or, for steps recorded without one, from the request. A step
+    // that streamed in under MIN_RATE_STEP_MS faster than MAX_STEP_RATE arrived as one burst, so
+    // its tokens over that time are not a rate; it is left out.
+    const stepTokens = (message.tokens?.output ?? 0) + (message.tokens?.reasoning ?? 0);
     if (message.streamedAt === undefined) {
       allStreamed = false;
+      outputTokens += stepTokens;
     } else {
-      durationMs += Math.max(0, message.streamedAt - message.createdAt);
+      const from = message.firstTokenRecordedAt ?? message.createdAt;
+      const stepMs = message.streamedAt - from;
+      const burst =
+        stepMs < MIN_RATE_STEP_MS && stepTokens * 1_000 > MAX_STEP_RATE * Math.max(stepMs, 1);
+      if (stepMs > 0 && !burst) {
+        outputTokens += stepTokens;
+        durationMs += stepMs;
+      }
     }
     const rate = outputTokens / (durationMs / 1_000);
     rates.set(
@@ -1466,13 +2356,15 @@ function isPostFinalPart(part: PalotMessageContent): boolean {
 
 function collapseState(input: {
   finalStarted: boolean;
+  completed: boolean;
   cancelled: boolean;
   failed: boolean;
   hasActivity: boolean;
   hasBlockingRequest: boolean;
 }) {
+  // A completed turn folds even when it ended on its work instead of an answer.
   const canCollapse =
-    input.finalStarted &&
+    (input.finalStarted || input.completed) &&
     !input.cancelled &&
     !input.failed &&
     input.hasActivity &&
@@ -1482,6 +2374,7 @@ function collapseState(input: {
 
 function project(
   id: string,
+  kind: NonNullable<TranscriptTurn["kind"]>,
   messages: PalotMessage[],
   execution: SessionExecutionState | null,
   hasAuthoritativeStatus: boolean,
@@ -1491,47 +2384,75 @@ function project(
   context: TranscriptTurn["context"],
   policy: ResolvedSessionProjectionPolicy,
   tokensPerSecond: number | null,
+  /** Notices from later turns for scripts this turn moved to the background. */
+  laterScriptReturns: PalotMessage[] = [],
 ): TranscriptTurn {
   const users: PalotMessage[] = [];
   const assistants: PalotMessage[] = [];
   let shell: PalotMessage | undefined;
   let latestAssistant: PalotMessage | undefined;
+  let idle: PalotMessage | null = null;
   for (const message of messages) {
     if (message.type === "user") users.push(message);
     if (message.type === "shell" && !shell) shell = message;
     if (["assistant", "compaction", "shell"].includes(message.type)) assistants.push(message);
     if (message.type === "assistant") latestAssistant = message;
+    if (message.type === "idle") idle = message;
   }
-  const user = users[0] ?? null;
+  const firstMessage = messages[0];
+  // The prompt that opened the turn. Later user messages are steers inside its work.
+  const user = firstMessage?.type === "user" ? firstMessage : null;
   const entries: TurnPart[] = [];
   const entriesByMessage = new Map<PalotMessage, TurnPart[]>();
   const shellReturns = new Map<string, PalotMessage>();
-  for (const message of messages) {
+  const codemodeReturns = new Map<string, PalotMessage>();
+  for (const message of [...laterScriptReturns, ...messages]) {
     const returned = backgroundShellReturn(message);
     if (returned) shellReturns.set(returned.shellID, message);
+    const script = codemodeReturn(message);
+    if (script) codemodeReturns.set(script.jobID, message);
   }
   const linkedReturnIDs = new Set<string>();
+  // Entries from here on came after the latest steer; earlier text cannot answer it.
+  let steerCut = 0;
   for (const message of messages) {
-    if (message.type === "user") continue;
+    if (message.type === "user") {
+      if (message !== user) steerCut = entries.length;
+      continue;
+    }
     if (linkedReturnIDs.has(message.id)) continue;
     const messageEntries = projectedParts(
       message,
       message.type !== "assistant" || message === latestAssistant,
-    ).map((part, index) => {
-      const shellID = stringValue(recordValue(recordValue(part.state).metadata).shellID);
-      const returned =
-        shellID && backgroundShellTool(part, shellID) ? shellReturns.get(shellID) : undefined;
-      if (returned) linkedReturnIDs.add(returned.id);
-      return {
-        message,
-        part: returned ? shellToolWithReturn(part, message.createdAt, returned) : part,
-        index,
-      };
-    });
+    )
+      .map((part, index) => {
+        const metadata = recordValue(recordValue(part.state).metadata);
+        const shellID = stringValue(metadata.shellID);
+        const returned =
+          shellID && backgroundShellTool(part, shellID) ? shellReturns.get(shellID) : undefined;
+        if (returned) linkedReturnIDs.add(returned.id);
+        const jobID = stringValue(metadata.jobID);
+        const scriptReturn =
+          !returned && jobID && backgroundExecuteTool(part, index, jobID)
+            ? codemodeReturns.get(jobID)
+            : undefined;
+        if (scriptReturn) linkedReturnIDs.add(scriptReturn.id);
+        return {
+          message,
+          part: returned
+            ? shellToolWithReturn(part, message.createdAt, returned)
+            : scriptReturn
+              ? executeToolWithReturn(part, message.createdAt, scriptReturn)
+              : part,
+          index,
+        };
+      })
+      .flatMap(flattenScriptEntry);
     if (messageEntries.length === 0) continue;
     entriesByMessage.set(message, messageEntries);
     entries.push(...messageEntries);
   }
+  assignScriptCallDiffTargets(entries, user?.id ?? null);
   const shellEntry = shell ? entries.find((entry) => isTool(entry.part)) : undefined;
   const runtimeBoundary = runtimeBoundaryPart(runtimeStatus);
   let runtimeBoundaryEntry: TurnPart | null = null;
@@ -1559,24 +2480,16 @@ function project(
     executionBoundaryEntry = { message: source, part: executionBoundary, index: 0 };
     entries.push(executionBoundaryEntry);
   }
+  const outcome = idleOutcome(idle);
   const working =
     execution?.status === "running" ||
     runtimeStatus?.type === "busy" ||
     runtimeStatus?.type === "retry" ||
-    (!hasAuthoritativeStatus && assistants.some((message) => message.completedAt === null));
-  const hasFailed = failed(entries, assistants);
-  const lastVisible = entries.findLast(
-    (entry) =>
-      visibleText(entry) ||
-      visibleReasoning(entry) ||
-      visibleCompaction(entry) ||
-      isTool(entry.part),
-  );
-  const final =
-    lastVisible && visibleText(lastVisible) && lastVisible.message.finish !== "tool-calls"
-      ? lastVisible
-      : null;
-  const runStartedAt = users.find((message) => message.runStartedAt !== undefined)?.runStartedAt;
+    (idle === null &&
+      !hasAuthoritativeStatus &&
+      assistants.some((message) => message.completedAt === null));
+  const final = answerEntry(entries, steerCut);
+  const hasFailed = failed(entries, assistants, final !== null);
   const runCompletedAt = users.findLast(
     (message) => message.runCompletedAt !== undefined,
   )?.runCompletedAt;
@@ -1589,13 +2502,13 @@ function project(
     (runCompletedAt !== undefined ||
       assistants.some((message) => message.finish !== null && message.finish !== "tool-calls"));
   const postFinal =
-    executionTerminal(execution) || historicalCompletion
+    !working && (idle !== null || executionTerminal(execution) || historicalCompletion)
       ? finalArtifacts(final, entries, diffs, false)
       : [];
   const activityItems: ActivityItem[] = [];
-  for (const [messageIndex, message] of messages.entries()) {
+  for (const message of messages) {
     if (message.type === "user") {
-      if (messageIndex > 0) activityItems.push({ message });
+      if (message !== user) activityItems.push({ message });
       continue;
     }
     for (const entry of entriesByMessage.get(message) ?? []) {
@@ -1618,7 +2531,9 @@ function project(
   const assistantInterrupted = latestAssistant
     ? interruptedError(structuredError(latestAssistant))
     : false;
-  const interrupted = executionInterrupted || assistantInterrupted;
+  const interrupted =
+    outcome === "interrupted" ||
+    (outcome === null && (executionInterrupted || assistantInterrupted));
   const blockingMessageIDs = new Set(
     blockingRequests.flatMap((request) => (request.ownerMessageID ? [request.ownerMessageID] : [])),
   );
@@ -1628,41 +2543,50 @@ function project(
           "part" in item && (item.part.type === "reasoning" || isTool(item.part)),
       )
     : undefined;
+  const launchedSubagents = new Set<string>();
+  for (const entry of entries) {
+    if (!isTool(entry.part)) continue;
+    const execution = projectToolExecution(entry.part, entry.index);
+    if (execution.kind === "subagent" && execution.sessionID) {
+      launchedSubagents.add(execution.sessionID);
+    }
+  }
   let activity = groupActivity(activityItems, policy, {
     interrupted,
     interruptedEntryID: interruptedEntry ? entryID(interruptedEntry) : null,
     blockingMessageIDs,
     protectAllForBlocking: blockingRequests.length > 0 && blockingMessageIDs.size === 0,
+    launchedSubagents,
   });
   const rootBoundary =
-    messages[0]?.type === "synthetic" && activity[0]?.kind === "boundary" ? activity[0] : null;
+    (firstMessage?.type === "synthetic" || switchMessage(firstMessage)) &&
+    activity[0]?.kind === "boundary"
+      ? activity[0]
+      : null;
   if (rootBoundary) activity = activity.slice(1);
-  const firstAssistant = assistants[0];
   const lastAssistant = assistants.at(-1);
-  const firstMessage = messages[0];
   const startedAt =
-    execution?.startedAt ??
-    runStartedAt ??
-    (firstMessage && messageProjectionFacts(firstMessage).subagentResponse
-      ? firstMessage.createdAt
-      : null) ??
-    firstAssistant?.createdAt ??
-    user?.createdAt ??
-    0;
+    execution?.startedAt ?? firstMessage?.runStartedAt ?? firstMessage?.createdAt ?? 0;
+  // The idle marker records when the run ended; live execution state wins while it runs.
   const completedAt = working
     ? null
-    : (runCompletedAt ??
+    : (idle?.createdAt ??
+      runCompletedAt ??
       execution?.completedAt ??
       lastAssistant?.completedAt ??
       lastAssistant?.createdAt ??
       null);
   const status = working
     ? "working"
-    : interrupted
-      ? "interrupted"
-      : execution?.status === "failed" || hasFailed
+    : outcome === "succeeded"
+      ? "completed"
+      : outcome === "failed"
         ? "failed"
-        : "completed";
+        : interrupted
+          ? "interrupted"
+          : execution?.status === "failed" || hasFailed
+            ? "failed"
+            : "completed";
   if (status === "working" && policy.keepCurrentActivityExpanded) {
     const lastProcessIndex = activity.findLastIndex(
       (group) => group.kind === "reasoning" || group.kind === "tools",
@@ -1683,12 +2607,14 @@ function project(
       );
     }
   }
+  activity = flattenActivityHeaders(activity, status);
   const finalStartedAt = finalStart(final);
   const workCompletedAt = finalStartedAt;
   const collapse = collapseState({
     finalStarted: hasFinal(final),
+    completed: status === "completed",
     cancelled: status === "interrupted",
-    failed: hasFailed || status === "failed",
+    failed: status === "failed",
     hasActivity: activity.length > 0,
     hasBlockingRequest: blockingRequests.length > 0,
   });
@@ -1696,17 +2622,7 @@ function project(
     policy.foldCompletedTurns && (status !== "working" || !policy.keepCurrentActivityExpanded);
   return {
     id,
-    kind:
-      messages[0]?.type === "shell"
-        ? "shell"
-        : messages[0]?.type === "compaction"
-          ? "compaction"
-          : messages[0] && messageProjectionFacts(messages[0]).subagentResponse
-            ? "subagent"
-            : messages[0]?.type === "user" ||
-                messages.some((message) => message.type === "assistant")
-              ? "conversation"
-              : "boundary",
+    kind,
     user,
     users,
     rootBoundary,
@@ -1721,21 +2637,28 @@ function project(
     workCompletedAt,
     completedAt,
     ...collapse,
+    changedFiles: turnChangedFiles(messages),
     ...(shellEntry ? { shell: shellEntry } : {}),
     ...(context ? { context } : {}),
   };
+}
+
+/** Whether the turn's own activity includes tool calls or subagent launches. */
+export function turnHasToolActivity(turn: TranscriptTurn): boolean {
+  return turn.activity.some((group) => group.kind === "tools" || group.kind === "subagent-tool");
 }
 
 interface TimelineGroup {
   id: string;
   kind: NonNullable<TranscriptTurn["kind"]>;
   messages: PalotMessage[];
-  activityOnly: boolean;
   context: NonNullable<TranscriptTurn["context"]>;
 }
 
 interface TimelineGrouping {
   groups: TimelineGroup[];
+  /** The turn that live execution state, runtime status, requests and diffs belong to. */
+  activeIndex: number;
   orderedMessages: PalotMessage[];
   userMessages: PalotMessage[];
   contextMessage: PalotMessage | null;
@@ -1754,6 +2677,7 @@ interface CachedTurnProjection {
   context: NonNullable<TranscriptTurn["context"]>;
   policyKey: string;
   tokensPerSecond: number | null;
+  laterScriptReturns: PalotMessage[];
   turn: TranscriptTurn;
 }
 
@@ -1786,6 +2710,75 @@ function timelineKind(
   return "boundary";
 }
 
+/**
+ * A prompt OpenCode has not delivered yet. It shows as its own turn after the running one until
+ * it starts.
+ */
+function heldPrompt(message: PalotMessage): boolean {
+  return (
+    message.type === "user" &&
+    message.optimistic === true &&
+    message.promotedAt === undefined &&
+    message.runStartedAt === undefined
+  );
+}
+
+const placedMessages = new WeakMap<PalotMessage, PalotMessage>();
+
+/**
+ * Where a prompt sits in the run. Live, a sent prompt sorts at the time it was sent, which can be
+ * inside a step that ran before OpenCode delivered it; once it started, it sits at its start time,
+ * which is where its server copy sorts after a reload.
+ */
+function placed(message: PalotMessage): PalotMessage {
+  if (message.type !== "user") return message;
+  const started = message.promotedAt ?? message.runStartedAt;
+  const sentAt =
+    (message.optimistic === true ? message.timelineAt : undefined) ?? message.createdAt;
+  if (started === undefined || started <= sentAt) return message;
+  const cached = placedMessages.get(message);
+  if (cached?.createdAt === started) return cached;
+  const proxy = { ...message, optimistic: undefined, timelineAt: undefined, createdAt: started };
+  placedMessages.set(message, proxy);
+  return proxy;
+}
+
+function comparePlaced(left: PalotMessage, right: PalotMessage): number {
+  return compareMessages(placed(left), placed(right));
+}
+
+function placedTime(message: PalotMessage): number {
+  const proxy = placed(message);
+  return (proxy.optimistic === true ? proxy.timelineAt : undefined) ?? proxy.createdAt;
+}
+
+/** A turn that holds only notices, switches or compaction, with no prompt or assistant step. */
+function workless(group: TimelineGroup): boolean {
+  return !group.messages.some((message) => message.type === "user" || message.type === "assistant");
+}
+
+/**
+ * The agent had finished answering: the turn's latest step completed without asking for tools.
+ * OpenCode delivers a queued prompt or a report at that point inside the same run, so a prompt or
+ * notice arriving now starts a new turn. A turn with no step yet is still waiting for its answer.
+ */
+function answered(group: TimelineGroup): boolean {
+  const latest = group.messages.findLast((message) => message.type === "assistant");
+  return (
+    latest !== undefined &&
+    latest.completedAt !== null &&
+    latest.finish !== null &&
+    latest.finish !== "tool-calls"
+  );
+}
+
+/**
+ * Groups messages into turns. A turn runs from a prompt until the agent has answered and something
+ * new arrives, or until OpenCode's idle marker. It takes in everything in between: steps, steers,
+ * compaction, switches and notices. One idle marker ends a whole busy period, so it belongs to the
+ * last turn of the run. Work with no prompt opens a turn at the notice or step that started it.
+ * A user shell command is a turn of its own and ends the open one, as in OpenCode's timeline.
+ */
 function groupTimelineMessages(
   messages: PalotMessage[],
   initialLocation: LocationRef | null,
@@ -1805,20 +2798,122 @@ function groupTimelineMessages(
       if (shellID && backgroundShellTool(part, shellID)) activeBackgroundShellIDs.add(shellID);
     }
   };
+  // Both change inside the helpers below, so they are typed to keep TypeScript from narrowing them.
+  let open = null as TimelineGroup | null;
+  // The latest turn that ran, which an idle marker after a user shell command still ends.
+  let latestConversation = null as TimelineGroup | null;
+  // Prompts waiting for delivery; each shows as its own turn until it starts.
+  const held = new Set<TimelineGroup>();
   let contextMessage: PalotMessage | null = null;
   let previousMessage: PalotMessage | null = null;
   let activeAgent: string | null = null;
   let activeModel: ModelRef | null = null;
   let activeLocation = initialLocation;
+  // Switches since the last visible message, compared with what was in effect before the first.
+  // Switches before the first prompt only set up the task, so they never show.
+  let seenUser = false;
+  let pendingModel: {
+    message: PalotMessage;
+    model: ModelRef;
+    previous: ModelRef | null;
+    position: number;
+  } | null = null;
+  let pendingAgent: {
+    message: PalotMessage;
+    agent: string;
+    previous: string | null;
+    position: number;
+  } | null = null;
+  const currentContext = () => ({
+    agent: activeAgent,
+    model: activeModel,
+    location: activeLocation,
+  });
+  const close = () => {
+    open = null;
+    activeBackgroundShellIDs.clear();
+  };
+  const openGroup = (group: TimelineGroup) => {
+    open = group;
+    if (group.kind === "conversation") latestConversation = group;
+  };
+  const startGroup = (message: PalotMessage, kind: TimelineGroup["kind"]) => {
+    const group: TimelineGroup = {
+      id: message.id,
+      kind,
+      messages: [message],
+      context: currentContext(),
+    };
+    groups.push(group);
+    return group;
+  };
+  const join = (group: TimelineGroup, message: PalotMessage) => {
+    group.messages.push(message);
+    group.context = currentContext();
+    if (message.type !== "assistant" && message.type !== "user") return;
+    group.kind = "conversation";
+    if (group === open) latestConversation = group;
+  };
+  const flushSwitches = (target: TimelineGroup | null) => {
+    const markers: Array<{ position: number; message: PalotMessage }> = [];
+    if (pendingModel && !sameModelRef(pendingModel.model, pendingModel.previous)) {
+      const { message, model, previous, position } = pendingModel;
+      markers.push({
+        position,
+        message: switchMarkerMessage(message, modelSwitchPart(message, model, previous)),
+      });
+    }
+    if (pendingAgent && pendingAgent.agent !== pendingAgent.previous) {
+      const { message, agent, position } = pendingAgent;
+      markers.push({
+        position,
+        message: switchMarkerMessage(message, agentSwitchPart(message, agent)),
+      });
+    }
+    pendingModel = null;
+    pendingAgent = null;
+    if (markers.length === 0) return;
+    for (const marker of markers.toSorted((left, right) => left.position - right.position)) {
+      if (target) join(target, marker.message);
+      else startGroup(marker.message, "boundary");
+    }
+  };
+  // Switches join a turn that is doing work; otherwise they stand above what comes next.
+  const switchTarget = () => (open && !workless(open) && !answered(open) ? open : null);
 
-  for (const message of messages) {
-    if (!assumeOrdered && previousMessage && compareMessages(previousMessage, message) > 0) {
-      return groupTimelineMessages(messages.toSorted(compareMessages), initialLocation, true);
+  for (const [position, message] of messages.entries()) {
+    if (!assumeOrdered && previousMessage && comparePlaced(previousMessage, message) > 0) {
+      return groupTimelineMessages(messages.toSorted(comparePlaced), initialLocation, true);
     }
     previousMessage = message;
     const data = messageData(message);
-    if (message.type === "agent-switched") activeAgent = stringValue(data.agent) ?? activeAgent;
-    if (message.type === "model-switched") activeModel = modelRef(data.model) ?? activeModel;
+    if (message.type === "agent-switched") {
+      const agent = stringValue(data.agent);
+      if (agent && seenUser) {
+        pendingAgent = {
+          message,
+          agent,
+          // OpenCode records what the task used before the switch; replies are the fallback.
+          previous: pendingAgent
+            ? pendingAgent.previous
+            : (stringValue(data.previous) ?? activeAgent),
+          position,
+        };
+      }
+      activeAgent = agent ?? activeAgent;
+    }
+    if (message.type === "model-switched") {
+      const model = modelRef(data.model);
+      if (model && seenUser) {
+        pendingModel = {
+          message,
+          model,
+          previous: pendingModel ? pendingModel.previous : (modelRef(data.previous) ?? activeModel),
+          position,
+        };
+      }
+      activeModel = model ?? activeModel;
+    }
     if (message.type === "location-switched") {
       const location = recordValue(data.location);
       const directory = stringValue(location.directory);
@@ -1829,7 +2924,10 @@ function groupTimelineMessages(
       activeAgent = message.agent ?? activeAgent;
       activeModel = message.model ?? activeModel;
     }
-    if (message.type === "user") userMessages.push(message);
+    if (message.type === "user") {
+      userMessages.push(message);
+      seenUser = true;
+    }
     if (message.type === "assistant" && tokenTotal(message) > 0) contextMessage = message;
     if (message.type === "shell") shellMessages.push(message);
 
@@ -1838,48 +2936,104 @@ function groupTimelineMessages(
     subagentResponses.push(...facts.subagentResponses);
     shellTools.push(...facts.shellTools);
 
+    if (message.type === "idle") {
+      // A prompt sent in the same millisecond the previous run ended sorts ahead of that run's
+      // marker; the marker still ends the earlier turn, and the prompt's turn stays open.
+      const opener = open?.messages[0];
+      if (
+        open &&
+        opener?.type === "user" &&
+        placedTime(opener) === message.createdAt &&
+        !open.messages.some((candidate) => candidate.type === "assistant")
+      ) {
+        const index = groups.indexOf(open);
+        const earlier = groups.findLast(
+          (group, position) =>
+            position < index && group.kind === "conversation" && !held.has(group),
+        );
+        if (earlier && !earlier.messages.some((candidate) => candidate.type === "idle")) {
+          earlier.messages.push(message);
+          continue;
+        }
+      }
+      // The marker ends the open turn. After a user shell command it ends the turn the command
+      // interrupted, if that one has no marker yet.
+      const target =
+        open ?? (latestConversation?.messages.at(-1)?.type === "idle" ? null : latestConversation);
+      if (target) target.messages.push(message);
+      close();
+      continue;
+    }
+
     const visible =
       message.type === "user" || message.type === "assistant" || facts.latestParts.length > 0;
     if (!visible) continue;
-    const kind = timelineKind(message, facts);
-    const activityOnly = facts.activityOnly;
-    const previous = groups.at(-1);
+
     const returned = backgroundShellReturn(message);
-    if (
-      returned &&
-      previous?.kind === "conversation" &&
-      previous.activityOnly &&
-      activeBackgroundShellIDs.has(returned.shellID)
-    ) {
-      previous.messages.push(message);
+    if (returned && open && activeBackgroundShellIDs.has(returned.shellID)) {
+      open.messages.push(message);
       linkedShellReturnIDs.add(message.id);
       activeBackgroundShellIDs.delete(returned.shellID);
       continue;
     }
-    if (
-      kind === "conversation" &&
-      activityOnly &&
-      previous?.kind === "conversation" &&
-      previous.activityOnly
-    ) {
-      previous.messages.push(message);
-      previous.context = { agent: activeAgent, model: activeModel, location: activeLocation };
-      trackBackgroundShells(facts);
+
+    if (message.type === "shell") {
+      close();
+      flushSwitches(null);
+      startGroup(message, "shell");
       continue;
     }
-    activeBackgroundShellIDs.clear();
-    groups.push({
-      id: message.id,
-      kind,
-      messages: [message],
-      activityOnly,
-      context: { agent: activeAgent, model: activeModel, location: activeLocation },
-    });
-    if (kind === "conversation" && activityOnly) trackBackgroundShells(facts);
-  }
 
+    if (message.type === "user") {
+      if (open && (workless(open) || answered(open))) close();
+      if (heldPrompt(message) && (open || held.size > 0)) {
+        flushSwitches(null);
+        held.add(startGroup(message, "conversation"));
+        continue;
+      }
+      flushSwitches(open);
+      if (open) {
+        join(open, message);
+        continue;
+      }
+      openGroup(startGroup(message, "conversation"));
+      continue;
+    }
+
+    const notice = message.type !== "assistant" && message.type !== "compaction";
+    // Background work that finishes together reads as one row: a report joins a turn that holds
+    // only reports of the same kind and outcome.
+    const report = notice ? messageReport(message) : null;
+    if (
+      open &&
+      report &&
+      !pendingModel &&
+      !pendingAgent &&
+      open.messages.every((candidate) => {
+        const other = messageReport(candidate);
+        return other !== null && sameReportRun(other, report);
+      })
+    ) {
+      join(open, message);
+      continue;
+    }
+    // A notice with no work after it stands alone; consecutive notices do not share a turn.
+    if (open && notice && (workless(open) || answered(open))) close();
+    flushSwitches(switchTarget());
+    if (open) {
+      join(open, message);
+      if (message.type === "assistant") trackBackgroundShells(facts);
+      continue;
+    }
+    openGroup(startGroup(message, timelineKind(message, facts)));
+    if (message.type === "assistant") trackBackgroundShells(facts);
+  }
+  flushSwitches(switchTarget());
+
+  const activeGroup = open ?? latestConversation;
   return {
     groups,
+    activeIndex: activeGroup ? groups.indexOf(activeGroup) : -1,
     orderedMessages: messages,
     userMessages,
     contextMessage,
@@ -1917,7 +3071,13 @@ function sameRuntimeStatus(
   if (!left || !right || left.type !== right.type) return false;
   if (left.type !== "retry" || right.type !== "retry") return true;
   return (
-    left.attempt === right.attempt && left.message === right.message && left.next === right.next
+    left.attempt === right.attempt &&
+    left.message === right.message &&
+    left.next === right.next &&
+    left.scheduledAt === right.scheduledAt &&
+    left.error?.type === right.error?.type &&
+    left.error?.status === right.error?.status &&
+    left.error?.retryAfterMs === right.error?.retryAfterMs
   );
 }
 
@@ -1949,7 +3109,8 @@ function sameCachedTurn(
     sameReferences(cached.diffs, input.diffs) &&
     sameRuntimeStatus(cached.runtimeStatus, input.runtimeStatus) &&
     sameTurnContext(cached.context, input.context) &&
-    cached.tokensPerSecond === input.tokensPerSecond
+    cached.tokensPerSecond === input.tokensPerSecond &&
+    sameReferences(cached.laterScriptReturns, input.laterScriptReturns)
   );
 }
 
@@ -2084,10 +3245,7 @@ function unpositionedPresentationRows(
       items: turn.postFinal,
     });
   }
-  if (
-    turn.status === "working" &&
-    (turn.kind === undefined || turn.kind === "conversation" || turn.kind === "subagent")
-  ) {
+  if (turn.status === "working" && turn.kind !== "shell" && turn.kind !== "compaction") {
     rows.push({ id: `${turn.id}:turn-status`, kind: "turn-status", turnID: turn.id, turn });
   }
   return rows;
@@ -2161,6 +3319,25 @@ function projectPresentationRows(
   return previous && sameReferences(previous, next) ? previous : next;
 }
 
+const NO_MESSAGES: PalotMessage[] = [];
+
+/** The notices outside `messages` for the background scripts its tool parts started. */
+function laterScriptReturnsFor(
+  messages: PalotMessage[],
+  returns: Map<string, PalotMessage>,
+): PalotMessage[] {
+  const found: PalotMessage[] = [];
+  for (const message of messages) {
+    for (const part of message.content) {
+      if (!isTool(part)) continue;
+      const jobID = stringValue(recordValue(recordValue(part.state).metadata).jobID);
+      const notice = jobID ? returns.get(jobID) : undefined;
+      if (notice && !messages.includes(notice)) found.push(notice);
+    }
+  }
+  return found.length > 0 ? found : NO_MESSAGES;
+}
+
 class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
   private turns = new Map<string, CachedTurnProjection>();
   private previous: SessionTranscriptProjection | null = null;
@@ -2181,46 +3358,17 @@ class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
       timeline.orderedMessages,
       timeline.linkedShellReturnIDs,
     );
-    let diffGroupIndex = -1;
-    let lastConversationIndex = -1;
-    let lastCompletedAssistantIndex = -1;
-    let lastPendingAssistantIndex = -1;
+    const activeIndex = timeline.activeIndex;
     const groupIndexByMessageID = new Map<string, number>();
-
     for (const [index, group] of groups.entries()) {
-      if (group.kind === "conversation") lastConversationIndex = index;
-      let hasAssistant = false;
-      for (const message of group.messages) {
-        groupIndexByMessageID.set(message.id, index);
-        if (message.type !== "assistant") continue;
-        hasAssistant = true;
-        if (message.completedAt === null) lastPendingAssistantIndex = index;
-        else lastCompletedAssistantIndex = index;
-      }
-      if (group.kind === "conversation" && hasAssistant) diffGroupIndex = index;
+      for (const message of group.messages) groupIndexByMessageID.set(message.id, index);
     }
-
-    const pendingAssistantIndex =
-      lastPendingAssistantIndex > lastCompletedAssistantIndex ? lastPendingAssistantIndex : -1;
-    const activeConversationIndex =
-      pendingAssistantIndex >= 0 ? pendingAssistantIndex : lastConversationIndex;
-    const executionGroupIndex =
-      execution === null
-        ? -1
-        : executionTerminal(execution) && diffGroupIndex >= 0
-          ? diffGroupIndex
-          : activeConversationIndex;
-    const runtimeGroupIndex =
-      execution?.status === "running" && executionGroupIndex >= 0
-        ? executionGroupIndex
-        : activeConversationIndex;
-    const requestGroupIndex = executionGroupIndex >= 0 ? executionGroupIndex : runtimeGroupIndex;
     const requestsByGroup = groups.map(() => [] as PendingRequestView[]);
     for (const request of requests) {
       if (request.type === "input") continue;
       const target = request.ownerMessageID
         ? groupIndexByMessageID.get(request.ownerMessageID)
-        : requestGroupIndex;
+        : activeIndex;
       if (target === undefined || target < 0 || groups[target]?.kind !== "conversation") continue;
       requestsByGroup[target]!.push(request);
     }
@@ -2229,28 +3377,36 @@ class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
     let nextUserMessageID: string | undefined;
     for (let index = groups.length - 1; index >= 0; index -= 1) {
       forkBeforeMessageIDs[index] = nextUserMessageID;
-      const user = groups[index]?.messages.find((message) => message.type === "user");
-      if (user) nextUserMessageID = user.id;
+      // Fork before the prompt that opened the next turn; its steers belong to that turn.
+      const opener = groups[index]?.messages[0];
+      if (opener?.type === "user") nextUserMessageID = opener.id;
     }
 
     const policyKey = projectionPolicyKey(policy);
     const hasAuthoritativeStatus = execution !== null || runtimeStatus !== null;
+    // A background script's notice usually opens a turn of its own; its script's turn still
+    // learns how the job ended, so the calls it was running settle.
+    const scriptReturnsByJob = new Map<string, PalotMessage>();
+    for (const message of messages) {
+      const script = codemodeReturn(message);
+      if (script) scriptReturnsByJob.set(script.jobID, message);
+    }
     const nextTurnCache = new Map<string, CachedTurnProjection>();
     const turns = groups.map((group, index) => {
+      // A run started by a notice is live before its first step arrives.
+      const active = index === activeIndex;
       const firstMessage = group.messages[0]!;
       const groupStartedAt = firstMessage.runStartedAt ?? firstMessage.createdAt;
       const appliesToTurn =
-        group.kind === "conversation" &&
-        index === executionGroupIndex &&
+        active &&
         execution !== null &&
         (execution.status === "running" ||
           execution.status === "inactive" ||
           (execution.completedAt !== null && execution.completedAt >= groupStartedAt));
       const groupExecution = appliesToTurn ? execution : null;
       const groupRequests = requestsByGroup[index]!;
-      const groupDiffs = group.kind === "conversation" && index === diffGroupIndex ? diffs : [];
-      const groupRuntime =
-        group.kind === "conversation" && index === runtimeGroupIndex ? runtimeStatus : null;
+      const groupDiffs = active ? diffs : [];
+      const groupRuntime = active ? runtimeStatus : null;
       const incomplete = group.messages.some(
         (message) =>
           ["assistant", "compaction", "shell"].includes(message.type) &&
@@ -2266,6 +3422,10 @@ class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
         runtimeStatus: groupRuntime,
         context: group.context,
         policyKey,
+        laterScriptReturns:
+          scriptReturnsByJob.size > 0
+            ? laterScriptReturnsFor(group.messages, scriptReturnsByJob)
+            : NO_MESSAGES,
         tokensPerSecond:
           tokensPerSecondByMessageID.get(
             group.messages.findLast((message) => message.type === "assistant")?.id ?? "",
@@ -2277,6 +3437,7 @@ class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
           ? cached.turn
           : project(
               group.id,
+              group.kind,
               group.messages,
               groupExecution,
               signature.hasAuthoritativeStatus,
@@ -2286,6 +3447,7 @@ class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
               group.context,
               policy,
               signature.tokensPerSecond,
+              signature.laterScriptReturns,
             );
       nextTurnCache.set(group.id, { ...signature, turn });
       return turn;
@@ -2296,11 +3458,13 @@ class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
     const nextPrompts: TranscriptPromptAnchor[] = [];
     let samePrompts = true;
     let rows = turns.map((turn, index) => {
-      if (turn.user && !turn.user.optimistic && !(turn.kind === "shell" && turn.shell)) {
-        const label = transcriptPromptLabel(turn.user);
+      // Every delivered prompt, steers included, so the rail matches the older-history index.
+      for (const user of turn.kind === "shell" ? [] : turn.users) {
+        if (user.optimistic) continue;
+        const label = transcriptPromptLabel(user);
         const prior = this.previous?.prompts[nextPrompts.length];
         if (
-          prior?.messageID === turn.user.id &&
+          prior?.messageID === user.id &&
           prior.turnID === turn.id &&
           prior.rowIndex === index &&
           prior.label === label
@@ -2308,7 +3472,7 @@ class CachedSessionTranscriptProjector implements SessionTranscriptProjector {
           nextPrompts.push(prior);
         } else {
           samePrompts = false;
-          nextPrompts.push({ messageID: turn.user.id, turnID: turn.id, rowIndex: index, label });
+          nextPrompts.push({ messageID: user.id, turnID: turn.id, rowIndex: index, label });
         }
       }
       const forkBeforeMessageID = forkBeforeMessageIDs[index];
@@ -2424,6 +3588,7 @@ export function sameTurnActivityGroup(left: TurnActivityGroup, right: TurnActivi
     left.title !== right.title ||
     left.status !== right.status ||
     left.presentation !== right.presentation ||
+    left.headerless !== right.headerless ||
     left.defaultOpen !== right.defaultOpen ||
     left.forceOpen !== right.forceOpen ||
     left.detailsDefaultOpen !== right.detailsDefaultOpen ||

@@ -4,7 +4,9 @@ import { useAtom, useAtomValue } from "jotai";
 import { KeyRound, Mic } from "lucide-react";
 import { useEffect, useState } from "react";
 import { runtimeAtom } from "../../atoms/workspace";
-import { VOICE_OPTIONS, voicePreferencesAtom } from "../../atoms/voice";
+import { useVoiceModel } from "../../hooks/use-voice-model";
+import { VOICE_OPTIONS, voicePreferencesAtom, type VoicePreferences } from "../../atoms/voice";
+import { settingReset } from "../../lib/setting-reset";
 import { supportsOpenCodeVoice } from "../../lib/voice/voice-support";
 import { openCodeClient } from "../../services/opencode-client";
 import { voiceCall } from "../../services/voice-call";
@@ -69,12 +71,22 @@ export function VoiceSettings() {
   const navigate = useNavigate();
   const microphones = useMicrophones();
   const supported = supportsOpenCodeVoice(runtime?.version);
-  const key = useOpenAIKey(runtime?.connected ? runtime.connectionID : null, supported);
+  const model = useVoiceModel();
+  // Servers without a voice model list only start GPT-Live with an OpenAI key.
+  const key = useOpenAIKey(
+    runtime?.connected ? runtime.connectionID : null,
+    supported && model.status === "unknown",
+  );
   const voiceLabel =
     VOICE_OPTIONS.find((option) => option.id === preferences.voice)?.label ?? preferences.voice;
   const microphoneLabel =
     microphones.find((device) => device.deviceId === preferences.inputDeviceID)?.label ||
     (preferences.inputDeviceID ? "Unavailable microphone" : "System default");
+  const voiceReset = <K extends keyof VoicePreferences>(key: K, after?: () => void) =>
+    settingReset(preferences[key], voicePreferencesAtom.defaultValue[key], (value) => {
+      setPreferences((current) => ({ ...current, [key]: value }));
+      after?.();
+    });
   const shortcutLabel =
     GLOBAL_SHORTCUTS.find((option) => option.value === preferences.globalShortcut)?.label ?? "Off";
 
@@ -90,7 +102,25 @@ export function VoiceSettings() {
             Voice chat needs OpenCode 2.0.32 or later. This connection runs{" "}
             {runtime?.version ?? "an unknown version"}.
           </SettingsNotice>
-        ) : key.data === false ? (
+        ) : model.status === "unavailable" ? (
+          <SettingsNotice
+            status="warning"
+            actions={
+              model.kind === "needs-key" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void navigate({ to: "/settings/providers" })}
+                >
+                  <KeyRound aria-hidden="true" data-icon="inline-start" />
+                  Open Providers
+                </Button>
+              ) : undefined
+            }
+          >
+            {model.reason}
+          </SettingsNotice>
+        ) : model.status === "unknown" && key.data === false ? (
           <SettingsNotice
             status="warning"
             actions={
@@ -111,6 +141,7 @@ export function VoiceSettings() {
         <SettingsGroup>
           <SettingsRow
             title="Voice"
+            reset={voiceReset("voice")}
             description="Used for new voice chats."
             control={
               <Select
@@ -137,6 +168,11 @@ export function VoiceSettings() {
           />
           <SettingsRow
             title="Microphone"
+            reset={voiceReset(
+              "inputDeviceID",
+              () =>
+                void voiceCall.selectInputDevice(voicePreferencesAtom.defaultValue.inputDeviceID),
+            )}
             description="Changes apply to an ongoing voice chat right away."
             control={
               <Select
@@ -163,6 +199,7 @@ export function VoiceSettings() {
           />
           <SettingsRow
             title="Greeting"
+            reset={voiceReset("greeting")}
             description="The assistant opens each voice chat with a short hello."
             control={
               <Switch
@@ -176,6 +213,7 @@ export function VoiceSettings() {
           />
           <SettingsRow
             title="Floating controls"
+            reset={voiceReset("overlay")}
             description="Keep a small call window above other apps while Palot isn't focused."
             control={
               <Switch
@@ -189,6 +227,7 @@ export function VoiceSettings() {
           />
           <SettingsRow
             title="System-wide shortcut"
+            reset={voiceReset("globalShortcut")}
             description="Start or end a voice chat in the open task from any app."
             control={
               <Select

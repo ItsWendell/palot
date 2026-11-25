@@ -12,11 +12,19 @@ import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotSession } from "../../../shared";
+import { composerDraftAtomFamily } from "../../atoms/ui";
 import { runtimeAtom } from "../../atoms/workspace";
+import { composerScope } from "../../lib/composer-scope";
 import { createRendererQueryClient } from "../../lib/query-client";
 import { renderWithRouter } from "../../test-utils/render-with-router";
 import { PullRequestControl } from "./pull-request-control";
-import { installSourceControl, pullRequestLink, sourceControlStatus } from "./test-fixtures";
+import {
+  installSourceControl,
+  person,
+  pullRequestDetail,
+  pullRequestLink,
+  sourceControlStatus,
+} from "./test-fixtures";
 import { useArmedConfirm } from "./use-armed-confirm";
 
 const session: PalotSession = {
@@ -40,8 +48,7 @@ afterEach(() => {
   Reflect.deleteProperty(window, "palot");
 });
 
-function renderControl() {
-  const store = createStore();
+function renderControl(store = createStore()) {
   store.set(runtimeAtom, {
     profileID: "profile",
     connectionID: "c1",
@@ -208,6 +215,73 @@ describe("PullRequestControl", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Open in Pull requests" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/pull-requests"));
     expect(router.state.location.search).toMatchObject({ pr: "github.com/acme/web/12" });
+  });
+
+  it("offers only the repairs the pull request needs and adds them to this task's composer", async () => {
+    installSourceControl({
+      listPullRequestLinks: async () => ({ ok: true, value: [pullRequestLink("task-1", 34)] }),
+      pullRequestDetail: async (ref) => ({
+        ok: true,
+        value: pullRequestDetail(ref.number, {
+          checkRuns: [
+            {
+              name: "build",
+              workflow: "CI",
+              status: "completed",
+              conclusion: "success",
+              required: true,
+              url: null,
+              startedAt: null,
+              completedAt: null,
+            },
+          ],
+        }),
+      }),
+      pullRequestTimeline: async () => ({
+        ok: true,
+        value: {
+          nextCursor: null,
+          items: [
+            {
+              kind: "review-thread",
+              id: "t1",
+              path: "src/app.ts",
+              line: 12,
+              isResolved: false,
+              isOutdated: false,
+              viewerCanResolve: true,
+              viewerCanReply: true,
+              createdAt: 1,
+              comments: [
+                {
+                  id: "c1",
+                  author: person("alice"),
+                  body: "Rename this.",
+                  path: "src/app.ts",
+                  line: 12,
+                  startLine: null,
+                  side: "RIGHT",
+                  diffHunk: "",
+                  createdAt: 1,
+                  url: "https://github.com/acme/web/pull/34#c1",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const store = createStore();
+    renderControl(store);
+    await userEvent.click(await screen.findByRole("button", { name: /^Pull request #34/ }));
+    const fix = await screen.findByRole("button", { name: "Fix review comments" });
+    // Checks pass and GitHub reports no conflicts, so those repairs are not offered.
+    expect(screen.queryByRole("button", { name: "Fix failing checks" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resolve conflicts" })).toBeNull();
+    await userEvent.click(fix);
+    const draft = store.get(composerDraftAtomFamily(composerScope("profile", "session:task-1")));
+    expect(draft.text).toMatch(/^<pr-context label="PR #34 · 1 review comment">\n/);
+    expect(draft.text).toContain("1. `src/app.ts:12` (@alice)\n   Rename this.");
   });
 
   it("disables the control with a reason on unsupported connections", async () => {

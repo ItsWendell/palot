@@ -1,7 +1,4 @@
 import type { InlineNode, MarkdownExtension } from "@tanstack/markdown";
-import type { PalotProject, PalotSession } from "../../shared";
-import { isCompleteSessionID } from "./markdown-session-links";
-import { projectForSession, projectName } from "./view-models";
 
 // OpenCode v2.2.0 packages/util/src/session-mention.ts: keep the wire format identical.
 const pattern = /(?<![\w/:@-])(?:@session:)?(ses_[A-Za-z0-9]{26})(?![\w/-])/g;
@@ -17,37 +14,6 @@ export function taskMentions(text: string) {
 
 export function serializeTaskMention(sessionID: string): string {
   return `@session:${sessionID}`;
-}
-
-/** The caller supplies the active connection's catalog, never a cross-server task list. */
-export function taskMentionSuggestions(
-  sessions: readonly PalotSession[],
-  projects: PalotProject[],
-  currentSessionID: string,
-  query: string,
-) {
-  const search = query.toLowerCase();
-  return sessions
-    .filter(
-      (session) =>
-        !session.parentID &&
-        !session.archivedAt &&
-        session.id !== currentSessionID &&
-        isCompleteSessionID(session.id),
-    )
-    .toSorted((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
-    .map((session) => {
-      const project = projectForSession(projects, session);
-      return {
-        id: session.id,
-        title: session.title?.trim() || "Untitled task",
-        project: project ? projectName(project) : session.location.directory,
-      };
-    })
-    .filter((task) =>
-      [task.title, task.project, task.id].some((value) => value.toLowerCase().includes(search)),
-    )
-    .slice(0, 10);
 }
 
 /** Explicit mentions complement the existing bare-session-ID Markdown links. */

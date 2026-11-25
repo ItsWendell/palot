@@ -9,10 +9,12 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { SidebarMode } from "../../shared";
 import { useReducedMotion } from "../hooks/use-reduced-motion";
 import { cn } from "../lib/cn";
 import { spring } from "../lib/springs";
+
+/** The column has one view now; the type keeps room for a peek of something else. */
+export type SidebarPeekView = "tasks";
 
 /** Hover intent before a rail button or the hot edge peeks the hidden column. */
 export const SIDEBAR_PEEK_OPEN_DELAY_MS = 250;
@@ -25,9 +27,9 @@ const PEEK_HIT_SLOP = 8;
 
 export interface SidebarPeekController {
   /** The peeked view, or null while nothing is peeking. */
-  view: SidebarMode | null;
+  view: SidebarPeekView | null;
   /** Hover intent on a view: peek it after the intent delay, or switch to it now. */
-  requestPeek(view: SidebarMode): void;
+  requestPeek(view: SidebarPeekView): void;
   /** The pointer left before the intent delay ran out. Leaves an open peek alone. */
   cancelPendingPeek(): void;
   scheduleClose(): void;
@@ -42,8 +44,8 @@ export interface SidebarPeekController {
  * column or touches the persisted navigation preference.
  */
 export function useSidebarPeek(enabled: boolean): SidebarPeekController {
-  const [view, setView] = useState<SidebarMode | null>(null);
-  const viewRef = useRef<SidebarMode | null>(null);
+  const [view, setView] = useState<SidebarPeekView | null>(null);
+  const viewRef = useRef<SidebarPeekView | null>(null);
   const timerRef = useRef<number | null>(null);
   // Pinning the column, compact mode, or leaving the workspace ends a peek in the
   // same render; the effect below retires any timer that would reopen it.
@@ -62,7 +64,7 @@ export function useSidebarPeek(enabled: boolean): SidebarPeekController {
   useEffect(() => cancelTimer, [cancelTimer]);
 
   const requestPeek = useCallback(
-    (next: SidebarMode) => {
+    (next: SidebarPeekView) => {
       if (!enabled) return;
       cancelTimer();
       if (viewRef.current !== null) {
@@ -150,7 +152,13 @@ export function SidebarPeek({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       // Escape inside a field (an inline rename) belongs to that field.
-      if (event.target instanceof Element && event.target.closest("input, textarea")) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          'input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"]',
+        )
+      )
+        return;
       if (peekBusy(overlayRef.current)) return;
       close();
     };

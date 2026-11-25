@@ -5,7 +5,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { GitRunner, parsePorcelainV2 } from "./git";
+import { GitRunner, execGit, parsePorcelainV2, type GitExec } from "./git";
 
 const roots: string[] = [];
 const savedEnv = { ...process.env };
@@ -77,6 +77,38 @@ describe("GitRunner", () => {
       await expect(
         git.changeBranch({ directory: root, action: "create", name }),
       ).rejects.toMatchObject({ code: "invalid-input" });
+  });
+
+  it("carries uncommitted changes onto a new branch at HEAD only when asked", async () => {
+    const root = await repository();
+    execFileSync("git", ["-C", root, "commit", "--allow-empty", "-qm", "Base"]);
+    await writeFile(path.join(root, "work.txt"), "keep me");
+    await git.stage(root, ["work.txt"]);
+    await writeFile(path.join(root, "loose.txt"), "and me");
+    await expect(
+      git.changeBranch({ directory: root, action: "create", name: "palot/a" }),
+    ).rejects.toMatchObject({ code: "dirty-worktree" });
+    // A base would move HEAD, so carrying stays refused there.
+    await expect(
+      git.changeBranch({
+        directory: root,
+        action: "create",
+        name: "palot/b",
+        base: "main",
+        carryChanges: true,
+      }),
+    ).rejects.toMatchObject({ code: "dirty-worktree" });
+    const status = await git.changeBranch({
+      directory: root,
+      action: "create",
+      name: "palot/feature",
+      carryChanges: true,
+    });
+    expect(status.branch.name).toBe("palot/feature");
+    expect(status.files.map((file) => [file.path, file.staged])).toEqual([
+      ["work.txt", true],
+      ["loose.txt", false],
+    ]);
   });
 
   it("switches a remote branch into a tracking branch and refuses an existing destination", async () => {
@@ -253,6 +285,52 @@ describe("GitRunner", () => {
     roots.push(directory);
     await expect(git.status(directory)).rejects.toMatchObject({ code: "not-a-repository" });
     await expect(git.status("relative/path")).rejects.toMatchObject({ code: "invalid-input" });
+  });
+
+  it("looks a root up once and shares a status read between concurrent callers", async () => {
+    const root = await repository();
+    await writeFile(path.join(root, "a.txt"), "a");
+    const commands: string[] = [];
+    const counted = new GitRunner((args, options) => {
+      commands.push(args.find((arg) => !arg.startsWith("-")) ?? "");
+      return execGit(args, options);
+    });
+
+    const [first, second] = await Promise.all([counted.status(root), counted.status(root)]);
+    expect(second).toBe(first);
+    expect(commands).toEqual(["rev-parse", "status"]);
+
+    // A later poll reads again, without another root lookup.
+    await counted.status(root);
+    expect(commands).toEqual(["rev-parse", "status", "status"]);
+
+    // A write's status sees the write, even while a poll is reading.
+    commands.length = 0;
+    const poll = counted.status(root);
+    const staged = await counted.stage(root, ["a.txt"]);
+    await poll;
+    expect((await counted.status(root)).files).toEqual(staged.files);
+    expect(commands.filter((command) => command === "rev-parse")).toEqual([]);
+  });
+
+  it("looks the root up again once Git says it is no longer a repository", async () => {
+    const root = await repository();
+    let failStatus = false;
+    const commands: string[] = [];
+    const exec: GitExec = async (args, options) => {
+      const command = args.find((arg) => !arg.startsWith("-")) ?? "";
+      commands.push(command);
+      if (failStatus && command === "status")
+        return { stdout: "", stderr: "fatal: not a git repository", exitCode: 128 };
+      return execGit(args, options);
+    };
+    const flaky = new GitRunner(exec);
+    await flaky.status(root);
+    failStatus = true;
+    await expect(flaky.status(root)).rejects.toMatchObject({ code: "git-failed" });
+    failStatus = false;
+    await flaky.status(root);
+    expect(commands).toEqual(["rev-parse", "status", "status", "rev-parse", "status"]);
   });
 });
 

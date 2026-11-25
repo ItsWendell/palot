@@ -1,5 +1,6 @@
 import {
   CircleAlert,
+  CircleCheck,
   ExternalLink,
   Eye,
   EyeOff,
@@ -39,10 +40,18 @@ import {
   PULL_REQUEST_STATE_LABEL,
   PULL_REQUEST_STATE_TEXT,
   REVIEW_LABEL,
+  snapshotReadiness,
   sourceControlErrorMessage,
   WATCH_END_LABEL,
   WATCH_EXPLANATION,
 } from "./pull-request-presentation";
+import { ReadinessLine } from "./readiness-line";
+import { refOf } from "./pull-request-actions";
+import {
+  PullRequestRepairButtons,
+  usePrContextTarget,
+  usePullRequestRepair,
+} from "./pull-request-repair";
 import { useArmedConfirm } from "./use-armed-confirm";
 
 const UNSUPPORTED_FALLBACK = "Pull requests are only available for tasks on this computer.";
@@ -140,6 +149,9 @@ function TriggerContent({ link, more }: { link: PullRequestLink; more: number })
           aria-hidden="true"
         />
       ) : null}
+      {snapshotReadiness(pullRequest)?.status === "ready" ? (
+        <CircleCheck className="size-3 text-success" aria-hidden="true" />
+      ) : null}
       {link.watch ? <Eye className="size-3" aria-hidden="true" /> : null}
     </>
   );
@@ -197,7 +209,13 @@ function PullRequestPanel({
         </div>
       ) : null}
       {links.map((link) => (
-        <LinkedPullRequest key={link.key} link={link} onRun={run} onNavigate={onNavigate} />
+        <LinkedPullRequest
+          key={link.key}
+          link={link}
+          directory={session.location.directory}
+          onRun={run}
+          onNavigate={onNavigate}
+        />
       ))}
       {!loading ? (
         <LinkForm
@@ -219,10 +237,12 @@ function PullRequestPanel({
 
 function LinkedPullRequest({
   link,
+  directory,
   onRun,
   onNavigate,
 }: {
   link: PullRequestLink;
+  directory: string;
   onRun(action: () => Promise<unknown>): Promise<void>;
   onNavigate(): void;
 }) {
@@ -270,6 +290,7 @@ function LinkedPullRequest({
           </div>
         </div>
       </div>
+      <ReadinessLine readiness={snapshotReadiness(pullRequest)} />
       {link.syncError ? (
         <p className="text-meta text-muted-foreground" title={link.syncError}>
           Last refresh failed: {link.syncError}
@@ -280,6 +301,9 @@ function LinkedPullRequest({
       ) : null}
       {watchable || link.watch ? (
         <p className="text-meta text-muted-foreground">{WATCH_EXPLANATION}</p>
+      ) : null}
+      {watchable ? (
+        <RepairActions link={link} directory={directory} onNavigate={onNavigate} />
       ) : null}
       <div className="flex flex-wrap items-center gap-1">
         <Button
@@ -342,6 +366,36 @@ function LinkedPullRequest({
         </Button>
       </div>
     </section>
+  );
+}
+
+/** Fix review comments, failing checks or conflicts in this task, when the PR has any. */
+function RepairActions({
+  link,
+  directory,
+  onNavigate,
+}: {
+  link: PullRequestLink;
+  directory: string;
+  onNavigate(): void;
+}) {
+  const repair = usePullRequestRepair(refOf(link.pullRequest), {
+    profileID: link.profileID,
+    directory,
+  });
+  const target = usePrContextTarget();
+  if (repair.contexts.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Fix in this task">
+      <PullRequestRepairButtons
+        contexts={repair.contexts}
+        onChoose={async (context) => {
+          const ready = await repair.prepare(context);
+          onNavigate();
+          await target(ready, link.pullRequest, link, { navigate: false });
+        }}
+      />
+    </div>
   );
 }
 

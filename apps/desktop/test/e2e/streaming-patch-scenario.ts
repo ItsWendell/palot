@@ -635,11 +635,13 @@ async function assertAppliedDiffColor(viewer: Locator, contents: Locator) {
   await viewer.getByRole("button", { name: "Show applied diff", exact: true }).click();
   try {
     // Word-diff emphasis adds wrapper spans. Compare the syntax token itself,
-    // not an ancestor that happens to have the same textContent.
+    // not an ancestor that happens to have the same textContent. The deleted
+    // `export` line pairs with the first added line, and changed words take
+    // their own text colour, so compare a token on a plain added line.
     const diffKeyword = viewer
       .locator("diffs-container")
       .first()
-      .locator("span:not(:has(span))")
+      .locator('[data-line-type="change-addition"] span:not(:has(span))')
       .filter({ hasText: /^export\s*$/ })
       .first();
     await expect(diffKeyword).toBeAttached();

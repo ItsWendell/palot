@@ -1,0 +1,30 @@
+.palot-composer-input {
+  position: relative;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+  line-height: var(--text-sm--line-height);
+  font-size: var(--text-sm);
+}
+.palot-composer-input > div {
+  margin: 0;
+}
+.palot-composer-input:has(> div > br:only-child)::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  pointer-events: none;
+  color: var(--muted-foreground);
+}
+.palot-composer-input[contenteditable="false"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.palot-composer-input .ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
+}
+.palot-composer-input .ProseMirror-separator {
+  display: inline;
+}
+.palot-composer-input .ProseMirror-gapcursor {
+  display: none;
+}

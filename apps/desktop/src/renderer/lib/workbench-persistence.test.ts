@@ -80,6 +80,7 @@ describe("workbench persistence", () => {
         question: "Why?",
         answer: "Bounded.",
         followUps: [{ id: "f1", question: "How big?", error: "Stopped." }],
+        unread: true,
       },
     }));
     expect(parseWorkbenchState(JSON.parse(JSON.stringify(state)))).toEqual(state);

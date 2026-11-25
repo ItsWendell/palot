@@ -37,7 +37,7 @@ export async function verifyBrowserComments(page: Page, { client, session, llm }
     .fill("Check this heading's wording.");
   await page.getByRole("button", { name: "Attach comment to prompt" }).click();
   await expect(editor).toHaveCount(0);
-  const pending = page.getByRole("region", { name: "Pending browser comments" });
+  const pending = page.getByRole("group", { name: "Pending browser comments" });
   await expect(pending).toBeVisible();
   llm.tool("execute", {
     code: `const snapshot = await tools.browser.snapshot({tabID:${JSON.stringify(selection.tabID)}}); return {snapshot, selected:await tools.browser.evaluate({tabID:${JSON.stringify(selection.tabID)},ref:${JSON.stringify(selection.element.ref)},script:'element => element.textContent'})};`,
@@ -52,6 +52,24 @@ export async function verifyBrowserComments(page: Page, { client, session, llm }
   const messages = (await client.message.list({ sessionID: session.id, order: "asc" })).data;
   const user = messages.findLast((message) => message.type === "user");
   expect(JSON.stringify(user?.metadata)).toContain("Check this heading's wording.");
+  // The screenshot is stored once, as the attached file the comment names, not in metadata.
+  expect(JSON.stringify(user?.metadata)).not.toContain("data:");
+  const previewFile = (
+    user?.metadata?.browserComments as unknown as Array<{ previewFile?: string }> | undefined
+  )?.[0]?.previewFile;
+  if (!previewFile) throw new Error("Sent browser comment names no preview file");
+  expect(user?.type === "user" ? user.files?.map((file) => file.name) : []).toContain(previewFile);
+  const chip = page
+    .locator('[data-slot="attachment"]', { has: page.getByTitle(previewFile, { exact: true }) })
+    .locator("img");
+  await expect
+    .poll(() =>
+      chip.evaluate(async (image: HTMLImageElement) => {
+        await image.decode().catch(() => undefined);
+        return image.naturalWidth;
+      }),
+    )
+    .toBeGreaterThan(0);
   const tool = messages
     .flatMap((message) => (message.type === "assistant" ? message.content : []))
     .findLast((part) => part.type === "tool");

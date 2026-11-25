@@ -60,12 +60,6 @@ export const composerRichScenario: Scenario = {
     );
   },
   async run(page, { session, client, runRoot, projectDirectory, llm }) {
-    await page.evaluate(() => {
-      location.hash = "#/settings/general";
-    });
-    const beta = page.getByRole("switch", { name: "Rich composer (beta)", exact: true });
-    await expect(beta).not.toBeChecked();
-    await beta.click();
     await page.evaluate((id) => {
       location.hash = `#/sessions/${id}`;
     }, session.id);
@@ -129,7 +123,7 @@ export const composerRichScenario: Scenario = {
       );
     });
     await expect(page.getByRole("group", { name: "Attachments", exact: true })).toContainText(
-      "pasted-text-",
+      "Pasted text · 2100 lines",
     );
     await expect(input).toHaveText("");
     await input.evaluate(async (element, location) => {
@@ -166,8 +160,9 @@ export const composerRichScenario: Scenario = {
     await input.press("ControlOrMeta+End");
     await input.pressSequentially(" @fixture");
     await page.getByRole("option").filter({ hasText: "fixture.txt" }).first().click();
-    await page.getByRole("button", { name: "More send options", exact: true }).click();
-    await page.getByRole("menuitem", { name: "Send to several models…", exact: true }).click();
+    // The launcher sets the draft aside and gives it back to the comparison.
+    await page.getByRole("button", { name: "Add files, commands and more", exact: true }).click();
+    await page.getByRole("option", { name: "Send to several models…", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("checkbox", { name: /Test Model/ }).click();
     await dialog.getByRole("checkbox", { name: /Compare Model/ }).click();

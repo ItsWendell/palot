@@ -123,8 +123,12 @@ export const destinationRecoveryScenario: Scenario = {
       },
       { sessionID: task.id, profileID: original.profileID },
     );
+    // The composer's notice line names the missing folder; Recover… opens the recovery form.
+    const notice = page.getByRole("status").filter({ hasText: "This workspace folder is missing" });
+    await expect(notice).toBeVisible({ timeout: 30_000 });
+    await notice.getByRole("button", { name: "Recover…", exact: true }).click();
     const recovery = page.getByRole("region", { name: "Missing workspace", exact: true });
-    await expect(recovery).toBeVisible({ timeout: 30_000 });
+    await expect(recovery).toBeVisible();
     await expect(recovery).toContainText(temporaryDirectory);
     const directoryInput = recovery.getByRole("combobox", {
       name: "Existing directory",
@@ -164,11 +168,15 @@ export const destinationRecoveryScenario: Scenario = {
       .poll(async () => (await client.session.get({ sessionID: task.id })).location.directory)
       .toBe(projectDirectory);
     await expect(recovery).toBeHidden();
+    await expect(notice).toBeHidden();
     const composer = page.getByRole("textbox", { name: "Message Palot", exact: true });
     await expect(composer).toBeVisible();
     await expect(composer).toBeEditable();
     await composer.fill("Unsent draft after recovering the original connection");
-    await expect(composer).toHaveValue("Unsent draft after recovering the original connection");
+    await expect(composer).toHaveJSProperty(
+      "value",
+      "Unsent draft after recovering the original connection",
+    );
     const restored = await runtimeStatus(page);
     expect(restored).toMatchObject({
       connectionID: original.connectionID,

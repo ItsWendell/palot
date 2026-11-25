@@ -9,6 +9,7 @@
     "scripts/**/*.ts",
     "test/e2e/**/*.ts",
     "test/tool-eval/**/*.ts",
+    "perf/**/*.ts",
     "src/main/palot-tools/tools.ts",
     "src/main/automations/recurrence.ts",
     "src/preload/api.d.ts",
@@ -16,7 +17,9 @@
     "src/main/opencode-version.ts",
     "src/main/linux-desktop.ts",
     "src/main/opencode-runtime-release.ts",
+    "src/renderer/lib/composer-editor-element.ts",
     "vite.*.config.ts",
+    "prototypes/*/vite.config.ts",
     "vitest.config.ts"
   ]
 }

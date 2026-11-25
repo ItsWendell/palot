@@ -1,6 +1,6 @@
 # Privacy
 
-This policy describes the Palot 0.23.0 source. It may change as pre-release
+This policy describes the Palot 0.24.0 source. It may change as pre-release
 features evolve.
 
 ## Data sent by Palot
@@ -25,6 +25,17 @@ from the same official host. These requests expose normal network metadata,
 including your IP address and request headers, to OpenCode's operator. They do
 not include prompts, project paths, credentials, or session contents. Opening
 Palot or changing the preferred channel does not itself check for releases.
+
+Checking for a newer Palot is off by default. When you turn on **Settings →
+About → Check for Palot updates** in a stable build, Palot asks GitHub's API
+(`api.github.com`) for the latest release of the Palot repository once a day and
+when you press **Check now**. The request carries only Palot's name and version
+as its User-Agent: no account, token, or other identifier, and nothing about your
+projects, tasks, or settings. GitHub sees normal network metadata, such as your IP
+address. Palot only shows a notice; it never downloads or installs an update. The
+setting, the last check time, the latest version seen, and a dismissed version are
+saved locally. Turn the setting off to stop the requests. Dev, Nightly, and Beta
+builds never check.
 
 When you confirm an update to a user-installed OpenCode executable, Palot invokes
 that executable's official upgrade command with the selected version and method.

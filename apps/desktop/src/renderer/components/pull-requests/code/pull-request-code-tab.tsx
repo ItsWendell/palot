@@ -30,6 +30,8 @@ import {
 import { cn } from "../../../lib/cn";
 import { hasTwoSidedChanges, resolveDiffLayout } from "../../../lib/diff-layout";
 import { canCommentOnRange } from "../../../lib/review-comments";
+import { classifyChangedFile, isQuietKind } from "../../../lib/changed-file-kind";
+import { ChangedFileKindBadge } from "../../changed-file-kind";
 import { showErrorToast } from "../../../lib/toast-error";
 import { pierreReviewTheme, pierreViewerStyle } from "../../file-viewer-theme";
 import { ReviewCommentEditor } from "../../review-comment-editor";
@@ -38,7 +40,11 @@ import { Checkbox } from "../../ui/checkbox";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../../ui/empty";
 import { Spinner } from "../../ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
-import { DiffFindBar, useDiffFind } from "../../workbench-tabs/diff-find";
+import {
+  DIFF_FIND_CODE_VIEW_SEARCH,
+  DiffFindBar,
+  useDiffFind,
+} from "../../workbench-tabs/diff-find";
 import {
   DiffViewOptionsMenu,
   useDiffViewPreferences,
@@ -157,6 +163,7 @@ function PullRequestCodeReview({
 }) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
   const [preferences] = useDiffViewPreferences();
+  const collapseQuiet = preferences.collapseQuietFiles;
   const pending = usePendingReview(pullRequestKey(ref));
   const setViewed = useSetPullRequestFileViewed();
   const timeline = usePullRequestTimeline(ref);
@@ -216,7 +223,7 @@ function PullRequestCodeReview({
           version,
         };
       }
-      const collapsed = isFileCollapsed(file, collapseOverrides);
+      const collapsed = isFileCollapsed(file, collapseOverrides, collapseQuiet);
       const annotations = buildFileAnnotations(
         file.path,
         fileDiff,
@@ -242,7 +249,7 @@ function PullRequestCodeReview({
       };
     });
     return { items: list, annotationGroups: groups };
-  }, [collapseOverrides, pending.review.comments, threads, visible]);
+  }, [collapseOverrides, collapseQuiet, pending.review.comments, threads, visible]);
 
   const setCollapsed = useCallback((path: string, collapsed: boolean) => {
     setCollapseOverrides((current) => {
@@ -256,9 +263,9 @@ function PullRequestCodeReview({
     (path: string) => {
       const entry = byPath.get(path);
       if (!entry?.fileDiff) return;
-      setCollapsed(path, !isFileCollapsed(entry.file, collapseOverrides));
+      setCollapsed(path, !isFileCollapsed(entry.file, collapseOverrides, collapseQuiet));
     },
-    [byPath, collapseOverrides, setCollapsed],
+    [byPath, collapseOverrides, collapseQuiet, setCollapsed],
   );
   const allCollapsed = items.every((item) => item.collapsed === true);
   const toggleAll = () =>
@@ -406,7 +413,7 @@ function PullRequestCodeReview({
             <span className="text-destructive">−{totals.deletions}</span>
           </span>
           <PendingCommentsTray pending={pending} onReveal={revealLine} />
-          <DiffViewOptionsMenu layout={diffStyle} onFind={find.openFind} />
+          <DiffViewOptionsMenu layout={diffStyle} onFind={find.openFind} collapseQuietAvailable />
           <ToolbarToggle
             label={lineWrap ? "Disable line wrap" : "Enable line wrap"}
             pressed={lineWrap}
@@ -509,6 +516,7 @@ function PullRequestCodeReview({
                 lineHoverHighlight: "line",
                 stickyHeaders: true,
                 enableLineSelection: true,
+                searchOptions: DIFF_FIND_CODE_VIEW_SEARCH,
               }}
               className="size-full overflow-auto"
               style={pierreViewerStyle}
@@ -591,6 +599,7 @@ function FileHeader({
 }) {
   const { file, fileDiff, additions, deletions, whitespaceOnly } = entry;
   const { directory, name } = filePathParts(file.path);
+  const kind = classifyChangedFile(file.path);
   const unavailable = !fileDiff && !whitespaceOnly;
   const foldable = Boolean(fileDiff);
   return (
@@ -628,8 +637,16 @@ function FileHeader({
             <span className="text-muted-foreground">{file.previousPath} → </span>
           ) : null}
           {directory ? <span className="text-muted-foreground">{directory}/</span> : null}
-          <span className="font-medium text-foreground">{name}</span>
+          <span
+            className={cn(
+              "font-medium",
+              isQuietKind(kind) ? "text-muted-foreground" : "text-foreground",
+            )}
+          >
+            {name}
+          </span>
         </span>
+        <ChangedFileKindBadge kind={kind} className="self-center" />
         <span className="sr-only">{fileStatusLabel(file.status)}</span>
         <span className="flex shrink-0 items-center gap-1 font-mono text-diff tabular-nums">
           <span className="text-success">+{additions}</span>

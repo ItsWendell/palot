@@ -8,6 +8,7 @@ import type {
   IntegrationMethod,
   McpServer,
   OpenCodeClient,
+  PermissionSavedInfo,
   PluginInfo,
 } from "@opencode/client";
 import type {
@@ -36,7 +37,9 @@ import type {
   SettingsLocationInput,
   SettingsCapability,
   UpdateCredentialInput,
+  UpdateSavedPermissionInput,
 } from "../../shared";
+import { isMissingOpenCodeRoute } from "../../shared/opencode-missing-route";
 import {
   describeOpenCodeError,
   readOpenCodeErrorDetail,
@@ -824,6 +827,50 @@ export async function removeSavedPermission(input: RemoveSavedPermissionInput): 
   await client.permission.saved.remove({ id: input.id }, { signal: requestSignal() });
 }
 
+/** OpenCode 2.1.0 added `permission.saved.update`; older servers can only list and remove. */
+export function supportsSavedPermissionUpdate(version: string | null | undefined): boolean {
+  const match = version?.match(/^v?(\d+)\.(\d+)\.(\d+)/);
+  // Unknown versions offer the edit; a missing route reports itself as unsupported.
+  if (!match) return true;
+  return Number(match[1]) > 2 || (Number(match[1]) === 2 && Number(match[2]) >= 1);
+}
+
+export type UpdateSavedPermissionResult =
+  | { status: "updated"; permission: PermissionSavedInfo }
+  /** The project already has a saved permission with this action and resource. */
+  | { status: "conflict" }
+  /** The server predates `permission.saved.update`. */
+  | { status: "unsupported" };
+
+export async function updateSavedPermission(
+  input: UpdateSavedPermissionInput,
+): Promise<UpdateSavedPermissionResult> {
+  const client = openCodeClient(input.connectionID);
+  const location = await resolveSettingsLocation(client, input);
+  const saved = await client.permission.saved.list(
+    { projectID: location.project.id },
+    { signal: requestSignal() },
+  );
+  if (!saved.some((permission) => permission.id === input.id)) {
+    throw new Error("Saved permission does not belong to the selected project");
+  }
+  try {
+    const permission = await client.permission.saved.update(
+      {
+        id: input.id,
+        ...(input.action === undefined ? {} : { action: input.action }),
+        ...(input.resource === undefined ? {} : { resource: input.resource }),
+      },
+      { signal: requestSignal() },
+    );
+    return { status: "updated", permission };
+  } catch (error) {
+    if (readOpenCodeErrorDetail(error)?.tag === "ConflictError") return { status: "conflict" };
+    if (isMissingOpenCodeRoute(error)) return { status: "unsupported" };
+    throw error;
+  }
+}
+
 export async function connectIntegrationKey(input: ConnectIntegrationKeyInput): Promise<void> {
   const client = openCodeClient(input.connectionID);
   await resolveSettingsLocation(client, input);
@@ -859,6 +906,7 @@ export async function connectIntegrationOAuth(
     url: response.data.url,
     instructions: response.data.instructions,
     mode: response.data.mode,
+    ...(response.data.paste ? { paste: true } : {}),
     createdAt: finiteNumber(response.data.time.created),
     expiresAt: finiteNumber(response.data.time.expires),
   };

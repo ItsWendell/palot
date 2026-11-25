@@ -3,6 +3,7 @@ import { memo, useEffect, useState } from "react";
 import { useAtomValue } from "jotai";
 import { runtimeAtom } from "../atoms/workspace";
 import type { PalotFileAttachment } from "../../shared";
+import { useMediaSource } from "../hooks/use-media-source";
 import { palot } from "../services/palot";
 import { ImageLightbox } from "./read-image-preview";
 import {
@@ -37,16 +38,26 @@ export const FileAttachment = memo(
     const [grantPreview, setGrantPreview] = useState<{ grant: string; url: string | null } | null>(
       null,
     );
-    const previewUrl =
-      file.previewDataUrl ?? (grantPreview?.grant === file.previewGrant ? grantPreview?.url : null);
-    const [failedUrl, setFailedUrl] = useState<string | null>(null);
     const imageMime = file.mime.toLowerCase().startsWith("image/");
+    const media = useMediaSource(
+      imageMime && !file.previewDataUrl ? file.previewMedia : undefined,
+      file.mime,
+    );
+    const previewUrl =
+      file.previewDataUrl ??
+      media.url ??
+      (grantPreview?.grant === file.previewGrant ? grantPreview?.url : null);
+    const [failedUrl, setFailedUrl] = useState<string | null>(null);
     const image =
       imageMime &&
-      Boolean(file.previewDataUrl || file.previewGrant) &&
+      Boolean(file.previewDataUrl || file.previewMedia || file.previewGrant) &&
       (!previewUrl || failedUrl !== previewUrl) &&
+      !(file.previewMedia && !file.previewDataUrl && media.failed) &&
       Boolean(
-        file.previewDataUrl || grantPreview?.grant !== file.previewGrant || grantPreview?.url,
+        file.previewDataUrl ||
+        file.previewMedia ||
+        grantPreview?.grant !== file.previewGrant ||
+        grantPreview?.url,
       );
     const [open, setOpen] = useState(false);
 

@@ -301,15 +301,19 @@ export async function listDiffs(
   return response.data;
 }
 
-/** `from` identifies the user message starting this turn; omitting `to` stops at the next turn. */
+/**
+ * `from` identifies the user message starting this turn; omitting `to` stops at the next turn.
+ * Without `context` OpenCode returns full-file patches.
+ */
 export async function listTurnDiffs(
   sessionID: string,
   userMessageID: string,
   requestSignal?: AbortSignal,
   connectionID?: string,
+  context?: number,
 ) {
   return openCodeClient(connectionID).session.diff(
-    { sessionID, from: userMessageID },
+    { sessionID, from: userMessageID, ...(context !== undefined ? { context } : {}) },
     { signal: openCodeRequestSignal(requestSignal) },
   );
 }
@@ -487,16 +491,19 @@ export async function sendPrompt(
     ...inlineFiles.map((file) => ({ uri: file.uri, name: file.name })),
     ...(session ? promptFiles(session.directory, input.fileReferences ?? []) : []),
     ...(session
-      ? (input.comments ?? []).map((comment) => {
-          const path = comment.path.startsWith("/")
-            ? comment.path
-            : `${session.directory.replace(/\/+$/, "")}/${comment.path}`;
-          const { startLine, endLine } = comment.selection;
-          return {
-            uri: `file://${path.split("/").map(encodeURIComponent).join("/")}?start=${startLine}&end=${endLine}`,
-            name: comment.path.split("/").at(-1) ?? comment.path,
-          };
-        })
+      ? (input.comments ?? [])
+          // A removed line's number is in the old version; the current file has other lines there.
+          .filter((comment) => comment.side !== "deletions")
+          .map((comment) => {
+            const path = comment.path.startsWith("/")
+              ? comment.path
+              : `${session.directory.replace(/\/+$/, "")}/${comment.path}`;
+            const { startLine, endLine } = comment.selection;
+            return {
+              uri: `file://${path.split("/").map(encodeURIComponent).join("/")}?start=${startLine}&end=${endLine}`,
+              name: comment.path.split("/").at(-1) ?? comment.path,
+            };
+          })
       : []),
     ...mentions.files,
   ];

@@ -1,12 +1,16 @@
 import { Provider, createStore } from "jotai";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { Profiler } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PalotMessage, PalotSession } from "../../shared";
 import { messagesAtom, type SessionExecutionState } from "../atoms/workspace";
-import { projectTranscriptTurns, type TurnActivityGroup } from "../lib/turn-projection";
+import {
+  createSessionTranscriptProjector,
+  projectTranscriptTurns,
+  type TurnActivityGroup,
+} from "../lib/turn-projection";
 import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
 import { seedCatalog } from "../test-utils/render-with-router";
@@ -22,15 +26,12 @@ vi.mock("../hooks/use-navigation", () => ({
 }));
 
 import {
-  BackgroundWorkPrompt,
   projectBackgroundWork,
   SubagentFooterControl,
   SubagentLaunch,
-  SubagentResponse,
   SubagentSessionDock,
-  type BackgroundWorkItem,
 } from "./subagent-activity";
-import { TurnActivity } from "./thread";
+import { TurnActivity } from "./transcript/activity-group";
 
 function session(input: Partial<PalotSession> & Pick<PalotSession, "id">): PalotSession {
   return {
@@ -158,19 +159,17 @@ describe("subagent activity", () => {
     const cardName = "Explore subagent finished: Map the timeline";
     const oneVisibleCard = () =>
       expect(screen.getAllByRole("button", { name: cardName })).toHaveLength(1);
-    const turnSummary = screen.getByRole("button", { name: "Completed in 1s" });
+    const turnSummary = screen.getByRole("button", {
+      name: "Worked for 1s · changed 1 file · 1 subagent",
+    });
     expect(turnSummary.getAttribute("aria-expanded")).toBe("false");
     oneVisibleCard();
 
+    // The turn's only group shows its rows without a header of its own.
     await user.click(turnSummary);
-    const groupSummary = screen.getByRole("button", {
-      name: "Read 1 file, changed 1 file, and delegated 1 task",
-    });
-    expect(groupSummary.getAttribute("aria-expanded")).toBe("false");
-    oneVisibleCard();
-
-    await user.click(groupSummary);
-    expect(groupSummary.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      screen.queryByRole("button", { name: "Changed a.ts, delegated 1 task, and read 1 file" }),
+    ).toBeNull();
     oneVisibleCard();
     await user.click(screen.getByRole("button", { name: cardName }));
     expect(mocks.openSession).toHaveBeenCalledWith(child.id);
@@ -326,19 +325,6 @@ describe("subagent activity", () => {
     };
     // No reliable start time: this fixture tests stream isolation, not clock ticks.
     group.entries[0]!.part.time = undefined;
-    const response: TurnActivityGroup = {
-      id: "response",
-      kind: "subagent",
-      title: "Result",
-      status: "completed",
-      entries: [
-        {
-          message: source([]),
-          index: 0,
-          part: { type: "subagent-response", data: { childID: child.id }, text: "Final result" },
-        },
-      ],
-    };
     function TranscriptReceipt() {
       const records = useOpenCodeRecords("disconnected", "session-message");
       return (
@@ -353,7 +339,6 @@ describe("subagent activity", () => {
         <TranscriptReceipt />
         <Profiler id="cards" onRender={commits}>
           <SubagentLaunch group={group} parentSessionID="parent" />
-          <SubagentResponse group={response} />
         </Profiler>
       </>,
       store,
@@ -421,7 +406,7 @@ describe("subagent activity", () => {
       });
     });
     await screen.findByRole("button", { name: "Explore subagent finished: Map the timeline" });
-    expect(screen.getAllByText("20s")).toHaveLength(2);
+    expect(screen.getByText("20s")).toBeTruthy();
     expect(commits).toHaveBeenCalled();
   });
 
@@ -517,48 +502,161 @@ describe("subagent activity", () => {
         startedAt: 10,
         fallbackStatus: "complete",
         background: true,
+        requestedBackground: true,
+        launchOnly: false,
       },
     ]);
   });
 
-  it("prompts to background the work delaying a steer", async () => {
-    const onBackground = vi.fn();
-    const items: BackgroundWorkItem[] = [
-      {
-        kind: "subagent",
-        id: "child-1",
-        agent: "Explore",
-        description: "Map the timeline",
-        startedAt: 1,
-        fallbackStatus: "running",
-        background: false,
+  it("never makes a reported subagent a foreground blocker when it runs again", () => {
+    // OpenCode after 2.2.7: the call returned at once, then the child reported and runs again
+    // because the user wrote to it.
+    const part = {
+      type: "tool",
+      id: "call",
+      name: "subagent",
+      time: { created: 10, completed: 11 },
+      state: {
+        status: "completed",
+        input: { agent: "explore", description: "Map the timeline", prompt: "Go" },
+        metadata: { sessionID: "child-1", status: "running" },
       },
-    ];
-
-    render(
-      <BackgroundWorkPrompt
-        items={items}
-        backgrounding={false}
-        retry={false}
-        error={null}
-        onBackground={onBackground}
-      />,
-    );
-
-    expect(
-      screen.getByText(
-        "The subagent 'Map the timeline' is blocking your message from steering this turn.",
-      ),
-    ).toBeTruthy();
-    await userEvent.click(
-      screen.getByRole("button", {
-        name: "Send blocking work to background so the message can steer this turn",
-      }),
-    );
-    expect(onBackground).toHaveBeenCalledOnce();
+    };
+    const report = {
+      type: "subagent-response",
+      id: "report",
+      name: "Map the timeline",
+      text: "Done.",
+      status: "completed" as const,
+      data: { childID: "child-1", agent: "explore", state: "completed" },
+    };
+    const [item] = projectBackgroundWork({
+      sessionID: "parent",
+      background: {
+        subagentTools: [{ part, index: 0, messageCreatedAt: 10 }],
+        subagentResponses: [{ part: report, messageCreatedAt: 20 }],
+        shellTools: [],
+        shellMessages: [],
+      },
+      runningShells: [],
+      sessions: [],
+      states: new Map([
+        ["child-1", { status: "running", startedAt: 30, completedAt: null, parentID: "parent" }],
+      ]),
+    });
+    expect(item).toMatchObject({
+      kind: "subagent",
+      background: true,
+      requestedBackground: false,
+      launchOnly: true,
+    });
   });
 
-  it("replaces the composer with sibling navigation in a child session", async () => {
+  describe("a three-level family (experimental.subagent_depth: 2)", () => {
+    const child = session({
+      id: "child-1",
+      parentID: "parent",
+      title: "Map the timeline (@explore subagent)",
+      createdAt: 1_000,
+    });
+    const grandchildren = [
+      session({
+        id: "grand-1",
+        parentID: "child-1",
+        title: "Read the reducer",
+        agent: "explore",
+        createdAt: 2_000,
+      }),
+      session({
+        id: "grand-2",
+        parentID: "child-1",
+        title: "Read the tests",
+        agent: "review",
+        createdAt: 3_000,
+      }),
+    ];
+    const running = (parentID: string) => ({
+      status: "running" as const,
+      startedAt: Date.now() - 1_000,
+      completedAt: null,
+      parentID,
+    });
+
+    it("shows a running subagent's subagents under its row, indented", async () => {
+      renderCatalog(
+        <SubagentLaunch group={launchGroup()} parentSessionID="parent" />,
+        createStore(),
+        [child, ...grandchildren],
+        new Map([
+          [child.id, running("parent")],
+          ["grand-1", running(child.id)],
+        ]),
+      );
+      const nested = await screen.findByRole("group", { name: "Subagents of Explore" });
+      expect(screen.getByRole("button", { name: "Hide 2 subagents under Explore" })).toBeTruthy();
+      expect(
+        within(nested).getByRole("button", { name: "Explore subagent running: Read the reducer" }),
+      ).toBeTruthy();
+      await userEvent.click(
+        within(nested).getByRole("button", { name: "Review subagent finished: Read the tests" }),
+      );
+      expect(mocks.openSession).toHaveBeenCalledWith("grand-2");
+    });
+
+    it("folds a finished subagent's subagents behind a count", async () => {
+      const finished = { status: "succeeded" as const, startedAt: 1_000, completedAt: 9_000 };
+      renderCatalog(
+        <SubagentLaunch group={launchGroup()} parentSessionID="parent" />,
+        createStore(),
+        [child, ...grandchildren],
+        new Map([
+          [child.id, { ...finished, parentID: "parent" }],
+          ["grand-1", { ...finished, parentID: child.id }],
+          ["grand-2", { ...finished, parentID: child.id }],
+        ]),
+      );
+      const toggle = await screen.findByRole("button", { name: "Show 2 subagents under Explore" });
+      expect(toggle.textContent).toContain("2 subagents");
+      expect(screen.queryByRole("group", { name: "Subagents of Explore" })).toBeNull();
+      await userEvent.click(toggle);
+      expect(screen.getByRole("group", { name: "Subagents of Explore" })).toBeTruthy();
+    });
+
+    it("lists a running grandchild under its parent in the active work list", () => {
+      const group = launchGroup();
+      const entry = group.entries[0]!;
+      const items = projectBackgroundWork({
+        sessionID: "parent",
+        background: {
+          subagentTools: [
+            { part: entry.part, index: entry.index, messageCreatedAt: entry.message.createdAt },
+          ],
+          subagentResponses: [],
+          shellTools: [],
+          shellMessages: [],
+        },
+        runningShells: [],
+        sessions: [child, ...grandchildren],
+        states: new Map([
+          [child.id, { ...running("parent"), startedAt: 10 }],
+          ["grand-2", { ...running(child.id), startedAt: 30 }],
+          ["grand-1", { ...running(child.id), startedAt: 20 }],
+          // A session outside this task's family is never listed.
+          ["elsewhere", { ...running("other-task"), startedAt: 15 }],
+        ]),
+      });
+      expect(
+        items.map((item) => [item.id, item.kind === "subagent" ? (item.depth ?? 0) : null]),
+      ).toEqual([
+        ["child-1", 0],
+        ["grand-1", 1],
+        ["grand-2", 1],
+      ]);
+      expect(items[1]).toMatchObject({ agent: "Explore", background: true, parentID: child.id });
+    });
+  });
+
+  it("steps between sibling subagents above a child session's composer", async () => {
     const store = createStore();
     const parent = session({ id: "parent" });
     const first = session({
@@ -591,7 +689,7 @@ describe("subagent activity", () => {
     );
 
     expect(screen.getByText(/Explore subagent · 1 of 2/)).toBeTruthy();
-    expect(screen.getByText(/Read-only session/)).toBeTruthy();
+    expect(screen.queryByText(/Read-only session/)).toBeNull();
     expect(document.querySelector("[data-palot-subagent-state]")?.textContent).toMatch(/^Running /);
     // Parent navigation moved to the task header breadcrumb.
     expect(screen.queryByRole("button", { name: "Parent task" })).toBeNull();
@@ -631,5 +729,102 @@ describe("subagent activity", () => {
     expect(mocks.openSession).toHaveBeenLastCalledWith(first.id);
     await userEvent.click(screen.getByRole("button", { name: "Next subagent" }));
     expect(mocks.openSession).toHaveBeenLastCalledWith(last.id);
+  });
+});
+
+describe("a background subagent outliving its parent's turn", () => {
+  it("keeps the same card element when the parent's turn ends", () => {
+    const store = createStore();
+    const child = session({
+      id: "child-1",
+      parentID: "parent",
+      title: "Timed inspection (@general subagent)",
+      createdAt: Date.now() - 5_000,
+    });
+    const execution = new Map([
+      [
+        child.id,
+        { status: "running" as const, startedAt: null, completedAt: null, parentID: "parent" },
+      ],
+    ]);
+    const base = { agent: "build", model: null, tokens: null, text: null, data: null };
+    const prompt: PalotMessage = {
+      ...base,
+      id: "prompt",
+      type: "user",
+      createdAt: 1_000,
+      completedAt: 1_000,
+      finish: null,
+      content: [{ type: "text", text: "Delegate a timed inspection." }],
+    };
+    const launch: PalotMessage = {
+      ...base,
+      id: "launch",
+      type: "assistant",
+      createdAt: 2_000,
+      completedAt: 2_500,
+      finish: "tool-calls",
+      content: [
+        {
+          type: "tool",
+          id: "call",
+          name: "subagent",
+          time: { created: 2_000, completed: 2_100 },
+          state: {
+            status: "completed",
+            input: { agent: "general", description: "Timed inspection", prompt: "Go" },
+            metadata: { sessionID: child.id, status: "running" },
+          },
+        },
+      ],
+    };
+    const reply = (done: boolean): PalotMessage => ({
+      ...base,
+      id: "reply",
+      type: "assistant",
+      createdAt: 3_000,
+      completedAt: done ? 3_500 : null,
+      finish: done ? "stop" : null,
+      content: [{ type: "text", id: "reply-text", text: "Waiting for the timed inspection." }],
+    });
+    const idle: PalotMessage = {
+      ...base,
+      id: "idle",
+      type: "idle",
+      createdAt: 4_000,
+      completedAt: 4_000,
+      finish: null,
+      content: [],
+      data: { outcome: "succeeded" },
+    };
+    const projector = createSessionTranscriptProjector();
+    const turnOf = (messages: PalotMessage[]) => projector.project({ messages }).rows[0]!.turn;
+    const element = (turn: ReturnType<typeof turnOf>) => (
+      <TurnActivity turn={turn} sessionID="parent" preventAutoCollapse runningSubagents={1} />
+    );
+    const working = turnOf([prompt, launch, reply(false)]);
+    expect(working.status).toBe("working");
+    const view = renderCatalog(element(working), store, [child], execution);
+    const card = screen.getByRole("button", { name: "General subagent running: Timed inspection" });
+    console.log(
+      JSON.stringify(working.activity.map((g) => [g.id, g.kind, g.presentation, g.headerless])),
+    );
+
+    const settled = turnOf([prompt, launch, reply(true), idle]);
+    expect(settled.status).not.toBe("working");
+    console.log(
+      JSON.stringify(settled.activity.map((g) => [g.id, g.kind, g.presentation, g.headerless])),
+    );
+    view.rerender(
+      <QueryClientProvider client={view.queryClient}>
+        <Provider store={store}>{element(settled)}</Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Waiting for 1 subagent" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "General subagent running: Timed inspection" })).toBe(
+      card,
+    );
+    expect(card.isConnected).toBe(true);
   });
 });

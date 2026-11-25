@@ -44,6 +44,7 @@ import type {
   AppearanceUpdateResult,
   NativeSystemAppearance,
 } from "./appearance-contract";
+import type { TerminalFileLink } from "./terminal-file-url";
 import type { WindowChromeTier } from "./window-chrome";
 import type { SessionTriageCommand, SessionTriageSnapshot } from "./session-triage-contract";
 import type {
@@ -66,6 +67,7 @@ import type { PalotToolsFocus } from "./palot-tools-contract";
 import type { PalotVoiceApi } from "./voice-contract";
 import { GUEST_LINKS_IPC_CHANNELS, type PalotGuestLinksApi } from "./guest-links-contract";
 import { SPELLCHECK_IPC_CHANNELS, type PalotSpellcheckApi } from "./spellcheck-contract";
+import { PALOT_UPDATE_IPC_CHANNELS, type PalotUpdateApi } from "./palot-update-contract";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -137,9 +139,20 @@ export type OpenCodeProfileUpdateInput =
       allowPlainHttp: boolean;
     };
 
+/**
+ * How saved credentials are protected. `basic-text` is Chromium's Linux fallback when it finds
+ * no keyring: it reports encryption as available but uses a hard-coded key.
+ */
+export type OpenCodeCredentialProtection = "encrypted" | "basic-text" | "unavailable";
+
+export const WEAK_CREDENTIAL_STORAGE_MESSAGE =
+  "Palot found no system keyring, so saved passwords and tokens are only obfuscated on disk. Install or unlock a keyring such as GNOME Keyring or KWallet, then restart Palot and save them again.";
+
 export interface OpenCodeProfileSnapshot {
   activeProfileID: string;
   profiles: OpenCodeProfile[];
+  /** Included when connection settings list profiles; absent from edit results. */
+  credentialProtection?: OpenCodeCredentialProtection;
 }
 
 export interface OpenCodeProfileTestResult {
@@ -155,9 +168,51 @@ export interface OpenCodePairPayload {
   password: string;
 }
 
-export type OpenCodePairImportInput =
+export type OpenCodePairImportInput = (
   | { payload: OpenCodePairPayload; link?: never; allowPlainHttp: boolean }
-  | { link: string; payload?: never; allowPlainHttp: boolean };
+  | { link: string; payload?: never; allowPlainHttp: boolean }
+) & {
+  /** The name to save the connection under; checked with `normalizeServerName`. */
+  name?: string;
+};
+
+/** Which part of reaching another OpenCode server failed. */
+export type OpenCodeConnectionStep =
+  | "address"
+  | "tunnel"
+  | "certificate"
+  | "code"
+  | "credentials"
+  | "version"
+  | "security"
+  | "server";
+
+/** A failed connection or pairing step, said in plain words with the fix. Never holds secrets. */
+export interface OpenCodeConnectionProblem {
+  step: OpenCodeConnectionStep;
+  title: string;
+  fix: string;
+  /** The one-time code reached the server and can't be used again. */
+  codeSpent?: boolean;
+}
+
+export type OpenCodePairImportResult =
+  | {
+      ok: true;
+      snapshot: OpenCodeProfileSnapshot;
+      profileID: string;
+      name: string;
+      url: string;
+      version: string;
+      /** An existing connection to the same server got the new sign-in instead of a duplicate. */
+      updated: boolean;
+    }
+  | { ok: false; problem: OpenCodeConnectionProblem };
+
+/** A saved connection checked with its own saved sign-in. */
+export type OpenCodeConnectionCheck =
+  | { ok: true; url: string; version: string; secure: boolean; supported: boolean }
+  | { ok: false; problem: OpenCodeConnectionProblem };
 
 export type OpenCodePairingInfo =
   | {
@@ -166,6 +221,8 @@ export type OpenCodePairingInfo =
       code: string;
       expiresIn: number;
       payload: string;
+      /** This machine's name as OpenCode reports it, offered as the shared server name. */
+      name: string | null;
     }
   | {
       mode: "credentials";
@@ -173,6 +230,7 @@ export type OpenCodePairingInfo =
       username: string;
       password: string;
       payload: string;
+      name: string | null;
     };
 
 export interface LocalOpenCodeServiceInfo {
@@ -684,6 +742,8 @@ export type PalotMcpConfig =
       disabled?: boolean;
       codemode?: boolean;
       timeout?: PalotMcpTimeout;
+      /** OpenCode 2.2.6+: share one connection across directories configured identically. */
+      pool?: boolean;
     }
   | {
       type: "remote";
@@ -693,6 +753,8 @@ export type PalotMcpConfig =
       disabled?: boolean;
       codemode?: boolean;
       timeout?: PalotMcpTimeout;
+      /** OpenCode 2.2.6+: share one connection across directories configured identically. */
+      pool?: boolean;
     };
 
 export interface PalotMcpTimeout {
@@ -719,6 +781,13 @@ export interface AddMcpServerInput extends McpServerInput {
 
 export interface RemoveSavedPermissionInput extends SettingsLocationInput {
   id: string;
+}
+
+/** Omitted fields keep their saved value. */
+export interface UpdateSavedPermissionInput extends SettingsLocationInput {
+  id: string;
+  action?: string;
+  resource?: string;
 }
 
 export interface ConnectIntegrationKeyInput extends SettingsLocationInput {
@@ -751,6 +820,8 @@ export interface PalotIntegrationOAuthAttempt {
   url: string;
   instructions: string;
   mode: "auto" | "code";
+  /** OpenCode 2.2.6+: an automatic attempt also accepts the redirect URL pasted from the browser. */
+  paste?: boolean;
   createdAt: number;
   expiresAt: number;
 }
@@ -796,15 +867,26 @@ export interface PalotFileAttachment {
   previewGrant?: string;
   /** Validated, bounded raster image data from OpenCode's persisted attachment bytes. */
   previewDataUrl?: string;
+  /** A `media:<hash>` reference to a raster image the server stores instead of inline bytes. */
+  previewMedia?: string;
   name: string;
   mime: string;
   size: number | null;
 }
 
+/** Files one pick, paste or drop may attach. */
+export const MAX_ATTACHMENT_COUNT = 20;
+
 export interface PalotFilePickerResult {
   files: PalotFileAttachment[];
   errors: string[];
 }
+
+/** What became of one stashed attachment when its prompt was restored. */
+export type PalotAttachmentRestore =
+  | { status: "kept" }
+  | { status: "restored"; uri: string; previewGrant?: string }
+  | { status: "missing" };
 
 export interface PalotAttachmentProgress {
   requestID: string;
@@ -817,6 +899,12 @@ export interface PalotAttachmentProgress {
 }
 
 export interface SessionExportFileInput {
+  suggestedName: string;
+  contents: string;
+}
+
+/** A text file's contents as the renderer shows them, saved wherever the user picks. */
+export interface TextFileCopyInput {
   suggestedName: string;
   contents: string;
 }
@@ -856,6 +944,8 @@ export interface PalotSession {
   archivedAt: number | null;
   cost: number | null;
   tokens: TokenUsageInfo;
+  /** The task this one was forked from. */
+  forkedFrom?: string;
   revert?: {
     messageID: string;
     partID?: string;
@@ -902,7 +992,10 @@ export interface PalotMessage {
   promotedAt?: number;
   runStartedAt?: number;
   runCompletedAt?: number;
+  /** First output Palot saw: OpenCode's recorded first token, or the first streamed delta. */
   firstTokenAt?: number;
+  /** OpenCode's `time.firstToken` for an assistant step (after 2.2.7); unset on older steps. */
+  firstTokenRecordedAt?: number;
   streamedAt?: number;
   completedAt: number | null;
   text: string | null;
@@ -957,6 +1050,8 @@ export interface PromptInput {
     path: string;
     comment: string;
     selection: { startLine: number; startChar: number; endLine: number; endChar: number };
+    /** "deletions" when the lines were removed: they number the old version of the file. */
+    side?: "additions" | "deletions";
     origin: "review";
   }[];
   files?: PalotFileAttachment[];
@@ -1206,6 +1301,7 @@ export const IPC_CHANNELS = {
   openSessionWindow: "palot:window:open-session",
   closeWindow: "palot:window:close",
   chromeTierChanged: "palot:window:chrome-tier-changed",
+  terminalFileLink: "palot:window:terminal-file-link",
   runtimeStatus: "palot:opencode:runtime-status",
   openCodeReleaseStatus: "palot:opencode:release-status",
   openCodeReleaseChannel: "palot:opencode:release-channel",
@@ -1236,6 +1332,7 @@ export const IPC_CHANNELS = {
   profilesSwitch: "palot:opencode:profiles-switch",
   pairingInfo: "palot:opencode:pairing-info",
   pairingImport: "palot:opencode:pairing-import",
+  profilesCheck: "palot:opencode:profiles-check",
   webAccessInfo: "palot:opencode:web-access-info",
   webAccessEnableTailscale: "palot:opencode:web-access-enable-tailscale",
   webAccessDisableTailscale: "palot:opencode:web-access-disable-tailscale",
@@ -1264,7 +1361,9 @@ export const IPC_CHANNELS = {
   externalOpenTargets: "palot:system:external-open-targets",
   externalOpen: "palot:system:external-open",
   pickFiles: "palot:system:pick-files",
+  attachFilePaths: "palot:system:attach-file-paths",
   saveSessionExport: "palot:system:save-session-export",
+  saveTextFileCopy: "palot:system:save-text-file-copy",
   pickSessionImport: "palot:system:pick-session-import",
   writeClipboardText: "palot:system:write-clipboard-text",
   attachClipboardImages: "palot:system:attach-clipboard-images",
@@ -1272,6 +1371,10 @@ export const IPC_CHANNELS = {
   attachmentProgress: "palot:system:attachment-progress",
   cancelAttachmentUpload: "palot:system:cancel-attachment-upload",
   attachmentPreview: "palot:system:attachment-preview",
+  persistComposerAttachments: "palot:system:persist-composer-attachments",
+  restoreComposerAttachments: "palot:system:restore-composer-attachments",
+  releaseComposerAttachments: "palot:system:release-composer-attachments",
+  sweepComposerAttachments: "palot:system:sweep-composer-attachments",
   downloadUrl: "palot:system:download-url",
   performanceSnapshot: "palot:system:performance-snapshot",
   heapSnapshots: "palot:system:heap-snapshots",
@@ -1309,6 +1412,7 @@ export const IPC_CHANNELS = {
   ...PROJECT_SCRIPTS_IPC_CHANNELS,
   ...GUEST_LINKS_IPC_CHANNELS,
   ...SPELLCHECK_IPC_CHANNELS,
+  ...PALOT_UPDATE_IPC_CHANNELS,
   events: "palot:opencode:events",
   writeClipboardImage: "palot:system:write-clipboard-image",
 } as const;
@@ -1368,6 +1472,8 @@ export interface PalotApi {
   onReducedTransparencyChanged(listener: (reduced: boolean) => void): () => void;
   getChromeTier(): Promise<WindowChromeTier>;
   onChromeTierChanged(listener: (tier: WindowChromeTier) => void): () => void;
+  /** A `file:` link a terminal in this window opened (OSC 8, Ctrl/Cmd-click). */
+  onTerminalFileLink(listener: (link: TerminalFileLink) => void): () => void;
   runtimeStatus(): Promise<OpenCodeRuntimeStatus>;
   openCodeReleaseStatus(): Promise<OpenCodeReleaseStatus>;
   setOpenCodeReleaseChannel(channel: OpenCodeReleaseChannel): Promise<OpenCodeReleaseStatus>;
@@ -1403,7 +1509,8 @@ export interface PalotApi {
   testOpenCodeProfile(input: OpenCodeProfileCreateInput): Promise<OpenCodeProfileTestResult>;
   switchOpenCodeProfile(profileID: string): Promise<OpenCodeRuntimeStatus>;
   openCodePairingInfo(): Promise<OpenCodePairingInfo>;
-  importOpenCodePairing(input: OpenCodePairImportInput): Promise<OpenCodeProfileSnapshot>;
+  importOpenCodePairing(input: OpenCodePairImportInput): Promise<OpenCodePairImportResult>;
+  checkOpenCodeProfile(profileID: string): Promise<OpenCodeConnectionCheck>;
   openCodeWebAccessInfo(): Promise<OpenCodeWebAccessInfo>;
   enableOpenCodeTailscaleAccess(): Promise<OpenCodeWebAccessInfo>;
   disableOpenCodeTailscaleAccess(): Promise<OpenCodeWebAccessInfo>;
@@ -1429,9 +1536,23 @@ export interface PalotApi {
     connectionID?: string,
   ): Promise<import("./external-open-contract").ExternalOpenResult>;
   pickFiles(connectionID?: string, requestID?: string): Promise<PalotFilePickerResult>;
+  /** The file's absolute path, or "" for a file with none, such as a pasted bitmap. */
+  pathForFile(file: File): string;
+  /**
+   * Attaches dropped or pasted files by path, exactly as if picked. The preload reads the paths
+   * from the files, so the page can only name files the user dropped, pasted or chose.
+   */
+  attachDroppedFiles(
+    files: File[],
+    connectionID: string,
+    requestID?: string,
+  ): Promise<PalotFilePickerResult>;
   saveSessionExport(input: SessionExportFileInput): Promise<string | null>;
+  /** Shows a save dialog; resolves to the chosen path, or null when cancelled. */
+  saveTextFileCopy(input: TextFileCopyInput): Promise<string | null>;
   pickSessionImport(): Promise<SessionImportFile | null>;
-  writeClipboardText(value: string): Promise<void>;
+  /** Plain text, with an HTML version beside it when given (a copied table). */
+  writeClipboardText(value: string, html?: string): Promise<void>;
   attachClipboardImages(
     images: PalotClipboardImage[],
     connectionID?: string,
@@ -1445,6 +1566,12 @@ export interface PalotApi {
   cancelAttachmentUpload(requestID: string): Promise<void>;
   onAttachmentProgress(listener: (progress: PalotAttachmentProgress) => void): () => void;
   attachmentPreview(grant: string, connectionID?: string): Promise<PalotAttachmentPreview | null>;
+  /** Durable copies of pasted files for a stashed prompt; other URIs come back unchanged. */
+  persistComposerAttachments(uris: string[]): Promise<string[]>;
+  restoreComposerAttachments(uris: string[]): Promise<PalotAttachmentRestore[]>;
+  releaseComposerAttachments(uris: string[]): Promise<void>;
+  /** Deletes durable pasted files that none of `retainedURIs` references. */
+  sweepComposerAttachments(retainedURIs: string[]): Promise<void>;
   downloadUrl(url: string): Promise<void>;
   performanceSnapshot(): Promise<PalotPerformanceSnapshot>;
   /** Capture locally, or reveal a capture owned by this window without accepting a file path. */
@@ -1470,7 +1597,12 @@ export interface PalotApi {
   openDesktopNotificationSystemSettings(): Promise<void>;
   sendDesktopTestNotification(): Promise<void>;
   takeOpenTarget(): Promise<PalotOpenTarget | null>;
-  openSessionWindow(sessionID: string, connectionID?: string): Promise<void>;
+  /** `background` shows the window without taking focus from this one. */
+  openSessionWindow(
+    sessionID: string,
+    connectionID?: string,
+    options?: { background?: boolean },
+  ): Promise<void>;
   closeWindow(): Promise<void>;
   onOpenTargetRequested(listener: (target: PalotOpenTarget) => void): () => void;
   loadSessionTriage(profileID: string): Promise<SessionTriageSnapshot>;
@@ -1498,5 +1630,7 @@ export interface PalotApi {
   readonly voice: PalotVoiceApi;
   /** Spellchecking in Palot's own windows: on/off and, outside macOS, dictionaries. */
   readonly spellcheck: PalotSpellcheckApi;
+  /** Opt-in check for a newer stable Palot release. Never downloads or installs. */
+  readonly palotUpdate: PalotUpdateApi;
   writeClipboardImage(png: ArrayBuffer): Promise<void>;
 }

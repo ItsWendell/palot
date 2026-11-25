@@ -4,7 +4,6 @@ import type {
   OpenCodeClient,
   OpenCodeEvent,
   PermissionRequest,
-  SessionInfo,
 } from "@opencode/client";
 import type {
   AttentionSnapshotInput,
@@ -12,6 +11,7 @@ import type {
   PalotSession,
   SessionRequestSnapshot,
 } from "../shared";
+import { mapSessionInfo } from "../shared/session-mapper";
 import { openCodeRuntime } from "./opencode-runtime";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -333,7 +333,9 @@ export class OpenCodeAttentionIndex {
         }
         this.#missingSessions.delete(sessionID);
         try {
-          return mapSession(await client.session.get({ sessionID }, { signal: this.#signal() }));
+          return mapSessionInfo(
+            await client.session.get({ sessionID }, { signal: this.#signal() }),
+          );
         } catch {
           if (epoch === this.#epoch)
             this.#missingSessions.set(sessionID, Date.now() + MISSING_SESSION_RETRY_MS);
@@ -460,41 +462,6 @@ function locationKey(location: LocationRef): string {
 
 function requestKey(type: AttentionRequest["type"], sessionID: string, requestID: string): string {
   return `${sessionID}:${type}:${requestID}`;
-}
-
-function mapSession(session: SessionInfo): PalotSession {
-  return {
-    id: session.id,
-    parentID: session.parentID ?? null,
-    projectID: session.projectID,
-    title: session.title ?? null,
-    agent: session.agent ?? null,
-    model: session.model ? { ...session.model } : null,
-    location: { ...session.location },
-    createdAt: session.time.created,
-    updatedAt: session.time.updated,
-    ...(session.time.idle === undefined ? {} : { idleAt: session.time.idle }),
-    ...(session.time.viewed === undefined ? {} : { viewedAt: session.time.viewed }),
-    ...(session.outcome ? { outcome: session.outcome } : {}),
-    archivedAt: session.time.archived ?? null,
-    cost: session.cost,
-    tokens: {
-      input: session.tokens.input,
-      output: session.tokens.output,
-      reasoning: session.tokens.reasoning,
-      cache: { ...session.tokens.cache },
-    },
-    ...(session.revert
-      ? {
-          revert: {
-            ...session.revert,
-            ...(session.revert.files
-              ? { files: session.revert.files.map((file) => ({ ...file })) }
-              : {}),
-          },
-        }
-      : {}),
-  };
 }
 
 const scopedIndexes = new Map<string, OpenCodeAttentionIndex>();

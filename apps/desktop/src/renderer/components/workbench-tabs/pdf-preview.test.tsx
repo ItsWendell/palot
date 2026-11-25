@@ -72,6 +72,32 @@ describe("PDF canvas preview", () => {
     expect(fixture.destroy).toHaveBeenCalledOnce();
   });
 
+  it("keeps the page and zoom while hidden, freeing the bitmap until it shows again", async () => {
+    const fixture = documentFixture(3);
+    const data = bytes("%PDF-1.7");
+    const view = render(<PdfPreview data={data} path="report.pdf" active />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Next page" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Zoom in" }));
+    await waitFor(() => expect(fixture.renderPage).toHaveBeenCalledTimes(3));
+    const canvas = screen.getByRole("img", { name: "PDF page 2 of report.pdf" });
+    await waitFor(() => expect(canvas.className).toContain("block"));
+    expect(canvas.getAttribute("width")).not.toBe("0");
+
+    view.rerender(<PdfPreview data={data} path="report.pdf" active={false} />);
+    expect(canvas.getAttribute("width")).toBe("0");
+    expect(screen.getByText("Page 2 of 3")).toBeTruthy();
+    expect(fixture.destroy).not.toHaveBeenCalled();
+
+    view.rerender(<PdfPreview data={data} path="report.pdf" active />);
+    // The redraw keeps the page laid out at its size, so the scroll position holds.
+    expect(canvas.className).toContain("block");
+    expect(screen.queryByText("Loading PDF preview")).toBeNull();
+    await waitFor(() => expect(fixture.renderPage).toHaveBeenCalledTimes(4));
+    expect(fixture.getPage).toHaveBeenLastCalledWith(2);
+    expect(screen.getByText("125%")).toBeTruthy();
+    expect(mocks.getDocument).toHaveBeenCalledOnce();
+  });
+
   it("cancels work on file change and unmount, ignoring stale document loads", async () => {
     let resolveFirst: ((value: ReturnType<typeof documentFixture>["document"]) => void) | undefined;
     const firstPromise = new Promise<ReturnType<typeof documentFixture>["document"]>((resolve) => {

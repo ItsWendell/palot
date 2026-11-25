@@ -449,6 +449,89 @@ describe("applyOpenCodeEvents", () => {
     expect(next[1]?.content[0]?.text).toBe("Hello world");
   });
 
+  it("applies a batch of deltas without touching other messages or the input array", () => {
+    const history = assistant("history", "Done");
+    const prompt = { ...assistant("prompt", "Explain"), type: "user" as const };
+    const input = [history, prompt, assistant("active", "Hello")];
+    const snapshot = [...input];
+    const deltas = [" brave", " new", " world"].map((delta, index) =>
+      event(
+        "session.text.delta",
+        { sessionID: "session", assistantMessageID: "active", ordinal: 0, delta },
+        10 + index,
+      ),
+    );
+
+    const next = applyOpenCodeEvents(input, "session", deltas);
+
+    expect(input).toEqual(snapshot);
+    expect(input.every((message, index) => message === snapshot[index])).toBe(true);
+    expect(next).not.toBe(input);
+    expect(next[0]).toBe(history);
+    expect(next[1]).toBe(prompt);
+    expect(next[2]).toMatchObject({
+      content: [{ text: "Hello brave new world" }],
+      text: "Hello brave new world",
+    });
+
+    // The next batch starts from the returned array without changing it.
+    const settled = [...next];
+    applyOpenCodeEvents(next, "session", [
+      event("session.text.delta", {
+        sessionID: "session",
+        assistantMessageID: "active",
+        ordinal: 0,
+        delta: "!",
+      }),
+      event("session.step.started", { sessionID: "session", assistantMessageID: "later" }, 20),
+    ]);
+    expect(next.every((message, index) => message === settled[index])).toBe(true);
+    expect(next).toHaveLength(3);
+  });
+
+  it("returns the same array when a batch changes nothing", () => {
+    const messages = [assistant("history", "Done"), assistant("active", "Hello")];
+    expect(
+      applyOpenCodeEvents(messages, "session", [
+        event("session.text.delta", {
+          sessionID: "other-session",
+          assistantMessageID: "active",
+          ordinal: 0,
+          delta: " world",
+        }),
+        event("session.text.delta", { sessionID: "session", assistantMessageID: "missing" }),
+      ]),
+    ).toBe(messages);
+  });
+
+  it("keeps message text equal to the joined text parts after appended deltas", () => {
+    const next = applyOpenCodeEvents([assistant("active", "")], "session", [
+      event("session.text.delta", {
+        sessionID: "session",
+        assistantMessageID: "active",
+        ordinal: 0,
+        delta: "First part.",
+      }),
+      event("session.tool.called", {
+        sessionID: "session",
+        assistantMessageID: "active",
+        id: "read-1",
+        name: "read",
+        input: { path: "a.ts" },
+      }),
+      ...["Second", " part."].map((delta, index) =>
+        event(
+          "session.text.delta",
+          { sessionID: "session", assistantMessageID: "active", ordinal: 1, delta },
+          10 + index,
+        ),
+      ),
+    ]);
+    const parts = next[0]!.content.filter((part) => part.type === "text");
+    expect(parts.map((part) => part.text)).toEqual(["First part.", "Second part."]);
+    expect(next[0]?.text).toBe("First part.Second part.");
+  });
+
   it("uses the terminal text snapshot without duplicating prior deltas", () => {
     const next = applyOpenCodeEvents([assistant("active", "Hello")], "session", [
       event("session.text.delta", {
@@ -465,6 +548,27 @@ describe("applyOpenCodeEvents", () => {
       }),
     ]);
     expect(next[0]?.content[0]?.text).toBe("Hello world");
+  });
+
+  it("keeps the provider phase a text part ends with and the files a step changed", () => {
+    const next = applyOpenCodeEvents([assistant("active", "Done")], "session", [
+      event("session.text.ended", {
+        sessionID: "session",
+        assistantMessageID: "active",
+        ordinal: 0,
+        text: "Done",
+        native: { phase: "final_answer" },
+      }),
+      event("session.step.ended", {
+        sessionID: "session",
+        assistantMessageID: "active",
+        finish: "stop",
+        snapshot: "snap-end",
+        files: ["src/app.ts"],
+      }),
+    ]);
+    expect(next[0]?.content[0]?.native).toEqual({ phase: "final_answer" });
+    expect(next[0]?.data).toMatchObject({ snapshot: { end: "snap-end", files: ["src/app.ts"] } });
   });
 
   it("replaces shell progress snapshots and reconciles final output without duplication", () => {
@@ -642,6 +746,38 @@ describe("applyOpenCodeEvents", () => {
       event("session.step.streamed", { sessionID: "session", assistantMessageID: "active" }, 20),
     ]);
     expect(streamed[0]?.streamedAt).toBe(20);
+  });
+
+  it("records OpenCode's first-token event over Palot's own estimate (after 2.2.7)", () => {
+    const started = applyOpenCodeEvents([], "session", [
+      event("session.step.started", {
+        sessionID: "session",
+        assistantMessageID: "active",
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+      }),
+      event(
+        "session.step.first-token" as never,
+        { sessionID: "session", assistantMessageID: "active" },
+        3,
+      ),
+      event(
+        "session.text.delta",
+        { sessionID: "session", assistantMessageID: "active", ordinal: 0, delta: "Hi" },
+        4,
+      ),
+    ]);
+    expect(started[0]).toMatchObject({ firstTokenAt: 3, firstTokenRecordedAt: 3 });
+
+    const restarted = applyOpenCodeEvents(started, "session", [
+      event("session.step.started", {
+        sessionID: "session",
+        assistantMessageID: "active",
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+      }),
+    ]);
+    expect(restarted[0]?.firstTokenRecordedAt).toBeUndefined();
   });
 
   it("records when assistant text starts and preserves changed files", () => {
@@ -1326,6 +1462,38 @@ describe("applySessionStatusEvents", () => {
     });
     expect(busy.get("session")).toEqual({ type: "busy" });
     expect(idle.get("session")).toEqual({ type: "idle" });
+  });
+
+  it("keeps what a scheduled retry failed on, also when a plain status repeats it", () => {
+    const scheduled = applySessionStatusEvents(new Map(), [
+      event(
+        "session.retry.scheduled",
+        {
+          sessionID: "session",
+          assistantMessageID: "assistant",
+          attempt: 2,
+          at: 900,
+          error: { type: "provider.quota", message: "Limit", status: 429, retryAfterMs: 60_000 },
+        },
+        40,
+      ),
+    ]);
+    const expected = {
+      type: "retry",
+      attempt: 2,
+      message: "Limit",
+      next: 900,
+      error: { type: "provider.quota", status: 429, retryAfterMs: 60_000 },
+      scheduledAt: 40,
+    };
+    expect(scheduled.get("session")).toEqual(expected);
+    const repeated = applySessionStatusEvents(scheduled, [
+      event("session.status", {
+        sessionID: "session",
+        status: { type: "retry", attempt: 2, message: "Limit", next: 900 },
+      }),
+    ]);
+    expect(repeated.get("session")).toEqual(expected);
   });
 
   it("clears retry status as soon as the next step starts", () => {

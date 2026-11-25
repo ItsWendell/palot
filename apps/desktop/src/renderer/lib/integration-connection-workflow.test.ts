@@ -5,6 +5,7 @@ import {
   type IntegrationConnectionCallbacks,
   type IntegrationConnectionPalotAdapter,
 } from "./integration-connection-workflow";
+import type { IntegrationConnectionAttempt } from "./integration-connection-workflow";
 
 const oauth: PalotIntegrationMethod = {
   id: "browser",
@@ -387,6 +388,37 @@ describe("integration connection workflow", () => {
     await vi.waitFor(() =>
       expect(events).toEqual(["invalidate", "toast:Example connected", "close"]),
     );
+  });
+
+  it("sends a pasted redirect URL for an automatic attempt that accepts one", async () => {
+    const { workflow, palot, callbacks } = setup();
+    let attempt: IntegrationConnectionAttempt | null = null;
+    vi.mocked(callbacks.setAttempt).mockImplementation((value) => {
+      attempt = value;
+    });
+    vi.mocked(palot.connectIntegrationOAuth).mockResolvedValue({
+      attemptID: "oauth-auto",
+      url: "https://example.com/auth",
+      instructions: "",
+      mode: "auto",
+      paste: true,
+      createdAt: 1,
+      expiresAt: 2,
+    });
+
+    await workflow.start(
+      { ...location, integration, method: oauth, key: "", label: "", answer: {} },
+      callbacks,
+    );
+    expect(attempt).toMatchObject({ mode: "auto", paste: true });
+    await workflow.completeOAuth(" http://127.0.0.1:19876/callback?code=abc ", callbacks);
+
+    expect(palot.completeIntegrationOAuth).toHaveBeenCalledWith({
+      ...location,
+      integrationID: "example",
+      attemptID: "oauth-auto",
+      code: "http://127.0.0.1:19876/callback?code=abc",
+    });
   });
 
   it("cancels a pending command before closing", async () => {

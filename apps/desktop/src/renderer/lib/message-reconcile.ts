@@ -1,4 +1,4 @@
-import type { PalotMessage } from "../../shared";
+import type { JsonValue, PalotMessage, PalotMessageContent } from "../../shared";
 
 function messageTypeOrder(message: PalotMessage): number {
   if (message.type === "user") return 0;
@@ -53,21 +53,24 @@ export function reconcileMessage(
   current: PalotMessage | undefined,
   preferCurrent: boolean,
 ): PalotMessage | undefined {
-  const preferred = preferCurrent ? (current ?? server) : (server ?? current);
-  if (!preferred || !current) return preferred;
+  const chosen = preferCurrent ? (current ?? server) : (server ?? current);
+  if (!chosen || !current) return chosen;
+  const preferred = chosen === current ? chosen : withLiveToolProgress(chosen, current);
   const delivery = preferred.delivery ?? current.delivery;
   const timelineAt = current.timelineAt ?? preferred.timelineAt;
   const promotedAt = preferred.promotedAt ?? current.promotedAt;
   const runStartedAt = preferred.runStartedAt ?? current.runStartedAt;
   const runCompletedAt = preferred.runCompletedAt ?? current.runCompletedAt;
   const firstTokenAt = preferred.firstTokenAt ?? current.firstTokenAt;
+  const firstTokenRecordedAt = preferred.firstTokenRecordedAt ?? current.firstTokenRecordedAt;
   if (
     delivery === preferred.delivery &&
     timelineAt === preferred.timelineAt &&
     promotedAt === preferred.promotedAt &&
     runStartedAt === preferred.runStartedAt &&
     runCompletedAt === preferred.runCompletedAt &&
-    firstTokenAt === preferred.firstTokenAt
+    firstTokenAt === preferred.firstTokenAt &&
+    firstTokenRecordedAt === preferred.firstTokenRecordedAt
   ) {
     return preferred;
   }
@@ -79,7 +82,81 @@ export function reconcileMessage(
     ...(runStartedAt === undefined ? {} : { runStartedAt }),
     ...(runCompletedAt === undefined ? {} : { runCompletedAt }),
     ...(firstTokenAt === undefined ? {} : { firstTokenAt }),
+    ...(firstTokenRecordedAt === undefined ? {} : { firstTokenRecordedAt }),
   };
+}
+
+function emptyRecord(value: JsonValue | undefined): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0)
+  );
+}
+
+function runningState(part: PalotMessageContent | undefined): Record<string, JsonValue> | null {
+  const state = part?.state;
+  if (!state || typeof state !== "object" || Array.isArray(state)) return null;
+  return state.status === "running" ? state : null;
+}
+
+/**
+ * OpenCode does not store a running tool's progress (`session.tool.progress`, such as the calls a
+ * Code Mode script has made so far), so a fetched copy of a running call has empty metadata.
+ * Keep the progress the live events delivered until the call settles.
+ */
+export function withLiveToolProgress(
+  server: PalotMessage,
+  current: PalotMessage | undefined,
+): PalotMessage {
+  if (!current) return server;
+  let content: PalotMessageContent[] | null = null;
+  server.content.forEach((part, index) => {
+    if (!part.id) return;
+    const state = runningState(part);
+    if (!state) {
+      // A script moved to the background: keep the calls the live events showed.
+      const settled = recordState(part);
+      const previous = recordState(current.content.find((candidate) => candidate.id === part.id));
+      if (!settled || !previous) return;
+      const metadata = withRetainedScriptCalls(previous.metadata, settled.metadata);
+      if (metadata === settled.metadata || metadata === undefined) return;
+      content ??= [...server.content];
+      content[index] = { ...part, state: { ...settled, metadata } };
+      return;
+    }
+    if (!emptyRecord(state.metadata)) return;
+    const live = runningState(current.content.find((candidate) => candidate.id === part.id));
+    if (!live || emptyRecord(live.metadata)) return;
+    content ??= [...server.content];
+    content[index] = { ...part, state: { ...state, metadata: live.metadata! } };
+  });
+  return content ? { ...server, content } : server;
+}
+
+function recordState(part: PalotMessageContent | undefined): Record<string, JsonValue> | null {
+  const state = part?.state;
+  return state && typeof state === "object" && !Array.isArray(state) ? state : null;
+}
+
+/**
+ * OpenCode drops the calls (`toolCalls`) a Code Mode script made once it moves the script to the
+ * background (`jobID`), and reports none after. Keep the calls Palot already saw, for as long as
+ * this transcript stays loaded, so they stay rows; a reload no longer has them.
+ */
+export function withRetainedScriptCalls(
+  previous: JsonValue | undefined,
+  next: JsonValue | undefined,
+): JsonValue | undefined {
+  if (!isRecord(next) || !isRecord(previous)) return next;
+  if (typeof next.jobID !== "string") return next;
+  if (Array.isArray(next.toolCalls) && next.toolCalls.length > 0) return next;
+  if (!Array.isArray(previous.toolCalls) || previous.toolCalls.length === 0) return next;
+  return { ...next, toolCalls: previous.toolCalls };
+}
+
+function isRecord(value: JsonValue | undefined): value is Record<string, JsonValue> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function mergeMessages(

@@ -1,3 +1,5 @@
+> Historical plan from 2026-10-02; superseded. For current behaviour see [`docs/README.md`](README.md).
+
 # palot-native: Rust + GPUI implementation plan
 
 Research date: 2026-10-02; updated 2026-10-03 with user-provided visual references. Status: proposed architecture and implementation plan, not an implemented app.

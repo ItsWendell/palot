@@ -63,3 +63,23 @@ it("shows Browser access and updates its local preferences independently", async
   await user.click(screen.getByRole("switch", { name: "Show full URL" }));
   expect(store.get(browserShowFullURLAtom)).toBe(true);
 });
+
+it("offers Reset to default only on changed rows and restores the atom's default", async () => {
+  const store = createStore();
+  store.set(browserSearchEngineAtom, "bing");
+  render(
+    <QueryClientProvider client={createRendererQueryClient()}>
+      <Provider store={store}>
+        <Settings category="browser" />
+      </Provider>
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  expect(screen.queryByRole("button", { name: "Reset Show full URL to default" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Reset Search engine to default" }));
+  expect(store.get(browserSearchEngineAtom)).toBe(browserSearchEngineAtom.defaultValue);
+  expect(screen.queryByRole("button", { name: /^Reset .* to default$/ })).toBeNull();
+
+  await user.click(screen.getByRole("switch", { name: "Show full URL" }));
+  expect(screen.getByRole("button", { name: "Reset Show full URL to default" })).toBeTruthy();
+});

@@ -3,8 +3,10 @@ import type { PalotMessageContent } from "../../shared";
 import {
   DEFAULT_SESSION_PROJECTION_PREFERENCE,
   activityCategory,
+  customizedAdvancedProjectionCount,
   isSessionProjectionPreference,
   migrateSessionProjectionPreference,
+  resetAdvancedProjection,
   resolveSessionProjectionPreference,
 } from "./session-projection-policy";
 
@@ -46,6 +48,31 @@ describe("session projection policy", () => {
       resolveSessionProjectionPreference(DEFAULT_SESSION_PROJECTION_PREFERENCE).categories.read
         .presentation,
     ).toBe("grouped");
+  });
+
+  it("counts only fine-tuning values that differ from the chosen preset", () => {
+    const preference = {
+      version: 2,
+      preset: "code-focus",
+      // Main switches and values equal to the preset are not customizations.
+      foldCompletedTurns: false,
+      showReasoningSummaries: true,
+      keepCurrentActivityExpanded: false,
+      groupSameFileReads: false,
+      categories: {
+        delegation: { presentation: "individual", foldedTurn: "pinned" },
+        read: { details: "collapsed" },
+      },
+    } as const;
+
+    expect(customizedAdvancedProjectionCount(preference)).toBe(3);
+    expect(customizedAdvancedProjectionCount({ ...preference, preset: "expanded" })).toBe(1);
+    expect(resetAdvancedProjection(preference)).toEqual({
+      version: 2,
+      preset: "code-focus",
+      foldCompletedTurns: false,
+      showReasoningSummaries: true,
+    });
   });
 
   it("migrates the legacy compact boolean", () => {

@@ -34,8 +34,14 @@ export const sshConnectionScenario: Scenario = {
     await page.getByRole("option", { name: /^Settings/ }).click();
     await page.getByRole("button", { name: "Connections", exact: true }).click();
     await page.getByRole("tab", { name: "Profiles", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Add HTTP server", exact: true })).toBeVisible();
-    const add = page.getByRole("button", { name: "Add SSH connection", exact: true });
+    const addMenu = page.getByRole("button", { name: "More ways to add a server", exact: true });
+    const add = {
+      click: async () => {
+        await addMenu.click();
+        await expect(page.getByRole("menuitem", { name: "Add by address…" })).toBeVisible();
+        await page.getByRole("menuitem", { name: "Add SSH connection…", exact: true }).click();
+      },
+    };
     await add.click();
     const dialog = page.getByRole("dialog", { name: "Add SSH connection", exact: true });
     const target = dialog.getByRole("textbox", { name: "SSH target", exact: true });

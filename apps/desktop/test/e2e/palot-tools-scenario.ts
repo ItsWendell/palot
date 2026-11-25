@@ -11,6 +11,7 @@ const FINAL = "CI check scheduled and tasks listed.";
 const SETTLED = "Settling this task when my turn ends.";
 
 export const palotToolsScenario: Scenario = {
+  tier: "core",
   description:
     "approve an agent-scheduled task through client-hosted MCP, list tasks without approval, and verify the Scheduled page",
   prompt: "Schedule a CI check tomorrow at 09:00, then list my tasks.",
@@ -34,14 +35,22 @@ export const palotToolsScenario: Scenario = {
     await expect(page.getByText(READY, { exact: true })).toBeVisible();
     // The API-created fixture has no preset rules. Change presets through the UI:
     // reselecting the already-selected Defaults option would be a no-op.
-    await page.getByRole("button", { name: "Approvals: Defaults", exact: true }).click();
-    await page.getByRole("option", { name: /^Full access\b/ }).click();
+    // Approvals are presets under the launcher's Approvals entry; Defaults shows no chip.
+    const preset = (name: string) =>
+      page
+        .getByRole("listbox", { name: "Approvals", exact: true })
+        .getByRole("option", { name: new RegExp(`^${name}`) });
+    await page.getByRole("button", { name: "Add files, commands and more", exact: true }).click();
+    await page.getByRole("option", { name: /^Approvals/ }).click();
+    await preset("Full access").click();
     await page
       .getByRole("alertdialog", { name: "Enable Full access?" })
       .getByRole("button", { name: "Enable Full access", exact: true })
       .click();
+    // The chip opens the launcher on Approvals; Defaults applies at once.
     await page.getByRole("button", { name: "Approvals: Full access", exact: true }).click();
-    await page.getByRole("option", { name: /^Defaults\b/ }).click();
+    await preset("Defaults").click();
+    await expect(page.getByRole("button", { name: /^Approvals:/ })).toHaveCount(0);
     await expect
       .poll(async () => (await client.session.get({ sessionID: session.id })).permissions)
       .toContainEqual({ action: "palot_schedule_task", resource: "*", effect: "ask" });

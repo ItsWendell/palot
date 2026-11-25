@@ -112,7 +112,7 @@ export class AutomationService {
       )
         return;
       this.recoverProfile(runtime);
-      void this.scan();
+      this.scanInBackground();
       this.changed(runtime.profileID);
     });
     this.unsubscribeDisposed = openCodeRuntime.onConnectionDisposed((connectionID) => {
@@ -123,15 +123,15 @@ export class AutomationService {
     });
     powerMonitor.on("resume", this.onResume);
     await this.events.start();
-    this.scanTimer = setInterval(() => void this.scan(), SCAN_INTERVAL_MS);
+    this.scanTimer = setInterval(() => this.scanInBackground(), SCAN_INTERVAL_MS);
     await this.recoverRuns();
     await this.scan();
     this.syncPowerSaveBlocker();
   }
 
   async shutdown(): Promise<void> {
-    if (!this.started) return;
     this.stopping = true;
+    if (!this.started) return;
     await this.events.shutdown();
     if (this.scanTimer) clearInterval(this.scanTimer);
     this.scanTimer = null;
@@ -187,6 +187,8 @@ export class AutomationService {
   }
 
   load(profileID: string): AutomationSnapshot {
+    // The database closes after this service during app shutdown; a late renderer load gets nothing.
+    if (this.stopping) return { profileID, automations: [], runs: [], webhookAddress: null };
     return {
       profileID,
       ...this.repository.load(profileID),
@@ -251,7 +253,7 @@ export class AutomationService {
       this.repository.markAllRead(command.profileID, Date.now());
     await this.events.refresh();
     this.changed(command.profileID);
-    if (command.type === "resume") void this.scan();
+    if (command.type === "resume") this.scanInBackground();
     return this.load(command.profileID);
   }
 
@@ -357,6 +359,11 @@ export class AutomationService {
       occurrenceKey: `${definition.id}:manual:${randomUUID()}`,
     });
     if (run) void this.runnerFor(profileID).execute(run.id);
+  }
+
+  /** One failed scan must not stop the schedule; the next scan tries again. */
+  private scanInBackground(): void {
+    void this.scan().catch((error) => log.error("Scheduled task scan failed", error));
   }
 
   private async scan(): Promise<void> {
@@ -601,7 +608,7 @@ export class AutomationService {
         .remove(definition.id)
         .catch((error) => log.warn("Deleted automation files were not cleaned up", { error }));
     }
-    void this.scan();
+    this.scanInBackground();
     const failure = ["failed", "interrupted", "unknown"].includes(run.state);
     const shouldNotify =
       definition.notifications === "all-runs" ||
@@ -704,7 +711,7 @@ export class AutomationService {
   }
 
   private readonly onResume = () => {
-    void this.scan();
+    this.scanInBackground();
   };
 
   private syncPowerSaveBlocker(): void {

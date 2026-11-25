@@ -82,7 +82,7 @@ describe("FinalMessageMeta", () => {
 
     const result = render(<FinalMessageMeta turn={turn} models={[]} sessionID="session" />);
 
-    expect(screen.getByTitle("Worked for 39s").textContent).toBe("39s");
+    expect(screen.getByTitle("Worked for 42s").textContent).toBe("42s");
     expect(result.container.firstElementChild?.classList.contains("opacity-0")).toBe(true);
   });
 
@@ -175,7 +175,7 @@ describe("FinalMessageMeta", () => {
     expect(onOpenDetails).toHaveBeenCalledWith("assistant-details");
   });
 
-  it("uses total-duration copy when historical final-start timing is unavailable", () => {
+  it("reads Worked for when a turn has no answer start time", () => {
     const message: PalotMessage = {
       id: "assistant",
       type: "assistant",
@@ -209,7 +209,7 @@ describe("FinalMessageMeta", () => {
 
     render(<FinalMessageMeta turn={turn} models={[]} sessionID="session" />);
 
-    expect(screen.getByTitle("Completed in 42s").textContent).toBe("42s");
+    expect(screen.getByTitle("Worked for 42s").textContent).toBe("42s");
   });
 
   it("forks the session after this response", async () => {

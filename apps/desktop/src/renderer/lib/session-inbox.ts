@@ -7,6 +7,11 @@ import type {
 } from "../../shared";
 import { isChatSession } from "./chats";
 import {
+  sessionActivityLabel,
+  sessionActivityStatus,
+  type SessionActivityStatus,
+} from "./session-activity-status";
+import {
   actionableRequestViews,
   projectForSession,
   projectName,
@@ -25,6 +30,8 @@ export interface InboxSessionView {
   section: InboxSection;
   attention: boolean;
   attentionCount: number;
+  /** What the task waits on when exactly one request blocks it. */
+  attentionStatus?: SessionActivityStatus;
   running: boolean;
   runningSince: number | null;
   failed: boolean;
@@ -36,6 +43,17 @@ export interface InboxSessionView {
   activityThrough: ActivityWatermark;
 }
 
+function sameAttentionStatus(
+  left: SessionActivityStatus | undefined,
+  right: SessionActivityStatus | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.kind !== right.kind) return false;
+  const label = sessionActivityLabel(left);
+  const other = sessionActivityLabel(right);
+  return label.label === other.label && label.detail === other.detail;
+}
+
 export function sameInboxSessionView(left: InboxSessionView, right: InboxSessionView): boolean {
   return (
     left.session === right.session &&
@@ -45,6 +63,7 @@ export function sameInboxSessionView(left: InboxSessionView, right: InboxSession
     left.section === right.section &&
     left.attention === right.attention &&
     left.attentionCount === right.attentionCount &&
+    sameAttentionStatus(left.attentionStatus, right.attentionStatus) &&
     left.running === right.running &&
     left.runningSince === right.runningSince &&
     left.failed === right.failed &&
@@ -57,35 +76,12 @@ export function sameInboxSessionView(left: InboxSessionView, right: InboxSession
   );
 }
 
-export function inboxMatchesProject(item: InboxSessionView, projectID: string | null): boolean {
-  if (projectID === null) return true;
-  if (projectID === CHATS_PROJECT_FILTER) return item.kind === "chat";
-  return item.kind !== "chat" && item.project?.id === projectID;
-}
-
-export type InboxSessionState = "attention" | "failed" | "running" | "unread" | null;
-
-export function inboxSessionState(
-  item: Pick<InboxSessionView, "attention" | "failed" | "running">,
-  unread: boolean,
-): InboxSessionState {
-  if (item.attention) return "attention";
-  if (item.running) return "running";
-  if (item.failed) return "failed";
-  return unread ? "unread" : null;
-}
-
 export interface SessionInboxSnapshot {
   pinned: InboxSessionView[];
   inbox: InboxSessionView[];
   snoozed: InboxSessionView[];
   settled: InboxSessionView[];
   nextSnoozeDeadline: number | null;
-}
-
-export interface InboxOrderingPreferences {
-  ordering: InboxOrdering;
-  unreadFirst: boolean;
 }
 
 /**
@@ -103,56 +99,6 @@ export function inboxOrderingAt(
   return sessionActivityAt(item.session);
 }
 
-/**
- * Orders Inbox and Settled tasks by the view preference. "Needs input first"
- * puts tasks needing input, then failed tasks, ahead of the newest-first key.
- */
-export function orderInboxSessions<T extends InboxSessionView>(
-  items: readonly T[],
-  preferences: InboxOrderingPreferences,
-): T[] {
-  return items.toSorted((left, right) => {
-    if (preferences.unreadFirst) {
-      const unread = Number(catalogViewIsUnread(right)) - Number(catalogViewIsUnread(left));
-      if (unread !== 0) return unread;
-    }
-    if (preferences.ordering === "attention") {
-      const attention =
-        Number(right.attention) - Number(left.attention) ||
-        Number(right.failed) - Number(left.failed);
-      if (attention !== 0) return attention;
-    }
-    const activity =
-      preferences.ordering === "oldest"
-        ? inboxOrderingAt(left) - inboxOrderingAt(right)
-        : inboxOrderingAt(right) - inboxOrderingAt(left);
-    return activity || left.session.id.localeCompare(right.session.id);
-  });
-}
-
-/**
- * Orders one inbox section. Pinned keeps the most recently pinned first and
- * Snoozed keeps the next wake first, whatever the view ordering.
- */
-export function orderInboxSection<T extends InboxSessionView>(
-  section: InboxSection,
-  items: readonly T[],
-  preferences: InboxOrderingPreferences,
-): T[] {
-  if (section === "pinned") return items.toSorted(comparePinned);
-  if (section === "snoozed") return items.toSorted(compareSnoozed);
-  return orderInboxSessions(items, preferences);
-}
-
-/** Splits an ordered task list into its sections, preserving the order. */
-export function groupInboxSections<T extends InboxSessionView>(
-  items: readonly T[],
-): Record<InboxSection, T[]> {
-  const result: Record<InboxSection, T[]> = { pinned: [], inbox: [], snoozed: [], settled: [] };
-  for (const item of items) result[item.section].push(item);
-  return result;
-}
-
 function comparePinned(left: InboxSessionView, right: InboxSessionView): number {
   return (
     (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0) || left.session.id.localeCompare(right.session.id)
@@ -166,17 +112,18 @@ function compareSnoozed(left: InboxSessionView, right: InboxSessionView): number
   );
 }
 
-function catalogViewIsUnread(item: InboxSessionView): boolean {
-  const idleAt = item.session.idleAt;
-  return (
-    idleAt !== undefined && (item.session.viewedAt === undefined || item.session.viewedAt < idleAt)
-  );
-}
-
 /** OpenCode's start of the current run: `time.busy`, while it is newer than the last idle. */
 export function serverRunStart(session: Pick<PalotSession, "busyAt" | "idleAt">): number | null {
   const { busyAt, idleAt } = session;
   return busyAt !== undefined && (idleAt === undefined || busyAt > idleAt) ? busyAt : null;
+}
+
+function pendingSubagentReport(snapshot: SessionRequestSnapshot | undefined): boolean {
+  return (
+    snapshot?.inbox.some(
+      (item) => item.type === "synthetic" && item.payload.metadata?.source === "subagent",
+    ) ?? false
+  );
 }
 
 export function projectSessionInbox(input: {
@@ -219,7 +166,12 @@ export function projectSessionInbox(input: {
     );
     const activityThrough = latestSessionWatermark(family);
     const runningSessions = family.filter((candidate) => input.activeIDs.has(candidate.id));
-    const running = runningSessions.length > 0;
+    // A task runs while any member does. A subagent's report waiting in a member's inbox is
+    // about to wake that member, so the task has not finished yet either (OpenCode after 2.2.7
+    // reports every time a subagent goes idle, and the parent then runs again).
+    const running =
+      runningSessions.length > 0 ||
+      family.some((candidate) => pendingSubagentReport(input.requests.get(candidate.id)));
     const runningSince = runningSessions.reduce<number | null>((earliest, candidate) => {
       // The server's run start survives reloads and needs no transcript; Palot's own estimate
       // (an observed start event, or the transcript) is the fallback for older servers.
@@ -232,6 +184,10 @@ export function projectSessionInbox(input: {
     }, null);
     const failed = !running && session.outcome === "failed";
     const attention = blockers.length > 0;
+    const attentionStatus =
+      blockers.length === 1
+        ? sessionActivityStatus({ turn: null, requests: blockers, runtimeStatus: null })
+        : null;
     const record = records.get(session.id);
     const chat = isChatSession(session);
     const project = chat ? null : (projectForSession(input.projects, session) ?? null);
@@ -256,6 +212,7 @@ export function projectSessionInbox(input: {
       section,
       attention,
       attentionCount: blockers.length,
+      ...(attentionStatus ? { attentionStatus } : {}),
       running,
       runningSince,
       failed,
@@ -419,7 +376,7 @@ export function latestSessionWatermark(
   );
 }
 
-export function rootSessionID(sessionID: string, sessions: PalotSession[]): string {
+export function rootSessionID(sessionID: string, sessions: readonly PalotSession[]): string {
   const byID = new Map(sessions.map((session) => [session.id, session]));
   let current = byID.get(sessionID);
   const seen = new Set([sessionID]);
@@ -459,7 +416,11 @@ export function watermarkCovers(through: ActivityWatermark, activity: ActivityWa
   );
 }
 
-function sessionFamily(root: PalotSession, children: Map<string, PalotSession[]>): PalotSession[] {
+/** A root task and every descendant in `children`, the root first. */
+export function sessionFamily(
+  root: PalotSession,
+  children: ReadonlyMap<string, readonly PalotSession[]>,
+): PalotSession[] {
   const family: PalotSession[] = [];
   const pending = [root];
   const seen = new Set<string>();

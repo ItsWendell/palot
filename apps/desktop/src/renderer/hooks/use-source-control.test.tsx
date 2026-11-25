@@ -131,6 +131,34 @@ describe("source control hooks", () => {
     expect(hook.result.current.error).toMatchObject({ code: "not-a-repository" });
   });
 
+  it("polls status only while the window has focus and catches up on return", async () => {
+    let focused = true;
+    vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
+    const gitStatus = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        root: "/repo",
+        branch: { name: "main", oid: null, upstream: null, ahead: 0, behind: 0 },
+        files: [],
+        truncated: false,
+      },
+    }));
+    install({ gitStatus });
+    renderHook(() => useGitStatus("/repo", { refetchInterval: 40 }), { wrapper: wrapper() });
+    await waitFor(() => expect(gitStatus.mock.calls.length).toBeGreaterThanOrEqual(2));
+
+    focused = false;
+    act(() => void window.dispatchEvent(new FocusEvent("blur")));
+    const whileBlurred = gitStatus.mock.calls.length;
+    await act(() => new Promise((resolve) => setTimeout(resolve, 200)));
+    expect(gitStatus).toHaveBeenCalledTimes(whileBlurred);
+
+    focused = true;
+    act(() => void window.dispatchEvent(new FocusEvent("focus")));
+    await waitFor(() => expect(gitStatus.mock.calls.length).toBeGreaterThan(whileBlurred));
+    vi.restoreAllMocks();
+  });
+
   it("fills the focused profile into mutations and refreshes the directory's status", async () => {
     const gitStatus = vi.fn(async () => ({
       ok: true as const,

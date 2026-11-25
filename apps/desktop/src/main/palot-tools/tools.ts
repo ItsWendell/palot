@@ -22,6 +22,7 @@ import type {
   SessionTriageRecord,
   SessionTriageSnapshot,
 } from "../../shared";
+import { createFamilyCompletionTracker } from "../../shared/family-completion";
 import {
   isFullAccessRuleset,
   PALOT_TOOL_APPROVALS,
@@ -38,6 +39,7 @@ import type {
   PalotSourceControlApi,
   SourceControlResult,
 } from "../../shared/source-control-contract";
+import { cutHead } from "../../shared/text-cut";
 
 export interface PalotToolContext {
   profileID: string;
@@ -222,59 +224,64 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
   };
 
   /**
-   * Settles a task once its running turn succeeds, as T3 Code does for a thread settling itself.
-   * A failed or interrupted turn stays in the Inbox; steering joins the same turn. Kept in
-   * memory: a restart or reconnect mid-turn leaves the task in the Inbox.
+   * Settles a task once its work succeeds, as T3 Code does for a thread settling itself: its
+   * running turn and every subagent under it have ended, and the task's latest run succeeded.
+   * A subagent's report can wake the task again first; that run is part of the same work. A
+   * failed or interrupted run stays in the Inbox; steering joins the same turn. Kept in memory:
+   * a restart or reconnect mid-turn leaves the task in the Inbox.
    */
-  const settleAfterTurn = (taskID: string) => {
+  const settleAfterTurn = async (taskID: string) => {
     const token = Symbol(taskID);
     scheduling.settleAfterTurn.set(taskID, token);
     const current = () => scheduling.settleAfterTurn.get(taskID) === token;
+    const parents = new Map<string, string | null>([[taskID, null]]);
     const stop = () => {
       if (current()) scheduling.settleAfterTurn.delete(taskID);
       clearTimeout(timer);
       unsubscribe();
+      tracker.reset();
       context.signal.removeEventListener("abort", stop);
     };
-    const unsubscribe = context.onEvent((event) => {
-      if (
-        (event.type !== "session.execution.succeeded" &&
-          event.type !== "session.execution.failed" &&
-          event.type !== "session.execution.interrupted") ||
-        event.data.sessionID !== taskID
-      )
-        return;
-      const settle = event.type === "session.execution.succeeded" && current();
-      stop();
-      if (!settle) return;
-      void context
-        .withClient(async (client) => {
-          const family = await familyWatermark(client, await getSession(client, taskID));
-          // Covers the turn's own end even if the read raced OpenCode's idle stamp.
-          const through =
-            family.updatedAt >= event.created
-              ? family
-              : { updatedAt: event.created, sessionID: taskID };
-          context.onTriageChanged(
-            context.triage.dispatch({ ...triageBase(taskID), type: "settle", through }),
-          );
-        })
-        .catch(() => undefined);
+    const tracker = createFamilyCompletionTracker({
+      parentOf: (sessionID) => parents.get(sessionID),
+      onFinished: (completion) => {
+        if (completion.rootID !== taskID) return;
+        const settle = completion.outcome === "succeeded" && current();
+        const endedAt = completion.eventCreatedAt ?? context.now();
+        stop();
+        if (!settle) return;
+        void context
+          .withClient(async (client) => {
+            const family = await familyWatermark(client, await getSession(client, taskID));
+            // Covers the work's own end even if the read raced OpenCode's idle stamp.
+            const through =
+              family.updatedAt >= endedAt ? family : { updatedAt: endedAt, sessionID: taskID };
+            context.onTriageChanged(
+              context.triage.dispatch({ ...triageBase(taskID), type: "settle", through }),
+            );
+          })
+          .catch(() => undefined);
+      },
     });
+    const unsubscribe = context.onEvent((event) => trackFamilyEvent(tracker, parents, event));
     const timer = setTimeout(stop, DAY);
     context.signal.addEventListener("abort", stop, { once: true });
+    await context
+      .withClient(async (client) => {
+        for (const [id, parent] of await familyParents(client, taskID)) parents.set(id, parent);
+        const active = await client.session.active();
+        tracker.seedActive(Object.keys(active).filter((id) => parents.has(id)));
+      })
+      .catch(() => undefined);
   };
 
   return [
     tool(
       "link_pull_request",
-      "Link a supported code host's pull/merge request to a task. Omit url to use its current branch. taskId defaults to this task.",
+      "Link a pull/merge request to a task. Omit url to use the task's current branch. Defaults to this task.",
       {
         taskId: { type: "string" },
-        url: {
-          type: "string",
-          description: "Pull/merge request HTTPS URL; omit for current branch.",
-        },
+        url: { type: "string", description: "HTTPS URL." },
       },
       [],
       async (args, caller, client) => {
@@ -290,7 +297,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ...(["watch_pull_request", "unwatch_pull_request"] as const).map((name) =>
       tool(
         name,
-        `${name === "watch_pull_request" ? "Watch" : "Stop watching"} a task's linked PR. Watching wakes the task on checks, reviews, comments or conflicts. Omit url for its linked PR or current branch.`,
+        `${name === "watch_pull_request" ? "Watch a task's PR to wake the task on checks, reviews, comments or conflicts." : "Stop watching a task's PR."} Omit url for its linked PR or current branch.`,
         { taskId: { type: "string" }, url: { type: "string" } },
         [],
         async (args, caller, client) => {
@@ -320,7 +327,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "create_pull_request",
-      "Create a pull/merge request on the task repository's configured code host and link it. Asks for approval under Defaults. Never pushes. Returns an existing open request if present.",
+      "Open a pull/merge request on the task's code host and link it. Never pushes; returns an existing open one if present. Asks for approval under Defaults.",
       {
         taskId: { type: "string" },
         base: { type: "string" },
@@ -342,40 +349,38 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "schedule_task",
-      [
-        "Schedule a prompt to run later in Palot, once or on a recurring schedule. Remind the user tomorrow at 9 or run a weekly report. Depending on the user's settings, they may be asked to approve it first.",
-        'target "this_task" (default) sends the prompt to the calling task when due, for follow-ups such as "check CI tomorrow at 9". "new_task" starts a fresh task in this task\'s project on each run, for recurring work such as a weekly report.',
-        "Write the prompt so it stands alone: the run may happen days later, without this conversation in view for new tasks.",
-        "Times are the user's local time unless they include an offset. Do not schedule work you can do now, and do not create a duplicate: check list_automations first.",
-      ].join("\n"),
+      'Schedule a prompt to run later in Palot, once or recurring: "remind me tomorrow at 9", follow up on CI, run a weekly report. The user may be asked to approve it. Don\'t schedule work you can do now, or a duplicate: check list_automations first.',
       {
-        name: {
+        name: { type: "string", maxLength: 200 },
+        prompt: {
           type: "string",
-          maxLength: 200,
-          description: "Short name shown in Palot's Scheduled list.",
+          description: "Must stand alone: it may run days later, and a new task lacks this chat.",
         },
-        prompt: { type: "string", description: "What to do when the task runs." },
         at: {
           type: "string",
           description:
-            'ISO 8601 date-time such as "2026-10-27T09:00". Required for a one-time task; for a recurring one it is the first run and sets the time of day.',
+            'ISO 8601 date-time such as "2026-10-27T09:00", in timezone unless it has an offset. Required for one-time; for recurring, sets the first run and time of day.',
         },
         rrule: {
           type: "string",
           description:
-            'RFC 5545 recurrence rule without DTSTART, such as "FREQ=DAILY" or "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR". Omit for a one-time task.',
+            'RFC 5545 rule without DTSTART, such as "FREQ=WEEKLY;BYDAY=MO,FR". Omit for one-time.',
         },
         timezone: { type: "string", description: "IANA time zone. Defaults to the user's." },
-        target: { type: "string", enum: ["this_task", "new_task"] },
+        target: {
+          type: "string",
+          enum: ["this_task", "new_task"],
+          description:
+            '"this_task" (default): prompt this task when due, for follow-ups. "new_task": a fresh task in this project per run, for recurring work.',
+        },
         workspace: {
           type: "string",
           enum: ["worktree", "checkout"],
-          description:
-            'For "new_task": a fresh worktree per run (default) or the project checkout.',
+          description: 'For "new_task": a fresh worktree per run (default) or the checkout.',
         },
         clientRequestId: {
           type: "string",
-          description: "Any unique string. Retrying with the same value never schedules twice.",
+          description: "Retrying with the same ID never schedules twice.",
         },
       },
       ["name", "prompt"],
@@ -434,13 +439,13 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "list_automations",
-      "List Palot's scheduled tasks with their schedule, next run and latest run. Use before scheduling, updating or deleting one.",
+      "List Palot's scheduled tasks with their schedule, next and latest run. Use before scheduling, updating or deleting one.",
       {
         scope: {
           type: "string",
           enum: ["this_task", "all"],
           description:
-            '"this_task" lists only those created by or sending to the calling task. Defaults to "all".',
+            '"this_task": only those created by or sending to this task. Defaults to "all".',
         },
       },
       [],
@@ -479,7 +484,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "update_automation",
-      'Change a scheduled task\'s name, prompt, schedule, or pause or resume it. Only the fields you pass change. The user may be asked to approve the change. To change only the time of a recurring task, pass at; pass rrule "" to make it one-time.',
+      'Change a scheduled task\'s name, prompt or schedule, or pause or resume it. Only passed fields change. To change only the time of a recurring task, pass at; pass rrule "" to make it one-time.',
       {
         automationId: { type: "string" },
         name: { type: "string", maxLength: 200 },
@@ -555,7 +560,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "delete_automation",
-      'Delete a scheduled task so it never runs again. Stop a scheduled task permanently. Tasks its earlier runs started are kept. The user may be asked to approve the deletion. To stop it temporarily, use update_automation with status "paused".',
+      'Stop a scheduled task permanently: delete it so it never runs again. Tasks from earlier runs are kept. To stop it temporarily, use update_automation with status "paused".',
       { automationId: { type: "string" } },
       ["automationId"],
       async (args) => {
@@ -570,11 +575,15 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "list_tasks",
-      "List Palot tasks, newest activity first, with whether each is running or waiting for the user. Defaults to the calling task's project. Use read_task for a task's messages.",
+      "List Palot tasks, newest activity first, with whether each is running or waiting for the user. Use read_task for a task's messages.",
       {
-        scope: { type: "string", enum: ["project", "all"], description: 'Defaults to "project".' },
+        scope: {
+          type: "string",
+          enum: ["project", "all"],
+          description: 'Defaults to "project", this task\'s project.',
+        },
         status: { type: "string", enum: ["running", "all"], description: 'Defaults to "all".' },
-        search: { type: "string", description: "Match task titles." },
+        search: { type: "string", description: "Matches titles." },
         includeArchived: { type: "boolean" },
         limit: { type: "integer", minimum: 1, maximum: 50, description: "Defaults to 20." },
       },
@@ -626,14 +635,14 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "read_task",
-      "Read a Palot task: its status, requests waiting for the user, and its latest messages. Defaults to the calling task.",
+      "Read a Palot task's status, requests waiting for the user, and latest messages. Defaults to this task.",
       {
         taskId: { type: "string" },
         messages: {
           type: "integer",
           minimum: 1,
           maximum: 20,
-          description: "How many recent messages to include. Defaults to 6.",
+          description: "Recent messages to include. Defaults to 6.",
         },
       },
       [],
@@ -691,7 +700,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "wait_tasks",
-      "Wait until the first of up to 8 other Palot tasks finishes its turn or needs the user, then report them. Returns at once if one already has. Use instead of polling read_task.",
+      "Wait until any of the given other tasks finishes its turn, subagents included, or needs the user, and report them. Returns at once if one already has. Use instead of polling read_task.",
       {
         taskIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 8 },
         timeoutSeconds: {
@@ -725,7 +734,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "settle_task",
-      "Settle a Palot task (session) as done for now, as the user does in the sidebar: it leaves the Inbox until it has new activity. Defaults to the calling task; settling the calling task takes effect when its current turn ends, unless the turn fails or is interrupted. Another task must not be running or waiting for the user: use wait_tasks first. Pass settled false to move a task back to the Inbox. Only settle a task when its work is finished or the user asked.",
+      "Settle a Palot task (session) as done for now: it leaves the Inbox until new activity. Defaults to this task, which settles once its current turn succeeds. Another task must not be running or waiting for the user: use wait_tasks first. Pass settled false to move it back to the Inbox. Only settle finished work or when the user asks.",
       { taskId: { type: "string" }, settled: { type: "boolean" } },
       [],
       async (args, sessionID, client) => {
@@ -739,10 +748,15 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
           scheduling.settleAfterTurn.delete(task.id);
           return triaged(client, sessionID, task.id, { ...base, type: "inbox" });
         }
-        const running = Boolean((await client.session.active())[task.id]);
+        const [active, family] = await Promise.all([
+          client.session.active(),
+          familyIDs(client, task.id),
+        ]);
+        // Running subagents count: they report back to the task and wake it.
+        const running = family.some((member) => Boolean(active[member]));
         // Settling now would not stick: the turn's end is new activity that unsettles it.
         if (running && task.id === caller.id) {
-          settleAfterTurn(task.id);
+          await settleAfterTurn(task.id);
           return {
             ...(await triaged(client, sessionID, task.id, null)),
             settlesWhenTurnEnds: true,
@@ -753,7 +767,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
             "task_busy",
             "That task is still running. Use wait_tasks until it finishes, then settle it.",
           );
-        for (const member of await familyIDs(client, task.id)) {
+        for (const member of family) {
           if ("waitingForUser" in (await pendingRequests(client, member)))
             throw new ToolFailure(
               "task_busy",
@@ -769,7 +783,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "snooze_task",
-      "Snooze a Palot task (session) until a time: it leaves the Inbox and returns then, or sooner if it has new activity. Defaults to the calling task. To wake it now, use settle_task with settled false.",
+      "Snooze a Palot task (session) until a time: it leaves the Inbox and returns then, or sooner on new activity. Defaults to this task. To wake it now, use settle_task with settled false.",
       {
         taskId: { type: "string" },
         until: { type: "string", description: "Future ISO 8601 date-time." },
@@ -791,7 +805,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "pin_task",
-      "Pin a Palot task (session) to the top of the Inbox, or pass pinned false to unpin it. Defaults to the calling task.",
+      "Pin a Palot task to the top of the Inbox, or pass pinned false to unpin it. Defaults to this task.",
       { taskId: { type: "string" }, pinned: { type: "boolean" } },
       [],
       async (args, sessionID, client) => {
@@ -805,7 +819,7 @@ export function palotTools(context: PalotToolContext): ClientMcpTool[] {
     ),
     tool(
       "archive_task",
-      "Archive a Palot task (session) in OpenCode, which hides it in every app, or pass archived false to restore it. Defaults to the calling task. Only archive a task when the user asked; to mark it done for now, use settle_task.",
+      "Archive a Palot task, hiding it in every OpenCode app, or pass archived false to restore it. Defaults to this task. Only archive when the user asks; to mark it done for now, use settle_task.",
       { taskId: { type: "string" }, archived: { type: "boolean" } },
       [],
       async (args, sessionID, client) => {
@@ -970,6 +984,46 @@ async function familyIDs(client: OpenCodeClient, rootID: string): Promise<string
   return family;
 }
 
+/** Each session in a task's family and its parent, for the family completion tracker. */
+async function familyParents(
+  client: OpenCodeClient,
+  rootID: string,
+): Promise<Map<string, string | null>> {
+  const parents = new Map<string, string | null>([[rootID, null]]);
+  const pending = [rootID];
+  while (pending.length && parents.size < 200) {
+    const parentID = pending.pop()!;
+    const children = await client.session.list({ parentID, limit: 100 });
+    for (const child of children.data) {
+      if (parents.has(child.id)) continue;
+      parents.set(child.id, parentID);
+      pending.push(child.id);
+    }
+  }
+  return parents;
+}
+
+/** Feeds a family tracker, learning new subagents from `session.created`. */
+function trackFamilyEvent(
+  tracker: ReturnType<typeof createFamilyCompletionTracker>,
+  parents: Map<string, string | null>,
+  event: OpenCodeEvent,
+) {
+  if (event.type === "session.created") {
+    const parentID = event.data.parentID;
+    if (parentID && parents.has(parentID)) parents.set(event.data.sessionID, parentID);
+    return;
+  }
+  tracker.handle({
+    id: event.id,
+    type: event.type,
+    data: event.data,
+    ...("created" in event && typeof event.created === "number"
+      ? { createdAt: event.created }
+      : {}),
+  });
+}
+
 /** The latest activity in a task and its subagents, which settling and snoozing cover. */
 async function familyWatermark(client: OpenCodeClient, root: SessionInfo) {
   const activity = triageActivity;
@@ -1064,11 +1118,20 @@ async function waitForTasks(
   return new Promise<string[]>((resolve, reject) => {
     const changed = new Set<string>();
     let settled = false;
+    const parents = new Map<string, string | null>(ids.map((id) => [id, null]));
+    // A task's turn is finished once its subagents are too: they report back and wake it.
+    const tracker = createFamilyCompletionTracker({
+      parentOf: (sessionID) => parents.get(sessionID),
+      onFinished: (completion) => {
+        if (targets.has(completion.rootID)) mark(completion.rootID);
+      },
+    });
     const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       unsubscribe();
+      tracker.reset();
       context.signal.removeEventListener("abort", finish);
       resolve([...changed]);
     };
@@ -1078,16 +1141,12 @@ async function waitForTasks(
       finish();
     };
     const unsubscribe = context.onEvent((event) => {
-      if (
-        event.type === "session.execution.succeeded" ||
-        event.type === "session.execution.failed" ||
-        event.type === "session.execution.interrupted"
-      ) {
-        if (targets.has(event.data.sessionID)) mark(event.data.sessionID);
-      } else if (event.type === "permission.asked") {
+      if (event.type === "permission.asked") {
         void ownerOf(event.data.sessionID).then(mark);
       } else if (event.type === "form.created") {
         void ownerOf(event.data.form.sessionID).then(mark);
+      } else {
+        trackFamilyEvent(tracker, parents, event);
       }
     });
     const timer = setTimeout(finish, timeout);
@@ -1099,13 +1158,19 @@ async function waitForTasks(
       const active = await client.session.active();
       for (const id of ids) {
         await getSession(client, id);
-        if (!active[id]) {
+        const family = await familyParents(client, id);
+        for (const [member, parent] of family) {
+          parents.set(member, parent);
+          owners.set(member, id);
+        }
+        const running = [...family.keys()].filter((member) => active[member]);
+        tracker.seedActive(running);
+        if (running.length === 0) {
           changed.add(id);
           continue;
         }
         // A subagent may already be waiting for the user; no new event would arrive.
-        for (const member of await familyIDs(client, id)) {
-          owners.set(member, id);
+        for (const member of family.keys()) {
           if ("waitingForUser" in (await pendingRequests(client, member))) {
             changed.add(id);
             break;
@@ -1118,6 +1183,7 @@ async function waitForTasks(
       settled = true;
       clearTimeout(timer);
       unsubscribe();
+      tracker.reset();
       context.signal.removeEventListener("abort", finish);
       reject(error);
     });
@@ -1179,7 +1245,7 @@ function integer(args: Args, key: string, min: number, max: number): number | un
 }
 
 function clip(value: string, max = MAX_TEXT): string {
-  return value.length > max ? `${value.slice(0, max)}…` : value;
+  return value.length > max ? `${cutHead(value, max)}…` : value;
 }
 
 function ok(value: unknown): ClientMcpToolResult {

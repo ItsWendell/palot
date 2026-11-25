@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isSessionNotFoundError } from "@opencode/client";
 import type { OpenCodeRuntimeStatus, PalotApi } from "../../shared";
+import { MEDIA_REFS_STORAGE_KEY } from "../lib/media-refs";
 import {
   isOpenCodeLocationMissing,
   openCodeClient,
@@ -15,6 +16,7 @@ afterEach(() => {
   vi.useRealTimers();
   resetOpenCodeClientForTest();
   Reflect.deleteProperty(window, "palot");
+  localStorage.removeItem(MEDIA_REFS_STORAGE_KEY);
 });
 
 describe("renderer OpenCode client transport", () => {
@@ -98,6 +100,53 @@ describe("renderer OpenCode client transport", () => {
     ]);
   });
 
+  it("asks for media references, unless switched off, on transcript and inbox reads from servers that serve them", async () => {
+    const openCodeRequest = vi.fn(
+      async (_request: { path: string; headers: Record<string, string> }) => ({
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: new TextEncoder().encode(JSON.stringify({ data: [], cursor: {} })).buffer,
+      }),
+    );
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: { openCodeRequest, cancelOpenCodeRequest: vi.fn() } as unknown as PalotApi,
+    });
+    const runtime = (connectionID: string, version: string) =>
+      ({ connectionID, profileID: `profile-${connectionID}`, version }) as OpenCodeRuntimeStatus;
+    setFocusedOpenCodeRuntime(runtime("current", "2.2.7"));
+    registerOpenCodeRuntime(runtime("old", "2.1.9"));
+    const capability = (path: string) =>
+      new Headers(
+        openCodeRequest.mock.calls.find(([request]) => request.path.startsWith(path))?.[0].headers,
+      ).get("x-opencode-capabilities") ?? undefined;
+
+    // "0" is the off switch.
+    localStorage.setItem(MEDIA_REFS_STORAGE_KEY, "0");
+    await openCodeClient().message.list({ sessionID: "s", limit: 20, order: "desc" });
+    expect(capability("/api/session/s/message")).toBeUndefined();
+    openCodeRequest.mockClear();
+    localStorage.removeItem(MEDIA_REFS_STORAGE_KEY);
+
+    await openCodeClient().message.list({ sessionID: "s", limit: 20, order: "desc" });
+    await openCodeClient().session.inbox.list({ sessionID: "s" });
+    // Export feeds session copies and files, which must stay self-contained.
+    await openCodeClient()
+      .experimental.session.export({ sessionID: "s" })
+      .catch(() => undefined);
+    expect(capability("/api/session/s/message")).toBe("experimental-media-uri");
+    expect(capability("/api/session/s/inbox")).toBe("experimental-media-uri");
+    expect(openCodeRequest.mock.calls.some(([request]) => request.path.includes("export"))).toBe(
+      true,
+    );
+    expect(capability("/api/experimental/session/s/export")).toBeUndefined();
+
+    openCodeRequest.mockClear();
+    await openCodeClient("old").message.list({ sessionID: "s", limit: 20, order: "desc" });
+    expect(capability("/api/session/s/message")).toBeUndefined();
+  });
+
   it("retains declared API error predicates and useful messages through the IPC bridge", async () => {
     const openCodeRequest = vi.fn(async (_request: { path: string }) => ({
       status: 404,
@@ -171,6 +220,38 @@ describe("renderer OpenCode client transport", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await rejected;
     expect(cancelOpenCodeRequest).toHaveBeenCalledOnce();
+  });
+
+  it("gives slow mutations their longer deadline instead of the default 30 seconds", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException("Timed out", "TimeoutError")),
+        milliseconds,
+      );
+      return controller.signal;
+    });
+    const openCodeRequest = vi.fn(() => new Promise(() => undefined));
+    const cancelOpenCodeRequest = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: { openCodeRequest, cancelOpenCodeRequest },
+    });
+    const settled = vi.fn();
+    for (const path of ["/api/session/ses_1/command", "/api/worktree"]) {
+      void openCodeFetch(`https://opencode.invalid${path}`, { method: "POST", body: "{}" }).then(
+        settled,
+        settled,
+      );
+    }
+    const read = openCodeFetch("https://opencode.invalid/api/worktree?projectID=p");
+    const readRejected = expect(read).rejects.toMatchObject({ name: "TimeoutError" });
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    await readRejected;
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(settled).toHaveBeenCalledTimes(2);
   });
 
   it("bounds slow Git reads separately and lets mutations and ordinary reads through", async () => {

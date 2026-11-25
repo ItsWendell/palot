@@ -25,6 +25,7 @@ import { Route as SettingsConfigRouteImport } from "./routes/settings.config";
 import { Route as SettingsConnectionsRouteImport } from "./routes/settings.connections";
 import { Route as SettingsDiagnosticsRouteImport } from "./routes/settings.diagnostics";
 import { Route as SettingsGeneralRouteImport } from "./routes/settings.general";
+import { Route as SettingsMachinesRouteImport } from "./routes/settings.machines";
 import { Route as SettingsModelsRouteImport } from "./routes/settings.models";
 import { Route as SettingsNotificationsRouteImport } from "./routes/settings.notifications";
 import { Route as SettingsPermissionsRouteImport } from "./routes/settings.permissions";
@@ -130,6 +131,11 @@ const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   path: "/general",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsMachinesRoute = SettingsMachinesRouteImport.update({
+  id: "/machines",
+  path: "/machines",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsModelsRoute = SettingsModelsRouteImport.update({
   id: "/models",
   path: "/models",
@@ -229,6 +235,7 @@ export interface FileRoutesByFullPath {
   "/settings/connections": typeof SettingsConnectionsRouteWithChildren;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
   "/settings/general": typeof SettingsGeneralRoute;
+  "/settings/machines": typeof SettingsMachinesRoute;
   "/settings/models": typeof SettingsModelsRoute;
   "/settings/notifications": typeof SettingsNotificationsRoute;
   "/settings/permissions": typeof SettingsPermissionsRoute;
@@ -260,6 +267,7 @@ export interface FileRoutesByTo {
   "/settings/config": typeof SettingsConfigRoute;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
   "/settings/general": typeof SettingsGeneralRoute;
+  "/settings/machines": typeof SettingsMachinesRoute;
   "/settings/models": typeof SettingsModelsRoute;
   "/settings/notifications": typeof SettingsNotificationsRoute;
   "/settings/permissions": typeof SettingsPermissionsRoute;
@@ -296,6 +304,7 @@ export interface FileRoutesById {
   "/settings/connections": typeof SettingsConnectionsRouteWithChildren;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
   "/settings/general": typeof SettingsGeneralRoute;
+  "/settings/machines": typeof SettingsMachinesRoute;
   "/settings/models": typeof SettingsModelsRoute;
   "/settings/notifications": typeof SettingsNotificationsRoute;
   "/settings/permissions": typeof SettingsPermissionsRoute;
@@ -333,6 +342,7 @@ export interface FileRouteTypes {
     | "/settings/connections"
     | "/settings/diagnostics"
     | "/settings/general"
+    | "/settings/machines"
     | "/settings/models"
     | "/settings/notifications"
     | "/settings/permissions"
@@ -364,6 +374,7 @@ export interface FileRouteTypes {
     | "/settings/config"
     | "/settings/diagnostics"
     | "/settings/general"
+    | "/settings/machines"
     | "/settings/models"
     | "/settings/notifications"
     | "/settings/permissions"
@@ -399,6 +410,7 @@ export interface FileRouteTypes {
     | "/settings/connections"
     | "/settings/diagnostics"
     | "/settings/general"
+    | "/settings/machines"
     | "/settings/models"
     | "/settings/notifications"
     | "/settings/permissions"
@@ -550,6 +562,13 @@ declare module "@tanstack/react-router" {
       path: "/general";
       fullPath: "/settings/general";
       preLoaderRoute: typeof SettingsGeneralRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
+    "/settings/machines": {
+      id: "/settings/machines";
+      path: "/machines";
+      fullPath: "/settings/machines";
+      preLoaderRoute: typeof SettingsMachinesRouteImport;
       parentRoute: typeof SettingsRoute;
     };
     "/settings/models": {
@@ -725,6 +744,7 @@ interface SettingsRouteChildren {
   SettingsConnectionsRoute: typeof SettingsConnectionsRouteWithChildren;
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute;
   SettingsGeneralRoute: typeof SettingsGeneralRoute;
+  SettingsMachinesRoute: typeof SettingsMachinesRoute;
   SettingsModelsRoute: typeof SettingsModelsRoute;
   SettingsNotificationsRoute: typeof SettingsNotificationsRoute;
   SettingsPermissionsRoute: typeof SettingsPermissionsRoute;
@@ -746,6 +766,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsConnectionsRoute: SettingsConnectionsRouteWithChildren,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsMachinesRoute: SettingsMachinesRoute,
   SettingsModelsRoute: SettingsModelsRoute,
   SettingsNotificationsRoute: SettingsNotificationsRoute,
   SettingsPermissionsRoute: SettingsPermissionsRoute,

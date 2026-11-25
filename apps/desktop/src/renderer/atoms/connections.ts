@@ -1,17 +1,6 @@
 import { atom } from "jotai";
 import { persistedAtom } from "./persisted";
 
-/** Project IDs are server-local; collapse preferences must include their owner. */
-export const overviewProjectSectionsAtom = persistedAtom({
-  key: "connections.project-sections",
-  initialValue: {} as Record<string, boolean>,
-  validate: (value): value is Record<string, boolean> =>
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.entries(value).every(([key, open]) => key.length <= 2048 && typeof open === "boolean"),
-});
-
 const profileIDs = (value: unknown): value is string[] =>
   Array.isArray(value) &&
   value.length <= 100 &&
@@ -56,16 +45,22 @@ export const discoverProfilesAtom = atom(
   },
 );
 
+/**
+ * An explicit start (start service, version-mismatch choice) is the user asking for this
+ * connection. The overview disconnects every runtime outside the included set, so a disabled
+ * profile that was started this way must be enabled again or it stops moments later.
+ */
+export const includeStartedProfileAtom = atom(
+  null,
+  (get, set, runtime: { profileID: string; connected: boolean }) => {
+    const included = get(includedProfileIDsAtom);
+    if (!runtime.connected || included.includes(runtime.profileID)) return;
+    set(includedProfileIDsAtom, [...included, runtime.profileID]);
+  },
+);
+
 export const visibleProfileIDsAtom = persistedAtom({
   key: "connections.visible-profiles",
   initialValue: null as string[] | null,
   validate: (value): value is string[] | null => value === null || profileIDs(value),
-});
-
-/** UI-only owner-qualified project key; never forwarded to an OpenCode operation. */
-export const overviewProjectFilterAtom = persistedAtom({
-  key: "connections.project-filter",
-  initialValue: null as string | null,
-  validate: (value): value is string | null =>
-    value === null || (typeof value === "string" && value.length <= 2048),
 });

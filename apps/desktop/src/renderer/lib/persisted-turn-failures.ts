@@ -71,12 +71,13 @@ function failedStep(step: PalotMessage, idle: PalotMessage, failure: PersistedTu
   return message;
 }
 
-// A turn can fail before any step starts. The idle marker then carries the error itself.
+// A turn can fail before any step starts. A step built from the idle marker then carries the
+// error, ahead of the marker, which still ends the turn.
 function failureCarrier(idle: PalotMessage, failure: PersistedTurnFailure): PalotMessage {
   const cached = carriers.get(idle);
   if (cached) return cached;
   const message: PalotMessage = {
-    id: idle.id,
+    id: `${idle.id}:failure`,
     type: "assistant",
     createdAt: idle.createdAt,
     completedAt: idle.createdAt,
@@ -101,6 +102,7 @@ function failureCarrier(idle: PalotMessage, failure: PersistedTurnFailure): Palo
  */
 export function withPersistedTurnFailures(messages: PalotMessage[]): PalotMessage[] {
   let next: PalotMessage[] | null = null;
+  const carried: number[] = [];
   let turnStart = 0;
   for (const [index, message] of messages.entries()) {
     if (message.type !== "idle") continue;
@@ -129,7 +131,11 @@ export function withPersistedTurnFailures(messages: PalotMessage[]): PalotMessag
       next[stepIndex] = failedStep(step, message, failure);
     } else {
       next[index] = failureCarrier(message, failure);
+      carried.push(index);
     }
   }
-  return next ?? messages;
+  if (!next) return messages;
+  // Each carrier goes in ahead of its marker, so the marker still ends the turn.
+  for (const index of carried.toReversed()) next.splice(index + 1, 0, messages[index]!);
+  return next;
 }

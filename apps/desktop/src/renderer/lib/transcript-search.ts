@@ -8,6 +8,7 @@
 import type { PalotMessage, PalotMessageContent } from "../../shared";
 import type { TranscriptProjectionRow, TranscriptTurn } from "./turn-projection";
 import { isTool, messageText } from "./view-models";
+import { stripSystemUpdates } from "../../shared/system-update";
 
 /** Upper bound for counted matches; very short queries in long tasks stop here. */
 export const MAX_TRANSCRIPT_FIND_MATCHES = 5_000;
@@ -51,7 +52,9 @@ export function transcriptPartText(
     part.type === "reasoning"
   )
     return null;
-  return messageText(message, part) || null;
+  const text = messageText(message, part);
+  // Instructions OpenCode adds to a prompt are for the model; the reader sees what was typed.
+  return (message.type === "user" ? stripSystemUpdates(text) : text) || null;
 }
 
 /** Stable key that ties a searchable part to its rendered element. */

@@ -1,6 +1,7 @@
 import type { WorkbenchScope, WorkbenchState, WorkbenchTab } from "./workbench-tabs";
 import { workbenchScopeKey } from "./workbench-tabs";
 import type { ComposerDraft } from "./composer-draft";
+import { cutHead } from "../../shared/text-cut";
 
 export type BtwTab = Extract<WorkbenchTab, { kind: "btw" }>;
 
@@ -156,12 +157,7 @@ export function btwPromptFor(resource: BtwTab["resource"], exchangeID: string): 
 }
 
 function clip(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  let end = limit;
-  // Do not split a surrogate pair.
-  const code = text.charCodeAt(end - 1);
-  if (code >= 0xd800 && code <= 0xdbff) end -= 1;
-  return `${text.slice(0, end)}…`;
+  return text.length <= limit ? text : `${cutHead(text, limit)}…`;
 }
 
 /** null means a normal submission; an empty string is a BTW missing its question. */

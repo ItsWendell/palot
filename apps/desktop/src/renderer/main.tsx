@@ -21,6 +21,7 @@ import { applyAppearanceToRoot } from "./lib/appearance";
 import { hydrateAppearancePreferencesAtom, resolvedAppearanceAtom } from "./atoms/appearance";
 import { rendererStore } from "./router";
 import { prepareAppearanceFonts } from "./lib/font-loading";
+import { scheduleComposerAttachmentSweep } from "./lib/composer-attachment-sweep";
 import {
   setStreamingLatencyCollectionSource,
   streamingLatencyCursor,
@@ -114,6 +115,7 @@ async function startRenderer() {
   );
   window.palotDiagnostics = { snapshot: readDiagnosticsStatus };
   startOptionalDiagnosticsOverlayHost();
+  scheduleComposerAttachmentSweep();
 }
 
 void startRenderer().catch((error) => {

@@ -1,6 +1,5 @@
 import type { Virtualizer } from "@tanstack/react-virtual";
 import { atom, useAtomValue, useStore } from "jotai";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -24,10 +23,8 @@ import {
   type TranscriptFindResult,
 } from "../lib/transcript-search";
 import type { TranscriptProjectionRow } from "../lib/turn-projection";
-import { IconButton } from "./ui";
+import { FindBar, findStatus } from "./find-bar";
 import { Button } from "./ui/button";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "./ui/input-group";
-import { SurfaceBackdrop } from "./ui/surface-backdrop";
 
 const transcriptFindRequestAtom = atom(0);
 const transcriptTurnRequestAtom = atom<{ direction: "previous" | "next"; serial: number } | null>(
@@ -37,6 +34,13 @@ const transcriptTurnRequestAtom = atom<{ direction: "previous" | "next"; serial:
 /** Opens (or refocuses) Find in task for the task currently on screen. */
 export const openTranscriptFindAtom = atom(null, (get, set) => {
   set(transcriptFindRequestAtom, get(transcriptFindRequestAtom) + 1);
+});
+
+const transcriptJumpRequestAtom = atom(0);
+
+/** Opens Jump to message in the open task. */
+export const openTranscriptJumpAtom = atom(null, (get, set) => {
+  set(transcriptJumpRequestAtom, get(transcriptJumpRequestAtom) + 1);
 });
 
 /** Moves the open task to its previous or next user turn. */
@@ -68,18 +72,27 @@ function eventElement(event: KeyboardEvent): Element | null {
 export function useTaskViewShortcuts({
   onFind,
   onTurn,
+  onJump,
 }: {
   onFind(): void;
   onTurn(direction: "previous" | "next"): void;
+  onJump(): void;
 }) {
-  const handlers = useRef({ onFind, onTurn });
+  const handlers = useRef({ onFind, onTurn, onJump });
   useLayoutEffect(() => {
-    handlers.current = { onFind, onTurn };
+    handlers.current = { onFind, onTurn, onJump };
   });
   const findRequest = useAtomValue(transcriptFindRequestAtom);
   const turnRequest = useAtomValue(transcriptTurnRequestAtom);
+  const jumpRequest = useAtomValue(transcriptJumpRequestAtom);
   const seenFindRequest = useRef(findRequest);
   const seenTurnRequest = useRef(turnRequest);
+  const seenJumpRequest = useRef(jumpRequest);
+  useEffect(() => {
+    if (jumpRequest === seenJumpRequest.current) return;
+    seenJumpRequest.current = jumpRequest;
+    handlers.current.onJump();
+  }, [jumpRequest]);
   useEffect(() => {
     if (findRequest === seenFindRequest.current) return;
     seenFindRequest.current = findRequest;
@@ -100,17 +113,19 @@ export function useTaskViewShortcuts({
         handlers.current.onFind();
         return;
       }
+      const jump = matchesShortcut(event, shortcutKeys("task.jump"));
       const direction = matchesShortcut(event, shortcutKeys("task.turn.previous"))
         ? "previous"
         : matchesShortcut(event, shortcutKeys("task.turn.next"))
           ? "next"
           : null;
-      if (!direction) return;
+      if (!direction && !jump) return;
       const inTaskView =
         !target || target === document.body || target.closest(`[${TASK_VIEW_ATTRIBUTE}]`);
       if (!inTaskView || target?.closest(OWN_FIND_SELECTOR)) return;
       event.preventDefault();
-      handlers.current.onTurn(direction);
+      if (jump) handlers.current.onJump();
+      else if (direction) handlers.current.onTurn(direction);
     };
     // Capture runs before window-level bubble handlers that also use these keys.
     window.addEventListener("keydown", onKeyDown, true);
@@ -234,13 +249,20 @@ export function useTranscriptFind(input: TranscriptFindInput) {
     else latest.current.viewport.current?.focus({ preventScroll: true });
   }, []);
 
+  // Focus moves in the same commit that shows the bar, not a frame later: a key pressed
+  // right after Mod+F (Escape, the first letter) belongs to the bar.
+  useLayoutEffect(() => {
+    if (!open || focusRequest === 0) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusRequest, open]);
+
   useEffect(() => {
     if (!open || focusRequest === 0) return;
     const focusInput = () => {
       inputRef.current?.focus();
       inputRef.current?.select();
     };
-    const frame = requestAnimationFrame(focusInput);
     // A closing menu restores focus to its trigger after the find bar opened from it.
     const timer = window.setTimeout(() => {
       const active = document.activeElement;
@@ -251,10 +273,7 @@ export function useTranscriptFind(input: TranscriptFindInput) {
       )
         focusInput();
     }, 200);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
+    return () => window.clearTimeout(timer);
   }, [focusRequest, open]);
 
   // Highlights follow virtualizer mounts and streamed text through DOM mutations,
@@ -386,78 +405,25 @@ export function TranscriptFindBar({
   onLoadOlder(): void;
 }) {
   if (!controller.open) return null;
-  const { query, activeIndex, matchCount, truncated } = controller;
-  const searching = normalizeTranscriptQuery(query) !== "";
-  const total = truncated ? `${matchCount}+` : String(matchCount);
-  const status = !searching
-    ? ""
-    : matchCount === 0
-      ? controller.pending
-        ? ""
-        : "No results"
-      : `${activeIndex + 1} of ${total}`;
-  const findShortcut = formatShortcut(shortcutKeys("task.find"));
+  const status = findStatus({
+    searching: normalizeTranscriptQuery(controller.query) !== "",
+    matchCount: controller.matchCount,
+    activeIndex: controller.activeIndex,
+    truncated: controller.truncated,
+    pending: controller.pending,
+  });
   return (
-    <div
-      role="search"
-      aria-label="Find in task"
-      className="palot-translucent-popover absolute top-2 right-4 z-30 isolate flex w-80 max-w-[calc(100%-2rem)] flex-col rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10"
+    <FindBar
+      label="Find in task"
+      shortcut={formatShortcut(shortcutKeys("task.find"))}
+      query={controller.query}
+      status={status}
+      matchCount={controller.matchCount}
+      inputRef={controller.inputRef}
+      onQueryChange={controller.setQuery}
+      onStep={controller.step}
+      onClose={controller.closeFind}
     >
-      <SurfaceBackdrop />
-      <div className="flex items-center gap-0.5 p-1">
-        <InputGroup className="min-w-0 flex-1">
-          <InputGroupAddon aria-hidden="true">
-            <Search />
-          </InputGroupAddon>
-          <InputGroupInput
-            ref={controller.inputRef}
-            type="text"
-            value={query}
-            placeholder="Find in task"
-            aria-label="Find in task"
-            aria-keyshortcuts={findShortcut}
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(event) => controller.setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
-              if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
-                controller.closeFind();
-                return;
-              }
-              if (event.key === "Enter" && !event.altKey && !event.metaKey && !event.ctrlKey) {
-                event.preventDefault();
-                controller.step(event.shiftKey ? "previous" : "next");
-              }
-            }}
-          />
-          {status ? (
-            <InputGroupAddon align="inline-end" className="tabular-nums" aria-hidden="true">
-              {status}
-            </InputGroupAddon>
-          ) : null}
-        </InputGroup>
-        <IconButton
-          label="Previous match"
-          icon={ChevronUp}
-          size="icon-sm"
-          disabled={matchCount === 0}
-          onClick={() => controller.step("previous")}
-        />
-        <IconButton
-          label="Next match"
-          icon={ChevronDown}
-          size="icon-sm"
-          disabled={matchCount === 0}
-          onClick={() => controller.step("next")}
-        />
-        <IconButton label="Close find" icon={X} size="icon-sm" onClick={controller.closeFind} />
-      </div>
-      <span className="sr-only" role="status" aria-live="polite">
-        {status}
-      </span>
       {hasOlder ? (
         <div className="flex items-center justify-between gap-2 border-t border-foreground/10 py-0.5 pr-1 pl-2.5 text-meta text-muted-foreground">
           <span>Searching loaded messages</span>
@@ -473,6 +439,6 @@ export function TranscriptFindBar({
           </Button>
         </div>
       ) : null}
-    </div>
+    </FindBar>
   );
 }

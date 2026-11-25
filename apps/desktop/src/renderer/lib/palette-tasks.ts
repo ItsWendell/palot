@@ -3,7 +3,7 @@ import type { PalotSession } from "../../shared";
 /** Number of recent tasks reachable with Alt+1…Alt+9 and shown on the empty palette. */
 export const RECENT_TASK_LIMIT = 9;
 
-export type PaletteTaskStatus = "running" | "attention" | "unread";
+export type PaletteTaskStatus = "running" | "attention" | "failed" | "unread";
 
 /** A root task plus the connection that owns it. */
 export interface PaletteTask {

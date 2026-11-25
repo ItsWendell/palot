@@ -1,14 +1,11 @@
 /**
- * `@` suggestions for files the person already has open in the task's workbench. The active file
- * leads, then other open files; workspace search results follow without repeating them. Only
- * tabs owned by the same connection profile and location are considered.
+ * Files the person already has open in the task's workbench, for `@`: the active file leads,
+ * then other open files. Only tabs owned by the same connection profile and location count.
  */
 
 import type { LocationRef } from "@opencode/client";
 import { locationKey } from "./opencode-query";
 import type { WorkbenchContextState, WorkbenchPaneState, WorkbenchTab } from "./workbench-tabs";
-
-export const MAX_OPEN_FILE_SUGGESTIONS = 10;
 
 type FileTab = Extract<WorkbenchTab, { kind: "file" }>;
 
@@ -49,28 +46,4 @@ export function openWorkbenchFiles(
     }),
   );
   return [...new Set(active ? [active.resource.path, ...paths] : paths)];
-}
-
-/**
- * Open files matching the typed query come first, then search results that are not already
- * listed. Matching is a case-insensitive substring, like the server search's simplest case.
- */
-export function mentionFileSuggestions(
-  openFiles: readonly string[],
-  searchResults: readonly string[],
-  query: string,
-): { path: string; open: boolean }[] {
-  const needle = query.toLowerCase();
-  const open = openFiles
-    .filter((path) => path.toLowerCase().includes(needle))
-    .slice(0, MAX_OPEN_FILE_SUGGESTIONS);
-  const seen = new Set(open);
-  return [
-    ...open.map((path) => ({ path, open: true })),
-    ...searchResults.flatMap((path) => {
-      if (seen.has(path)) return [];
-      seen.add(path);
-      return [{ path, open: false }];
-    }),
-  ];
 }

@@ -115,7 +115,7 @@ export const composerPermissionsScenario: Scenario = {
       location.hash = `#/sessions/${id}`;
     }, sessionID);
     // A composer alone may still belong to the previous route.
-    await expect(page.locator(`[data-message-id="${ASSISTANT_ID}"]`)).toBeVisible();
+    await expect(page.locator(`[data-palot-response-message="${ASSISTANT_ID}"]`)).toBeVisible();
     await expectApprovals(page, "Defaults");
     const pendingCard = page.locator(`[data-palot-request-id="${requestID}"]`);
     await expect(pendingCard).toBeVisible();
@@ -147,9 +147,12 @@ export const composerPermissionsScenario: Scenario = {
     await expect(pendingCard).toBeVisible();
     await expectPending(client, sessionID, requestID);
 
+    // The chip opens the launcher on Approvals; Defaults applies at once and closes it.
     await page.getByRole("button", { name: "Approvals: Full access", exact: true }).click();
-    await page.getByRole("option", { name: /^Defaults\b/ }).click();
+    await expect(approvalsPreset(page, "Full access")).toHaveAttribute("aria-current", "true");
+    await approvalsPreset(page, "Defaults").click();
     await expectApprovals(page, "Defaults");
+    await expect(launcher(page)).toHaveCount(0);
     await expectRules(client, sessionID, PALOT_TOOL_PERMISSIONS);
     await expect(confirmation).toHaveCount(0);
 
@@ -157,16 +160,17 @@ export const composerPermissionsScenario: Scenario = {
     await client.session.update({ sessionID, permissions: CUSTOM });
     await expectApprovals(page, "Custom");
     await page.getByRole("button", { name: "Approvals: Custom", exact: true }).click();
-    // Custom rules match neither preset, so neither row is current.
-    await expect(page.getByRole("option", { name: /^Defaults\b/ })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
-    await expect(page.getByRole("option", { name: /^Full access\b/ })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
+    // Custom rules match neither preset: neither is current, and a notice says a preset
+    // replaces them.
+    await expect(
+      launcher(page).getByText("Custom session rules are active. Choosing a preset replaces them."),
+    ).toBeVisible();
+    await expect(approvalsPreset(page, "Defaults")).not.toHaveAttribute("aria-current", "true");
+    await expect(approvalsPreset(page, "Full access")).not.toHaveAttribute("aria-current", "true");
+    // Escape steps back to the launcher's root, then closes it.
     await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(launcher(page)).toHaveCount(0);
     await expectRules(client, sessionID, CUSTOM);
     await page.reload({ waitUntil: "domcontentloaded" });
     await expectApprovals(page, "Custom");
@@ -175,19 +179,25 @@ export const composerPermissionsScenario: Scenario = {
     await expectRules(client, sessionID, []);
     await expectPending(client, sessionID, requestID);
     await expect(pendingCard).toBeVisible();
-    // Only an explicit reply settles the existing request. Then inspect the ordinary toolbar.
+    // Only an explicit reply settles the existing request. Then inspect the ordinary row.
     await client.permission.reply({ sessionID, requestID, decision: "reject" });
     await expect(pendingCard).toHaveCount(0);
-    const modelTrigger = page.getByRole("button", { name: "Model: Test Model", exact: true });
+    const message = page.getByRole("textbox", { name: "Message Palot" });
+    // Defaults show no chip; model and effort share one popover.
+    await expect(page.getByRole("button", { name: /^Approvals:/ })).toHaveCount(0);
+    const modelTrigger = page.getByRole("button", { name: /^Model: Test Model, effort / });
     await modelTrigger.click();
     await expect(page.getByRole("combobox", { name: "Choose model", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(modelTrigger).toBeFocused();
-    // Reasoning is its own control, shown only because Test Model offers variants.
-    await page.getByRole("button", { name: /^Reasoning:/ }).click();
-    await page.getByRole("option", { name: "High", exact: true }).click();
-    const reasoningTrigger = page.getByRole("button", { name: "Reasoning: High", exact: true });
-    await expect(reasoningTrigger).toBeEnabled();
+    await expect(message).toBeFocused();
+    // Effort sits beside the model list because Test Model offers variants.
+    await modelTrigger.click();
+    await page.getByRole("option", { name: /^High\b/ }).click();
+    const effortTrigger = page.getByRole("button", {
+      name: "Model: Test Model, effort High",
+      exact: true,
+    });
+    await expect(effortTrigger).toBeEnabled();
     await expect
       .poll(async () => (await client.session.get({ sessionID })).model?.variant)
       .toBe("high");
@@ -199,25 +209,35 @@ export const composerPermissionsScenario: Scenario = {
       await expect
         .poll(() => page.evaluate(() => document.documentElement.style.colorScheme))
         .toBe("dark");
-      await reasoningTrigger.click();
-      await expect(page.getByRole("option", { name: "High", exact: true })).toHaveAttribute(
+      await effortTrigger.click();
+      await expect(page.getByRole("option", { name: /^High\b/ })).toHaveAttribute(
         "aria-selected",
         "true",
       );
       await page.screenshot({ path: join(runRoot, "composer-model-effort-dark.png") });
       await page.keyboard.press("Escape");
-      const trigger = page.getByRole("button", { name: "Approvals: Full access", exact: true });
-      await trigger.click();
-      await expect(page.getByRole("option", { name: /^Full access\b/ })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      await expect(page.getByRole("combobox", { name: "Choose model" })).toHaveCount(0);
+      // The chip opens the launcher on Approvals; the text field keeps focus.
+      await page.getByRole("button", { name: "Approvals: Full access", exact: true }).click();
+      await expect(approvalsPreset(page, "Full access")).toHaveAttribute("aria-current", "true");
+      await expect(message).toBeFocused();
       await page.screenshot({ path: join(runRoot, "composer-permissions-menu-dark.png") });
       await page.keyboard.press("Escape");
-      await expect(trigger).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(launcher(page)).toHaveCount(0);
+      await expect(message).toBeFocused();
       await client.session.update({ sessionID, permissions: [] });
-      await expectApprovals(page, "Defaults");
-      await openFullAccessConfirmation(page);
+      await expect(page.getByRole("button", { name: /^Approvals:/ })).toHaveCount(0);
+      await openApprovals(page);
+      // Moving the highlight onto Full access arms nothing; Enter picks it and asks first.
+      await page.keyboard.press("ArrowDown");
+      await expect(approvalsPreset(page, "Full access")).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("alertdialog")).toHaveCount(0);
+      await expectRules(client, sessionID, []);
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByRole("alertdialog", { name: "Enable Full access?", exact: true }),
+      ).toBeVisible();
       await page.screenshot({ path: join(runRoot, "composer-permissions-confirm-dark.png") });
       await page.keyboard.press("Escape");
       await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -231,17 +251,39 @@ export const composerPermissionsScenario: Scenario = {
   },
 };
 
+/** The row shows an approvals chip only when they are not Defaults. */
 async function expectApprovals(page: Page, mode: "Defaults" | "Full access" | "Custom") {
+  if (mode === "Defaults") {
+    await expect(page.getByRole("button", { name: /^Model:/ })).toBeEnabled();
+    await expect(page.getByRole("button", { name: /^Approvals:/ })).toHaveCount(0);
+    return;
+  }
   await expect(page.getByRole("button", { name: `Approvals: ${mode}`, exact: true })).toBeEnabled();
 }
 
+function launcher(page: Page) {
+  return page.getByRole("region", { name: "Add to message", exact: true });
+}
+
+/** A preset under the launcher's Approvals entry. */
+function approvalsPreset(page: Page, name: "Defaults" | "Full access") {
+  return page
+    .getByRole("listbox", { name: "Approvals", exact: true })
+    .getByRole("option", { name: new RegExp(`^${name}`) });
+}
+
+/** `+`, then the Approvals entry, which names the current mode. */
+async function openApprovals(page: Page) {
+  await page.getByRole("button", { name: "Add files, commands and more", exact: true }).click();
+  const entry = launcher(page).getByRole("option", { name: /^Approvals/ });
+  await expect(entry).toContainText("Defaults");
+  await entry.click();
+  await expect(approvalsPreset(page, "Defaults")).toHaveAttribute("aria-current", "true");
+}
+
 async function openFullAccessConfirmation(page: Page) {
-  await page.getByRole("button", { name: /^Approvals:/ }).click();
-  await expect(page.getByRole("option", { name: /^Defaults\b/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await page.getByRole("option", { name: /^Full access\b/ }).click();
+  await openApprovals(page);
+  await approvalsPreset(page, "Full access").click();
   await expect(
     page.getByRole("alertdialog", { name: "Enable Full access?", exact: true }),
   ).toBeVisible();
@@ -271,68 +313,31 @@ async function captureLayout(page: Page, runRoot: string) {
       { width: 920, height: 640 },
     ]) {
       await page.setViewportSize(size);
-      const names = [
-        /^Agent:/,
-        /^Approvals:/,
-        /^Model:/,
-        /^Reasoning:/,
-        /^Context window/,
-        /^Send message$/,
-      ];
+      const names = [/^Agent:/, /^Approvals:/, /^Model:/, /^Context window/, /^Send message$/];
       for (const name of names) await expect(page.getByRole("button", { name })).toBeInViewport();
       // One DOM snapshot avoids comparing bounds from different layout/animation frames.
       await expect
         .poll(() =>
           page.getByRole("button").evaluateAll((buttons) => {
-            const prefixes = [
-              "Agent:",
-              "Approvals:",
-              "Model:",
-              "Reasoning:",
-              "Context window",
-              "Send message",
-            ];
+            const prefixes = ["Agent:", "Approvals:", "Model:", "Context window", "Send message"];
             const boxes = prefixes.map((prefix) =>
               buttons
                 .find((button) => button.getAttribute("aria-label")?.startsWith(prefix))
                 ?.getBoundingClientRect(),
             );
             if (boxes.some((box) => !box || box.width <= 0 || box.height <= 0)) return false;
-            const [agent, approvals, model, reasoning, context, send] = boxes as DOMRect[];
-            if (!agent || !approvals || !model || !reasoning || !context || !send) return false;
-            const disjoint = boxes.every((a, index) =>
-              boxes
-                .slice(index + 1)
-                .every(
-                  (b) =>
-                    a &&
-                    b &&
-                    (a.right <= b.left + 1 ||
-                      b.right <= a.left + 1 ||
-                      a.bottom <= b.top + 1 ||
-                      b.bottom <= a.top + 1),
-                ),
-            );
+            const [agent, approvals, model, context, send] = boxes as DOMRect[];
+            if (!agent || !approvals || !model || !context || !send) return false;
             const aligned = (a: DOMRect, b: DOMRect) =>
               Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2) <= 2;
-            // Left options may wrap above the right controls at the minimum viewport.
-            // Model and reasoning stay together immediately before Context and Send.
-            const separateGroups =
-              approvals.right <= model.left + 1 ||
-              Math.max(agent.bottom, approvals.bottom) <= model.top + 1;
+            // The row never wraps: everything sits on one line, in order, without overlap.
             return (
-              disjoint &&
-              separateGroups &&
+              boxes.every((box) => aligned(box!, send)) &&
               agent.right <= approvals.left + 1 &&
-              aligned(agent, approvals) &&
-              model.right <= reasoning.left + 1 &&
-              reasoning.left - model.right <= 16 &&
-              reasoning.right <= context.left + 1 &&
-              context.left - reasoning.right <= 16 &&
-              aligned(model, reasoning) &&
-              context.right <= send.left + 1 &&
-              aligned(model, context) &&
-              aligned(context, send)
+              approvals.right <= model.left + 1 &&
+              model.right <= context.left + 1 &&
+              context.left - model.right <= 16 &&
+              context.right <= send.left + 1
             );
           }),
         )

@@ -1,5 +1,6 @@
 // Adapted from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser-pane.ts
+// See browser/UPSTREAM.md.
 import { randomUUID } from "node:crypto";
 import { NodeHttpClient } from "@effect/platform-node";
 import { Browser } from "@opencode/plugin-browser/rpc";
@@ -75,6 +76,16 @@ type BrowserEvent = PalotBrowserEvent extends infer E
     ? Omit<E, "bindingID">
     : never
   : never;
+
+/**
+ * Waits between attach attempts while the task's location may still be loading its plugins
+ * (about 8 s in total). A plugin.updated event for that location retries sooner.
+ */
+const attachRetryDelays = [250, 500, 1_000, 2_000, 4_000];
+
+function rpcErrorType(error: unknown) {
+  return error instanceof Object && "type" in error ? error.type : undefined;
+}
 
 const userActions = new Set<Browser.Action["type"]>([
   "tabs.open",
@@ -870,6 +881,31 @@ export function createBrowserPane() {
             const rpc = client.rpc(Browser.Definition);
             entry.network = yield* createBrowserNetwork({ rpc, attachment, location, partition });
             const connected = yield* Deferred.make<void>();
+            const pluginsChanged = yield* Queue.sliding<void>(1);
+            // Since OpenCode 2.2.7 RPC calls do not wait for a location's plugins, so an attach
+            // made while they load fails with rpc.unavailable, the same error as a server without
+            // the browser plugin. Retry until the window runs out, then treat it as unsupported.
+            const attach = (retry: number): ReturnType<typeof rpc.attach> =>
+              rpc.attach({ ...attachment, version: 4 }, options).pipe(
+                Effect.catchIf(
+                  (error) =>
+                    !attached &&
+                    retry < attachRetryDelays.length &&
+                    rpcErrorType(error) === "rpc.unavailable",
+                  () =>
+                    Effect.raceFirst(
+                      Effect.sleep(attachRetryDelays[retry]!).pipe(Effect.as("backoff")),
+                      Queue.take(pluginsChanged).pipe(Effect.as("plugin.updated")),
+                    ).pipe(
+                      Effect.tap((wake) =>
+                        Effect.sync(() =>
+                          console.info("Browser attachment retry", retry + 1, "after", wake),
+                        ),
+                      ),
+                      Effect.andThen(Effect.suspend(() => attach(retry + 1))),
+                    ),
+                ),
+              );
             const outbound = yield* Queue.unbounded<Effect.Effect<void>>();
             const sendRpc = (effect: Effect.Effect<unknown, unknown>) =>
               Queue.offerUnsafe(
@@ -915,6 +951,11 @@ export function createBrowserPane() {
                 Effect.gen(function* () {
                   if (event.type === "server.connected") {
                     yield* Deferred.succeed(connected, undefined);
+                    return;
+                  }
+                  if (event.type === "plugin.updated") {
+                    if (!attached && event.location?.directory === location.directory)
+                      Queue.offerUnsafe(pluginsChanged, undefined);
                     return;
                   }
                   if (
@@ -974,7 +1015,7 @@ export function createBrowserPane() {
               receive,
               Stream.fromQueue(outbound).pipe(Stream.runForEach((effect) => effect)),
               Deferred.await(connected).pipe(
-                Effect.andThen(rpc.attach({ ...attachment, version: 4 }, options)),
+                Effect.andThen(attach(0)),
                 Effect.tap((result) =>
                   Effect.sync(() => {
                     if (result === "replaced") reason = "browser.pane.replaced";
@@ -986,7 +1027,7 @@ export function createBrowserPane() {
             Effect.scoped,
             Effect.tapError((error) =>
               Effect.sync(() => {
-                const type = error instanceof Object && "type" in error ? error.type : undefined;
+                const type = rpcErrorType(error);
                 console.warn("Browser attachment failed", type ?? "unknown error");
                 if (type === "rpc.unavailable" && attached) reason = "browser.pane.suspended";
                 else if (

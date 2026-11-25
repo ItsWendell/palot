@@ -1,6 +1,7 @@
 import type { PalotFileAttachment, PalotMessage } from "../../shared";
 import { emptyComposerDraft, normalizeComposerDraft, type ComposerDraft } from "./composer-draft";
 import { composerDraftFromMessage, composerFilesFromMessage } from "./composer-restoration";
+import { promptAutomation } from "./prompt-automation";
 import { reviewCommentsFromMessage, type ReviewComment } from "./review-comments";
 
 export type ComposerMode = "normal" | "shell";
@@ -56,6 +57,8 @@ export function normalPromptHistory(messages: readonly PalotMessage[]): Composer
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
     if (message.type !== "user" || !message.text?.trim()) continue;
+    // An automation's prompt is not something you wrote; Up should not recall it.
+    if (promptAutomation(message)) continue;
     const data = message.data;
     // Recall text and mentions without the "attachments not restored" notice; context follows.
     const draft = composerDraftFromMessage({
@@ -186,4 +189,9 @@ export function swapHistoryContext<T>(
     ...next,
     ...current.filter((item) => !shownKeys.has(key(item)) && !nextKeys.has(key(item))),
   ];
+}
+
+/** The note shown when recalled or restored attachments could not come back. */
+export function attachmentsNotRestoredMessage(names: readonly string[]): string {
+  return `Not restored: ${names.join(", ")}. Reattach before sending.`;
 }

@@ -4,6 +4,7 @@ import { access } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import type { Scenario } from "./scenarios";
+import { taskRowBySession } from "./task-list.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,8 +13,6 @@ export const projectFreeChatScenario: Scenario = {
     "start a chat without a project from the sidebar, show it as a Chat with no checkout controls, then move it into a project",
   prompt: "",
   expectedModelCalls: 0,
-  // Chats refuse a server folder inside a repository, and run roots live in this checkout.
-  homeOutsideCheckout: true,
   arrange() {},
   async prepareProject({ projectDirectory }) {
     // A committed repository is a real project the chat can move into.
@@ -33,10 +32,13 @@ export const projectFreeChatScenario: Scenario = {
       { cwd: projectDirectory },
     );
   },
+  // The chat starts from the UI; the harness's fixture session gets no prompt.
+  async run() {},
   async assert(page, { client, llm, projectDirectory, runRoot }) {
     const chatRoot = join((await client.location.get()).directory, ".palot", "chats");
 
-    await page.getByRole("button", { name: "New chat", exact: true }).click();
+    await page.getByRole("button", { name: "More ways to start", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^New chat without a project/ }).click();
     const main = page.getByRole("main", { name: "New chat", exact: true });
     await expect(main.getByText("What do you want to ask?")).toBeVisible();
     await expect(main.getByRole("combobox", { name: "Task destination" })).toHaveCount(0);
@@ -66,7 +68,9 @@ export const projectFreeChatScenario: Scenario = {
     await client.experimental.session.wait({ sessionID: chat.id });
 
     // A chat reads as a Chat: no project name, checkout or branch.
-    await expect(page.getByRole("button", { name: /^Open .*, Chat, / }).first()).toBeVisible();
+    const chatRow = taskRowBySession(page, chat.id).first();
+    await expect(chatRow).toBeVisible();
+    await expect(chatRow).toHaveAttribute("aria-label", /, Chat(,|$)/);
     await expect(page.getByRole("button", { name: "Chat", exact: true })).toBeVisible();
     const composerBar = page.locator(".palot-composer-shell");
     await expect(composerBar.getByText("Checkout", { exact: true })).toHaveCount(0);
@@ -85,7 +89,8 @@ export const projectFreeChatScenario: Scenario = {
       .poll(async () => (await client.session.get({ sessionID: chat!.id })).location.directory)
       .toBe(projectDirectory);
     await expect(move).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /^Open .*, Chat, / })).toHaveCount(0);
+    await expect(chatRow).toBeVisible();
+    await expect(chatRow).not.toHaveAttribute("aria-label", /, Chat(,|$)/);
     await expect(composerBar.getByText("Checkout", { exact: true })).toBeVisible();
     await page.screenshot({ path: join(runRoot, "project-free-chat-moved.png") });
   },

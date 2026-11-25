@@ -107,14 +107,24 @@ describe("navigation visibility", () => {
     });
   });
 
-  it("persists sidebar section expansion", async () => {
-    const { sidebarSectionsAtom } = await import("./attention");
-    const store = createStore();
-
-    store.set(sidebarSectionsAtom, (current) => ({ ...current, recents: false }));
-
+  it("turns a stored Projects view into Group by: Project, once", async () => {
+    window.localStorage.setItem(
+      persistedStorageKey("ui.sidebar-mode"),
+      JSON.stringify({ version: 1, value: "project" }),
+    );
+    window.localStorage.setItem(
+      persistedStorageKey("ui.default-sidebar-mode"),
+      JSON.stringify({ version: 1, value: "remember" }),
+    );
     vi.resetModules();
-    const { sidebarSectionsAtom: restoredAtom } = await import("./attention");
-    expect(createStore().get(restoredAtom).recents).toBe(false);
+    const { inboxViewPreferencesAtom } = await import("./ui");
+    expect(createStore().get(inboxViewPreferencesAtom).grouping).toBe("project");
+    expect(window.localStorage.getItem(persistedStorageKey("ui.sidebar-mode"))).toBeNull();
+
+    // A later change sticks; the migration has nothing left to read.
+    createStore().set(inboxViewPreferencesAtom, (current) => ({ ...current, grouping: "inbox" }));
+    vi.resetModules();
+    const { inboxViewPreferencesAtom: reloaded } = await import("./ui");
+    expect(createStore().get(reloaded).grouping).toBe("inbox");
   });
 });

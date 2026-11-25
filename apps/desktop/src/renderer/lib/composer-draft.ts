@@ -4,6 +4,12 @@ import { serializeTaskMention } from "./task-mentions";
 
 export type ComposerMentionKind = "file" | "skill" | "agent" | "reference" | "task";
 
+/** The task a file mention came from (a recent output), so its chip can lead back to it. */
+export interface ComposerMentionOrigin {
+  sessionID: string;
+  title: string;
+}
+
 export interface ComposerMention {
   localID: string;
   kind: ComposerMentionKind;
@@ -12,6 +18,8 @@ export interface ComposerMention {
   path?: string;
   /** Display title captured when a task was chosen; the value remains its session ID. */
   title?: string;
+  /** A file mention picked from recent outputs: the task that produced or changed it. */
+  origin?: ComposerMentionOrigin;
   text: string;
   start: number;
   end: number;
@@ -39,7 +47,7 @@ export interface ComposerTextEdit {
 export type ComposerDiscoverySelection =
   | { kind: "command"; name: string }
   | { kind: "skill"; id: string; localID: string }
-  | { kind: "file"; path: string; localID: string }
+  | { kind: "file"; path: string; localID: string; origin?: ComposerMentionOrigin }
   | { kind: "agent"; name: string; localID: string }
   | { kind: "task"; id: string; title: string; localID: string }
   | { kind: "reference"; name: string; path: string; localID: string };
@@ -251,6 +259,7 @@ export function insertComposerSelection(
           end: query.start + displayText.length,
           ...(selection.kind === "reference" ? { path: selection.path } : {}),
           ...(selection.kind === "task" ? { title: selection.title } : {}),
+          ...(selection.kind === "file" && selection.origin ? { origin: selection.origin } : {}),
         },
       ],
     });

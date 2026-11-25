@@ -28,6 +28,11 @@ const RESPONSE = [
   `Report: \`${HOME_REPORT}\`, docs: [Palot docs](${DOCS_URL}).`,
   `![Native clipboard fixture](${IMAGE})`,
 ].join("\n");
+const QUOTED_PROMPT = "Tidy up the review fixtures.";
+const LONG_PROMPT = Array.from(
+  { length: 30 },
+  (_, index) => `Long prompt paragraph ${index + 1}.`,
+).join("\n\n");
 
 /** Reads the system clipboard by pasting into a scratch field; renderer clipboard reads are denied. */
 async function pastedClipboardText(page: Page): Promise<string> {
@@ -125,6 +130,7 @@ async function assertLinkMenus(page: Page, runRoot: string) {
 }
 
 export const transcriptFeaturesScenario: Scenario = {
+  tier: "core",
   description:
     "wrap and safely paste reply code, preview isolated HTML, and rewind a user message into the composer",
   prompt: "",
@@ -140,7 +146,7 @@ export const transcriptFeaturesScenario: Scenario = {
     const base = await client.session.create({ location: { directory: projectDirectory } });
     const start = Date.now() - 30_000;
     const messages: SessionMessageInfo[] = [
-      { id: "msg_unread_seen_user", type: "user", text: "Seen prompt", time: { created: start } },
+      { id: "msg_unread_seen_user", type: "user", text: LONG_PROMPT, time: { created: start } },
       {
         id: "msg_unread_seen_reply",
         type: "assistant",
@@ -149,6 +155,78 @@ export const transcriptFeaturesScenario: Scenario = {
         finish: "stop",
         content: [{ type: "text", text: "Seen reply" }],
         time: { created: start + 1, completed: start + 2 },
+      },
+      {
+        // What OpenCode's automation runner admits: an ordinary prompt carrying its run.
+        id: "msg_automation_user",
+        type: "user",
+        text: "Check the nightly build",
+        metadata: {
+          automation: {
+            id: "aut_nightly",
+            name: "Nightly check",
+            run: 2,
+            dueAt: start,
+            late: true,
+          },
+        },
+        time: { created: start + 3 },
+      },
+      {
+        id: "msg_automation_reply",
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "test", id: "test-model" },
+        finish: "stop",
+        content: [{ type: "text", text: "Nightly build is green" }],
+        time: { created: start + 3.5, completed: start + 4 },
+      },
+      {
+        // What Palot sends with review and browser comments: sentences, plus the stored comments.
+        id: "msg_quoted_user",
+        type: "user",
+        text: [
+          QUOTED_PROMPT,
+          "The user made the following comment regarding line 1 of tasks.md: Turn this into a real task",
+          "The user made the following comment regarding lines 12 through 18 of src/old.ts (removed lines, old version): Keep this guard",
+          'The user commented on the "button \\"Save\\"" element in browser tab "tab-1" at "http://localhost:5173/settings" (role "button"): Too tight',
+        ].join("\n"),
+        metadata: {
+          displayText: QUOTED_PROMPT,
+          comments: [
+            {
+              path: "tasks.md",
+              comment: "Turn this into a real task",
+              selection: { startLine: 1, startChar: 0, endLine: 1, endChar: 0 },
+            },
+            {
+              path: "src/old.ts",
+              comment: "Keep this guard",
+              selection: { startLine: 12, startChar: 0, endLine: 18, endChar: 0 },
+              side: "deletions",
+            },
+          ],
+          browserComments: [
+            {
+              id: "c1",
+              comment: "Too tight",
+              tabID: "tab-1",
+              url: "http://localhost:5173/settings",
+              generation: 0,
+              element: { label: 'button "Save"', selector: "button", role: "button" },
+            },
+          ],
+        },
+        time: { created: start + 4.2 },
+      },
+      {
+        id: "msg_quoted_reply",
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "test", id: "test-model" },
+        finish: "stop",
+        content: [{ type: "text", text: "Quoted reply" }],
+        time: { created: start + 4.3, completed: start + 4.4 },
       },
       {
         id: "msg_unread_new_user",
@@ -189,6 +267,51 @@ export const transcriptFeaturesScenario: Scenario = {
       page.locator('[data-message-id="msg_unread_new_user"] [data-palot-unread]'),
     ).toBeVisible();
     await page.screenshot({ path: join(runRoot, "transcript-unread.png") });
+    // An automation's prompt names its sender and is not offered for edit and resend.
+    const automationPrompt = page
+      .getByRole("article", { name: "user message" })
+      .filter({ hasText: "Check the nightly build" });
+    const attribution = automationPrompt.getByRole("button", {
+      name: "Automation · Nightly check · ran late",
+      exact: true,
+    });
+    await attribution.scrollIntoViewIfNeeded();
+    await expect(attribution).toBeVisible();
+    await automationPrompt.hover();
+    await expect(automationPrompt.getByRole("button", { name: "Copy prompt" })).toBeVisible();
+    await expect(automationPrompt.getByRole("button", { name: "Edit from here" })).toHaveCount(0);
+    await automationPrompt.screenshot({ path: join(runRoot, "transcript-automation-prompt.png") });
+    await page.screenshot({ path: join(runRoot, "transcript-automation-prompt-page.png") });
+    // Review and browser comments show as quote chips; a chip opens its file at its lines.
+    const quotedPrompt = page
+      .getByRole("article", { name: "user message" })
+      .filter({ hasText: QUOTED_PROMPT });
+    await quotedPrompt.scrollIntoViewIfNeeded();
+    await expect(quotedPrompt).not.toContainText("The user made the following comment");
+    await expect(
+      quotedPrompt.getByRole("button", {
+        name: "Open the change to src/old.ts:L12–18. Comment: Keep this guard",
+      }),
+    ).toContainText("removed");
+    await expect(
+      quotedPrompt.getByRole("button", {
+        name: 'Open button "Save" at http://localhost:5173/settings. Comment: Too tight',
+      }),
+    ).toBeVisible();
+    await quotedPrompt.screenshot({ path: join(runRoot, "transcript-quote-chips.png") });
+    await quotedPrompt
+      .getByRole("button", { name: "Open tasks.md:L1. Comment: Turn this into a real task" })
+      .click();
+    await expect(page.getByRole("tab", { name: /tasks\.md/ })).toBeVisible();
+    await page.screenshot({ path: join(runRoot, "transcript-quote-chips-page.png") });
+    // Copy prompt copies the whole prompt while the long message is collapsed.
+    const longPrompt = page
+      .getByRole("article", { name: "user message" })
+      .filter({ hasText: "Long prompt paragraph 1." });
+    await expect(longPrompt.getByRole("button", { name: "Read more", exact: true })).toBeVisible();
+    await longPrompt.hover();
+    await longPrompt.getByRole("button", { name: "Copy prompt", exact: true }).click();
+    expect(await pastedClipboardText(page)).toBe(LONG_PROMPT);
     await page.evaluate((id) => {
       location.hash = `#/sessions/${id}`;
     }, session.id);
@@ -301,7 +424,10 @@ export const transcriptFeaturesScenario: Scenario = {
     const edit = page.getByRole("button", { name: "Edit from here", exact: true }).first();
     page.once("dialog", (dialog) => dialog.accept());
     await edit.click();
-    await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(PROMPT);
+    await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveJSProperty(
+      "value",
+      PROMPT,
+    );
     await expect
       .poll(async () => (await client.session.get({ sessionID: session.id })).revert?.messageID)
       .toBeTruthy();
@@ -313,9 +439,57 @@ export const transcriptFeaturesScenario: Scenario = {
       "- [ ] File checkbox\n",
     );
     await page.screenshot({ path: join(runRoot, "transcript-edit-from-here.png") });
+
+    // A file dropped from disk attaches by path under its own name. A file the page builds has no
+    // path, so the page cannot make main read a path the user did not drop.
+    const dropped = join(runRoot, "dropped-notes.zip");
+    await writeFile(dropped, "zip");
+    await page.evaluate(() => {
+      const field = document.createElement("input");
+      field.type = "file";
+      field.id = "e2e-drop-source";
+      document.body.append(field);
+    });
+    // Playwright sends file bytes to a browser it attached to, so the file would have no path;
+    // DevTools sets a file from disk, as a file manager's drag does.
+    const devtools = await page.context().newCDPSession(page);
+    const { root } = await devtools.send("DOM.getDocument");
+    const { nodeId } = await devtools.send("DOM.querySelector", {
+      nodeId: root.nodeId,
+      selector: "#e2e-drop-source",
+    });
+    await devtools.send("DOM.setFileInputFiles", { nodeId, files: [dropped] });
+    await devtools.detach();
+    const paths = await page.evaluate(async () => {
+      const api = (globalThis as unknown as { palot: PalotApi }).palot;
+      const field = document.querySelector<HTMLInputElement>("#e2e-drop-source")!;
+      const onDisk = field.files![0]!;
+      const built = new File(["zip"], "built.zip");
+      const refused = await api
+        .attachDroppedFiles([built], (await api.runtimeStatus()).connectionID)
+        .then(
+          () => "attached",
+          (error: Error) => error.message,
+        );
+      const transfer = new DataTransfer();
+      transfer.items.add(onDisk);
+      document
+        .querySelector("main")!
+        .dispatchEvent(
+          new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }),
+        );
+      field.remove();
+      return { onDisk: api.pathForFile(onDisk), built: api.pathForFile(built), refused };
+    });
+    expect(paths).toMatchObject({ onDisk: dropped, built: "" });
+    expect(paths.refused).toContain("Attachment paths are invalid.");
+    await expect(page.getByText("dropped-notes.zip", { exact: true })).toBeVisible();
   },
   async assert(page, { llm }) {
-    await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(PROMPT);
+    await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveJSProperty(
+      "value",
+      PROMPT,
+    );
     expect(llm.scriptedCalls()).toBe(2);
   },
 };

@@ -4,6 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { measureInteraction } from "./performance.ts";
 import type { Scenario } from "./scenarios.ts";
+import { taskRow } from "./task-list.ts";
 
 const LABELS = ["ALPHA", "BETA", "GAMMA", "DELTA"] as const;
 const CHUNK_COUNT = 450;
@@ -209,8 +210,7 @@ export const interactionStreamingPerformanceScenario: Scenario = {
     }
     const navigation = page.getByRole("button", { name: /^(Show|Hide) navigation$/ });
     if ((await navigation.getAttribute("aria-pressed")) === "false") await navigation.click();
-    const sessionButton = (label: string) =>
-      page.getByRole("button", { name: new RegExp(`^Open ${title(label)}, `) });
+    const sessionButton = (label: string) => taskRow(page, title(label)).first();
     const transcript = page.getByLabel("Task transcript", { exact: true });
     // Warm both navigation directions and transcript measurement before subscribing/prompts.
     for (const label of ["BETA", "ALPHA", "BETA", "ALPHA"]) {

@@ -181,6 +181,23 @@ describe("personal bindings", () => {
     expect(isShortcutCustomized("chat.new")).toBe(false);
   });
 
+  it("binds focus regions to F6 and Shift+F6, and accepts other function keys without modifiers", () => {
+    const f6 = key({ key: "F6", code: "F6" });
+    expect(matchesShortcut(f6, shortcutKeys("focus.region.next"))).toBe(true);
+    expect(matchesShortcut(f6, shortcutKeys("focus.region.previous"))).toBe(false);
+    expect(
+      matchesShortcut(
+        key({ key: "F6", code: "F6", shiftKey: true }),
+        shortcutKeys("focus.region.previous"),
+      ),
+    ).toBe(true);
+    expect(shortcutBindingProblem("focus.region.next", ["F7"])).toBeNull();
+    expect(shortcutBindingProblem("focus.region.next", ["Shift", "F6"])).toBeNull();
+    expect(shortcutBindingProblem("focus.region.next", ["J"])).not.toBeNull();
+    setShortcutBinding("focus.region.next", ["F7"]);
+    expect(matchesShortcut(f6, shortcutKeys("focus.region.next"))).toBe(false);
+  });
+
   it("allows rebinding and clearing the terminal quote action through the shared registry", () => {
     setShortcutBinding("terminal.quote", ["Mod", "Shift", "J"]);
     expect(
@@ -272,6 +289,15 @@ describe("personal bindings", () => {
     expect(shortcutBindingProblem("task.new", ["Mod", "C"])).toMatch(/Copy/);
     expect(shortcutBindingProblem("task.new", ["Mod", "Q"], "Linux")).toBeNull();
     expect(shortcutBindingProblem("task.new", ["Mod", "Q"], "MacIntel")).toMatch(/Quit/);
+  });
+
+  it("refuses keys a locked shortcut holds instead of offering to replace it", () => {
+    expect(shortcutBindingProblem("composer.model", ["Mod", "Enter"])).toMatch(
+      /Send the other way \(steer or queue\), which can't be changed/,
+    );
+    expect(shortcutBindingProblem("composer.model", ["Mod", "S"])).toMatch(/Stash prompt/);
+    // Scopes that never receive the composer's keys stay free to use them.
+    expect(shortcutBindingProblem("changes.find", ["Mod", "Enter"])).toBeNull();
   });
 });
 

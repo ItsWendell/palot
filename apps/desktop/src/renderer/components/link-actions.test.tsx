@@ -7,7 +7,8 @@ import type { PalotApi, PalotMessage } from "../../shared";
 import { palot } from "../services/palot";
 import { LinkActionsProvider, LinkedText, type LinkActions } from "./link-actions";
 import { MarkdownContent, MarkdownWorkspaceProvider } from "./markdown-content";
-import { PendingRequests, TimelineBoundary } from "./thread";
+import { TimelineBoundary } from "./transcript/timeline-parts";
+import { SubagentRequests } from "./composer/composer-requests";
 
 const writeClipboardText = vi.fn<(value: string) => Promise<void>>();
 
@@ -335,6 +336,24 @@ describe("web link menu", () => {
   });
 });
 
+describe("email link menu", () => {
+  it("offers Copy email address for written and bare addresses", async () => {
+    installBridge();
+    renderReply(
+      "Mail [support](mailto:help%2Bpalot@example.com?subject=Hi) or ada@example.com.",
+      LOCAL,
+    );
+    openMenu(screen.getByRole("link", { name: "support" }));
+    expect(await menuItems()).toEqual(["Copy email address"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Copy email address" }));
+    await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith("help+palot@example.com"));
+
+    openMenu(screen.getByRole("link", { name: "ada@example.com" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy email address" }));
+    await waitFor(() => expect(writeClipboardText).toHaveBeenLastCalledWith("ada@example.com"));
+  });
+});
+
 describe("linkified plain text", () => {
   function wrap(children: ReactNode) {
     return (
@@ -359,50 +378,58 @@ describe("linkified plain text", () => {
     installBridge();
     render(
       wrap(
-        <PendingRequests
-          sessionID="ses_1"
-          requests={[
-            {
-              ...request,
-              id: "que_1",
-              type: "question",
-              questions: [
-                {
-                  header: "Docs",
-                  question: "Did you read https://example.com/guide before continuing?",
-                  multiple: false,
-                  custom: false,
-                  options: [{ label: "Yes" }],
-                },
-              ],
-            },
-            {
-              ...request,
-              id: "form_1",
-              type: "form",
-              title: "Connect",
-              detail: "Create a key at https://keys.example.com (needs admin).",
-              fields: [
-                {
-                  key: "token",
-                  type: "string",
-                  title: "Token",
-                  description:
-                    "Paste the token from https://keys.example.com/new, not `https://code.example`.",
-                  required: true,
-                  options: [],
-                  custom: false,
-                  when: [],
-                },
-              ],
-            },
-          ]}
-        />,
+        <>
+          <SubagentRequests
+            sessionID="ses_1"
+            requests={[
+              {
+                ...request,
+                id: "que_1",
+                type: "question",
+                questions: [
+                  {
+                    header: "Docs",
+                    question: "Did you read https://example.com/guide before continuing?",
+                    multiple: false,
+                    custom: false,
+                    options: [{ label: "Yes" }],
+                  },
+                ],
+              },
+            ]}
+          />
+          <SubagentRequests
+            sessionID="ses_1"
+            requests={[
+              {
+                ...request,
+                id: "form_1",
+                type: "form",
+                title: "Connect",
+                detail: "Create a key at https://keys.example.com (needs admin).",
+                fields: [
+                  {
+                    key: "token",
+                    type: "string",
+                    title: "Token",
+                    description:
+                      "Paste the token from https://keys.example.com/new, not `https://code.example`.",
+                    required: true,
+                    options: [],
+                    custom: false,
+                    when: [],
+                  },
+                ],
+              },
+            ]}
+          />
+        </>,
       ),
     );
     const guide = screen.getByRole("link", { name: "https://example.com/guide" });
     expect(guide.closest('[data-slot="questionnaire-title"]')).toBeTruthy();
     const form = within(screen.getByRole("region", { name: "Connect" }));
+    expect(form.getByText(/Create a key at/)).toBeTruthy();
     expect(form.getByRole("link", { name: "https://keys.example.com" })).toBeTruthy();
     expect(form.getByRole("link", { name: "https://keys.example.com/new" })).toBeTruthy();
     expect(form.queryByRole("link", { name: "https://code.example" })).toBeNull();

@@ -36,7 +36,17 @@ export function clearTranscriptHighlights(): void {
  * two paragraphs, while inline formatting and streamed text spans still match across
  * node boundaries.
  */
-export function transcriptTextRanges(elements: readonly Element[], query: string): Range[] {
+export function transcriptTextRanges(
+  elements: readonly Element[],
+  query: string,
+  options: {
+    /** Stops after this many ranges. */
+    limit?: number;
+    /** Drops a match, e.g. text the page does not show. */
+    accept?(range: Range): boolean;
+  } = {},
+): Range[] {
+  const limit = options.limit ?? Number.POSITIVE_INFINITY;
   const needle = normalizeTranscriptQuery(query);
   const ownerDocument = elements[0]?.ownerDocument;
   if (!needle || !ownerDocument) return [];
@@ -81,13 +91,18 @@ export function transcriptTextRanges(elements: readonly Element[], query: string
       nodeIndex += 1;
     return { node: nodes[nodeIndex]!, offset: offset - starts[nodeIndex]! };
   };
-  for (let at = lower.indexOf(needle); at !== -1; at = lower.indexOf(needle, at + needle.length)) {
+  for (
+    let at = lower.indexOf(needle);
+    at !== -1 && ranges.length < limit;
+    at = lower.indexOf(needle, at + needle.length)
+  ) {
     const start = locate(at, false);
     const end = locate(at + needle.length, true);
     if (start.offset > start.node.data.length || end.offset > end.node.data.length) continue;
     const range = ownerDocument.createRange();
     range.setStart(start.node, start.offset);
     range.setEnd(end.node, end.offset);
+    if (options.accept && !options.accept(range)) continue;
     ranges.push(range);
   }
   return ranges;

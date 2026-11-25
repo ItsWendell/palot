@@ -105,6 +105,17 @@ export interface GitHubGateway {
     variables?: Record<string, unknown>;
     priority: GitHubPriority;
   }): Promise<GitHubGraphQlPartial<T>>;
+  /**
+   * A REST download that GitHub answers with a redirect to signed storage, such as an Actions
+   * job log. The credential goes only to GitHub; the redirect target gets no token. Keeps the
+   * last `tailBytes` of the answer.
+   */
+  download(input: {
+    host: string;
+    path: string;
+    priority: GitHubPriority;
+    tailBytes: number;
+  }): Promise<string>;
   credential(host: string): Promise<Pick<GitHubCredential, "source" | "fingerprint">>;
   pausedUntil(host: string): number | null;
 }
@@ -169,6 +180,59 @@ export class GitHubClient implements GitHubGateway {
       if (this.etags.size > ETAG_CACHE_LIMIT) this.etags.delete(this.etags.keys().next().value!);
     }
     return { status: response.status, data, notModified: false };
+  }
+
+  async download(input: {
+    host: string;
+    path: string;
+    priority: GitHubPriority;
+    tailBytes: number;
+  }): Promise<string> {
+    const host = input.host.trim().toLowerCase();
+    const url = `${gitHubApiUrls(host).rest}/${input.path.replace(/^\/+/, "")}`;
+    const credential = await this.credentialFor(host);
+    const response = await this.send(
+      credential,
+      "core",
+      input.priority,
+      url,
+      { method: "GET", headers: { accept: "application/vnd.github+json" } },
+      "rest",
+      "manual",
+    );
+    if (response.status < 300) return tail(response.text, input.tailBytes);
+    let target: URL;
+    try {
+      target = new URL(response.headers.get("location") ?? "", url);
+    } catch {
+      throw new GitHubApiError("response", "GitHub returned an unreadable download link.");
+    }
+    if (target.protocol !== "https:")
+      throw new GitHubApiError("response", "GitHub returned an insecure download link.");
+    let download: Response;
+    try {
+      // A signed link: no credential, and errors never repeat the link itself.
+      download = await this.fetch(target.href, {
+        headers: { "user-agent": "Palot" },
+        redirect: "follow",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (cause) {
+      throw new GitHubApiError("network", "Could not download from GitHub.", { cause });
+    }
+    if (!download.ok) {
+      await download.body?.cancel().catch(() => undefined);
+      throw new GitHubApiError(
+        download.status === 404 || download.status === 410 ? "not-found" : "response",
+        `GitHub's download returned HTTP ${download.status}.`,
+        { status: download.status },
+      );
+    }
+    try {
+      return await readTail(download, input.tailBytes);
+    } catch (cause) {
+      throw new GitHubApiError("network", "Could not download from GitHub.", { cause });
+    }
   }
 
   async graphql<T>(input: {
@@ -239,6 +303,7 @@ export class GitHubClient implements GitHubGateway {
     url: string,
     init: { method: string; headers: Record<string, string>; body?: string },
     kind: "rest" | "graphql" | "graphql-partial" = "rest",
+    redirect: "error" | "manual" = "error",
   ): Promise<{ status: number; headers: Headers; text: string }> {
     const { quota } = this.transport;
     const scope = credential.fingerprint;
@@ -266,7 +331,7 @@ export class GitHubClient implements GitHubGateway {
           "user-agent": "Palot",
         },
         ...(init.body === undefined ? {} : { body: init.body }),
-        redirect: "error",
+        redirect,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       status = response.status;
@@ -323,6 +388,8 @@ export class GitHubClient implements GitHubGateway {
       );
     }
     if ((status >= 200 && status < 300) || status === 304) return { status, headers, text };
+    if (redirect === "manual" && status >= 301 && status <= 308 && headers.get("location"))
+      return { status, headers, text };
     const messages = restMessages(text);
     const summary = messages.length
       ? `GitHub returned an error: ${messages.join("; ").slice(0, 500)}`
@@ -360,6 +427,40 @@ export class GitHubClient implements GitHubGateway {
     if (next) next();
     else this.active -= 1;
   }
+}
+
+function tail(text: string, bytes: number): string {
+  const encoded = new TextEncoder().encode(text);
+  return encoded.length <= bytes ? text : decodeTail(encoded, bytes);
+}
+
+function decodeTail(bytes: Uint8Array, limit: number): string {
+  // A character cut in half at the start decodes to U+FFFD; drop it.
+  return new TextDecoder()
+    .decode(bytes.subarray(Math.max(0, bytes.length - limit)))
+    .replace(/^\uFFFD+/, "");
+}
+
+/** Reads a whole answer but holds only its last `limit` bytes. */
+async function readTail(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.length;
+    while (chunks.length > 1 && size - chunks[0]!.length >= limit) size -= chunks.shift()!.length;
+  }
+  const joined = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return decodeTail(joined, limit);
 }
 
 function parseJson(text: string): unknown {

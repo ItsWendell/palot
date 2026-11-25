@@ -10,6 +10,8 @@ import { transcriptPromptLabel, type TranscriptPrompt } from "../lib/transcript-
 import { loadPromptIndex } from "../services/opencode-resources";
 import { projectTranscriptMessages } from "./use-session-transcript";
 
+const NO_MESSAGES: PalotMessage[] = [];
+
 export function useTranscriptPrompts(input: {
   sessionID: string;
   hasOlder: boolean;
@@ -29,26 +31,41 @@ export function useTranscriptPrompts(input: {
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
-  const prompts = useMemo(() => {
-    if (!input.hasOlder || !input.firstMessage || !query.data) return input.loaded;
+  // The prompts before the loaded transcript, read from the index without adding transcript pages.
+  const olderMessages = useMemo(() => {
+    if (!input.hasOlder || !input.firstMessage || !query.data) return NO_MESSAGES;
     const seen = new Set(input.loaded.map((prompt) => prompt.messageID));
-    const older = projectTranscriptMessages(query.data.pages.flatMap((page) => page.data))
+    return projectTranscriptMessages(query.data.pages.flatMap((page) => page.data))
       .filter(
         (message) => message.type === "user" && compareMessages(message, input.firstMessage!) < 0,
       )
       .toSorted(compareMessages)
-      .flatMap((message) => {
-        if (seen.has(message.id)) return [];
+      .filter((message) => {
+        if (seen.has(message.id)) return false;
         seen.add(message.id);
-        return [{ messageID: message.id, label: transcriptPromptLabel(message) }];
+        return true;
       });
-    return [...older, ...input.loaded];
   }, [input.hasOlder, input.firstMessage, input.loaded, query.data]);
+  const prompts = useMemo(
+    () =>
+      olderMessages.length === 0
+        ? input.loaded
+        : [
+            ...olderMessages.map((message) => ({
+              messageID: message.id,
+              label: transcriptPromptLabel(message),
+            })),
+            ...input.loaded,
+          ],
+    [olderMessages, input.loaded],
+  );
   return {
     prompts,
+    olderMessages,
     earlier: {
       available: input.hasOlder && (query.hasNextPage || query.isError),
       loading: query.isFetching,
+      failed: input.hasOlder && query.isError,
       async load() {
         const result = query.isError ? await query.refetch() : await query.fetchNextPage();
         return !result.isError;

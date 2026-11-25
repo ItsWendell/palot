@@ -7,6 +7,7 @@ import { GuestLinksServer, type GuestSource } from "./server";
 import { guestRows } from "./projection";
 import { GuestPublisher } from "./publisher";
 import { openCodeLog } from "../opencode-observability";
+import { onBeforeRestart } from "../app-restart";
 
 let server: GuestLinksServer | undefined;
 let settings: Store<{ enabled: boolean }> | undefined;
@@ -106,6 +107,14 @@ export function registerGuestLinksIpc(
     handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
   ) => void,
 ) {
+  onBeforeRestart(shutdownGuestLinks);
+  void publisher
+    .removeOrphanedRoute((target) =>
+      Boolean(server?.state().shares.some((share) => new URL(share.localUrl).origin === target)),
+    )
+    .catch((error) =>
+      openCodeLog.warn("Leftover guest route cleanup failed", { error: String(error) }),
+    );
   register(GUEST_LINKS_IPC_CHANNELS.guestLinksCommand, async (_event, input) => {
     const command = v.parse(commandSchema, input);
     const host = service();

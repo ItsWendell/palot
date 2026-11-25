@@ -23,7 +23,6 @@ import {
   Search,
   Server,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   Sun,
   Trash2,
@@ -48,6 +47,7 @@ import {
   CODE_THEME_IDS,
   CODE_THEME_OPTIONS,
   DEFAULT_APPEARANCE_PREFERENCES,
+  DEFAULT_DESKTOP_NOTIFICATION_SETTINGS,
   NATIVE_GLASS_VARIANTS,
   SIDEBAR_MATERIALS,
   UI_FONT_OPTIONS,
@@ -83,10 +83,9 @@ import {
   compactBeforeSendSuggestionAtom,
   contextMeterVisibleAtom,
   defaultDeliveryAtom,
-  richComposerAtom,
+  keepSidePanelAcrossTasksAtom,
   remoteMarkdownFaviconsAtom,
   showTimelineCacheBustsAtom,
-  defaultSidebarModeAtom,
   autoSettleAfterDaysAtom,
   chatAutoSettleAfterDaysAtom,
   AUTO_SETTLE_DAY_CHOICES,
@@ -114,6 +113,8 @@ import { isAppearanceFontAvailable } from "../lib/font-loading";
 import { SETTINGS_NAV_ITEMS, type SettingsCategory } from "../lib/settings-navigation";
 import {
   ACTIVITY_CATEGORIES,
+  customizedAdvancedProjectionCount,
+  resetAdvancedProjection,
   resolveSessionProjectionPreference,
   type ActivityCategory,
   type ActivityProjectionPreference,
@@ -124,6 +125,8 @@ import { projectForSession, projectLocation, orderProjects } from "../lib/view-m
 import { palotBuild } from "../lib/build";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useCheckPlugins, useSettingsSnapshot } from "../hooks/use-settings-snapshot";
+import { useSetting } from "../hooks/use-setting";
+import { sameSettingValue, settingReset, type SettingReset } from "../lib/setting-reset";
 import { useSelectedSession } from "../hooks/use-session-catalog";
 import { SettingsOwnerContext, useSettingsOwner } from "../hooks/use-settings-owner";
 import { useSettingsServer } from "../hooks/use-settings-server";
@@ -144,6 +147,7 @@ import {
 import { Button } from "./ui/button";
 import { AppIcon, type AppIconName } from "./ui/app-icon";
 import { Badge } from "./ui/badge";
+import { ChoiceGroup } from "./ui/choice-group";
 import {
   Dialog,
   DialogContent,
@@ -165,14 +169,34 @@ import { Textarea } from "./ui/textarea";
 import { ThemeEditor } from "./theme-editor";
 import { toast } from "./ui/toast";
 import { NavigationRail } from "./navigation-rail";
-import { SettingsEmpty, SettingsGroup, SettingsRow, SettingsSection } from "./settings-layout";
+import { usePersistedTaskListPreferences, type TaskListPreferences } from "./task-list";
+import {
+  DEFAULT_VIEW,
+  DETAIL_CHOICES,
+  GROUPING_CHOICES,
+  WORKING_CHOICES,
+  type RowDetail,
+  type WorkingKnob,
+} from "../lib/task-list/model/view";
+import type { Grouping } from "../lib/task-list/model/sections";
+import {
+  SettingsDisclosure,
+  SettingsEmpty,
+  SettingsGroup,
+  SettingsRow,
+  SettingsSection,
+} from "./settings-layout";
 import { SpellcheckSettings } from "./spellcheck-settings";
+import { SwitchingSettings } from "./switching-dialog";
+import { PalotUpdateSettings } from "./palot-update-settings";
 import { ModelSettings } from "./settings/models-settings";
 import { ProviderSettings } from "./settings/providers-settings";
 import { KeyboardShortcutsSettings } from "./keyboard-shortcuts-settings";
 import { NotificationSoundSettings } from "./notification-sound-settings";
 import { DefaultShellSetting } from "./default-shell-setting";
 import { SourceControlSettings } from "./settings/source-control-settings";
+import { ReviewInstructionsSettings } from "./settings/review-instructions-settings";
+import { SavedPermissionRow } from "./settings/saved-permission-row";
 
 const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: string }> = {
   "source-control": {
@@ -225,6 +249,11 @@ const CATEGORY_COPY: Record<SettingsCategory, { title: string; description: stri
     title: "Tools",
     description: "Manage plugins and MCP servers, and browse tools discovered for this project.",
   },
+  machines: {
+    title: "Machines",
+    description:
+      "Link other computers to a server so its tasks can read, edit and run commands there. Experimental.",
+  },
   agents: {
     title: "Agents",
     description: "Inspect the primary agents and subagents available in this project.",
@@ -260,6 +289,7 @@ const SETTINGS_APP_ICONS: Record<SettingsCategory, AppIconName> = {
   models: "models",
   providers: "providers",
   tools: "tools",
+  machines: "machines",
   agents: "agents",
   permissions: "permissions",
   config: "config",
@@ -272,6 +302,11 @@ const VoiceSettings = lazy(() =>
 );
 const DiagnosticsSettings = lazy(() =>
   import("./diagnostics-settings").then((module) => ({ default: module.DiagnosticsSettings })),
+);
+const MachinesSettings = lazy(() =>
+  import("./settings/machines-settings").then((module) => ({
+    default: module.MachinesSettings,
+  })),
 );
 const ConnectionSettings = lazy(() =>
   import("./connection-settings").then((module) => ({ default: module.ConnectionSettings })),
@@ -583,7 +618,11 @@ export function Settings({
           <div
             className={cn(
               "mx-auto flex w-full flex-col gap-8 px-4 py-6 @2xl/settings-page:px-8",
-              category === "diagnostics" ? "max-w-[1180px]" : "max-w-5xl",
+              // Sections query this column. Chromium drops the layout of section containers when
+              // another one mounts during a theme change, so they stay plain blocks here.
+              "@container/settings **:data-[slot=settings-section]:[container-type:normal]",
+              // One centred reading column; Diagnostics keeps room for its charts and tables.
+              category === "diagnostics" ? "max-w-[1180px]" : "max-w-180",
             )}
           >
             <div className="space-y-2">
@@ -647,6 +686,7 @@ export function Settings({
               "voice",
               "shortcuts",
               "connections",
+              "machines",
               "diagnostics",
               "about",
             ].includes(category) ? (
@@ -744,6 +784,13 @@ function SettingsContent({
       </Suspense>
     );
   }
+  if (category === "machines") {
+    return (
+      <Suspense fallback={<SettingsSkeleton />}>
+        <MachinesSettings />
+      </Suspense>
+    );
+  }
   if (category === "diagnostics") {
     return (
       <Suspense fallback={<SettingsSkeleton />}>
@@ -804,11 +851,17 @@ const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
 };
 
 const PROJECTION_PRESET_DESCRIPTIONS: Record<SessionProjectionPreset, string> = {
-  "code-focus": "Keeps the final response prominent and activity available as summaries.",
+  "code-focus": "Hides reasoning and folds a turn's work as soon as the answer starts.",
   compact:
-    "Keeps the current phase open with reasoning summaries while completed work stays compact.",
-  expanded: "Shows every activity row while keeping raw tool inputs and outputs inspectable.",
+    "Keeps the current step open while the agent works, then folds the turn behind its “Worked for …” line.",
+  expanded: "Shows every tool call and thought as its own row and leaves finished turns unfolded.",
 };
+
+const PROJECTION_PRESETS: readonly SessionProjectionPreset[] = [
+  "code-focus",
+  "compact",
+  "expanded",
+];
 
 const PROJECTION_PRESET_LABELS: Record<SessionProjectionPreset, string> = {
   "code-focus": "Focused",
@@ -844,11 +897,12 @@ function autoSettleLabel(days: AutoSettleAfterDays): string {
   return days === 1 ? "After 1 day" : `After ${days} days`;
 }
 
-const SIDEBAR_MODE_LABELS = {
-  remember: "Remember",
-  project: "Projects",
-  inbox: "Inbox",
-} as const;
+function choiceLabel<T extends string>(
+  choices: readonly { value: T; label: string }[],
+  value: T,
+): string {
+  return choices.find((choice) => choice.value === value)?.label ?? value;
+}
 
 const WORKSPACE_MODE_LABELS = {
   worktree: "Worktree",
@@ -868,11 +922,12 @@ const DELIVERY_LABELS = {
 function BrowserSettings() {
   const runtime = useAtomValue(runtimeAtom);
   const selectedSession = useSelectedSession();
-  const [experimentalBrowser, setExperimentalBrowser] = useAtom(experimentalBrowserAtom);
-  const [searchEngine, setSearchEngine] = useAtom(browserSearchEngineAtom);
-  const [webLinks, setWebLinks] = useAtom(browserWebLinksAtom);
-  const [localLinks, setLocalLinks] = useAtom(browserLocalLinksAtom);
-  const [showFullURL, setShowFullURL] = useAtom(browserShowFullURLAtom);
+  const [experimentalBrowser, setExperimentalBrowser, experimentalBrowserReset] =
+    useSetting(experimentalBrowserAtom);
+  const [searchEngine, setSearchEngine, searchEngineReset] = useSetting(browserSearchEngineAtom);
+  const [webLinks, setWebLinks, webLinksReset] = useSetting(browserWebLinksAtom);
+  const [localLinks, setLocalLinks, localLinksReset] = useSetting(browserLocalLinksAtom);
+  const [showFullURL, setShowFullURL, showFullURLReset] = useSetting(browserShowFullURLAtom);
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
   const selectedTask = runtime?.connected && selectedSession ? selectedSession : null;
@@ -902,6 +957,7 @@ function BrowserSettings() {
       >
         <SettingsGroup>
           <SettingsRow
+            reset={experimentalBrowserReset}
             title="Enable browser"
             description="Allow tasks to open browser tabs in the workbench. Requires the OpenCode browser plugin on the connected server. The browser tool can access sites reachable from that server, including localhost and private networks. Palot cannot require per-site approval yet."
             control={
@@ -920,6 +976,7 @@ function BrowserSettings() {
       >
         <SettingsGroup>
           <SettingsRow
+            reset={searchEngineReset}
             title="Search engine"
             description="Used when you enter search terms instead of a URL in the browser address bar."
             control={
@@ -939,6 +996,7 @@ function BrowserSettings() {
             }
           />
           <SettingsRow
+            reset={webLinksReset}
             title="Web links"
             description="Choose where public web links open when you click them in Palot."
             control={
@@ -957,6 +1015,7 @@ function BrowserSettings() {
             }
           />
           <SettingsRow
+            reset={localLinksReset}
             title="Local dev links"
             description="Choose where local development links open when you click them in Palot."
             control={
@@ -975,6 +1034,7 @@ function BrowserSettings() {
             }
           />
           <SettingsRow
+            reset={showFullURLReset}
             title="Show full URL"
             description="Show the complete page address rather than a shortened address in the browser bar."
             control={
@@ -1037,48 +1097,40 @@ function BrowserSettings() {
 }
 
 function GeneralSettings() {
-  const [workspaceMode, setWorkspaceMode] = useAtom(defaultWorkspaceModeAtom);
-  const [newTaskApprovals, setNewTaskApprovals] = useAtom(newTaskApprovalModeAtom);
-  const [worktreeBase, setWorktreeBase] = useAtom(defaultWorktreeBaseAtom);
-  const [projection, setProjection] = useAtom(sessionProjectionPreferenceAtom);
-  const [customizeProjection, setCustomizeProjection] = useState(false);
-  const [delivery, setDelivery] = useAtom(defaultDeliveryAtom);
-  const [richComposer, setRichComposer] = useAtom(richComposerAtom);
-  const [autoBackgroundOnSteer, setAutoBackgroundOnSteer] = useAtom(autoBackgroundOnSteerAtom);
-  const [contextMeterVisible, setContextMeterVisible] = useAtom(contextMeterVisibleAtom);
-  const [compactBeforeSend, setCompactBeforeSend] = useAtom(compactBeforeSendSuggestionAtom);
-  const [showTimelineCacheBusts, setShowTimelineCacheBusts] = useAtom(showTimelineCacheBustsAtom);
-  const [remoteMarkdownFavicons, setRemoteMarkdownFavicons] = useAtom(remoteMarkdownFaviconsAtom);
-  const [defaultSidebarMode, setDefaultSidebarMode] = useAtom(defaultSidebarModeAtom);
-  const [autoSettleAfterDays, setAutoSettleAfterDays] = useAtom(autoSettleAfterDaysAtom);
-  const [chatAutoSettleAfterDays, setChatAutoSettleAfterDays] = useAtom(
-    chatAutoSettleAfterDaysAtom,
+  const [workspaceMode, setWorkspaceMode, workspaceModeReset] =
+    useSetting(defaultWorkspaceModeAtom);
+  const [newTaskApprovals, setNewTaskApprovals, newTaskApprovalsReset] =
+    useSetting(newTaskApprovalModeAtom);
+  const [worktreeBase, setWorktreeBase, worktreeBaseReset] = useSetting(defaultWorktreeBaseAtom);
+  const [delivery, setDelivery, deliveryReset] = useSetting(defaultDeliveryAtom);
+  const [autoBackgroundOnSteer, setAutoBackgroundOnSteer, autoBackgroundOnSteerReset] =
+    useSetting(autoBackgroundOnSteerAtom);
+  const [contextMeterVisible, setContextMeterVisible, contextMeterVisibleReset] =
+    useSetting(contextMeterVisibleAtom);
+  const [compactBeforeSend, setCompactBeforeSend, compactBeforeSendReset] = useSetting(
+    compactBeforeSendSuggestionAtom,
   );
+  const [remoteMarkdownFavicons, setRemoteMarkdownFavicons, remoteMarkdownFaviconsReset] =
+    useSetting(remoteMarkdownFaviconsAtom);
+  const [keepSidePanel, setKeepSidePanel, keepSidePanelReset] = useSetting(
+    keepSidePanelAcrossTasksAtom,
+  );
+  const [taskListPreferences, setTaskListPreferences] = usePersistedTaskListPreferences();
+  const setTaskListView = (view: Partial<TaskListPreferences["view"]>) =>
+    setTaskListPreferences({
+      ...taskListPreferences,
+      view: { ...taskListPreferences.view, ...view },
+    });
+  const taskListViewReset = (knob: keyof TaskListPreferences["view"]) =>
+    settingReset(taskListPreferences.view[knob], DEFAULT_VIEW[knob], () =>
+      setTaskListView({ [knob]: DEFAULT_VIEW[knob] }),
+    );
+  const [autoSettleAfterDays, setAutoSettleAfterDays, autoSettleAfterDaysReset] =
+    useSetting(autoSettleAfterDaysAtom);
+  const [chatAutoSettleAfterDays, setChatAutoSettleAfterDays, chatAutoSettleAfterDaysReset] =
+    useSetting(chatAutoSettleAfterDaysAtom);
   const [automationHostSettings, setAutomationHostSettings] =
     useState<AutomationHostSettings | null>(null);
-  const resolvedProjection = useMemo(
-    () => resolveSessionProjectionPreference(projection),
-    [projection],
-  );
-  const customized =
-    projection.foldCompletedTurns !== undefined ||
-    projection.groupTitle !== undefined ||
-    projection.groupSameFileReads !== undefined ||
-    projection.showReasoningSummaries !== undefined ||
-    projection.keepCurrentActivityExpanded !== undefined ||
-    (projection.categories !== undefined && Object.keys(projection.categories).length > 0);
-  const updateCategory = (
-    category: ActivityCategory,
-    patch: Partial<ActivityProjectionPreference>,
-  ) => {
-    setProjection((current) => ({
-      ...current,
-      categories: {
-        ...current.categories,
-        [category]: { ...current.categories?.[category], ...patch },
-      },
-    }));
-  };
   useEffect(() => {
     let active = true;
     void palot
@@ -1113,6 +1165,7 @@ function GeneralSettings() {
   };
   return (
     <div className="space-y-8">
+      <SwitchingSettings />
       <GuestLinksSettings />
       <SettingsSection
         title="Task defaults"
@@ -1120,6 +1173,7 @@ function GeneralSettings() {
       >
         <SettingsGroup>
           <SettingsRow
+            reset={workspaceModeReset}
             title="Default workspace"
             description="Used until you choose a workspace for a project. Each project remembers its own choice."
             control={
@@ -1138,6 +1192,7 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
+            reset={newTaskApprovalsReset}
             title="Approvals for new tasks"
             description="Full access runs commands, edits files and schedules tasks without asking you. You can still change a task's approvals from its composer."
             control={
@@ -1161,6 +1216,7 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
+            reset={worktreeBaseReset}
             title="New worktree starting point"
             description="Start new task worktrees from the repository default branch or your current branch."
             control={
@@ -1182,6 +1238,7 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
+            reset={deliveryReset}
             title="Messages while running"
             description="Steer updates the active turn. Queue waits and starts after the current turn finishes."
             control={
@@ -1203,17 +1260,7 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
-            title="Rich composer (beta)"
-            description="Style Markdown as you type and edit context as inline chips. Turn off to use the plain-text composer."
-            control={
-              <Switch
-                checked={richComposer}
-                aria-label="Rich composer (beta)"
-                onCheckedChange={(checked) => setRichComposer(Boolean(checked))}
-              />
-            }
-          />
-          <SettingsRow
+            reset={autoBackgroundOnSteerReset}
             title="Automatically send blocking work to background"
             description="If a steer stays blocked for five seconds, let supported foreground work continue in the background."
             control={
@@ -1225,6 +1272,7 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
+            reset={contextMeterVisibleReset}
             title="Context meter"
             description="Show how full the model's context window is next to Send."
             control={
@@ -1236,6 +1284,7 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
+            reset={compactBeforeSendReset}
             title="Suggest compacting before sending"
             description="When a large task has been idle for an hour, its prompt cache has likely expired. Offer to summarize the history first so the next message doesn't re-read all of it."
             control={
@@ -1250,31 +1299,86 @@ function GeneralSettings() {
         </SettingsGroup>
       </SettingsSection>
       <SpellcheckSettings />
+      <ReviewInstructionsSettings />
       <SettingsSection
         title="Desktop behavior"
-        description="Startup, local schedules, and website icons."
+        description="The task list, the side panel, local schedules, and website icons."
       >
         <SettingsGroup>
           <SettingsRow
-            title="Default sidebar"
-            description="Choose which sidebar opens when Palot starts, or return to the last one you used."
+            reset={taskListViewReset("grouping")}
+            title="Group tasks by"
+            description="One inbox across projects, or tasks grouped by project or by server. Tasks that need you stay on top either way."
             control={
               <Select
-                value={defaultSidebarMode}
-                onValueChange={(value) => setDefaultSidebarMode(value as typeof defaultSidebarMode)}
+                value={taskListPreferences.view.grouping}
+                onValueChange={(value) => setTaskListView({ grouping: value as Grouping })}
               >
-                <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Default sidebar">
-                  <SelectValue>{SIDEBAR_MODE_LABELS[defaultSidebarMode]}</SelectValue>
+                <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Group tasks by">
+                  <SelectValue>
+                    {choiceLabel(GROUPING_CHOICES, taskListPreferences.view.grouping)}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent align="end">
-                  <SelectItem value="remember">Remember last used</SelectItem>
-                  <SelectItem value="project">Projects</SelectItem>
-                  <SelectItem value="inbox">Inbox</SelectItem>
+                  {GROUPING_CHOICES.map((choice) => (
+                    <SelectItem key={choice.value} value={choice.value}>
+                      {choice.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             }
           />
           <SettingsRow
+            reset={taskListViewReset("working")}
+            title="Working tasks"
+            description="Where running tasks sit when tasks are grouped as an inbox."
+            control={
+              <Select
+                value={taskListPreferences.view.working}
+                onValueChange={(value) => setTaskListView({ working: value as WorkingKnob })}
+              >
+                <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Working tasks">
+                  <SelectValue>
+                    {choiceLabel(WORKING_CHOICES, taskListPreferences.view.working)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {WORKING_CHOICES.map((choice) => (
+                    <SelectItem key={choice.value} value={choice.value}>
+                      {choice.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            reset={taskListViewReset("rowDetail")}
+            title="Row detail"
+            description="Compact keeps idle tasks to one line; Comfortable gives every task two, with its project and branch."
+            control={
+              <Select
+                value={taskListPreferences.view.rowDetail}
+                onValueChange={(value) => setTaskListView({ rowDetail: value as RowDetail })}
+              >
+                <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Row detail">
+                  <SelectValue>
+                    {choiceLabel(DETAIL_CHOICES, taskListPreferences.view.rowDetail)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {DETAIL_CHOICES.map((choice) => (
+                    <SelectItem key={choice.value} value={choice.value}>
+                      {choice.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            reset={autoSettleAfterDaysReset}
             title="Auto-settle idle tasks"
             description="Move Inbox tasks to Settled after a while without activity. Tasks that are running, need input, failed, pinned, or that you moved back to Inbox stay put. New activity returns a task to Inbox."
             control={
@@ -1304,6 +1408,7 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
+            reset={chatAutoSettleAfterDaysReset}
             title="Settle idle chats after"
             description="Move idle chats to Settled sooner than project tasks. The same activity and Inbox protections apply."
             control={
@@ -1330,6 +1435,18 @@ function GeneralSettings() {
                   ))}
                 </SelectContent>
               </Select>
+            }
+          />
+          <SettingsRow
+            reset={keepSidePanelReset}
+            title="Keep the side panel when switching tasks"
+            description="The next task opens or closes its right panel to match, on the same Changes, Files or Context surface. Off keeps each task's own panel."
+            control={
+              <Switch
+                aria-label="Keep the side panel when switching tasks"
+                checked={keepSidePanel}
+                onCheckedChange={(checked) => setKeepSidePanel(Boolean(checked))}
+              />
             }
           />
           <SettingsRow
@@ -1391,6 +1508,7 @@ function GeneralSettings() {
             }
           />
           <SettingsRow
+            reset={remoteMarkdownFaviconsReset}
             title="Website icons in links"
             description="Load icons from DuckDuckGo for public websites linked in messages. This shares each exact hostname, including subdomains, but not its page path."
             control={
@@ -1403,259 +1521,279 @@ function GeneralSettings() {
           />
         </SettingsGroup>
       </SettingsSection>
-      <SettingsSection
-        title="Timeline"
-        description="Choose how reasoning and tool activity appear in your tasks."
+      <TimelineSettings />
+    </div>
+  );
+}
+
+export function TimelineSettings() {
+  const [projection, setProjection] = useAtom(sessionProjectionPreferenceAtom);
+  const [showTimelineCacheBusts, setShowTimelineCacheBusts, showTimelineCacheBustsReset] =
+    useSetting(showTimelineCacheBustsAtom);
+  const resolvedProjection = useMemo(
+    () => resolveSessionProjectionPreference(projection),
+    [projection],
+  );
+  const customizedCount = customizedAdvancedProjectionCount(projection);
+  const updateCategory = (
+    category: ActivityCategory,
+    patch: Partial<ActivityProjectionPreference>,
+  ) => {
+    setProjection((current) => ({
+      ...current,
+      categories: {
+        ...current.categories,
+        [category]: { ...current.categories?.[category], ...patch },
+      },
+    }));
+  };
+  return (
+    <SettingsSection
+      title="Timeline"
+      description="Choose how reasoning and tool activity appear in your tasks."
+    >
+      <SettingsGroup>
+        <SettingsRow
+          title="Timeline style"
+          description="How much of each turn's work stays in view."
+          layout="stacked"
+          reset={settingReset(
+            projection.preset,
+            sessionProjectionPreferenceAtom.defaultValue.preset,
+            (preset) => setProjection({ version: 2, preset }),
+          )}
+          control={
+            <ChoiceGroup
+              aria-label="Timeline style"
+              value={projection.preset}
+              onValueChange={(value) => setProjection({ version: 2, preset: value })}
+              options={PROJECTION_PRESETS.map((preset) => ({
+                value: preset,
+                label: PROJECTION_PRESET_LABELS[preset],
+                description: PROJECTION_PRESET_DESCRIPTIONS[preset],
+              }))}
+            />
+          }
+        />
+        <SettingsRow
+          title="Reasoning summaries"
+          description="Show the agent's reasoning summaries inside activity groups."
+          control={
+            <Switch
+              checked={resolvedProjection.showReasoningSummaries}
+              aria-label="Show reasoning summaries in the timeline"
+              onCheckedChange={(checked) =>
+                setProjection((current) => ({
+                  ...current,
+                  showReasoningSummaries: Boolean(checked),
+                }))
+              }
+            />
+          }
+        />
+        <SettingsRow
+          title="Completed turns"
+          description="Fold a finished turn's work behind its “Worked for …” line."
+          control={
+            <Select
+              value={resolvedProjection.foldCompletedTurns ? "folded" : "expanded"}
+              onValueChange={(value) =>
+                setProjection((current) => ({
+                  ...current,
+                  foldCompletedTurns: value === "folded",
+                }))
+              }
+            >
+              <SelectTrigger className="w-full @lg/settings:w-36" aria-label="Completed turns">
+                <SelectValue>
+                  {resolvedProjection.foldCompletedTurns ? "Folded" : "Expanded"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="folded">Folded</SelectItem>
+                <SelectItem value="expanded">Expanded</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+        />
+      </SettingsGroup>
+      <SettingsDisclosure
+        title={customizedCount > 0 ? `Advanced · ${customizedCount} customized` : "Advanced"}
+        description="Rules per kind of activity, the current step, group titles and repeated reads."
       >
-        <SettingsGroup>
+        {customizedCount > 0 ? (
           <SettingsRow
-            title="Likely cache busts"
-            description="Show a warning in the timeline when cache reuse drops unexpectedly between matching model steps. Selecting a warning opens it in the Context tab's diagnostics."
+            title="Customized values"
+            description={`${customizedCount === 1 ? "1 value differs" : `${customizedCount} values differ`} from ${PROJECTION_PRESET_LABELS[projection.preset]}.`}
             control={
-              <Switch
-                checked={showTimelineCacheBusts}
-                aria-label="Show likely cache busts in timeline"
-                onCheckedChange={(checked) => setShowTimelineCacheBusts(Boolean(checked))}
-              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setProjection((current) => resetAdvancedProjection(current))}
+              >
+                Reset to preset
+              </Button>
             }
           />
-          <SettingsRow
-            title="Timeline activity"
-            description={PROJECTION_PRESET_DESCRIPTIONS[projection.preset]}
-            control={
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Customize timeline activity"
-                  aria-expanded={customizeProjection}
-                  title="Customize timeline activity"
-                  onClick={() => setCustomizeProjection((open) => !open)}
-                >
-                  <SlidersHorizontal aria-hidden="true" />
-                </Button>
+        ) : null}
+        <div>
+          <div className="hidden grid-cols-[minmax(7rem,1fr)_repeat(3,minmax(7rem,auto))] gap-x-2 border-b px-4 py-2 text-meta font-medium text-muted-foreground @3xl/settings:grid">
+            <span>Activity</span>
+            <span>Display</span>
+            <span>Details</span>
+            <span>Folded turns</span>
+          </div>
+          {ACTIVITY_CATEGORIES.map((category) => {
+            const preference = resolvedProjection.categories[category];
+            return (
+              <div
+                key={category}
+                className="grid gap-2 border-b px-4 py-3 last:border-b-0 @3xl/settings:grid-cols-[minmax(7rem,1fr)_repeat(3,minmax(7rem,auto))] @3xl/settings:items-center"
+              >
+                <span className="text-xs font-medium">{ACTIVITY_CATEGORY_LABELS[category]}</span>
                 <Select
-                  value={projection.preset}
+                  value={preference.presentation}
                   onValueChange={(value) =>
-                    setProjection({ version: 2, preset: value as SessionProjectionPreset })
+                    updateCategory(category, {
+                      presentation: value as ActivityProjectionPreference["presentation"],
+                    })
                   }
                 >
-                  <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Timeline style">
+                  <SelectTrigger
+                    className="w-full @3xl/settings:w-36"
+                    aria-label={`${ACTIVITY_CATEGORY_LABELS[category]} display`}
+                  >
                     <SelectValue>
-                      {PROJECTION_PRESET_LABELS[projection.preset]}
-                      {customized ? ", customized" : ""}
+                      {ACTIVITY_PRESENTATION_LABELS[preference.presentation]}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent align="end">
-                    <SelectItem value="code-focus">Focused</SelectItem>
-                    <SelectItem value="compact">Balanced</SelectItem>
-                    <SelectItem value="expanded">Detailed</SelectItem>
+                    <SelectItem value="individual">Individual</SelectItem>
+                    <SelectItem value="grouped">Grouped</SelectItem>
+                    <SelectItem value="hidden">Hidden when completed</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={preference.details}
+                  onValueChange={(value) =>
+                    updateCategory(category, {
+                      details: value as ActivityProjectionPreference["details"],
+                    })
+                  }
+                >
+                  <SelectTrigger
+                    className="w-full @3xl/settings:w-32"
+                    aria-label={`${ACTIVITY_CATEGORY_LABELS[category]} details`}
+                  >
+                    <SelectValue>{DETAIL_DEFAULT_LABELS[preference.details]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    <SelectItem value="collapsed">Collapsed</SelectItem>
+                    <SelectItem value="expanded">Expanded</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={preference.foldedTurn}
+                  onValueChange={(value) =>
+                    updateCategory(category, {
+                      foldedTurn: value as ActivityProjectionPreference["foldedTurn"],
+                    })
+                  }
+                >
+                  <SelectTrigger
+                    className="w-full @3xl/settings:w-32"
+                    aria-label={`${ACTIVITY_CATEGORY_LABELS[category]} folded turns`}
+                  >
+                    <SelectValue>{FOLDED_TURN_LABELS[preference.foldedTurn]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    <SelectItem value="inside">Inside</SelectItem>
+                    <SelectItem value="pinned">Keep visible</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            }
-          />
-          <SettingsRow
-            title="Reasoning summaries"
-            description="Show the agent's reasoning summaries inside activity groups."
-            control={
-              <Switch
-                checked={resolvedProjection.showReasoningSummaries}
-                aria-label="Show reasoning summaries in the timeline"
-                onCheckedChange={(checked) =>
-                  setProjection((current) => ({
-                    ...current,
-                    showReasoningSummaries: Boolean(checked),
-                  }))
-                }
-              />
-            }
-          />
-          <SettingsRow
-            title="Current activity"
-            description="Keep the current activity group open while the agent works."
-            control={
-              <Switch
-                checked={resolvedProjection.keepCurrentActivityExpanded}
-                aria-label="Keep current activity expanded"
-                onCheckedChange={(checked) =>
-                  setProjection((current) => ({
-                    ...current,
-                    keepCurrentActivityExpanded: Boolean(checked),
-                  }))
-                }
-              />
-            }
-          />
-        </SettingsGroup>
-        {customizeProjection ? (
-          <div className="overflow-hidden rounded-xl border bg-card">
-            <div className="flex items-center justify-between gap-3 border-b bg-muted/20 px-3 py-2.5">
-              <div className="text-xs font-medium">
-                {projection.preset === "code-focus"
-                  ? "Focused"
-                  : projection.preset === "compact"
-                    ? "Balanced"
-                    : "Detailed"}
-                {customized ? ", customized" : ""}
-              </div>
-              {customized ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => setProjection({ version: 2, preset: projection.preset })}
-                >
-                  Reset
-                </Button>
-              ) : null}
-            </div>
-            <div className="hidden grid-cols-[minmax(7rem,1fr)_repeat(3,minmax(7rem,auto))] gap-x-2 border-b px-4 py-2 text-meta font-medium text-muted-foreground @3xl/settings:grid">
-              <span>Activity</span>
-              <span>Display</span>
-              <span>Details</span>
-              <span>Folded turns</span>
-            </div>
-            {ACTIVITY_CATEGORIES.map((category) => {
-              const preference = resolvedProjection.categories[category];
-              return (
-                <div
-                  key={category}
-                  className="grid gap-2 border-b px-4 py-3 last:border-b-0 @3xl/settings:grid-cols-[minmax(7rem,1fr)_repeat(3,minmax(7rem,auto))] @3xl/settings:items-center"
-                >
-                  <span className="text-xs font-medium">{ACTIVITY_CATEGORY_LABELS[category]}</span>
-                  <Select
-                    value={preference.presentation}
-                    onValueChange={(value) =>
-                      updateCategory(category, {
-                        presentation: value as ActivityProjectionPreference["presentation"],
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      className="w-full @3xl/settings:w-36"
-                      aria-label={`${ACTIVITY_CATEGORY_LABELS[category]} display`}
-                    >
-                      <SelectValue>
-                        {ACTIVITY_PRESENTATION_LABELS[preference.presentation]}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      <SelectItem value="individual">Individual</SelectItem>
-                      <SelectItem value="grouped">Grouped</SelectItem>
-                      <SelectItem value="hidden">Hidden when completed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={preference.details}
-                    onValueChange={(value) =>
-                      updateCategory(category, {
-                        details: value as ActivityProjectionPreference["details"],
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      className="w-full @3xl/settings:w-32"
-                      aria-label={`${ACTIVITY_CATEGORY_LABELS[category]} details`}
-                    >
-                      <SelectValue>{DETAIL_DEFAULT_LABELS[preference.details]}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      <SelectItem value="collapsed">Collapsed</SelectItem>
-                      <SelectItem value="expanded">Expanded</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={preference.foldedTurn}
-                    onValueChange={(value) =>
-                      updateCategory(category, {
-                        foldedTurn: value as ActivityProjectionPreference["foldedTurn"],
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      className="w-full @3xl/settings:w-32"
-                      aria-label={`${ACTIVITY_CATEGORY_LABELS[category]} folded turns`}
-                    >
-                      <SelectValue>{FOLDED_TURN_LABELS[preference.foldedTurn]}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      <SelectItem value="inside">Inside</SelectItem>
-                      <SelectItem value="pinned">Keep visible</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              );
-            })}
-            <div className="flex items-center justify-between gap-3 border-t bg-muted/10 px-3 py-3">
-              <span className="text-xs font-medium">Group titles</span>
-              <Select
-                value={resolvedProjection.groupTitle}
-                onValueChange={(value) =>
-                  setProjection((current) => ({
-                    ...current,
-                    groupTitle: value as GroupTitleMode,
-                  }))
-                }
-              >
-                <SelectTrigger className="w-44" aria-label="Group titles">
-                  <SelectValue>{GROUP_TITLE_LABELS[resolvedProjection.groupTitle]}</SelectValue>
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectItem value="summary">Activity summary</SelectItem>
-                  <SelectItem value="latest-reasoning">Reasoning intent</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center justify-between gap-3 border-t bg-muted/10 px-3 py-3">
-              <span className="text-xs font-medium">Repeated file reads</span>
-              <Select
-                value={resolvedProjection.groupSameFileReads ? "grouped" : "separate"}
-                onValueChange={(value) =>
-                  setProjection((current) => ({
-                    ...current,
-                    groupSameFileReads: value === "grouped",
-                  }))
-                }
-              >
-                <SelectTrigger className="w-44" aria-label="Repeated file reads">
-                  <SelectValue>
-                    {resolvedProjection.groupSameFileReads ? "One card per file" : "Separate cards"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectItem value="separate">Separate cards</SelectItem>
-                  <SelectItem value="grouped">One card per file</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center justify-between gap-3 border-t bg-muted/10 px-3 py-3">
-              <span className="text-xs font-medium">Completed turns</span>
-              <Select
-                value={resolvedProjection.foldCompletedTurns ? "folded" : "expanded"}
-                onValueChange={(value) =>
-                  setProjection((current) => ({
-                    ...current,
-                    foldCompletedTurns: value === "folded",
-                  }))
-                }
-              >
-                <SelectTrigger className="w-36" aria-label="Completed turns">
-                  <SelectValue>
-                    {resolvedProjection.foldCompletedTurns ? "Folded" : "Expanded"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectItem value="folded">Folded</SelectItem>
-                  <SelectItem value="expanded">Expanded</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        ) : null}
-      </SettingsSection>
-    </div>
+            );
+          })}
+        </div>
+        <SettingsRow
+          title="Current activity"
+          description="Keep the current activity group open while the agent works."
+          control={
+            <Switch
+              checked={resolvedProjection.keepCurrentActivityExpanded}
+              aria-label="Keep current activity expanded"
+              onCheckedChange={(checked) =>
+                setProjection((current) => ({
+                  ...current,
+                  keepCurrentActivityExpanded: Boolean(checked),
+                }))
+              }
+            />
+          }
+        />
+        <SettingsRow
+          title="Group titles"
+          control={
+            <Select
+              value={resolvedProjection.groupTitle}
+              onValueChange={(value) =>
+                setProjection((current) => ({
+                  ...current,
+                  groupTitle: value as GroupTitleMode,
+                }))
+              }
+            >
+              <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Group titles">
+                <SelectValue>{GROUP_TITLE_LABELS[resolvedProjection.groupTitle]}</SelectValue>
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="summary">Activity summary</SelectItem>
+                <SelectItem value="latest-reasoning">Reasoning intent</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Repeated file reads"
+          control={
+            <Select
+              value={resolvedProjection.groupSameFileReads ? "grouped" : "separate"}
+              onValueChange={(value) =>
+                setProjection((current) => ({
+                  ...current,
+                  groupSameFileReads: value === "grouped",
+                }))
+              }
+            >
+              <SelectTrigger className="w-full @lg/settings:w-44" aria-label="Repeated file reads">
+                <SelectValue>
+                  {resolvedProjection.groupSameFileReads ? "One card per file" : "Separate cards"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="separate">Separate cards</SelectItem>
+                <SelectItem value="grouped">One card per file</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+        />
+      </SettingsDisclosure>
+      <SettingsGroup>
+        <SettingsRow
+          reset={showTimelineCacheBustsReset}
+          title="Likely cache busts"
+          description="Show a warning in the timeline when cache reuse drops unexpectedly between matching model steps. Selecting a warning opens it in the Context tab's diagnostics."
+          control={
+            <Switch
+              checked={showTimelineCacheBusts}
+              aria-label="Show likely cache busts in timeline"
+              onCheckedChange={(checked) => setShowTimelineCacheBusts(Boolean(checked))}
+            />
+          }
+        />
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
@@ -1717,6 +1855,15 @@ function NotificationSettings() {
       showError("Could not update notification settings", error);
     }
   };
+
+  const notificationReset = <K extends keyof DesktopNotificationSettings>(key: K) =>
+    settings
+      ? settingReset(settings[key], DEFAULT_DESKTOP_NOTIFICATION_SETTINGS[key], (value) => {
+          const patch: Partial<DesktopNotificationSettings> = {};
+          patch[key] = value;
+          void updateSettings(patch);
+        })
+      : undefined;
 
   const refreshDeliveryStatus = async () => {
     setDeliveryBusy(true);
@@ -1792,6 +1939,7 @@ function NotificationSettings() {
           ) : null}
           <SettingsRow
             title="Turn completion notifications"
+            reset={notificationReset("turnCompletion")}
             description="Set when Palot alerts you that a task has finished."
             control={
               <Select
@@ -1821,6 +1969,7 @@ function NotificationSettings() {
           />
           <SettingsRow
             title="Permission notifications"
+            reset={notificationReset("permissionRequests")}
             description="Show alerts when a task needs permission to continue."
             control={
               <Switch
@@ -1835,6 +1984,7 @@ function NotificationSettings() {
           />
           <SettingsRow
             title="Question notifications"
+            reset={notificationReset("questionRequests")}
             description="Show alerts when your input is needed to continue."
             control={
               <Switch
@@ -1943,6 +2093,16 @@ function AppearanceSettings() {
   });
   const update = (patch: Partial<AppearancePreferences>) =>
     setPreferences((current) => ({ ...current, ...patch }));
+  /** Reset for the preferences one row controls, against the shipped defaults. */
+  const appearanceReset = (...keys: Array<keyof AppearancePreferences>): SettingReset => ({
+    changed: keys.some(
+      (key) => !sameSettingValue(preferences[key], DEFAULT_APPEARANCE_PREFERENCES[key]),
+    ),
+    onReset: () =>
+      update(Object.fromEntries(keys.map((key) => [key, DEFAULT_APPEARANCE_PREFERENCES[key]]))),
+  });
+  const schemeKey = (light: keyof AppearancePreferences, dark: keyof AppearancePreferences) =>
+    resolved.scheme === "light" ? light : dark;
 
   useEffect(() => {
     const api = window.palot;
@@ -1994,6 +2154,7 @@ function AppearanceSettings() {
         <SettingsGroup>
           <AppearanceSelectRow
             title="Theme"
+            reset={appearanceReset("source", schemeKey("lightTheme", "darkTheme"))}
             description={
               preferences.source === "system"
                 ? preferences.systemPalette === "macos"
@@ -2040,6 +2201,7 @@ function AppearanceSettings() {
           />
           <SettingsRow
             title="Contrast"
+            reset={appearanceReset(schemeKey("lightContrast", "darkContrast"))}
             description={`Adjust separation between surfaces, controls, borders, and secondary text in the current ${resolved.scheme} theme.`}
             control={
               <AppearanceSlider
@@ -2049,7 +2211,6 @@ function AppearanceSettings() {
                 }
                 min={0}
                 max={100}
-                defaultValue={50}
                 onChange={(value) =>
                   update(
                     resolved.scheme === "light"
@@ -2062,6 +2223,7 @@ function AppearanceSettings() {
           />
           <AppearanceSelectRow
             title="Code theme"
+            reset={appearanceReset(schemeKey("lightCodeTheme", "darkCodeTheme"))}
             description="File previews, diffs, Markdown code, and terminal ANSI colors."
             value={
               resolved.scheme === "light" ? preferences.lightCodeTheme : preferences.darkCodeTheme
@@ -2107,6 +2269,7 @@ function AppearanceSettings() {
         <SettingsGroup>
           <SettingsRow
             title="Always show scrollbars"
+            reset={appearanceReset("alwaysShowScrollbars")}
             description="Keep scroll handles visible instead of hiding them when idle."
             control={
               <Switch
@@ -2128,6 +2291,7 @@ function AppearanceSettings() {
           {window.palot?.platform === "linux" ? (
             <SettingsRow
               title="Window background opacity"
+              reset={appearanceReset("linuxBackgroundOpacity")}
               description="Make window backgrounds translucent while keeping text crisp. Enabling or disabling transparency requires restarting Palot. Your compositor controls desktop blur and can additionally fade the whole window."
               control={
                 <AppearanceSlider
@@ -2135,7 +2299,6 @@ function AppearanceSettings() {
                   value={preferences.linuxBackgroundOpacity}
                   min={60}
                   max={100}
-                  defaultValue={100}
                   onChange={(linuxBackgroundOpacity) => update({ linuxBackgroundOpacity })}
                 />
               }
@@ -2143,6 +2306,7 @@ function AppearanceSettings() {
           ) : null}
           <SettingsRow
             title="Surface tint"
+            reset={appearanceReset("glassOpacity")}
             description="Higher values make the composer, inspector, menus, and dialogs more solid. Native Liquid Glass sidebars remain transparent."
             control={
               <AppearanceSlider
@@ -2154,15 +2318,13 @@ function AppearanceSettings() {
                 }
                 min={30}
                 max={100}
-                defaultValue={themeTreatment.sidebar.opacity}
-                isDefault={preferences.glassOpacity === "theme"}
                 onChange={(glassOpacity) => update({ glassOpacity })}
-                onReset={() => update({ glassOpacity: "theme" })}
               />
             }
           />
           <SettingsRow
             title="Main content opacity"
+            reset={appearanceReset("contentOpacity")}
             description="Let the native material show through the chat surface and right or bottom workbench panes."
             control={
               <AppearanceSlider
@@ -2170,13 +2332,13 @@ function AppearanceSettings() {
                 value={preferences.contentOpacity}
                 min={55}
                 max={100}
-                defaultValue={DEFAULT_APPEARANCE_PREFERENCES.contentOpacity}
                 onChange={(contentOpacity) => update({ contentOpacity })}
               />
             }
           />
           <SettingsRow
             title="Native glass tint"
+            reset={appearanceReset("nativeGlassTint")}
             description="Tint macOS Liquid Glass toward the current theme background."
             control={
               <AppearanceSlider
@@ -2184,15 +2346,13 @@ function AppearanceSettings() {
                 value={resolved.treatment.native.tint}
                 min={0}
                 max={30}
-                defaultValue={themeTreatment.native.tint}
-                isDefault={preferences.nativeGlassTint === "theme"}
                 onChange={(nativeGlassTint) => update({ nativeGlassTint })}
-                onReset={() => update({ nativeGlassTint: "theme" })}
               />
             }
           />
           <AppearanceSelectRow
             title="Native glass variant"
+            reset={appearanceReset("nativeGlassVariant")}
             description="Choose between Apple's regular and clear Liquid Glass treatments. Theme follows the active palette's recommendation."
             value={preferences.nativeGlassVariant}
             options={[
@@ -2211,6 +2371,7 @@ function AppearanceSettings() {
           />
           <AppearanceSelectRow
             title="Window material"
+            reset={appearanceReset("windowMaterial")}
             description="Automatic follows the active theme's native backdrop. Changing this may require a restart."
             value={preferences.windowMaterial}
             options={WINDOW_MATERIALS.map((value) => ({
@@ -2228,6 +2389,7 @@ function AppearanceSettings() {
           />
           <AppearanceSelectRow
             title="Sidebar material"
+            reset={appearanceReset("sidebarMaterial")}
             description="Choose whether the navigation and settings sidebar stay solid or reveal the window material."
             value={preferences.sidebarMaterial}
             options={SIDEBAR_MATERIALS.map((value) => ({
@@ -2274,6 +2436,7 @@ function AppearanceSettings() {
         <SettingsGroup>
           <AppearanceSelectRow
             title="Interface font"
+            reset={appearanceReset("uiFont", "uiFontSize")}
             description="Everything outside code blocks, file previews, and terminals."
             value={preferences.uiFont}
             options={Object.entries(UI_FONT_OPTIONS).map(([value, option]) => ({
@@ -2297,6 +2460,7 @@ function AppearanceSettings() {
           {window.palot?.platform === "linux" ? (
             <SettingsRow
               title="Follow desktop monospace font"
+              reset={appearanceReset("followOmarchyFont")}
               description="Use Omarchy’s monospace font with the System theme. Interface typography stays independent."
               control={
                 <Switch
@@ -2309,6 +2473,7 @@ function AppearanceSettings() {
           ) : null}
           <AppearanceSelectRow
             title="Monospace font"
+            reset={appearanceReset("codeFont", "codeFontSize")}
             description="Code blocks, diffs, file previews, and terminal output."
             value={preferences.codeFont}
             options={Object.entries(CODE_FONT_OPTIONS).map(([value, option]) => ({
@@ -2332,6 +2497,7 @@ function AppearanceSettings() {
           />
           <SettingsRow
             title="Terminal font size"
+            reset={appearanceReset("terminalFontSize")}
             description="Terminal size stays independent so shell output can remain compact or roomy."
             control={
               <SizeSelect
@@ -2413,6 +2579,7 @@ function AppearanceSelectRow({
   options,
   onChange,
   trailing,
+  reset,
 }: {
   title: string;
   description: string;
@@ -2426,11 +2593,13 @@ function AppearanceSelectRow({
   }>;
   onChange: (value: string) => void;
   trailing?: ReactNode;
+  reset?: SettingReset;
 }) {
   const selected = options.find((option) => option.value === value);
   return (
     <SettingsRow
       title={title}
+      reset={reset}
       description={description}
       control={
         <div className="flex w-full flex-wrap items-center gap-2 @lg/settings:w-auto">
@@ -2494,19 +2663,13 @@ function AppearanceSlider({
   value,
   min,
   max,
-  defaultValue,
-  isDefault,
   onChange,
-  onReset,
 }: {
   label: string;
   value: number;
   min: number;
   max: number;
-  defaultValue: number;
-  isDefault?: boolean;
   onChange(value: number): void;
-  onReset?(): void;
 }) {
   const [interaction, setInteraction] = useState<{ source: number; value: number } | null>(null);
   const displayedValue = interaction?.source === value ? interaction.value : value;
@@ -2535,19 +2698,6 @@ function AppearanceSlider({
           setInteraction(null);
         }}
       />
-      <Button
-        type="button"
-        size="xs"
-        variant="ghost"
-        disabled={isDefault ?? displayedValue === defaultValue}
-        onClick={() => {
-          setInteraction(null);
-          if (onReset) onReset();
-          else onChange(defaultValue);
-        }}
-      >
-        Reset
-      </Button>
     </div>
   );
 }
@@ -3241,6 +3391,7 @@ function AddMcpDialog({
   const [executionTimeout, setExecutionTimeout] = useState("");
   const [disabled, setDisabled] = useState(false);
   const [codemode, setCodemode] = useState(true);
+  const [pool, setPool] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -3269,6 +3420,7 @@ function AddMcpDialog({
           ...(Object.keys(timeout).length ? { timeout } : {}),
           disabled,
           codemode,
+          ...(pool ? { pool } : {}),
         };
       } else {
         const command = parseCommand(target);
@@ -3281,6 +3433,7 @@ function AddMcpDialog({
           ...(Object.keys(timeout).length ? { timeout } : {}),
           disabled,
           codemode,
+          ...(pool ? { pool } : {}),
         };
       }
       await palot.addMcpServer({
@@ -3306,6 +3459,7 @@ function AddMcpDialog({
       setCatalogTimeout("");
       setExecutionTimeout("");
       setDisabled(false);
+      setPool(false);
       onOpenChange(false);
       toast.add({ type: "success", title: `${name.trim()} added` });
     } catch (cause) {
@@ -3482,6 +3636,16 @@ function AddMcpDialog({
               onCheckedChange={(checked) => setCodemode(Boolean(checked))}
             />
           </label>
+          <label className="flex items-center justify-between rounded-lg border px-3 py-2 text-xs">
+            <span>
+              <span className="block font-medium">Share across projects</span>
+              <span className="block text-micro text-muted-foreground">
+                One connection for every project that configures this server the same way, instead
+                of one per project. Needs OpenCode 2.2.6 and a server on the current MCP revision.
+              </span>
+            </span>
+            <Switch checked={pool} onCheckedChange={(checked) => setPool(Boolean(checked))} />
+          </label>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
@@ -3568,7 +3732,6 @@ function PermissionSettings({
   capabilityStates: Partial<Record<SettingsCapability, InventoryLoadState>>;
   refresh(): Promise<void>;
 }) {
-  const owner = useSettingsOwner();
   const permissions = snapshot?.savedPermissions ?? [];
   const location = snapshot?.location;
   return (
@@ -3590,42 +3753,12 @@ function PermissionSettings({
             empty="This project has no saved approvals."
           />
           {permissions.map((permission) => (
-            <div
+            <SavedPermissionRow
               key={permission.id}
-              className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-4"
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <Badge variant="secondary">{permission.action}</Badge>
-                  <code
-                    className="min-w-0 text-code-compact wrap-anywhere"
-                    title={permission.resource}
-                  >
-                    {permission.resource}
-                  </code>
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Remove saved approval for ${permission.resource}`}
-                onClick={() =>
-                  void palot
-                    .removeSavedPermission({
-                      connectionID: owner?.connectionID,
-                      id: permission.id,
-                      projectID: permission.projectID,
-                      directory: location?.directory ?? "",
-                      ...(location?.workspaceID ? { workspaceID: location.workspaceID } : {}),
-                    })
-                    .then(refresh)
-                    .catch((cause) => showError("Could not remove saved approval", cause))
-                }
-              >
-                <Trash2 aria-hidden="true" />
-              </Button>
-            </div>
+              permission={permission}
+              location={location}
+              onChanged={refresh}
+            />
           ))}
         </SettingsGroup>
       </SettingsSection>
@@ -3976,6 +4109,7 @@ function AboutSettings({ snapshot }: { snapshot: PalotSettingsSnapshot | null })
               </Button>
             }
           />
+          <PalotUpdateSettings />
         </SettingsGroup>
         <p className="sr-only" role="status" aria-live="polite">
           {updateStatus}

@@ -196,7 +196,12 @@ export function useFluidList<T extends HTMLElement>(
     });
     const attributeFilter = ["aria-selected", "aria-pressed", "data-popup-open"];
     if (highlightAttribute) attributeFilter.push(highlightAttribute);
-    observer.observe(container, { subtree: true, childList: true, attributes: true, attributeFilter });
+    observer.observe(container, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter,
+    });
     return () => {
       observer.disconnect();
       if (frame !== null) cancelAnimationFrame(frame);
@@ -360,7 +365,7 @@ export function chainHandlers<P extends object>(
   return merged as P;
 }
 
-const fade = { duration: 0.08 };
+const fade = { duration: spring.fast.duration };
 
 /**
  * The selected row's pill, sliding between rows on spring.moderate. It dims slightly

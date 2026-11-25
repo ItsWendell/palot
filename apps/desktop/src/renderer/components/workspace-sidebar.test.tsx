@@ -6,6 +6,7 @@ import { renderWithRouter } from "../test-utils/render-with-router";
 import { SidebarProvider } from "./ui/sidebar";
 import { NavigationRail } from "./navigation-rail";
 import { WorkspaceSidebar } from "./workspace-sidebar";
+import { TaskListSourceProvider } from "./task-list-host";
 import { runtimeAtom } from "../atoms/workspace";
 import { includedProfileIDsAtom } from "../atoms/connections";
 import { palot } from "../services/palot";
@@ -21,51 +22,35 @@ afterEach(() => {
 });
 
 describe("WorkspaceSidebar", () => {
-  it("keeps one sidebar shell while switching mode-specific content", async () => {
+  it("shows the task list with search, View and one footer, beside the rail", async () => {
     const store = createStore();
     const onSearchTasks = vi.fn();
 
     renderWithRouter(
-      <SidebarProvider>
-        {/* The workspace mounts the rail beside the task column, not inside it. */}
-        <NavigationRail navigationOpen onNavigationOpenChange={vi.fn()} />
-        <WorkspaceSidebar open onNewSession={vi.fn()} onSearchTasks={onSearchTasks} />
-      </SidebarProvider>,
+      <TaskListSourceProvider>
+        <SidebarProvider>
+          {/* The workspace mounts the rail beside the task column, not inside it. */}
+          <NavigationRail navigationOpen onNavigationOpenChange={vi.fn()} />
+          <WorkspaceSidebar open onSearchTasks={onSearchTasks} />
+        </SidebarProvider>
+      </TaskListSourceProvider>,
       store,
     );
 
-    const shell = document.querySelector("[data-sidebar-mode]");
-    expect(shell).toBeTruthy();
-    expect(shell?.querySelector("[data-navigation-rail]")).toBeNull();
+    const shell = screen.getByLabelText("Tasks", { selector: "[data-sidebar-presentation]" });
+    expect(shell.querySelector("[data-navigation-rail]")).toBeNull();
+    expect(shell.querySelector("[data-slot='task-list']")).toBeTruthy();
     const rail = screen.getByRole("navigation", { name: "Palot" });
     expect(
-      within(rail).getByRole("button", { name: "Show inbox" }).getAttribute("aria-pressed"),
+      within(rail).getByRole("button", { name: "Show tasks" }).getAttribute("aria-pressed"),
     ).toBe("true");
-    expect(screen.getByRole("heading", { name: "Inbox" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Filter tasks" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Inbox options" })).toBeTruthy();
-    expect(screen.queryByRole("textbox")).toBeNull();
-    expect(document.querySelectorAll('[data-slot="sidebar-header"]')).toHaveLength(1);
+    expect(within(shell).getByRole("button", { name: "View" })).toBeTruthy();
+    expect(within(shell).queryByRole("textbox")).toBeNull();
     expect(document.querySelectorAll('[data-slot="sidebar-footer"]')).toHaveLength(1);
 
-    const search = screen.getByRole("button", { name: "Search tasks" });
+    const search = within(shell).getByRole("button", { name: "Search tasks" });
     await userEvent.click(search);
     expect(onSearchTasks).toHaveBeenCalledExactlyOnceWith(search);
-
-    await userEvent.click(within(rail).getByRole("button", { name: "Show projects" }));
-
-    expect(document.querySelector("[data-sidebar-mode]")).toBe(shell);
-    expect(
-      within(rail).getByRole("button", { name: "Show projects" }).getAttribute("aria-pressed"),
-    ).toBe("true");
-    expect(screen.getByRole("heading", { name: "Projects" })).toBeTruthy();
-    expect(document.querySelectorAll('[data-slot="sidebar-header"]')).toHaveLength(1);
-    expect(document.querySelectorAll('[data-slot="sidebar-footer"]')).toHaveLength(1);
-
-    await userEvent.click(within(rail).getByRole("button", { name: "Show inbox" }));
-
-    expect(document.querySelector("[data-sidebar-mode]")).toBe(shell);
-    expect(screen.getByRole("button", { name: "Filter tasks" })).toBeTruthy();
   });
 
   it("keeps server controls in the Palot menu and destinations on the rail", async () => {
@@ -102,10 +87,12 @@ describe("WorkspaceSidebar", () => {
       versionMismatch: null,
     });
     const { router } = renderWithRouter(
-      <SidebarProvider>
-        <NavigationRail navigationOpen onNavigationOpenChange={vi.fn()} />
-        <WorkspaceSidebar open onNewSession={vi.fn()} onSearchTasks={vi.fn()} />
-      </SidebarProvider>,
+      <TaskListSourceProvider>
+        <SidebarProvider>
+          <NavigationRail navigationOpen onNavigationOpenChange={vi.fn()} />
+          <WorkspaceSidebar open onSearchTasks={vi.fn()} />
+        </SidebarProvider>
+      </TaskListSourceProvider>,
       store,
     );
 
@@ -116,14 +103,14 @@ describe("WorkspaceSidebar", () => {
     serverMenu.focus();
     await userEvent.keyboard("{ArrowRight}");
     expect(
-      await screen.findByRole("menuitemcheckbox", { name: "Local OpenCode Enabled" }),
+      await screen.findByRole("menuitemcheckbox", { name: "Local OpenCode Offline" }),
     ).toBeTruthy();
     const remote = screen.getByRole("menuitemcheckbox", { name: "Remote workstation Disabled" });
     const before = router.state.location.href;
     await userEvent.click(remote);
     expect(store.get(includedProfileIDsAtom)).toEqual(["local", "remote"]);
     expect(router.state.location.href).toBe(before);
-    await userEvent.click(screen.getByRole("menuitemcheckbox", { name: "Local OpenCode Enabled" }));
+    await userEvent.click(screen.getByRole("menuitemcheckbox", { name: "Local OpenCode Offline" }));
     expect(store.get(includedProfileIDsAtom)).toEqual(["remote"]);
     expect(router.state.location.href).toBe(before);
     expect(listProfiles).toHaveBeenCalledTimes(1);

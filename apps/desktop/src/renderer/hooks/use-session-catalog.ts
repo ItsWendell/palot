@@ -56,6 +56,7 @@ export function useProjectCatalogState(owner?: OpenCodeRuntimeStatus | null) {
   return {
     projects,
     ready: query.data !== undefined,
+    fetching: query.isFetching,
     error: query.error,
     refetch: query.refetch,
   };
@@ -126,6 +127,24 @@ export function useCacheSession(owner?: OpenCodeRuntimeStatus | null) {
       cacheSessions(queryClient, runtime?.connectionID ?? "disconnected", [session]);
     },
     [queryClient, runtime?.connectionID],
+  );
+}
+
+/**
+ * A task's title from the session catalog, read when asked rather than subscribed to, for
+ * restoring task mentions into the composer.
+ */
+export function useTaskTitleLookup(
+  owner?: OpenCodeRuntimeStatus | null,
+): (sessionID: string) => string | undefined {
+  const activeRuntime = useAtomValue(runtimeAtom);
+  const runtime = owner === undefined ? activeRuntime : owner;
+  const queryClient = useQueryClient();
+  const connectionID = runtime?.connectionID ?? "disconnected";
+  return useCallback(
+    (sessionID: string) =>
+      openCodeReconciler(queryClient).session(connectionID, sessionID)?.title || undefined,
+    [connectionID, queryClient],
   );
 }
 

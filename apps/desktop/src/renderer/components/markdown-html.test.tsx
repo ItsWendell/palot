@@ -393,3 +393,27 @@ describe("streaming raw HTML", () => {
     now.mockRestore();
   });
 });
+
+describe("single tildes in the user's own text", () => {
+  const user = (value: string) =>
+    render(<MarkdownContent value={value} literalSingleTilde />).container;
+
+  it("keeps a single ~ literal in paths the user typed", () => {
+    const value = "move ~/foo to (~/bar)";
+    const container = user(value);
+    expect(container.textContent).toBe(value);
+    expect(container.querySelector("del")).toBeNull();
+  });
+
+  it("still strikes ~~double~~ and leaves code alone", () => {
+    const container = user("Drop ~~the old ~/plan~~ and run `a ~b~ c`\n\n```\n~x~\n```");
+    expect(container.querySelector("del")?.textContent).toBe("the old ~/plan");
+    expect(container.querySelector("p code")?.textContent).toBe("a ~b~ c");
+    expect(container.querySelector("pre")?.textContent).toContain("~x~");
+  });
+
+  it("leaves an assistant's single-tilde strikethrough as GFM renders it", () => {
+    const container = renderMarkdown("move ~/foo to (~/bar)");
+    expect(container.querySelector("del")?.textContent).toBe("/foo to (");
+  });
+});

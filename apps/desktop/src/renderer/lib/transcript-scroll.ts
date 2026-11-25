@@ -106,6 +106,19 @@ export function transcriptDistanceFromBottom(metrics: TranscriptScrollMetrics): 
   return Math.max(0, metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight);
 }
 
+/**
+ * Whether sending a prompt takes the reader to the bottom. A reader who is following the bottom
+ * goes along with the new prompt; one who has scrolled up (and so sees Scroll to bottom) stays
+ * where they are. A transcript that fits its viewport has no place to keep, so it follows.
+ */
+export function transcriptSubmissionFollowsBottom(input: {
+  locked: boolean;
+  metrics: TranscriptScrollMetrics | null;
+}): boolean {
+  if (input.locked || !input.metrics) return true;
+  return input.metrics.scrollHeight - input.metrics.clientHeight <= 1;
+}
+
 export function transcriptScrollTargetConsumesDelta(
   metrics: TranscriptScrollMetrics,
   delta: number,
@@ -151,6 +164,19 @@ export function nextTranscriptBottomLock(input: TranscriptBottomLockInput): bool
   return input.current;
 }
 
+/**
+ * A wheel gesture that scrolls sideways, such as across a wide table or code block. Shift-wheel
+ * scrolls sideways, and a trackpad swipe adds a little vertical noise, so it must neither leave
+ * the live edge nor count as reading upward (which would load older history).
+ */
+export function transcriptWheelIsSideways(input: {
+  deltaX: number;
+  deltaY: number;
+  shiftKey: boolean;
+}): boolean {
+  return input.shiftKey || Math.abs(input.deltaX) > Math.abs(input.deltaY);
+}
+
 export function normalizeTranscriptWheelDelta(input: {
   deltaY: number;
   deltaMode: number;
@@ -159,4 +185,30 @@ export function normalizeTranscriptWheelDelta(input: {
   if (input.deltaMode === 1) return input.deltaY * 40;
   if (input.deltaMode === 2) return input.deltaY * input.viewportHeight;
   return input.deltaY;
+}
+
+/** How close to the viewport a turn outside it must be to stay mounted ahead of scrolling. */
+export const TRANSCRIPT_TURN_OVERSCAN_PX = 256;
+
+/**
+ * Turns to mount besides the visible range `startIndex … endIndex`: its neighbours whose near edge lies within
+ * `distance` pixels of the viewport. A turn holds a prompt and its whole answer, so a count of neighbouring turns
+ * would keep a full answer mounted offscreen however far away it is.
+ */
+export function nearTranscriptTurns(input: {
+  startIndex: number;
+  endIndex: number;
+  items: readonly { start: number; end: number }[];
+  scrollOffset: number;
+  viewportHeight: number;
+  distance?: number;
+}): number[] {
+  const distance = input.distance ?? TRANSCRIPT_TURN_OVERSCAN_PX;
+  const near: number[] = [];
+  const before = input.items[input.startIndex - 1];
+  if (before && input.scrollOffset - before.end <= distance) near.push(input.startIndex - 1);
+  const after = input.items[input.endIndex + 1];
+  if (after && after.start - (input.scrollOffset + input.viewportHeight) <= distance)
+    near.push(input.endIndex + 1);
+  return near;
 }

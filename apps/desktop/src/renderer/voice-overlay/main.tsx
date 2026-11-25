@@ -2,6 +2,7 @@
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { syncOverlayReducedMotion } from "./overlay-reduced-motion";
 import { VoiceOverlay } from "./voice-overlay";
 import "../index.css";
 import "./voice-overlay.css";
@@ -19,6 +20,7 @@ const applyScheme = () => {
 };
 applyScheme();
 dark.addEventListener("change", applyScheme);
+syncOverlayReducedMotion(api, documentRoot);
 
 createRoot(root).render(
   <StrictMode>

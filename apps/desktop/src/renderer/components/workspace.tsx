@@ -2,23 +2,15 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { SharedOpenCodeAction } from "./opencode-connection-alert";
 import { OpenCodeReleaseSetup } from "./open-code-release-settings";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { usePanelRef } from "react-resizable-panels";
 import type { AutomationNotificationTarget, PalotSession } from "../../shared";
 import {
   commandPaletteOpenAtom,
   commandPaletteReturnFocusAtom,
+  keepSidePanelAcrossTasksAtom,
   navigationOpenAtom,
-  sidebarModeAtom,
 } from "../atoms/ui";
 import {
   errorAtom,
@@ -31,17 +23,20 @@ import {
   flushWorkbenchPersistence,
   useWorkbenchCommands,
   useWorkbenchScope,
+  workbenchStateAtom,
 } from "../atoms/workbench";
 import { cn } from "../lib/cn";
+import { spring } from "../lib/springs";
 import { showErrorToast } from "../lib/toast-error";
-import { workbenchScopeKey, type WorkbenchScope } from "../lib/workbench-tabs";
-import { projectLocation, visibleProjects } from "../lib/view-models";
+import { carryRightPane, workbenchScopeKey, type WorkbenchScope } from "../lib/workbench-tabs";
 import { usePalotNavigation } from "../hooks/use-navigation";
-import { useProjectCatalog, useSessionCatalogSelector } from "../hooks/use-session-catalog";
+import { prefersReducedMotion } from "../hooks/use-reduced-motion";
+import { useSessionCatalogSelector } from "../hooks/use-session-catalog";
 import { useAutomations } from "../hooks/use-automations";
 import { useAutomaticWorktreeCleanup } from "../hooks/use-worktree-cleanup";
 import { palot } from "../services/palot";
 import { WorkspaceSidebar } from "./workspace-sidebar";
+import { TaskListSourceProvider } from "./task-list-host";
 import { WorkbenchPane } from "./workbench/workbench-pane";
 import { Button } from "./ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
@@ -62,6 +57,23 @@ import { SIDEBAR_PEEK_MAX_WIDTH, SidebarPeek, useSidebarPeek } from "./sidebar-p
 
 /** Width of the always-visible navigation rail (`w-11`). */
 const NAVIGATION_RAIL_WIDTH = 44;
+const CENTER_MIN_WIDTH = 360;
+const RIGHT_WORKBENCH_MIN_WIDTH = 300;
+/** The two 1px separators beside the center panel. */
+const PANEL_SEPARATORS_WIDTH = 2;
+
+type ShellSurface = "navigation" | "right" | "bottom";
+
+interface ShellTransitionSlot {
+  id: number;
+  animation: Animation | null;
+  exitCleanup: (() => void) | null;
+}
+
+const SHELL_OPEN_MS = Math.round(spring.moderate.duration * 1000);
+const SHELL_CLOSE_MS = Math.round(spring.moderate.exit.duration * 1000);
+// Force-finish a stalled pane animation (background window) a little after it should end.
+const SHELL_FALLBACK_MARGIN_MS = 60;
 
 type WorkspaceSession = Pick<PalotSession, "id" | "projectID" | "location">;
 
@@ -85,8 +97,6 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const [error, setError] = useAtom(errorAtom);
   const [runtime, setRuntime] = useAtom(runtimeAtom);
   const workspaceRecovery = useAtomValue(workspaceRecoveryAtom);
-  const projects = useProjectCatalog();
-  const visible = useMemo(() => visibleProjects(projects), [projects]);
   const historyIndex = useRouterState({
     select: (state) => state.location.state.__TSR_index,
   });
@@ -98,7 +108,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
       return typeof value === "string" ? value : null;
     },
   });
-  const { openNewTask: navigateToNewTask, openScheduled, openSession } = usePalotNavigation();
+  const { openScheduled, openSession } = usePalotNavigation();
   const selectWorkspaceSession = useCallback(
     (sessions: PalotSession[]) => {
       const session = sessionID
@@ -111,16 +121,27 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
     [sessionID],
   );
   const selectedSession = useSessionCatalogSelector(selectWorkspaceSession, sameWorkspaceSession);
-  const newTaskContext = useRef(visible);
-  useEffect(() => {
-    newTaskContext.current = visible;
-  }, [visible]);
   const [navigationRequestedOpen, setNavigationOpen] = useAtom(navigationOpenAtom);
   const workbenchScope: WorkbenchScope | null =
     runtime && sessionID ? { profileID: runtime.profileID, sessionID } : null;
   const scopeKey = workbenchScope ? workbenchScopeKey(workbenchScope) : null;
   const workbench = useWorkbenchScope(workbenchScope);
   const workbenchCommands = useWorkbenchCommands(workbenchScope);
+  const keepSidePanel = useAtomValue(keepSidePanelAcrossTasksAtom);
+  const setWorkbenchState = useSetAtom(workbenchStateAtom);
+  // The last task shown, so the next one can take its right pane when the setting asks.
+  const carryFromRef = useRef<WorkbenchScope | null>(null);
+  const profileID = runtime?.profileID;
+  const selectedLocation =
+    selectedSession && selectedSession.id === sessionID ? selectedSession.location : null;
+  useEffect(() => {
+    if (!profileID || !sessionID || !selectedLocation) return;
+    const to = { profileID, sessionID };
+    const from = carryFromRef.current;
+    carryFromRef.current = to;
+    if (!keepSidePanel || !from) return;
+    setWorkbenchState((state) => carryRightPane(state, from, to, selectedLocation));
+  }, [keepSidePanel, profileID, selectedLocation, sessionID, setWorkbenchState]);
   const rightRequestedOpen = workbench.right.requestedOpen;
   const bottomRequestedOpen = workbench.bottom.requestedOpen;
   const setCommandPaletteOpen = useSetAtom(commandPaletteOpenAtom);
@@ -130,10 +151,14 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const rightPanelRef = usePanelRef();
   const bottomPanelRef = usePanelRef();
   const workspaceRef = useRef<HTMLDivElement>(null);
-  const shellTransitionRef = useRef(0);
-  const shellAnimationRef = useRef<Animation | null>(null);
-  const shellExitCleanupRef = useRef<(() => void) | null>(null);
-  const [exitingPanel, setExitingPanel] = useState<string | null>(null);
+  // One slot per surface, so toggling one pane never cancels another pane's animation.
+  const shellTransitionsRef = useRef<Record<ShellSurface, ShellTransitionSlot>>({
+    navigation: { id: 0, animation: null, exitCleanup: null },
+    right: { id: 0, animation: null, exitCleanup: null },
+    bottom: { id: 0, animation: null, exitCleanup: null },
+  });
+  const [exitingPanels, setExitingPanels] = useState<Partial<Record<ShellSurface, string>>>({});
+  const isExitingPanel = (panel: string) => Object.values(exitingPanels).includes(panel);
   const [workspaceSize, setWorkspaceSize] = useState({ width: 0, height: 0 });
   const [paneGeometry, setPaneGeometry] = useAtom(paneGeometryAtom);
   const navigationCompact =
@@ -150,7 +175,6 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const navigationSheetOpen = navigationOverlay && navigationSheetHistory === historyIndex;
   const navigationVisible = navigationOpen || navigationSheetOpen;
   // A hidden (not compact) column can peek as an overlay without being pinned.
-  const sidebarMode = useAtomValue(sidebarModeAtom);
   const navigationPeek = useSidebarPeek(
     phase === "ready" && !navigationVisible && !navigationCompact,
   );
@@ -173,6 +197,24 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
     rightRequestedOpen &&
     Boolean(selectedSession);
   const rightTooNarrow = workspaceSize.width < NAVIGATION_RAIL_WIDTH + navigationWidth + 800;
+  // Reopened in a narrow window, the right workbench keeps its minimum and the transcript's
+  // minimum yields, so the three panels never add up to more than the window.
+  const centerMinWidth =
+    workspaceSize.width === 0
+      ? CENTER_MIN_WIDTH
+      : Math.max(
+          0,
+          Math.min(
+            CENTER_MIN_WIDTH,
+            workspaceSize.width -
+              (rightRequestedOpen
+                ? NAVIGATION_RAIL_WIDTH +
+                  navigationWidth +
+                  RIGHT_WORKBENCH_MIN_WIDTH +
+                  PANEL_SEPARATORS_WIDTH
+                : 0),
+          ),
+        );
   const narrowRightRef = useRef<{ scope: string; narrow: boolean } | null>(null);
   const wasRightExpandedRef = useRef(false);
   const bottomOpen =
@@ -185,13 +227,36 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   const forwardShortcut = useShortcutKeys("navigation.forward");
 
   const runShellTransition = useCallback(
-    async (surface: "navigation" | "right" | "bottom", open: boolean, update: () => void) => {
-      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-      const transitionID = ++shellTransitionRef.current;
-      shellAnimationRef.current?.cancel();
-      shellAnimationRef.current = null;
-      const previousExitCleanup = shellExitCleanupRef.current;
-      shellExitCleanupRef.current = null;
+    async (surface: ShellSurface, open: boolean, update: () => void) => {
+      const reducedMotion = prefersReducedMotion();
+      const slot = shellTransitionsRef.current[surface];
+      const transitionID = ++slot.id;
+      const setExitingPanel = (panel: string | null) =>
+        setExitingPanels((current) => {
+          if (panel !== null) return { ...current, [surface]: panel };
+          if (!(surface in current)) return current;
+          const next = { ...current };
+          delete next[surface];
+          return next;
+        });
+      // A toggle that interrupts this surface's animation continues from where it is
+      // instead of snapping back to the unanimated state first.
+      let interruptedFrom: Keyframe | null = null;
+      const interrupted = slot.animation;
+      if (interrupted) {
+        const target = (interrupted.effect as KeyframeEffect | null)?.target;
+        if (target instanceof HTMLElement && interrupted.playState !== "finished") {
+          const style = getComputedStyle(target);
+          interruptedFrom = {
+            opacity: Number.parseFloat(style.opacity),
+            transform: style.transform === "none" ? "translate3d(0, 0, 0)" : style.transform,
+          };
+        }
+        interrupted.cancel();
+      }
+      slot.animation = null;
+      const previousExitCleanup = slot.exitCleanup;
+      slot.exitCleanup = null;
       if (previousExitCleanup) {
         previousExitCleanup();
         flushSync(() => setExitingPanel(null));
@@ -211,19 +276,20 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
       let animatedSurface: HTMLElement | null = null;
       const x = surface === "navigation" ? -12 : surface === "right" ? 12 : 0;
       const y = surface === "bottom" ? 10 : 0;
+      const duration = open ? SHELL_OPEN_MS : SHELL_CLOSE_MS;
       const createAnimation = (target: HTMLElement) =>
         target.animate(
           open
             ? [
-                { opacity: 0.88, transform: `translate3d(${x}px, ${y}px, 0)` },
+                interruptedFrom ?? { opacity: 0.88, transform: `translate3d(${x}px, ${y}px, 0)` },
                 { opacity: 1, transform: "translate3d(0, 0, 0)" },
               ]
             : [
-                { opacity: 1, transform: "translate3d(0, 0, 0)" },
+                interruptedFrom ?? { opacity: 1, transform: "translate3d(0, 0, 0)" },
                 { opacity: 0, transform: `translate3d(${x}px, ${y}px, 0)` },
               ],
           {
-            duration: open ? 180 : 140,
+            duration,
             easing: open ? "cubic-bezier(0.22, 1, 0.36, 1)" : "ease-out",
             fill: "both",
           },
@@ -267,7 +333,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
           if (sourcePanel && sourcePanel !== source) {
             sourcePanel.style.setProperty("overflow", "visible", "important");
           }
-          shellExitCleanupRef.current = () => {
+          slot.exitCleanup = () => {
             temporaryStyles.forEach((value, property) => {
               if (value) source.style.setProperty(property, value);
               else source.style.removeProperty(property);
@@ -282,7 +348,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
           };
           animatedSurface = source;
           animation = createAnimation(source);
-          shellAnimationRef.current = animation;
+          slot.animation = animation;
           await new Promise<void>((resolve) => {
             let animationFrame: number | undefined;
             const timer = window.setTimeout(() => {
@@ -294,7 +360,7 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
               resolve();
             });
           });
-          if (shellTransitionRef.current !== transitionID) return;
+          if (slot.id !== transitionID) return;
         }
       }
 
@@ -310,23 +376,23 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
       });
       if (reducedMotion || typeof Element.prototype.animate !== "function") return;
       if (open) animatedSurface = findSurface() ?? null;
-      if (!animatedSurface || shellTransitionRef.current !== transitionID) return;
+      if (!animatedSurface || slot.id !== transitionID) return;
       animation ??= createAnimation(animatedSurface);
-      shellAnimationRef.current = animation;
+      slot.animation = animation;
 
       let cleanupTimer: number | undefined;
       await Promise.race([
         animation.finished.catch(() => undefined),
         new Promise((resolve) => {
-          cleanupTimer = window.setTimeout(resolve, open ? 240 : 200);
+          cleanupTimer = window.setTimeout(resolve, duration + SHELL_FALLBACK_MARGIN_MS);
         }),
       ]);
       if (cleanupTimer !== undefined) window.clearTimeout(cleanupTimer);
-      if (shellTransitionRef.current === transitionID) {
+      if (slot.id === transitionID) {
         animation.cancel();
-        shellAnimationRef.current = null;
-        shellExitCleanupRef.current?.();
-        shellExitCleanupRef.current = null;
+        slot.animation = null;
+        slot.exitCleanup?.();
+        slot.exitCleanup = null;
         setExitingPanel(null);
       }
     },
@@ -375,6 +441,16 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
     [workspaceRecovery],
   );
 
+  // The main process connects by itself once a missing local service appears (Palot can start
+  // before OpenCode at login). Leave the error screen then, without waiting for "Try again".
+  const runtimeConnected = runtime?.connected === true;
+  const recoveredConnection = useRef(runtimeConnected);
+  useEffect(() => {
+    const appeared = runtimeConnected && !recoveredConnection.current;
+    recoveredConnection.current = runtimeConnected;
+    if (appeared && phase === "error") void retryWorkspace().catch(() => undefined);
+  }, [phase, retryWorkspace, runtimeConnected]);
+
   const openCommandPalette = useCallback(
     (trigger: HTMLElement) => {
       setCommandPaletteReturnFocus(trigger);
@@ -397,21 +473,6 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
       });
     },
     [historyIndex, navigationOverlay, navigationPanelRef, runShellTransition, setNavigationOpen],
-  );
-
-  const startNewTask = useCallback(
-    (requestedDirectory?: string) => {
-      if (!requestedDirectory) {
-        void navigateToNewTask();
-        return;
-      }
-      const project = newTaskContext.current.find(
-        (item) => projectLocation(item) === requestedDirectory,
-      );
-      if (!project) return;
-      void navigateToNewTask(project.id);
-    },
-    [navigateToNewTask],
   );
 
   const toggleRightWorkbench = useCallback(() => {
@@ -612,9 +673,11 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
 
   useEffect(
     () => () => {
-      shellTransitionRef.current += 1;
-      shellAnimationRef.current?.cancel();
-      shellExitCleanupRef.current?.();
+      for (const slot of Object.values(shellTransitionsRef.current)) {
+        slot.id += 1;
+        slot.animation?.cancel();
+        slot.exitCleanup?.();
+      }
     },
     [],
   );
@@ -642,8 +705,21 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
         return;
       }
     };
+    // A mouse's back and forward buttons do what Mod+[ and Mod+] do. The browser pane's page is
+    // its own web contents, so its clicks never arrive here.
+    const onMouseUp = (event: MouseEvent) => {
+      if (event.defaultPrevented || (event.button !== 3 && event.button !== 4)) return;
+      event.preventDefault();
+      if (event.button === 3) {
+        if (canGoBack) router.history.back();
+      } else if (canGoForward) router.history.forward();
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
   }, [canGoBack, canGoForward, router]);
 
   useEffect(() => {
@@ -782,315 +858,309 @@ export function Workspace({ content }: { content: ReactNode; children?: ReactNod
   }
   return (
     <div ref={workspaceRef} data-palot-workspace className="relative size-full min-h-0 min-w-0">
-      <SidebarProvider
-        open={navigationOpen}
-        onOpenChange={setNavigationVisibility}
-        className="size-full min-h-0 min-w-0 bg-transparent"
-        data-navigation={navigationOpen ? "open" : "closed"}
-        data-right-workbench={rightRequestedOpen ? "open" : "closed"}
-        data-right-workbench-mode={rightExpanded ? "expanded" : "inline"}
-        data-bottom-workbench={bottomRequestedOpen ? "open" : "closed"}
-      >
-        <div
-          ref={railRef}
-          className={cn(
-            "palot-navigation-rail flex h-full shrink-0 flex-col bg-sidebar text-sidebar-foreground",
-            // With the task column open the rail shares its surface; otherwise it owns the edge.
-            !navigationOpen && "border-r border-border",
-          )}
-          data-shell-surface="rail"
+      <TaskListSourceProvider>
+        <SidebarProvider
+          open={navigationOpen}
+          onOpenChange={setNavigationVisibility}
+          className="size-full min-h-0 min-w-0 bg-transparent"
+          data-navigation={navigationOpen ? "open" : "closed"}
+          data-right-workbench={rightRequestedOpen ? "open" : "closed"}
+          data-right-workbench-mode={rightExpanded ? "expanded" : "inline"}
+          data-bottom-workbench={bottomRequestedOpen ? "open" : "closed"}
         >
-          <div className="window-drag h-(--shell-header-height) shrink-0" aria-hidden="true" />
-          <NavigationRail
-            className="min-h-0 flex-1"
-            navigationOpen={navigationVisible}
-            onNavigationOpenChange={setNavigationVisibility}
-            onViewHoverStart={navigationPeek.requestPeek}
-            onViewHoverEnd={navigationPeek.cancelPendingPeek}
-            peeking={navigationPeek.view !== null}
-          />
-        </div>
-        <ResizablePanelGroup
-          orientation="horizontal"
-          className="@container/workspace-shell min-h-0"
-          onLayoutChanged={(_, { isUserInteraction }) => {
-            if (!isUserInteraction) return;
-            const navigationSize = navigationPanelRef.current?.getSize().inPixels ?? 0;
-            const rightSize = rightPanelRef.current?.getSize().inPixels ?? 0;
-            setPaneGeometry((current) => ({
-              ...current,
-              navigation: navigationSize > 1 ? navigationSize : current.navigation,
-              right: !rightExpanded && rightSize > 1 ? rightSize : current.right,
-            }));
-          }}
-        >
-          <ResizablePanel
-            id="navigation"
-            panelRef={navigationPanelRef}
-            defaultSize={`${paneGeometry.navigation}px`}
-            minSize="220px"
-            maxSize={
-              rightExpanded
-                ? `${Math.min(420, Math.max(220, fullscreenNavigationWidth))}px`
-                : "420px"
-            }
-            collapsedSize="0px"
-            collapsible
-            groupResizeBehavior="preserve-pixel-size"
-            data-shell-panel="navigation"
-            className={cn(
-              "relative flex min-w-0 overflow-hidden!",
-              navigationOpen || exitingPanel === "navigation"
-                ? "opacity-100"
-                : "pointer-events-none opacity-0",
-            )}
-            onResize={({ inPixels }, _id, previousSize) => {
-              if (!previousSize) return;
-              const open = inPixels > 1;
-              if (
-                !navigationOverlay &&
-                navigationTransitionRef.current === null &&
-                open !== navigationOpen
-              ) {
-                setNavigationOpen(open);
-              }
-            }}
-          >
-            <WorkspaceSidebar
-              open={navigationOpen}
-              onNewSession={startNewTask}
-              onSearchTasks={openCommandPalette}
-            />
-          </ResizablePanel>
-          <ResizableHandle
-            disabled={!navigationOpen}
-            aria-hidden={!navigationOpen}
-            className={cn(
-              "transition-opacity duration-150",
-              navigationOpen ? "opacity-100" : "pointer-events-none w-0 opacity-0",
-            )}
-          />
-          <ResizablePanel
-            id="center"
-            panelRef={centerPanelRef}
-            minSize={rightExpanded ? "0px" : `${Math.min(360, workspaceSize.width || 360)}px`}
-            maxSize={rightExpanded ? "0px" : "100%"}
-            collapsedSize="0px"
-            collapsible
-            aria-hidden={rightExpanded}
-            inert={rightExpanded}
-            data-shell-panel="center"
-            className="relative min-h-0 min-w-0 flex-[1_1_auto]"
-          >
-            <ResizablePanelGroup
-              orientation="vertical"
-              className="min-h-0"
-              onLayoutChanged={(_, { isUserInteraction }) => {
-                if (!isUserInteraction) return;
-                const bottomSize = bottomPanelRef.current?.getSize().inPixels ?? 0;
-                if (bottomSize <= 1) return;
-                setPaneGeometry((current) => ({ ...current, bottom: bottomSize }));
-              }}
-            >
-              <ResizablePanel
-                id="thread"
-                minSize={`${Math.min(320, workspaceSize.height || 320)}px`}
-                className="relative min-h-0 min-w-0 [container-type:size]"
-              >
-                {content}
-              </ResizablePanel>
-              <ResizableHandle
-                disabled={!bottomOpen}
-                aria-hidden={!bottomOpen}
-                className={cn(
-                  "transition-opacity duration-150",
-                  bottomOpen ? "opacity-100" : "pointer-events-none h-0 opacity-0",
-                )}
-              />
-              <ResizablePanel
-                id="bottom-workbench"
-                panelRef={bottomPanelRef}
-                defaultSize={`${paneGeometry.bottom}px`}
-                minSize="180px"
-                maxSize="70%"
-                collapsedSize="0px"
-                collapsible
-                groupResizeBehavior="preserve-pixel-size"
-                data-shell-panel="bottom-workbench"
-                className={cn(
-                  "relative flex min-h-0 min-w-0 overflow-hidden!",
-                  bottomOpen || exitingPanel === "bottom-workbench"
-                    ? "opacity-100"
-                    : "pointer-events-none opacity-0",
-                )}
-              >
-                {(bottomOpen || exitingPanel === "bottom-workbench") &&
-                workbenchScope &&
-                selectedSession ? (
-                  <WorkbenchPane
-                    pane="bottom"
-                    visible={bottomOpen}
-                    scope={workbenchScope}
-                    context={workbench}
-                    location={selectedSession.location}
-                  />
-                ) : null}
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          </ResizablePanel>
-          <ResizableHandle
-            disabled={!rightRequestedOpen || rightExpanded}
-            aria-hidden={!rightRequestedOpen || rightExpanded}
-            className={cn(
-              "transition-opacity duration-150",
-              rightRequestedOpen && !rightExpanded
-                ? "opacity-100"
-                : "pointer-events-none w-0 opacity-0",
-            )}
-          />
-          <ResizablePanel
-            id="right-workbench"
-            panelRef={rightPanelRef}
-            defaultSize={`${paneGeometry.right}px`}
-            minSize="300px"
-            maxSize={rightExpanded ? "100%" : "70%"}
-            collapsedSize="0px"
-            collapsible
-            groupResizeBehavior="preserve-pixel-size"
-            data-shell-panel="right-workbench"
-            className={cn(
-              "relative flex min-h-0 min-w-0 overflow-hidden!",
-              rightRequestedOpen || exitingPanel === "right-workbench"
-                ? "opacity-100"
-                : "pointer-events-none opacity-0",
-            )}
-          >
-            {(rightRequestedOpen || exitingPanel === "right-workbench") &&
-            workbenchScope &&
-            selectedSession ? (
-              <WorkbenchPane
-                pane="right"
-                visible={rightRequestedOpen}
-                expanded={rightExpanded}
-                onToggleExpanded={() => {
-                  if (!rightExpanded) {
-                    const width = navigationPanelRef.current?.getSize().inPixels ?? 0;
-                    setFullscreenNavigationWidth(
-                      navigationOpen && width > 1 ? width : paneGeometry.navigation,
-                    );
-                  }
-                  setFullscreenScopeKey(rightExpanded ? null : scopeKey);
-                }}
-                scope={workbenchScope}
-                context={workbench}
-                location={selectedSession.location}
-              />
-            ) : null}
-          </ResizablePanel>
-        </ResizablePanelGroup>
-        {phase === "ready" && !navigationVisible && !navigationOverlay ? (
-          // Hot edge just right of the rail: resting here peeks the remembered view.
           <div
-            aria-hidden="true"
-            data-sidebar-peek-edge=""
-            className="absolute top-(--shell-header-height) bottom-0 z-30 w-1.5"
-            style={{ left: NAVIGATION_RAIL_WIDTH }}
-            onPointerEnter={(event) => {
-              if (event.pointerType !== "touch") navigationPeek.requestPeek(sidebarMode);
-            }}
-            onPointerLeave={navigationPeek.cancelPendingPeek}
-          />
-        ) : null}
-        <SidebarPeek
-          peek={navigationPeek}
-          railRef={railRef}
-          left={NAVIGATION_RAIL_WIDTH}
-          width={Math.min(paneGeometry.navigation, SIDEBAR_PEEK_MAX_WIDTH)}
-          label={navigationPeek.view === "project" ? "Projects preview" : "Inbox preview"}
-        >
-          <WorkspaceSidebar
-            open
-            presentation="peek"
-            mode={navigationPeek.view ?? sidebarMode}
-            onNewSession={startNewTask}
-            onSearchTasks={openCommandPalette}
-          />
-        </SidebarPeek>
-        <Sheet
-          open={navigationSheetOpen}
-          onOpenChange={(open) => setNavigationSheetHistory(open ? historyIndex : null)}
-        >
-          <SheetContent
-            side="left"
-            className="p-0"
-            style={{ width: Math.min(paneGeometry.navigation, 360) }}
+            ref={railRef}
+            className={cn(
+              "palot-navigation-rail flex h-full shrink-0 flex-col bg-sidebar text-sidebar-foreground",
+              // With the task column open the rail shares its surface; otherwise it owns the edge.
+              !navigationOpen && "border-r border-border",
+            )}
+            data-shell-surface="rail"
           >
-            <SheetTitle className="sr-only">Task navigation</SheetTitle>
-            <SheetDescription className="sr-only">Projects, tasks, and settings</SheetDescription>
-            <WorkspaceSidebar
-              open={navigationSheetOpen}
-              onNewSession={startNewTask}
-              onSearchTasks={openCommandPalette}
-            />
-          </SheetContent>
-        </Sheet>
-        <div className="window-chrome-cluster pointer-events-none fixed top-0 z-40 flex h-(--shell-header-height) items-center gap-2">
-          <IconButton
-            label={navigationVisible ? "Hide navigation" : "Show navigation"}
-            appIcon="sidebarLeading"
-            size="icon-sm"
-            aria-pressed={navigationVisible}
-            className="pointer-events-auto [-webkit-app-region:no-drag]"
-            onClick={toggleNavigation}
-          />
-          <div className="flex items-center gap-0.5 max-[480px]:hidden">
-            <IconButton
-              label={backShortcut.length ? `Back (${formatShortcut(backShortcut)})` : "Back"}
-              appIcon="back"
-              size="icon-sm"
-              disabled={!canGoBack}
-              className="pointer-events-auto [-webkit-app-region:no-drag]"
-              onClick={goBack}
-            />
-            <IconButton
-              label={
-                forwardShortcut.length ? `Forward (${formatShortcut(forwardShortcut)})` : "Forward"
-              }
-              appIcon="forward"
-              size="icon-sm"
-              disabled={!canGoForward}
-              className="pointer-events-auto [-webkit-app-region:no-drag]"
-              onClick={goForward}
+            <div className="window-drag h-(--shell-header-height) shrink-0" aria-hidden="true" />
+            <NavigationRail
+              className="min-h-0 flex-1"
+              navigationOpen={navigationVisible}
+              onNavigationOpenChange={setNavigationVisibility}
+              onViewHoverStart={navigationPeek.requestPeek}
+              onViewHoverEnd={navigationPeek.cancelPendingPeek}
+              peeking={navigationPeek.view !== null}
             />
           </div>
-        </div>
-        <div className="window-trailing-controls pointer-events-none fixed top-0 right-3 z-40 flex h-(--shell-header-height) items-center gap-1">
-          <IconButton
-            label={bottomRequestedOpen ? "Hide bottom workbench" : "Show terminal"}
-            appIcon="panelBottom"
-            size="icon-sm"
-            aria-pressed={bottomRequestedOpen}
-            className="pointer-events-auto [-webkit-app-region:no-drag]"
-            disabled={
-              !selectedSession ||
-              (runtime?.capabilities?.pty === "none" &&
-                !bottomRequestedOpen &&
-                workbench.bottom.tabs.length === 0)
-            }
-            onClick={toggleBottom}
-          />
-          <IconButton
-            label={rightRequestedOpen ? "Hide right workbench" : "Show changes"}
-            appIcon="sidebarTrailing"
-            size="icon-sm"
-            aria-pressed={rightRequestedOpen}
-            className="pointer-events-auto [-webkit-app-region:no-drag]"
-            disabled={!selectedSession}
-            onClick={toggleRightWorkbench}
-          />
-          <span className="window-close-spacer shrink-0" aria-hidden="true" />
-        </div>
-      </SidebarProvider>
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="@container/workspace-shell min-h-0"
+            onLayoutChanged={(_, { isUserInteraction }) => {
+              if (!isUserInteraction) return;
+              const navigationSize = navigationPanelRef.current?.getSize().inPixels ?? 0;
+              const rightSize = rightPanelRef.current?.getSize().inPixels ?? 0;
+              setPaneGeometry((current) => ({
+                ...current,
+                navigation: navigationSize > 1 ? navigationSize : current.navigation,
+                right: !rightExpanded && rightSize > 1 ? rightSize : current.right,
+              }));
+            }}
+          >
+            <ResizablePanel
+              id="navigation"
+              panelRef={navigationPanelRef}
+              defaultSize={`${paneGeometry.navigation}px`}
+              minSize="220px"
+              maxSize={
+                rightExpanded
+                  ? `${Math.min(420, Math.max(220, fullscreenNavigationWidth))}px`
+                  : "420px"
+              }
+              collapsedSize="0px"
+              collapsible
+              groupResizeBehavior="preserve-pixel-size"
+              data-shell-panel="navigation"
+              className={cn(
+                "relative flex min-w-0 overflow-hidden!",
+                navigationOpen || isExitingPanel("navigation")
+                  ? "opacity-100"
+                  : "pointer-events-none opacity-0",
+              )}
+              onResize={({ inPixels }, _id, previousSize) => {
+                if (!previousSize) return;
+                const open = inPixels > 1;
+                if (
+                  !navigationOverlay &&
+                  navigationTransitionRef.current === null &&
+                  open !== navigationOpen
+                ) {
+                  setNavigationOpen(open);
+                }
+              }}
+            >
+              <WorkspaceSidebar open={navigationOpen} onSearchTasks={openCommandPalette} />
+            </ResizablePanel>
+            <ResizableHandle
+              disabled={!navigationOpen}
+              aria-hidden={!navigationOpen}
+              className={cn(
+                "transition-opacity duration-150",
+                navigationOpen ? "opacity-100" : "pointer-events-none w-0 opacity-0",
+              )}
+            />
+            <ResizablePanel
+              id="center"
+              panelRef={centerPanelRef}
+              minSize={rightExpanded ? "0px" : `${centerMinWidth}px`}
+              maxSize={rightExpanded ? "0px" : "100%"}
+              collapsedSize="0px"
+              collapsible
+              aria-hidden={rightExpanded}
+              inert={rightExpanded}
+              data-shell-panel="center"
+              className="relative min-h-0 min-w-0 flex-[1_1_auto]"
+            >
+              <ResizablePanelGroup
+                orientation="vertical"
+                className="min-h-0"
+                onLayoutChanged={(_, { isUserInteraction }) => {
+                  if (!isUserInteraction) return;
+                  const bottomSize = bottomPanelRef.current?.getSize().inPixels ?? 0;
+                  if (bottomSize <= 1) return;
+                  setPaneGeometry((current) => ({ ...current, bottom: bottomSize }));
+                }}
+              >
+                <ResizablePanel
+                  id="thread"
+                  minSize={`${Math.min(320, workspaceSize.height || 320)}px`}
+                  className="relative min-h-0 min-w-0 [container-type:size]"
+                >
+                  {content}
+                </ResizablePanel>
+                <ResizableHandle
+                  disabled={!bottomOpen}
+                  aria-hidden={!bottomOpen}
+                  className={cn(
+                    "transition-opacity duration-150",
+                    bottomOpen ? "opacity-100" : "pointer-events-none h-0 opacity-0",
+                  )}
+                />
+                <ResizablePanel
+                  id="bottom-workbench"
+                  panelRef={bottomPanelRef}
+                  defaultSize={`${paneGeometry.bottom}px`}
+                  minSize="180px"
+                  maxSize="70%"
+                  collapsedSize="0px"
+                  collapsible
+                  groupResizeBehavior="preserve-pixel-size"
+                  data-shell-panel="bottom-workbench"
+                  className={cn(
+                    "relative flex min-h-0 min-w-0 overflow-hidden!",
+                    bottomOpen || isExitingPanel("bottom-workbench")
+                      ? "opacity-100"
+                      : "pointer-events-none opacity-0",
+                  )}
+                >
+                  {(bottomOpen || isExitingPanel("bottom-workbench")) &&
+                  workbenchScope &&
+                  selectedSession ? (
+                    <WorkbenchPane
+                      pane="bottom"
+                      visible={bottomOpen}
+                      scope={workbenchScope}
+                      context={workbench}
+                      location={selectedSession.location}
+                    />
+                  ) : null}
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            </ResizablePanel>
+            <ResizableHandle
+              disabled={!rightRequestedOpen || rightExpanded}
+              aria-hidden={!rightRequestedOpen || rightExpanded}
+              className={cn(
+                "transition-opacity duration-150",
+                rightRequestedOpen && !rightExpanded
+                  ? "opacity-100"
+                  : "pointer-events-none w-0 opacity-0",
+              )}
+            />
+            <ResizablePanel
+              id="right-workbench"
+              panelRef={rightPanelRef}
+              defaultSize={`${paneGeometry.right}px`}
+              minSize={`${RIGHT_WORKBENCH_MIN_WIDTH}px`}
+              maxSize={rightExpanded ? "100%" : "70%"}
+              collapsedSize="0px"
+              collapsible
+              groupResizeBehavior="preserve-pixel-size"
+              data-shell-panel="right-workbench"
+              className={cn(
+                "relative flex min-h-0 min-w-0 overflow-hidden!",
+                rightRequestedOpen || isExitingPanel("right-workbench")
+                  ? "opacity-100"
+                  : "pointer-events-none opacity-0",
+              )}
+            >
+              {(rightRequestedOpen || isExitingPanel("right-workbench")) &&
+              workbenchScope &&
+              selectedSession ? (
+                <WorkbenchPane
+                  pane="right"
+                  visible={rightRequestedOpen}
+                  expanded={rightExpanded}
+                  onToggleExpanded={() => {
+                    if (!rightExpanded) {
+                      const width = navigationPanelRef.current?.getSize().inPixels ?? 0;
+                      setFullscreenNavigationWidth(
+                        navigationOpen && width > 1 ? width : paneGeometry.navigation,
+                      );
+                    }
+                    setFullscreenScopeKey(rightExpanded ? null : scopeKey);
+                  }}
+                  scope={workbenchScope}
+                  context={workbench}
+                  location={selectedSession.location}
+                />
+              ) : null}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+          {phase === "ready" && !navigationVisible && !navigationOverlay ? (
+            // Hot edge just right of the rail: resting here peeks the remembered view.
+            <div
+              aria-hidden="true"
+              data-sidebar-peek-edge=""
+              className="absolute top-(--shell-header-height) bottom-0 z-30 w-1.5"
+              style={{ left: NAVIGATION_RAIL_WIDTH }}
+              onPointerEnter={(event) => {
+                if (event.pointerType !== "touch") navigationPeek.requestPeek("tasks");
+              }}
+              onPointerLeave={navigationPeek.cancelPendingPeek}
+            />
+          ) : null}
+          <SidebarPeek
+            peek={navigationPeek}
+            railRef={railRef}
+            left={NAVIGATION_RAIL_WIDTH}
+            width={Math.min(paneGeometry.navigation, SIDEBAR_PEEK_MAX_WIDTH)}
+            label="Tasks preview"
+          >
+            <WorkspaceSidebar open presentation="peek" onSearchTasks={openCommandPalette} />
+          </SidebarPeek>
+          <Sheet
+            open={navigationSheetOpen}
+            onOpenChange={(open) => setNavigationSheetHistory(open ? historyIndex : null)}
+          >
+            <SheetContent
+              side="left"
+              className="p-0"
+              style={{ width: Math.min(paneGeometry.navigation, 360) }}
+            >
+              <SheetTitle className="sr-only">Task navigation</SheetTitle>
+              <SheetDescription className="sr-only">Tasks across your projects</SheetDescription>
+              <WorkspaceSidebar
+                open={navigationSheetOpen}
+                presentation="sheet"
+                onSearchTasks={openCommandPalette}
+              />
+            </SheetContent>
+          </Sheet>
+          <div className="window-chrome-cluster pointer-events-none fixed top-0 z-40 flex h-(--shell-header-height) items-center gap-2">
+            <IconButton
+              label={navigationVisible ? "Hide navigation" : "Show navigation"}
+              appIcon="sidebarLeading"
+              size="icon-sm"
+              aria-pressed={navigationVisible}
+              className="pointer-events-auto [-webkit-app-region:no-drag]"
+              onClick={toggleNavigation}
+            />
+            <div className="flex items-center gap-0.5 max-[480px]:hidden">
+              <IconButton
+                label={backShortcut.length ? `Back (${formatShortcut(backShortcut)})` : "Back"}
+                appIcon="back"
+                size="icon-sm"
+                disabled={!canGoBack}
+                className="pointer-events-auto [-webkit-app-region:no-drag]"
+                onClick={goBack}
+              />
+              <IconButton
+                label={
+                  forwardShortcut.length
+                    ? `Forward (${formatShortcut(forwardShortcut)})`
+                    : "Forward"
+                }
+                appIcon="forward"
+                size="icon-sm"
+                disabled={!canGoForward}
+                className="pointer-events-auto [-webkit-app-region:no-drag]"
+                onClick={goForward}
+              />
+            </div>
+          </div>
+          <div className="window-trailing-controls pointer-events-none fixed top-0 right-3 z-40 flex h-(--shell-header-height) items-center gap-1">
+            <IconButton
+              label={bottomRequestedOpen ? "Hide bottom workbench" : "Show terminal"}
+              appIcon="panelBottom"
+              size="icon-sm"
+              aria-pressed={bottomRequestedOpen}
+              className="pointer-events-auto [-webkit-app-region:no-drag]"
+              disabled={
+                !selectedSession ||
+                (runtime?.capabilities?.pty === "none" &&
+                  !bottomRequestedOpen &&
+                  workbench.bottom.tabs.length === 0)
+              }
+              onClick={toggleBottom}
+            />
+            <IconButton
+              label={rightRequestedOpen ? "Hide right workbench" : "Show changes"}
+              appIcon="sidebarTrailing"
+              size="icon-sm"
+              aria-pressed={rightRequestedOpen}
+              className="pointer-events-auto [-webkit-app-region:no-drag]"
+              disabled={!selectedSession}
+              onClick={toggleRightWorkbench}
+            />
+            <span className="window-close-spacer shrink-0" aria-hidden="true" />
+          </div>
+        </SidebarProvider>
+      </TaskListSourceProvider>
     </div>
   );
 }

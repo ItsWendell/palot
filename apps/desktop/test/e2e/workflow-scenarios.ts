@@ -7,7 +7,9 @@ const ORIGINAL_DRAFT = "Keep this unsent draft for the original task.";
 const OTHER_DRAFT = "This separate draft belongs to the other task.";
 const QUEUED_INPUT = "The queued input before editing.";
 const EDITED_INPUT = "The edited queued input after switching tasks.";
-const EDIT_NOTICE = "Editing a canceled pending message. Resubmitting adds it to the end.";
+// The message being edited shows as its own row in the composer's queue.
+const EDIT_ROW = "Editing a pending message";
+const FOLLOW_UP_INPUT = "The follow-up queued behind the edited input.";
 const SHARED_MODEL = "Workflow Shared Model";
 const PLUGIN_FAILURE = "Workflow plugin activation failed";
 const COMPACTION_PROMPT = "Hold the active turn until the compaction workflow gate is released.";
@@ -21,10 +23,22 @@ const COMPACTION_RESULT =
   "STEER_ALPHA_19151 then STEER_BETA_19151. Both pending instructions are complete.";
 const COMPACTION_GATE_RESULT = "WORKFLOW_COMPACTION_GATE_COMPLETED";
 
+const QUEUE_FIRST_INPUTS = [
+  "Queued first, then moved behind the second.",
+  "Queued second, then moved to the top.",
+  "Queued third with Alt+Enter, ahead of the rest.",
+] as const;
+const QUEUE_FIRST_ANSWERS = [
+  "The first delivered queued message is answered.",
+  "The second delivered queued message is answered.",
+  "The third delivered queued message is answered.",
+];
+
 type WorkflowScenarioName =
   | "compaction-pending-steer"
   | "composer-draft-switch"
   | "composer-pending-edit-switch"
+  | "composer-queue-first"
   | "model-provider-identity"
   | "settings-plugin-failure";
 
@@ -71,7 +85,8 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
         const pendingRail = page.getByRole("region", { name: "Pending messages", exact: true });
         await expect(pendingRail).toBeVisible();
         for (const text of COMPACTION_STEERS) {
-          const pending = pendingRail.getByRole("region", {
+          // Each pending message is a row in the composer card's queue.
+          const pending = pendingRail.getByRole("group", {
             name: `Pending message actions: ${text}`,
             exact: true,
           });
@@ -105,7 +120,7 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
           await expect(pendingRail).toBeVisible();
           for (const text of COMPACTION_STEERS) {
             await expect(
-              pendingRail.getByRole("region", {
+              pendingRail.getByRole("group", {
                 name: `Pending message actions: ${text}`,
                 exact: true,
               }),
@@ -235,6 +250,7 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
     },
   },
   "settings-plugin-failure": {
+    tier: "core",
     description: "show a real failed plugin without blocking configuration or local settings",
     prompt: "",
     expectedModelCalls: 0,
@@ -288,7 +304,7 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
           ]),
         );
     },
-    async run(page) {
+    async run(page, { client, projectDirectory }) {
       await openSettings(page);
       await page.getByRole("button", { name: "Tools", exact: true }).click();
       await page.getByRole("heading", { name: "Plugins", level: 2 }).waitFor();
@@ -300,6 +316,28 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
         .click();
       await expect(page.getByText(PLUGIN_FAILURE, { exact: false }).last()).toBeVisible();
       await expect(page.getByText("Some settings need attention", { exact: true })).toBeVisible();
+
+      // Add server offers "Share across projects", and saving with it on registers the server.
+      // OpenCode keeps added servers as runtime overrides and exposes no read of their config,
+      // so the pool flag itself is not observable here.
+      await page.getByRole("tab", { name: "MCP", exact: true }).click();
+      await page.getByRole("button", { name: "Add server", exact: true }).click();
+      const addServer = page.getByRole("dialog", { name: "Add MCP server" });
+      await addServer.getByRole("textbox", { name: "Server name" }).fill("workflow-pooled");
+      await addServer.getByRole("textbox", { name: "Server URL" }).fill("http://127.0.0.1:1/mcp");
+      await addServer.getByRole("switch", { name: /^Start disabled/ }).click();
+      const share = addServer.getByRole("switch", { name: /^Share across projects/ });
+      await share.click();
+      await expect(share).toBeChecked();
+      await addServer.getByRole("button", { name: "Add server", exact: true }).click();
+      await expect(addServer).toHaveCount(0);
+      await expect
+        .poll(
+          async () => (await client.mcp.list({ location: { directory: projectDirectory } })).data,
+        )
+        .toContainEqual(
+          expect.objectContaining({ name: "workflow-pooled", status: { status: "disabled" } }),
+        );
 
       await page.getByRole("button", { name: "Configuration", exact: true }).click();
       await page.getByRole("heading", { name: "Configuration sources", level: 2 }).waitFor();
@@ -334,12 +372,12 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       const composer = page.getByRole("textbox", { name: "Message Palot" });
       await composer.fill(ORIGINAL_DRAFT);
       await switchTask(page, other.id, "Workflow draft secondary task");
-      await expect(composer).toHaveValue("");
+      await expect(composer).toHaveJSProperty("value", "");
       await composer.fill(OTHER_DRAFT);
       await switchTask(page, session.id, "Palot E2E: composer-draft-switch");
-      await expect(composer).toHaveValue(ORIGINAL_DRAFT);
+      await expect(composer).toHaveJSProperty("value", ORIGINAL_DRAFT);
       await switchTask(page, other.id, "Workflow draft secondary task");
-      await expect(composer).toHaveValue(OTHER_DRAFT);
+      await expect(composer).toHaveJSProperty("value", OTHER_DRAFT);
       await switchTask(page, session.id, "Palot E2E: composer-draft-switch");
 
       for (const sessionID of [session.id, other.id]) {
@@ -349,7 +387,8 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       }
     },
     async assert(page, { llm }) {
-      await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(
+      await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveJSProperty(
+        "value",
         ORIGINAL_DRAFT,
       );
       expect(llm.requests).toHaveLength(0);
@@ -357,7 +396,7 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
   },
   "composer-pending-edit-switch": {
     description:
-      "resubmit an edited queued input after task switching without losing the original draft",
+      "resubmit an edited queued input after task switching without losing the original draft, then steer it ahead of a follow-up from an empty composer",
     prompt: "Hold the current turn until the workflow gate is released.",
     expectedModelCalls: 3,
     arrange(llm) {
@@ -368,7 +407,7 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
         timeout: 120_000,
       });
       llm.text("The original workflow turn is complete.");
-      llm.text("The edited queued workflow input is complete.");
+      llm.text("The queued follow-up is complete.");
     },
     async run(page, { client, session, projectDirectory, runRoot }) {
       const other = await client.session.create({
@@ -394,19 +433,21 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
           text: QUEUED_INPUT,
           delivery: "queue",
         });
-        const pending = page.getByRole("region", {
+        // Queued messages are rows in the composer card, outside the text field.
+        const pending = page.getByRole("group", {
           name: `Pending message actions: ${QUEUED_INPUT}`,
         });
         await pending.waitFor();
-        await expect(pending.locator('xpath=ancestor::*[@data-slot="input-group"]')).toHaveCount(0);
+        await expect(pending.locator('xpath=ancestor::*[@role="textbox"]')).toHaveCount(0);
         await expect(page.getByRole("region", { name: "Pending messages" })).toBeVisible();
         await page.screenshot({ path: join(runRoot, "pending-queue.png") });
         await composer.fill(ORIGINAL_DRAFT);
-        // The action reads "Steer now" while a turn runs and "Send now" while the task is idle.
-        await expect(pending.getByRole("button", { name: /^(Steer|Send) now$/ })).toBeVisible();
+        // The gate holds the turn open, so a waiting prompt reads as queued behind it, not paused.
+        await expect(pending.getByRole("button", { name: "Steer now", exact: true })).toBeVisible();
+        await expect(page.getByRole("group", { name: "Paused queue" })).toHaveCount(0);
         await pending.getByRole("button", { name: "Edit pending message", exact: true }).click();
-        await expect(composer).toHaveValue(QUEUED_INPUT);
-        await expect(page.getByText(EDIT_NOTICE, { exact: true })).toBeVisible();
+        await expect(composer).toHaveJSProperty("value", QUEUED_INPUT);
+        await expect(page.getByRole("group", { name: EDIT_ROW, exact: true })).toBeVisible();
         await expect
           .poll(async () =>
             (await client.session.inbox.list({ sessionID: session.id })).some(
@@ -417,18 +458,18 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
         await composer.fill(EDITED_INPUT);
 
         await switchTask(page, other.id, "Workflow queued edit secondary task");
-        await expect(composer).toHaveValue("");
-        await expect(page.getByText(EDIT_NOTICE, { exact: true })).toHaveCount(0);
+        await expect(composer).toHaveJSProperty("value", "");
+        await expect(page.getByRole("group", { name: EDIT_ROW, exact: true })).toHaveCount(0);
         await composer.fill(OTHER_DRAFT);
         await switchTask(page, session.id, "Palot E2E: composer-pending-edit-switch");
-        await expect(composer).toHaveValue(EDITED_INPUT);
-        await expect(page.getByText(EDIT_NOTICE, { exact: true })).toBeVisible();
+        await expect(composer).toHaveJSProperty("value", EDITED_INPUT);
+        await expect(page.getByRole("group", { name: EDIT_ROW, exact: true })).toBeVisible();
         await page
           .getByRole("button", { name: "Queue message after current turn", exact: true })
           .click();
 
-        await expect(composer).toHaveValue(ORIGINAL_DRAFT);
-        await expect(page.getByText(EDIT_NOTICE, { exact: true })).toHaveCount(0);
+        await expect(composer).toHaveJSProperty("value", ORIGINAL_DRAFT);
+        await expect(page.getByRole("group", { name: EDIT_ROW, exact: true })).toHaveCount(0);
         await expect
           .poll(async () =>
             (await client.session.inbox.list({ sessionID: session.id }))
@@ -437,9 +478,30 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
           )
           .toEqual([{ text: EDITED_INPUT, delivery: "queue" }]);
         await switchTask(page, other.id, "Workflow queued edit secondary task");
-        await expect(composer).toHaveValue(OTHER_DRAFT);
+        await expect(composer).toHaveJSProperty("value", OTHER_DRAFT);
         await switchTask(page, session.id, "Palot E2E: composer-pending-edit-switch");
-        await expect(composer).toHaveValue(ORIGINAL_DRAFT);
+        await expect(composer).toHaveJSProperty("value", ORIGINAL_DRAFT);
+
+        // With an empty composer, the steer keys steer only the first queued message.
+        await client.session.prompt({
+          sessionID: session.id,
+          text: FOLLOW_UP_INPUT,
+          delivery: "queue",
+        });
+        await page
+          .getByRole("group", { name: `Pending message actions: ${FOLLOW_UP_INPUT}` })
+          .waitFor();
+        await expect(page.getByRole("group", { name: "Paused queue" })).toHaveCount(0);
+        await composer.fill("");
+        await composer.press("ControlOrMeta+Enter");
+        await expect
+          .poll(async () =>
+            (await client.session.inbox.list({ sessionID: session.id })).flatMap((input) =>
+              input.type === "user" && input.delivery === "queue" ? [input.payload.text] : [],
+            ),
+          )
+          .toEqual([FOLLOW_UP_INPUT]);
+        await composer.fill(ORIGINAL_DRAFT);
       } finally {
         await writeFile(join(projectDirectory, ".workflow-queue-release"), "release\n");
       }
@@ -447,9 +509,10 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
     },
     async assert(page, { client, session }) {
       await expect(
-        page.getByText("The edited queued workflow input is complete.", { exact: true }),
+        page.getByText("The queued follow-up is complete.", { exact: true }),
       ).toBeVisible();
-      await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(
+      await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveJSProperty(
+        "value",
         ORIGINAL_DRAFT,
       );
       const messages = (await client.message.list({ sessionID: session.id })).data;
@@ -461,7 +524,97 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
       expect(await client.session.inbox.list({ sessionID: session.id })).toHaveLength(0);
     },
   },
+  "composer-queue-first": {
+    description:
+      "queue two messages, move the second to the top with its row action, then queue a third first with Alt+Enter",
+    prompt: "Hold the current turn until the queue-first gate is released.",
+    expectedModelCalls: 5,
+    arrange(llm) {
+      llm.tool("shell", {
+        command:
+          "printf ready > .queue-first-ready; while [ ! -f .queue-first-release ]; do sleep 0.05; done",
+        timeout: 120_000,
+      });
+      llm.text("The gated turn is complete.");
+      for (const answer of QUEUE_FIRST_ANSWERS) llm.text(answer);
+    },
+    async run(page, { client, session, projectDirectory, runRoot }) {
+      const composer = page.getByRole("textbox", { name: "Message Palot" });
+      const [first, second, third] = QUEUE_FIRST_INPUTS;
+      const inbox = async () =>
+        (await client.session.inbox.list({ sessionID: session.id })).flatMap((input) =>
+          input.type === "user" && input.delivery === "queue" ? [input.payload.text] : [],
+        );
+      const rows = () =>
+        page
+          .getByRole("region", { name: "Pending messages" })
+          .getByRole("group", { name: /^Pending message actions: / })
+          .evaluateAll((elements) =>
+            elements.map((element) =>
+              element.getAttribute("aria-label")!.replace("Pending message actions: ", ""),
+            ),
+          );
+      try {
+        await client.session.prompt({
+          sessionID: session.id,
+          text: "Hold the current turn until the queue-first gate is released.",
+        });
+        await expect
+          .poll(
+            () => readFile(join(projectDirectory, ".queue-first-ready"), "utf8").catch(() => ""),
+            { timeout: 30_000 },
+          )
+          .toBe("ready");
+
+        for (const text of [first, second]) {
+          await composer.fill(text);
+          await page
+            .getByRole("button", { name: "Queue message after current turn", exact: true })
+            .click();
+          await page.getByRole("group", { name: `Pending message actions: ${text}` }).waitFor();
+        }
+        await expect.poll(inbox).toEqual([first, second]);
+
+        const firstRow = page.getByRole("group", { name: `Pending message actions: ${first}` });
+        await expect(firstRow.getByRole("button", { name: "Move to top" })).toHaveCount(0);
+        const secondRow = page.getByRole("group", { name: `Pending message actions: ${second}` });
+        await secondRow.hover();
+        await secondRow.getByRole("button", { name: "Move to top" }).click();
+        await expect.poll(inbox).toEqual([second, first]);
+        await expect.poll(rows).toEqual([second, first]);
+
+        await composer.fill(third);
+        await composer.press("Alt+Enter");
+        await expect(composer).toHaveJSProperty("value", "");
+        await expect.poll(inbox).toEqual([third, second, first]);
+        // Three rows collapse to a count; open the list to read their order.
+        await page.getByRole("button", { name: /^3 queued/ }).click();
+        await expect.poll(rows).toEqual([third, second, first]);
+        await page.screenshot({ path: join(runRoot, "queue-first.png") });
+      } finally {
+        await writeFile(join(projectDirectory, ".queue-first-release"), "release\n");
+      }
+      await expect.poll(inbox, { timeout: 60_000 }).toEqual([]);
+      await client.experimental.session.wait({ sessionID: session.id });
+    },
+    async assert(page, { client, session }) {
+      await expect(page.getByText(QUEUE_FIRST_ANSWERS.at(-1)!, { exact: true })).toBeVisible();
+      const messages = (
+        await client.message.list({ sessionID: session.id, type: "user", order: "asc" })
+      ).data;
+      const userTexts = messages.map((message) => (message.type === "user" ? message.text : ""));
+      // Each message was delivered once, in the order the queue showed.
+      const queued: readonly string[] = QUEUE_FIRST_INPUTS;
+      expect(userTexts.filter((text) => queued.includes(text))).toEqual([
+        QUEUE_FIRST_INPUTS[2],
+        QUEUE_FIRST_INPUTS[1],
+        QUEUE_FIRST_INPUTS[0],
+      ]);
+      expect(await client.session.inbox.list({ sessionID: session.id })).toHaveLength(0);
+    },
+  },
   "model-provider-identity": {
+    tier: "core",
     description: "select and hide same-ID models independently across two configured providers",
     prompt: "",
     expectedModelCalls: 0,
@@ -520,6 +673,9 @@ export const workflowScenarios: Record<WorkflowScenarioName, Scenario> = {
           .getByRole("group", { name: `Workflow ${provider}` })
           .getByRole("option", { name: new RegExp(SHARED_MODEL) })
           .click();
+        // A model with efforts keeps the popover open on its effort column; close it.
+        await page.keyboard.press("Escape");
+        await expect(suggestions).toBeHidden();
         await expect
           .poll(async () => (await client.session.get({ sessionID: session.id })).model)
           .toMatchObject({

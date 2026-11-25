@@ -119,32 +119,62 @@ function responseCreated(model: string) {
   };
 }
 
-function responseMessage(itemID: string, sequence: number) {
-  return {
-    type: "response.output_item.added",
-    sequence_number: sequence,
-    output_index: 0,
-    item: { type: "message", id: itemID },
-  };
-}
-
-function responseText(itemID: string, text: string, sequence: number) {
-  return {
-    type: "response.output_text.delta",
-    sequence_number: sequence,
-    item_id: itemID,
-    delta: text,
-    logprobs: null,
-  };
-}
-
-function responseMessageDone(itemID: string, sequence: number) {
-  return {
-    type: "response.output_item.done",
-    sequence_number: sequence,
-    output_index: 0,
-    item: { type: "message", id: itemID },
-  };
+/** A message item streamed as OpenAI's Responses API does, with its text in every final event. */
+function messageResponses(
+  itemID: string,
+  outputIndex: number,
+  chunks: string[],
+  nextSequence: () => number,
+) {
+  const text = chunks.join("");
+  const part = (value: string) => ({ type: "output_text", text: value, annotations: [] });
+  const position = { item_id: itemID, output_index: outputIndex, content_index: 0 };
+  return [
+    {
+      type: "response.output_item.added",
+      sequence_number: nextSequence(),
+      output_index: outputIndex,
+      item: { type: "message", id: itemID, status: "in_progress", role: "assistant", content: [] },
+    },
+    {
+      type: "response.content_part.added",
+      sequence_number: nextSequence(),
+      ...position,
+      part: part(""),
+    },
+    ...chunks.map((delta) => ({
+      type: "response.output_text.delta",
+      sequence_number: nextSequence(),
+      ...position,
+      delta,
+      logprobs: [],
+    })),
+    {
+      type: "response.output_text.done",
+      sequence_number: nextSequence(),
+      ...position,
+      text,
+      logprobs: [],
+    },
+    {
+      type: "response.content_part.done",
+      sequence_number: nextSequence(),
+      ...position,
+      part: part(text),
+    },
+    {
+      type: "response.output_item.done",
+      sequence_number: nextSequence(),
+      output_index: outputIndex,
+      item: {
+        type: "message",
+        id: itemID,
+        status: "completed",
+        role: "assistant",
+        content: [part(text)],
+      },
+    },
+  ];
 }
 
 function responseReasoning(itemID: string, sequence: number) {
@@ -282,9 +312,7 @@ function textResponses(
   return [
     responseCreated(modelFrom(body)),
     ...reasoningResponses(reasoningID, reasoningChunks, nextSequence),
-    responseMessage(itemID, nextSequence()),
-    ...chunks.map((text) => responseText(itemID, text, nextSequence())),
-    responseMessageDone(itemID, nextSequence()),
+    ...messageResponses(itemID, reasoningChunks.length > 0 ? 1 : 0, chunks, nextSequence),
     responseCompleted(nextSequence(), outputTokens),
   ];
 }
@@ -297,13 +325,15 @@ function toolResponses(
 ): unknown[] {
   const messageID = "msg_palot_test";
   const reasoningID = "rs_palot_test";
+  // Output indexes count every item in the response: reasoning, then the preamble, then tools.
+  const firstToolIndex = (reasoningChunks.length > 0 ? 1 : 0) + (preambleChunks.length > 0 ? 1 : 0);
   const tools = calls.map<ResponseTool>((call) => ({
     callID: call.id,
     itemID: `fc_palot_${call.id}`,
     name: call.name,
     input: call.inputChunks?.join("") ?? JSON.stringify(call.input),
     inputChunks: call.inputChunks ?? [JSON.stringify(call.input)],
-    outputIndex: call.index + 1,
+    outputIndex: firstToolIndex + call.index,
   }));
   let sequence = 1;
   const nextSequence = () => ++sequence;
@@ -311,11 +341,7 @@ function toolResponses(
     responseCreated(modelFrom(body)),
     ...reasoningResponses(reasoningID, reasoningChunks, nextSequence),
     ...(preambleChunks.length > 0
-      ? [
-          responseMessage(messageID, nextSequence()),
-          ...preambleChunks.map((text) => responseText(messageID, text, nextSequence())),
-          responseMessageDone(messageID, nextSequence()),
-        ]
+      ? messageResponses(messageID, firstToolIndex - 1, preambleChunks, nextSequence)
       : []),
     ...tools.map((tool) => responseToolAdded(tool, nextSequence())),
     ...tools.flatMap((tool) =>
@@ -392,6 +418,7 @@ export class TestLLMServer {
   #closing: Promise<void> | null = null;
   #steps: Step[] = [];
   #routes = new Map<string, Step[]>();
+  #firstUserRoutes = new Set<string>();
   #fixtures = new Map<string, Fixture>();
   #waiters: Waiter[] = [];
   #toolID = 0;
@@ -483,8 +510,8 @@ export class TestLLMServer {
           (payload) => this.emissions.push({ at: Date.now(), payload }),
           step.burst && {
             ...step.burst,
-            // Burst steps are text-only: chat has one opening envelope, Responses two.
-            contentStart: pathname === "/v1/responses" ? 2 : 1,
+            // Burst steps are text-only: chat has one opening envelope, Responses three.
+            contentStart: pathname === "/v1/responses" ? 3 : 1,
             contentCount: step.chunks.length,
           },
         );
@@ -619,13 +646,23 @@ export class TestLLMServer {
     this.#script(this.#steps).error(status, body);
   }
 
-  route(marker: string, arrange: (script: TestLLMScript) => void): void {
+  /**
+   * Answers requests containing `marker` from their own queue. With `firstUserMessage`, only a
+   * request's first user message is searched: that is a session's own task, so a subagent's
+   * prompt routes its own calls but not its parent's, whose tool calls repeat that prompt.
+   */
+  route(
+    marker: string,
+    arrange: (script: TestLLMScript) => void,
+    options: { firstUserMessage?: boolean } = {},
+  ): void {
     if (!marker.trim()) throw new Error("Test LLM route marker must not be empty");
     if (this.#routes.has(marker)) throw new Error(`Test LLM route '${marker}' is already defined`);
     const steps: Step[] = [];
     arrange(this.#script(steps));
     if (steps.length === 0) throw new Error(`Test LLM route '${marker}' has no scripted responses`);
     this.#routes.set(marker, steps);
+    if (options.firstUserMessage) this.#firstUserRoutes.add(marker);
   }
 
   fixture(path: string, body: string, contentType = "text/plain; charset=utf-8"): string {
@@ -698,7 +735,15 @@ export class TestLLMServer {
 
   #route(body: Record<string, unknown>): string | null {
     const serialized = JSON.stringify(body);
-    const matches = [...this.#routes.keys()].filter((marker) => serialized.includes(marker));
+    const messages = Array.isArray(body.messages)
+      ? body.messages
+      : Array.isArray(body.input)
+        ? body.input
+        : [];
+    const firstUser = JSON.stringify(messages.find((message) => message?.role === "user") ?? null);
+    const matches = [...this.#routes.keys()].filter((marker) =>
+      (this.#firstUserRoutes.has(marker) ? firstUser : serialized).includes(marker),
+    );
     if (matches.length > 1) {
       throw new Error(`Model request matched multiple scripted routes: ${matches.join(", ")}`);
     }

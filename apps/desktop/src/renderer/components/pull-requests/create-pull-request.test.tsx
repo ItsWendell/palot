@@ -47,7 +47,7 @@ it("keeps edits made during generation and creates/links only after review", asy
       <CreatePullRequestControl
         profileID="profile"
         sessionID="task"
-        model={null}
+        resolveModel={async () => null}
         pushing={false}
         push={vi.fn()}
       />

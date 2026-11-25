@@ -22,6 +22,8 @@ export interface IntegrationConnectionAttempt {
   url: string | null;
   instructions: string | null;
   mode: "auto" | "code" | null;
+  /** An automatic OAuth attempt that also accepts the browser's redirect URL. */
+  paste?: boolean;
 }
 
 export interface IntegrationConnectionPalotAdapter {
@@ -176,7 +178,8 @@ export class IntegrationConnectionWorkflow {
     try {
       await this.palot.completeIntegrationOAuth({
         ...active.input,
-        ...(active.attempt.mode === "code" ? { code: code.trim() } : {}),
+        // A pasted redirect URL completes an automatic attempt; it settles through the status poll.
+        ...(active.attempt.mode === "code" || active.attempt.paste ? { code: code.trim() } : {}),
       });
     } catch (cause) {
       if (active.generation === this.generation) {
@@ -340,6 +343,7 @@ function oauthAttempt(value: PalotIntegrationOAuthAttempt): IntegrationConnectio
     url: value.url,
     instructions: value.instructions,
     mode: value.mode,
+    ...(value.paste ? { paste: true } : {}),
   };
 }
 

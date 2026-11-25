@@ -11,7 +11,6 @@ import {
   sessionTriageLoadingAtom,
   sessionTriageSnapshotAtom,
 } from "../atoms/inbox";
-import { sidebarModeAtom } from "../atoms/ui";
 import { phaseAtom, runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { connectionOverview } from "../lib/connection-overview";
 import { latestSessionWatermark, rootSessionID } from "../lib/session-inbox";
@@ -25,7 +24,6 @@ export function useInboxController(): void {
   const runtime = useAtomValue(runtimeAtom);
   const phase = useAtomValue(phaseAtom);
   const selectedSessionID = useAtomValue(selectedSessionIDAtom);
-  const sidebarMode = useAtomValue(sidebarModeAtom);
   const sessions = useSessionCatalog();
   const catalogReady = useAtomValue(sessionCatalogReadyAtom);
   const snapshot = useAtomValue(sessionTriageSnapshotAtom);
@@ -41,7 +39,7 @@ export function useInboxController(): void {
   const getSnapshot = useEffectEvent(() => snapshot);
   const queryClient = useQueryClient();
 
-  // Palot settles a task when its watched PR merges or closes; reload that profile's
+  // Palot settles a task when its unwatched PR merges or closes; reload that profile's
   // triage so the task moves to Settled without a restart.
   useSourceControlEvent((event) => {
     if (event.type !== "pull-requests" || event.reason !== "settled") return;
@@ -74,7 +72,7 @@ export function useInboxController(): void {
   );
 
   useEffect(() => {
-    if (sidebarMode !== "inbox" || phase !== "ready" || !catalogReady || !runtime?.profileID) {
+    if (phase !== "ready" || !catalogReady || !runtime?.profileID) {
       return;
     }
     let active = true;
@@ -127,16 +125,7 @@ export function useInboxController(): void {
     return () => {
       active = false;
     };
-  }, [
-    phase,
-    catalogReady,
-    runtime?.profileID,
-    setError,
-    setLoading,
-    cacheSession,
-    setSnapshot,
-    sidebarMode,
-  ]);
+  }, [phase, catalogReady, runtime?.profileID, setError, setLoading, cacheSession, setSnapshot]);
 
   useEffect(() => {
     if (inbox.nextSnoozeDeadline === null) return;

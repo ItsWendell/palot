@@ -1,0 +1,123 @@
+name: Nightly E2E
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.4.4
+  NODE_VERSION: 24
+
+jobs:
+  e2e:
+    name: Native E2E, every functional scenario (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Vite+ and Node.js
+        uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
+        with:
+          version-file: package.json
+          node-version: ${{ env.NODE_VERSION }}
+          run-install: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: vp install --frozen-lockfile
+
+      - name: Prepare Linux native display and sandbox
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb xauth dbus-x11 libgtk-3-0t64 libnss3 libasound2t64
+          # Keep Electron's sandbox enabled rather than disabling Ubuntu's
+          # AppArmor/user-namespace policy or passing --no-sandbox.
+          # Download first: Electron's lazy installer writes to stdout, which
+          # must not become part of the captured sandbox path.
+          node -e 'require("electron")'
+          sandbox="$(node -p 'require("node:path").join(require("node:path").dirname(require("electron")), "chrome-sandbox")')"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
+
+      - name: Install the aligned OpenCode CLI
+        run: |
+          version="$(bun -p 'require("./apps/desktop/package.json").devDependencies["@opencode/client"]')"
+          bun add --global --trust "@opencode/cli@$version"
+
+      # Performance profiles, React Scan attribution, showcase capture and demos are
+      # diagnosis tools rather than pass/fail checks. The runtime acquisition check
+      # downloads a release and needs an explicit opt-in and a packaged build. The
+      # browser scenarios need a focused window, so they run in their own batch.
+      - name: Select scenarios
+        id: scenarios
+        run: |
+          all="$(bun run test:e2e:list 2>/dev/null | cut -d: -f1)"
+          focused="browser-native browser-native-http"
+          unfocused="$(grep -Ev 'performance|session-memory|render-react-scan|showcase|demo|^opencode-runtime-acquisition$|^browser-native(-http)?$' <<< "$all" | tr '\n' ' ')"
+          test -n "$unfocused"
+          echo "unfocused=$unfocused" >> "$GITHUB_OUTPUT"
+          echo "focused=$focused" >> "$GITHUB_OUTPUT"
+          echo "Unfocused: $unfocused"
+          echo "Focused: $focused"
+
+      - name: Run scenarios
+        id: e2e
+        env:
+          UNFOCUSED: ${{ steps.scenarios.outputs.unfocused }}
+          FOCUSED: ${{ steps.scenarios.outputs.focused }}
+        run: |
+          run() {
+            dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' \
+              bun run test:e2e -- "$@" --retries 1 --display=desktop
+          }
+          status=0
+          # shellcheck disable=SC2086 # Scenario names are word-split on purpose.
+          run $UNFOCUSED || status=$?
+          mv .local/desktop-e2e/last-run.json .local/desktop-e2e/last-run-unfocused.json || true
+          # shellcheck disable=SC2086
+          run $FOCUSED --focus || status=$?
+          mv .local/desktop-e2e/last-run.json .local/desktop-e2e/last-run-focused.json || true
+          # Successful runs remove their directories, so any that remain belong to a
+          # failed scenario or to the failed attempt of a flaky one.
+          if compgen -G '.local/desktop-e2e/*/instance.json' > /dev/null; then
+            echo "retained=true" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
+
+      - name: Upload failed scenario artifacts
+        if: ${{ failure() || steps.e2e.outputs.retained == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-nightly-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          # Allowlist synthetic-run diagnostics, not isolated homes/auth/service data.
+          path: |
+            .local/desktop-e2e/last-run-*.json
+            .local/desktop-e2e/**/instance.json
+            .local/desktop-e2e/**/build.log
+            .local/desktop-e2e/**/electron.log
+            .local/desktop-e2e/**/service-startup-error.log
+            .local/desktop-e2e/**/failure.png
+            .local/desktop-e2e/**/llm-requests.json
+            .local/desktop-e2e/**/logs/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

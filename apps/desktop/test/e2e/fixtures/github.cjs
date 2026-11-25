@@ -4,6 +4,22 @@ const fs = require("node:fs");
 const original = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = new URL(typeof input === "string" ? input : (input.url ?? String(input)));
+  // Signed job log storage: answers without the GitHub token, like the real one.
+  if (url.hostname === "job-logs.palot-e2e.invalid") {
+    if (init?.headers?.authorization) throw new Error("A job log download carried the token.");
+    return new Response(
+      [
+        "2026-10-28T12:00:00.0000000Z ##[group]Run actions/checkout@v4",
+        "2026-10-28T12:00:01.0000000Z ##[endgroup]",
+        "2026-10-28T12:00:02.0000000Z ##[group]Run bun test",
+        "2026-10-28T12:00:03.0000000Z \u001b[31mFAIL\u001b[0m fixture.test.ts > adds numbers",
+        "2026-10-28T12:00:03.5000000Z Expected: 3, Received: 4",
+        "2026-10-28T12:00:04.0000000Z ##[error]Process completed with exit code 1.",
+        "2026-10-28T12:00:05.0000000Z Post job cleanup.",
+      ].join("\n"),
+      { status: 200, headers: { "content-type": "text/plain" } },
+    );
+  }
   if (url.hostname !== "api.github.com") return original(input, init);
   const statePath = process.env.PALOT_TEST_GITHUB_STATE;
   const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
@@ -34,7 +50,8 @@ globalThis.fetch = async (input, init) => {
     createdAt: "2026-10-28T10:00:00Z",
     viewerCanUpdate: true,
     viewerDidAuthor: true,
-    mergeStateStatus: "BLOCKED",
+    mergeStateStatus: state.mergeStateStatus ?? "BLOCKED",
+    reviewDecision: state.reviewDecision ?? null,
     autoMergeRequest: state.autoMerge ? { mergeMethod: state.autoMerge } : null,
     labels: { nodes: [] },
     files: { nodes: [], pageInfo: { hasNextPage: false } },
@@ -54,6 +71,7 @@ globalThis.fetch = async (input, init) => {
                   ? [
                       {
                         __typename: "CheckRun",
+                        databaseId: 101,
                         name: "Fixture CI",
                         status: state.checkStatus === "PENDING" ? "IN_PROGRESS" : "COMPLETED",
                         conclusion:
@@ -103,6 +121,31 @@ globalThis.fetch = async (input, init) => {
       };
     data = { data: answer };
   } else if (url.pathname.endsWith("/pulls/7") && init?.method === "PATCH") data = node;
+  else if (url.pathname === "/repos/palot-e2e/fixture/check-runs/101")
+    data = { id: 101, name: "Fixture CI", app: { slug: "github-actions" } };
+  else if (url.pathname === "/repos/palot-e2e/fixture/actions/jobs/101")
+    data = {
+      id: 101,
+      steps: [
+        {
+          name: "Checkout",
+          conclusion: "success",
+          started_at: "2026-10-28T12:00:00Z",
+          completed_at: "2026-10-28T12:00:01Z",
+        },
+        {
+          name: "Test",
+          conclusion: "failure",
+          started_at: "2026-10-28T12:00:02Z",
+          completed_at: "2026-10-28T12:00:04Z",
+        },
+      ],
+    };
+  else if (url.pathname === "/repos/palot-e2e/fixture/actions/jobs/101/logs")
+    return new Response(null, {
+      status: 302,
+      headers: { location: "https://job-logs.palot-e2e.invalid/101?sig=fixture" },
+    });
   else if (url.pathname.endsWith("/files")) data = [];
   else if (url.pathname.endsWith("/labels")) data = [];
   else if (url.pathname.endsWith("/pulls") && init?.method === "POST") {

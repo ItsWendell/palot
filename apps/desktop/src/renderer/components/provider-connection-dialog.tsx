@@ -146,6 +146,12 @@ function IntegrationConnectionDialog({
     );
   }
 
+  const pasteRedirect =
+    attempt?.type === "oauth" &&
+    attempt.mode === "auto" &&
+    attempt.paste === true &&
+    attempt.status === "pending";
+
   async function completeOAuth() {
     if (!integration || !attempt || attempt.type !== "oauth") return;
     await workflow.completeOAuth(code, callbacks);
@@ -266,6 +272,21 @@ function IntegrationConnectionDialog({
                 <Input value={code} onChange={(event) => setCode(event.target.value)} />
               </label>
             ) : null}
+            {pasteRedirect ? (
+              <label className="grid gap-1.5 text-xs font-medium">
+                Redirect URL
+                <span className="font-normal text-muted-foreground">
+                  If the browser can't reach the machine running OpenCode, paste the address it was
+                  sent to after signing in.
+                </span>
+                <Input
+                  value={code}
+                  autoComplete="off"
+                  placeholder="http://127.0.0.1:…/callback?code=…"
+                  onChange={(event) => setCode(event.target.value)}
+                />
+              </label>
+            ) : null}
           </div>
         )}
         {attempt ? (
@@ -273,7 +294,7 @@ function IntegrationConnectionDialog({
             <Button type="button" variant="outline" onClick={() => void close()}>
               Cancel
             </Button>
-            {attempt.type === "oauth" && attempt.mode === "code" ? (
+            {(attempt.type === "oauth" && attempt.mode === "code") || pasteRedirect ? (
               <Button
                 type="button"
                 disabled={busy || !code.trim()}

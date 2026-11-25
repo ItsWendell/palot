@@ -19,7 +19,9 @@ import {
 } from "lucide-react";
 import {
   Fragment,
+  createContext,
   memo,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -35,12 +37,17 @@ import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionCatalog } from "../hooks/use-session-catalog";
 import { cn } from "../lib/cn";
 import { writeClipboardText } from "../lib/clipboard";
-import { fileReferenceHref } from "../lib/file-reference";
+import { formatDurationPrecise, formatElapsed } from "../lib/duration";
+import { fileReferenceHref, fileReferenceMachine } from "../lib/file-reference";
+import { MachineBadge } from "./machine-badge";
 import { FileLinkMenu, useLinkActions } from "./link-actions";
 import {
+  executeNestedParts,
   projectToolExecution,
+  scriptCallOrigin,
   formatToolDetailValue,
   readableToolName,
+  toolExecutionMachines,
   type FileChangeExecution,
   type ExecuteExecution,
   type ListExecution,
@@ -56,6 +63,7 @@ import {
 } from "../lib/tool-executions";
 import { IconButton } from "./ui";
 import { Badge } from "./ui/badge";
+import { usePendingApproval } from "./transcript/pending-approvals";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { PulseDot } from "./ui/pulse-dot";
@@ -75,6 +83,12 @@ import { TerminalOutput } from "./terminal-output";
 import { isPlanToolPart, planItems, summarizePlan } from "./transcript/plan";
 import { ArtifactCard } from "./transcript/artifact-card";
 import { projectArtifactCalls } from "../lib/artifact-calls";
+import { scriptCallDiffTarget, type ScriptCallDiffTarget } from "../lib/turn-projection";
+import {
+  useScriptCallDiffs,
+  useTranscriptDiffScope,
+  type TranscriptDiffScope,
+} from "./script-call-diffs";
 
 const MAX_HIGHLIGHTED_JSON_LENGTH = 256_000;
 const MAX_CACHED_DETAIL_HEIGHTS = 512;
@@ -238,6 +252,7 @@ function WorkspaceFileTarget({
   className?: string;
 }) {
   const label = children ?? baseName(path);
+  const machine = fileReferenceMachine({ path });
   const title = line === undefined ? path : `${path} (line ${line})`;
   const directory = useWorkspaceDirectory();
   const { homeDirectory } = useLinkActions();
@@ -265,6 +280,7 @@ function WorkspaceFileTarget({
         href={fileHref}
         tabIndex={0}
         title={`Open ${title}`}
+        aria-label={machine ? `Open ${baseName(path)} on ${machine.machine}` : undefined}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -323,45 +339,42 @@ function WorkspaceFileTargets({ files, opener }: { files: string[]; opener: Work
   );
 }
 
-function executeToolLabel(view: ExecuteExecution) {
-  const names = view.calls
-    .map((call) => call.title)
-    .filter((name, index, values) => values.indexOf(name) === index);
-  if (names.length === 0) return null;
-  if (names.length === 1) return names[0]!;
-  if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  return `${names[0]}, ${names[1]} and ${names.length - 2} more`;
+/** The first line of what a script threw, without the `Error:` prefix every thrown error has. */
+function scriptFailureReason(view: ExecuteExecution): string | null {
+  const text = (view.error ?? view.output ?? "").trim();
+  const line =
+    text
+      .split("\n")[0]
+      ?.trim()
+      .replace(/^Error:\s*/, "") ?? "";
+  return line || null;
 }
 
-function durationLabel(durationMs: number) {
-  if (durationMs < 1_000) return `${Math.round(durationMs)} ms`;
-  if (durationMs < 10_000) return `${(durationMs / 1_000).toFixed(1)} s`;
-  if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)} s`;
-  const minutes = Math.floor(durationMs / 60_000);
-  const seconds = Math.round((durationMs % 60_000) / 1_000);
-  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-}
-
-function elapsedLabel(durationMs: number) {
-  const seconds = Math.max(0, Math.floor(durationMs / 1_000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}m ${remainder.toString().padStart(2, "0")}s`;
+// A failed call says what it attempted; its Failed badge says how it ended.
+/** Where a search looked: a relative folder as given, an absolute one by its name. */
+function searchFolder(scope: string | null): string | null {
+  const path = scope?.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+  if (!path || path === "." || path === "./") return null;
+  return path.startsWith("/") || /^[A-Za-z]:\//.test(path) ? baseName(path) || path : path;
 }
 
 function executionTitle(view: ToolExecutionView) {
-  if (view.kind === "read") return `Read ${baseName(view.path)}`;
-  if (view.kind === "list") return `Listed ${view.path}`;
+  const failed = view.status === "error";
+  if (view.kind === "read") return `${failed ? "Tried to read" : "Read"} ${baseName(view.path)}`;
+  if (view.kind === "list") return `${failed ? "Tried to list" : "Listed"} ${view.path}`;
   if (view.kind === "search") {
-    if (view.engine === "glob") return `Found files matching “${view.query}”`;
-    return `Searched for “${view.query}”`;
+    const folder = searchFolder(view.scope);
+    const where = folder ? ` in ${folder}` : "";
+    if (view.engine === "glob") {
+      return `${failed ? "Tried to find" : "Found"} files matching “${view.query}”${where}`;
+    }
+    return `${failed ? "Tried to search" : "Searched"} for “${view.query}”${where}`;
   }
   if (view.kind === "web-search") {
-    return `${view.status === "running" || view.status === "pending" ? "Searching" : "Searched"} the web for “${view.query}”`;
+    return `${failed ? "Tried to search" : view.status === "running" || view.status === "pending" ? "Searching" : "Searched"} the web for “${view.query}”`;
   }
   if (view.kind === "web-fetch") {
-    return `${view.status === "error" ? "Failed to fetch" : view.status === "running" || view.status === "pending" ? "Fetching" : "Fetched"} ${view.url}`;
+    return `${failed ? "Tried to fetch" : view.status === "interrupted" ? "Stopped fetching" : view.status === "running" || view.status === "pending" ? "Fetching" : "Fetched"} ${view.url}`;
   }
   if (view.kind === "shell") {
     const command = view.command.trim();
@@ -371,14 +384,16 @@ function executionTitle(view: ToolExecutionView) {
         ? "shell commands with Python"
         : "Python script";
       if (view.status === "error") return `Failed to run ${subject}`;
+      if (view.status === "interrupted") return `Stopped ${subject}`;
       return `${running ? "Running" : "Ran"} ${subject}`;
     }
     if (running) return command ? `Running ${command}` : "Running command";
     if (view.status === "error") return command ? `Command failed: ${command}` : "Command failed";
+    if (view.status === "interrupted") return command ? `Stopped ${command}` : "Stopped command";
     return command ? `Ran ${command}` : "Ran command";
   }
   if (view.kind === "skill") {
-    return `${view.status === "running" || view.status === "pending" ? "Loading" : "Loaded"} ${view.skill}`;
+    return `${failed ? "Tried to load" : view.status === "running" || view.status === "pending" ? "Loading" : "Loaded"} ${view.skill}`;
   }
   if (view.kind === "subagent") {
     const running = view.status === "running" || view.status === "pending";
@@ -392,17 +407,28 @@ function executionTitle(view: ToolExecutionView) {
       if (view.status === "error" || view.runtimeError) return `${title} failed`;
       return `Ran ${title}`;
     }
-    const tools = executeToolLabel(view);
-    if (running) return tools ? `Orchestrating ${tools}` : "Orchestrating tools";
-    if (view.status === "error" || view.runtimeError) {
-      return tools ? `Failed to orchestrate ${tools}` : "Tool orchestration failed";
+    // A script's calls are rows of their own; its row says only how the script itself went.
+    if (view.background) {
+      if (view.background.state === null) return "Moved script to background";
+      if (view.status === "interrupted") return "Stopped background script";
+      if (view.status === "error") return "Background script failed";
+      return "Ran script in background";
     }
-    return tools ? `Orchestrated ${tools}` : "Orchestrated tools";
+    if (view.status === "interrupted") return "Stopped script";
+    if (view.status === "error" || view.runtimeError) {
+      const reason = scriptFailureReason(view);
+      return reason ? `Script failed: ${reason}` : "Script failed";
+    }
+    return running ? "Running a script" : "Ran a script";
   }
   if (view.kind === "file-change") {
     const targets = view.targetFiles;
     const running = view.status === "running" || view.status === "pending";
     if (view.operation === "patch") {
+      if (failed)
+        return targets.length > 0
+          ? `Tried to patch ${targetLabel(targets)}`
+          : "Tried to apply patch";
       if (view.inputStreaming) {
         return targets.length > 0
           ? `Generating patch for ${targetLabel(targets)}`
@@ -414,8 +440,10 @@ function executionTitle(view: ToolExecutionView) {
       return running ? "Applying patch" : "Applied patch";
     }
     const path = targets[0] ?? view.path ?? "file";
-    if (view.operation === "write") return `${running ? "Writing" : "Wrote"} ${baseName(path)}`;
-    return `${running ? "Editing" : "Updated"} ${baseName(path)}`;
+    if (view.operation === "write") {
+      return `${failed ? "Tried to write" : running ? "Writing" : "Wrote"} ${baseName(path)}`;
+    }
+    return `${failed ? "Tried to edit" : running ? "Editing" : "Updated"} ${baseName(path)}`;
   }
   if (view.kind === "image-generation") {
     const editing = view.operation === "edit";
@@ -433,7 +461,7 @@ function executionTitleContent(view: ToolExecutionView, opener: WorkspaceFileOpe
   if (view.kind === "read") {
     return (
       <>
-        <span>Read </span>
+        <span>{view.status === "error" ? "Tried to read " : "Read "}</span>
         <WorkspaceFileTarget path={view.path} line={view.range?.start} opener={opener} />
       </>
     );
@@ -441,11 +469,18 @@ function executionTitleContent(view: ToolExecutionView, opener: WorkspaceFileOpe
   if (view.kind !== "file-change") return executionTitle(view);
 
   const running = view.status === "running" || view.status === "pending";
+  const failed = view.status === "error";
   if (view.operation === "patch" && view.targetFiles.length > 0) {
     return (
       <>
         <span>
-          {view.inputStreaming ? "Generating patch for " : running ? "Patching " : "Updated "}
+          {failed
+            ? "Tried to patch "
+            : view.inputStreaming
+              ? "Generating patch for "
+              : running
+                ? "Patching "
+                : "Updated "}
         </span>
         <WorkspaceFileTargets files={view.targetFiles} opener={opener} />
       </>
@@ -458,12 +493,16 @@ function executionTitleContent(view: ToolExecutionView, opener: WorkspaceFileOpe
     <>
       <span>
         {view.operation === "write"
-          ? running
-            ? "Writing "
-            : "Wrote "
-          : running
-            ? "Editing "
-            : "Updated "}
+          ? failed
+            ? "Tried to write "
+            : running
+              ? "Writing "
+              : "Wrote "
+          : failed
+            ? "Tried to edit "
+            : running
+              ? "Editing "
+              : "Updated "}
       </span>
       <WorkspaceFileTarget path={path} opener={opener} />
     </>
@@ -487,6 +526,7 @@ function executionMeta(view: ToolExecutionView) {
   if (view.kind === "web-fetch") return view.format;
   if (view.kind === "shell") {
     if (view.timedOut) return "timed out";
+    if (view.killed) return "killed";
     if (view.exitCode !== null) return `exit ${view.exitCode}`;
   }
   if (view.kind === "file-change" && view.files.length > 0) {
@@ -503,7 +543,7 @@ function executionMeta(view: ToolExecutionView) {
     return `${view.targetFiles.length} files`;
   }
   if (view.kind === "skill" && view.directory) return baseName(view.directory);
-  if (view.kind === "subagent") return view.background ? "background" : view.description;
+  if (view.kind === "subagent") return view.requestedBackground ? "background" : view.description;
   if (view.kind === "execute" && view.calls.length > 0) {
     const failed = view.calls.filter((call) => call.status === "error").length;
     return failed > 0
@@ -592,16 +632,32 @@ export const ToolExecution = memo(function ToolExecution({
     return items ? summarizePlan(view.id, items) : null;
   }, [part, view.id]);
   const artifacts = useMemo(() => projectArtifactCalls(part, index), [index, part]);
+  const origin = scriptCallOrigin(part);
+  // A script whose calls render as rows of their own: its row says only how the script went.
+  const flattenedScript = view.kind === "execute" && executeNestedParts(part, index).length > 0;
+  if (origin) return <ScriptCallExecution part={part} view={view} defaultOpen={defaultOpen} />;
   if (artifacts) {
     // The cards say everything an artifact-only call did; other calls keep their own row.
+    const ownRow = flattenedScript
+      ? view.status !== "complete" || (view.kind === "execute" && view.background !== null)
+      : !artifacts.only;
     return (
       <>
-        {artifacts.only ? null : <ToolExecutionCard view={view} defaultOpen={defaultOpen} />}
+        {ownRow ? (
+          flattenedScript && view.kind === "execute" ? (
+            <ScriptRow view={view} defaultOpen={defaultOpen} />
+          ) : (
+            <ToolExecutionCard view={view} defaultOpen={defaultOpen} />
+          )
+        ) : null}
         {artifacts.calls.map((call) => (
           <ArtifactCard key={call.key} call={call} />
         ))}
       </>
     );
+  }
+  if (flattenedScript && view.kind === "execute") {
+    return <ScriptRow view={view} defaultOpen={defaultOpen} />;
   }
   if (isPlanToolPart(part)) {
     // The pinned plan card lists the items; the transcript only records the update.
@@ -620,6 +676,71 @@ export const ToolExecution = memo(function ToolExecution({
   return <ToolExecutionCard view={view} defaultOpen={defaultOpen} />;
 });
 
+/** The row a script keeps beside its calls' rows: how it failed, stopped or went to the background. */
+function ScriptRow({ view, defaultOpen }: { view: ExecuteExecution; defaultOpen: boolean }) {
+  return (
+    <ToolExecutionCard view={view} defaultOpen={defaultOpen} meta={null}>
+      <ExecuteDetails view={view} showCalls={false} />
+    </ToolExecutionCard>
+  );
+}
+
+/**
+ * One call a Code Mode script made, as the row the same call made directly would show. The row
+ * offers the script's source and result, and a file change shows the turn's diff for its file.
+ */
+function ScriptCallExecution({
+  part,
+  view,
+  defaultOpen,
+}: {
+  part: PalotMessageContent;
+  view: ToolExecutionView;
+  defaultOpen: boolean;
+}) {
+  const origin = scriptCallOrigin(part)!;
+  const script = projectToolExecution(origin.script, origin.index);
+  const scope = useTranscriptDiffScope();
+  const target = scriptCallDiffTarget(part);
+  if (script.kind !== "execute") return <ToolExecutionCard view={view} defaultOpen={defaultOpen} />;
+  if (scope && target && view.kind === "file-change") {
+    return (
+      <ScriptFileChangeExecution
+        view={view}
+        script={script}
+        scope={scope}
+        target={target}
+        defaultOpen={defaultOpen}
+      />
+    );
+  }
+  return <ToolExecutionCard view={view} script={script} defaultOpen={defaultOpen} />;
+}
+
+function ScriptFileChangeExecution({
+  view,
+  script,
+  scope,
+  target,
+  defaultOpen,
+}: {
+  view: FileChangeExecution;
+  script: ExecuteExecution;
+  scope: TranscriptDiffScope;
+  target: ScriptCallDiffTarget;
+  defaultOpen: boolean;
+}) {
+  const diffs = useScriptCallDiffs(scope, target);
+  const withDiffs = useMemo(
+    () => (diffs && diffs.length > 0 ? { ...view, files: diffs } : view),
+    [diffs, view],
+  );
+  return <ToolExecutionCard view={withDiffs} script={script} defaultOpen={defaultOpen} />;
+}
+
+/** Inside a script call's row: opens the script's source and result under it. */
+const ScriptRowContext = createContext<{ showScript(): void } | null>(null);
+
 export const StandaloneShellExecution = memo(function StandaloneShellExecution({
   part,
   index,
@@ -631,9 +752,21 @@ export const StandaloneShellExecution = memo(function StandaloneShellExecution({
   if (view.kind !== "shell") return <ToolExecution part={part} index={index} />;
   const active = view.status === "running" || view.status === "pending";
   const label =
-    view.status === "error" ? "Command failed" : active ? "Running command" : "Command completed";
+    view.status === "error"
+      ? "Command failed"
+      : view.status === "interrupted"
+        ? "Command stopped"
+        : active
+          ? "Running command"
+          : "Command completed";
   const meta = [
-    view.timedOut ? "timed out" : view.exitCode === null ? null : `exit ${view.exitCode}`,
+    view.timedOut
+      ? "timed out"
+      : view.killed
+        ? "killed"
+        : view.exitCode === null
+          ? null
+          : `exit ${view.exitCode}`,
     view.truncated ? "output truncated" : null,
   ]
     .filter(Boolean)
@@ -764,11 +897,13 @@ function mergeReadExecutions(views: ReadExecution[]): ReadExecution | null {
   if (!first) return null;
   const status = views.some((view) => view.status === "error")
     ? "error"
-    : views.some((view) => view.status === "running")
-      ? "running"
-      : views.some((view) => view.status === "pending")
-        ? "pending"
-        : "complete";
+    : views.some((view) => view.status === "interrupted")
+      ? "interrupted"
+      : views.some((view) => view.status === "running")
+        ? "running"
+        : views.some((view) => view.status === "pending")
+          ? "pending"
+          : "complete";
   const started = views.flatMap((view) => (view.startedAt === null ? [] : [view.startedAt]));
   const durations = views.flatMap((view) => (view.durationMs === null ? [] : [view.durationMs]));
   return {
@@ -791,15 +926,23 @@ const ToolExecutionCard = memo(function ToolExecutionCard({
   defaultOpen = false,
   meta: selectedMeta,
   title,
+  script,
   children,
 }: {
   view: ToolExecutionView;
   defaultOpen?: boolean;
   meta?: string | null;
   title?: ReactNode;
+  /** The Code Mode script that made this call; the row offers its source and result. */
+  script?: ExecuteExecution;
   children?: ReactNode;
 }) {
   const opener = useWorkspaceFileOpener();
+  const [scriptOpen, setScriptOpen] = useState(false);
+  const scriptRow = useMemo(
+    () => (script ? { showScript: () => setScriptOpen(true) } : null),
+    [script],
+  );
   const [userOverride, setUserOverride] = useState<{
     status: ToolExecutionView["status"];
     open: boolean;
@@ -815,7 +958,86 @@ const ToolExecutionCard = memo(function ToolExecutionCard({
   const detail = children !== undefined || hasDetails(view);
   const materialized = open || userOverride !== null;
   const meta = selectedMeta === undefined ? executionMeta(view) : selectedMeta;
+  const machines = toolExecutionMachines(view);
   const timing = timingLabel(view);
+  const approval = usePendingApproval(view.id);
+  const awaitingApproval =
+    approval !== null && (view.status === "running" || view.status === "pending");
+
+  const trigger = (
+    <CollapsibleTrigger
+      disabled={!detail}
+      render={
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          title={timing ?? undefined}
+          className={cn(
+            "h-7 w-full justify-start px-0! text-xs font-normal hover:bg-transparent! hover:text-foreground aria-expanded:bg-transparent!",
+            (awaitingApproval || script) && "min-w-0 flex-1",
+          )}
+        />
+      }
+    >
+      {executionIcon(view)}
+      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+        <span className="min-w-0 truncate text-left text-foreground/80 transition-colors group-hover/button:text-foreground">
+          {title ?? executionTitleContent(view, opener)}
+        </span>
+        {machines.map((machine) => (
+          <MachineBadge key={machine} machine={machine} />
+        ))}
+        {!awaitingApproval && (view.status === "running" || view.status === "pending") ? (
+          <ActiveExecutionTiming
+            key={view.startedAt ?? "not-started"}
+            status={view.status}
+            startedAt={view.startedAt}
+          />
+        ) : null}
+      </span>
+      {meta ? (
+        <span
+          className="min-w-0 max-w-[45%] truncate tabular-nums text-muted-foreground/70 transition-colors group-hover/button:text-foreground/80"
+          title={meta}
+        >
+          {meta}
+        </span>
+      ) : null}
+      {view.status === "error" ? (
+        <ExecutionStatusTooltip label={timing}>
+          <Badge variant="destructive">Failed</Badge>
+        </ExecutionStatusTooltip>
+      ) : view.status === "interrupted" ? (
+        <ExecutionStatusTooltip label={timing}>
+          <Badge variant="neutral">Stopped</Badge>
+        </ExecutionStatusTooltip>
+      ) : view.status === "complete" ? (
+        view.durationMs === null ? (
+          <span className="inline-flex size-4 items-center justify-center">
+            <Check
+              className="size-3.5 text-muted-foreground/50 transition-colors group-hover/button:text-foreground/70"
+              aria-hidden="true"
+            />
+          </span>
+        ) : (
+          <span
+            className="shrink-0 tabular-nums text-muted-foreground/70 transition-colors group-hover/button:text-foreground/80"
+            aria-label={timing ?? undefined}
+          >
+            {formatDurationPrecise(view.durationMs)}
+          </span>
+        )
+      ) : null}
+      {detail ? (
+        open ? (
+          <ChevronDown data-icon="inline-end" aria-hidden="true" />
+        ) : (
+          <ChevronRight data-icon="inline-end" aria-hidden="true" />
+        )
+      ) : null}
+    </CollapsibleTrigger>
+  );
 
   return (
     <Collapsible
@@ -824,78 +1046,64 @@ const ToolExecutionCard = memo(function ToolExecutionCard({
       data-status={view.status}
       data-palot-tool-kind={view.kind}
       data-palot-tool-name={view.name}
+      data-palot-awaiting-approval={awaitingApproval ? "" : undefined}
       className="my-0.5 min-w-0 text-muted-foreground"
     >
-      <CollapsibleTrigger
-        disabled={!detail}
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            title={timing ?? undefined}
-            className="h-7 w-full justify-start px-0! text-xs font-normal hover:bg-transparent! hover:text-foreground aria-expanded:bg-transparent!"
-          />
-        }
-      >
-        {executionIcon(view)}
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <span className="min-w-0 truncate text-left text-foreground/80 transition-colors group-hover/button:text-foreground">
-            {title ?? executionTitleContent(view, opener)}
-          </span>
-          {view.status === "running" || view.status === "pending" ? (
-            <ActiveExecutionTiming
-              key={view.startedAt ?? "not-started"}
-              status={view.status}
-              startedAt={view.startedAt}
-            />
-          ) : null}
-        </span>
-        {meta ? (
-          <span
-            className="min-w-0 max-w-[45%] truncate tabular-nums text-muted-foreground/70 transition-colors group-hover/button:text-foreground/80"
-            title={meta}
-          >
-            {meta}
-          </span>
-        ) : null}
-        {view.status === "error" ? (
-          <ExecutionStatusTooltip label={timing}>
-            <Badge variant="destructive">Failed</Badge>
-          </ExecutionStatusTooltip>
-        ) : view.status === "complete" ? (
-          view.durationMs === null ? (
-            <span className="inline-flex size-4 items-center justify-center">
-              <Check
-                className="size-3.5 text-muted-foreground/50 transition-colors group-hover/button:text-foreground/70"
-                aria-hidden="true"
+      {awaitingApproval ? (
+        // The badge sits beside the disclosure trigger: a button cannot hold another button.
+        <div className="flex min-w-0 items-center gap-1.5">
+          {trigger}
+          <Badge
+            variant="warning"
+            className="cursor-pointer outline-none hover:bg-warning/22 dark:hover:bg-warning/26"
+            render={
+              <button
+                type="button"
+                title="Review the request"
+                onClick={() => approval?.focus()}
+                data-palot-approval-request-id={approval?.requestID}
               />
-            </span>
-          ) : (
-            <span
-              className="shrink-0 tabular-nums text-muted-foreground/70 transition-colors group-hover/button:text-foreground/80"
-              aria-label={timing ?? undefined}
-            >
-              {durationLabel(view.durationMs)}
-            </span>
-          )
-        ) : null}
-        {detail ? (
-          open ? (
-            <ChevronDown data-icon="inline-end" aria-hidden="true" />
-          ) : (
-            <ChevronRight data-icon="inline-end" aria-hidden="true" />
-          )
-        ) : null}
-      </CollapsibleTrigger>
+            }
+          >
+            Needs approval
+          </Badge>
+        </div>
+      ) : script ? (
+        // The script stays one quiet step away: a hover action, like other row actions.
+        <div className="group/script-call flex min-w-0 items-center gap-1">
+          {trigger}
+          <IconButton
+            label={scriptOpen ? "Hide script" : "Show script"}
+            icon={Braces}
+            size="icon-xs"
+            aria-pressed={scriptOpen}
+            data-palot-script-toggle=""
+            className={cn(
+              "shrink-0 text-muted-foreground/70",
+              !scriptOpen &&
+                "hidden group-hover/script-call:inline-flex group-focus-within/script-call:inline-flex",
+            )}
+            onClick={() => setScriptOpen((value) => !value)}
+          />
+        </div>
+      ) : (
+        trigger
+      )}
       {detail ? (
         <CollapsibleContent smooth animate={userOverride !== null} className="min-w-0 pt-1">
           {materialized ? (
-            <DeferredDetails cacheKey={view.id}>
-              {children ?? <ExecutionDetails view={view} opener={opener} />}
-            </DeferredDetails>
+            <ScriptRowContext.Provider value={scriptRow}>
+              <DeferredDetails cacheKey={view.id}>
+                {children ?? <ExecutionDetails view={view} opener={opener} />}
+              </DeferredDetails>
+            </ScriptRowContext.Provider>
           ) : null}
         </CollapsibleContent>
+      ) : null}
+      {script && scriptOpen ? (
+        <div className="min-w-0 pt-1" data-palot-script-source="">
+          <ExecuteDetails view={script} showCalls={false} />
+        </div>
       ) : null}
     </Collapsible>
   );
@@ -926,7 +1134,7 @@ function ActiveExecutionTiming({
           className="text-muted-foreground/70 transition-colors group-hover/button:text-foreground/80"
           aria-hidden="true"
         >
-          {elapsedLabel(elapsed)}
+          {formatElapsed(elapsed)}
         </span>
       ) : null}
     </span>
@@ -935,7 +1143,13 @@ function ActiveExecutionTiming({
 
 function timingLabel(view: ToolExecutionView) {
   if (view.durationMs === null) return null;
-  return `${view.status === "error" ? "Failed after" : "Completed in"} ${durationLabel(view.durationMs)}`;
+  const verb =
+    view.status === "error"
+      ? "Failed after"
+      : view.status === "interrupted"
+        ? "Stopped after"
+        : "Completed in";
+  return `${verb} ${formatDurationPrecise(view.durationMs)}`;
 }
 
 function ExecutionStatusTooltip({
@@ -1056,7 +1270,15 @@ function GenericDetails({
   );
 }
 
-function ExecuteDetails({ view }: { view: ExecuteExecution }) {
+function ExecuteDetails({
+  view,
+  showCalls = true,
+}: {
+  view: ExecuteExecution;
+  /** Off where the calls already show as rows of their own. */
+  showCalls?: boolean;
+}) {
+  const calls = showCalls ? view.calls : [];
   const result = view.error ?? view.output;
   const jsonResult = useMemo(
     () => (!view.error && !view.runtimeError && result ? formatJson(result) : null),
@@ -1065,9 +1287,9 @@ function ExecuteDetails({ view }: { view: ExecuteExecution }) {
 
   return (
     <div className="flex flex-col gap-2 rounded-lg bg-muted/35 p-2.5 text-xs">
-      {view.calls.length > 0 ? (
+      {calls.length > 0 ? (
         <section className="flex flex-col gap-1.5">
-          {view.calls.map((call, index) => (
+          {calls.map((call, index) => (
             <div key={`${call.tool}:${index}`} className="flex min-w-0 items-center gap-2">
               {call.status === "running" ? (
                 <PulseDot className="size-3" aria-hidden="true" />
@@ -1092,7 +1314,7 @@ function ExecuteDetails({ view }: { view: ExecuteExecution }) {
         </section>
       ) : null}
       {view.code ? (
-        <section className={view.calls.length > 0 ? "border-t pt-2" : undefined}>
+        <section className={calls.length > 0 ? "border-t pt-2" : undefined}>
           <div className="mb-1 text-micro font-medium tracking-wide text-muted-foreground uppercase">
             Script
           </div>
@@ -1433,6 +1655,7 @@ function webResultHost(url: string) {
 
 function ShellDetails({ view }: { view: ShellExecution }) {
   const [copied, setCopied] = useState(false);
+  const scriptRow = useContext(ScriptRowContext);
   const value = `$ ${view.command}${view.output ? `\n\n${view.output}` : ""}${view.error ? `\n\n${view.error}` : ""}`;
 
   if (view.scriptPresentation) return <PythonShellDetails view={view} />;
@@ -1467,6 +1690,19 @@ function ShellDetails({ view }: { view: ShellExecution }) {
           ) : null}
         </pre>
       </ToolOutput>
+      {scriptRow && !view.output && !view.error ? (
+        // OpenCode records no output or exit code for a script's calls; the script's result may.
+        <p className="m-0 border-t border-border/40 px-3 py-2 text-xs text-muted-foreground">
+          Output isn’t available for commands run inside a script.{" "}
+          <button
+            type="button"
+            className="text-foreground/80 underline-offset-2 hover:text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
+            onClick={scriptRow.showScript}
+          >
+            Show the script’s result
+          </button>
+        </p>
+      ) : null}
     </div>
   );
 }

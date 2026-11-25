@@ -1,18 +1,20 @@
-import type { FileDiffInfo, FormValue } from "@opencode/client";
+import type { FileDiffInfo } from "@opencode/client";
 import { isCancelledError } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
-import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
+import {
+  defaultRangeExtractor,
+  useVirtualizer,
+  type Range,
+  type Virtualizer,
+} from "@tanstack/react-virtual";
+import { atom, useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { terminalPasteAtom } from "../atoms/terminal-paste";
 import { useWorkbenchScope } from "../atoms/workbench";
 import { useThreadHeaderInsets } from "../hooks/use-thread-header-insets";
 import { openNewWorkbenchTerminal } from "../services/workbench-terminal";
 import {
-  Brain,
   ChevronDown,
-  ChevronRight,
   CircleAlert,
-  CircleStop,
   Copy,
   FileText,
   FolderGit2,
@@ -21,12 +23,9 @@ import {
   LoaderCircle,
   MessageCircle,
   Pencil,
-  RotateCcw,
   Sparkles,
-  Undo2,
 } from "lucide-react";
-import { motion } from "motion/react";
-import { VoiceStage } from "./voice/voice-call-ui";
+import { AnimatePresence, motion } from "motion/react";
 import {
   createElement,
   Fragment,
@@ -40,15 +39,14 @@ import {
   useRef,
   useState,
 } from "react";
-import type { PalotMessage, PalotMessageContent, PalotModel, PalotSession } from "../../shared";
+import type { PalotMessage, PalotModel, PalotSession } from "../../shared";
+import type { ProviderLimit } from "../../shared/provider-limit";
 import {
-  activityGroupOpenAtomFamily,
   browserLocalLinksAtom,
   browserWebLinksAtom,
   experimentalBrowserAtom,
   sessionProjectionPreferenceAtom,
   showTimelineCacheBustsAtom,
-  turnActivityOpenAtomFamily,
 } from "../atoms/ui";
 import {
   belongsToSession,
@@ -63,96 +61,96 @@ import {
   useWorkbenchCommands,
 } from "../atoms/workbench";
 import { attentionTargetAtom } from "../atoms/attention";
+import {
+  clearSessionStopAtom,
+  SESSION_STOPPING_MS,
+  sessionStopRequestsAtom,
+} from "../atoms/session-stop";
 import { resolvedAppearanceAtom } from "../atoms/appearance";
+import { spring } from "../lib/springs";
 import { retainedTranscriptLayouts } from "../lib/transcript-layout-cache";
+import type { OpenedSessionView } from "../hooks/use-session-info";
 import { useSessionTranscript } from "../hooks/use-session-transcript";
 import { useBrowserSession } from "../hooks/use-browser-session";
 import { openFileInBrowser, workspaceFileTarget } from "../lib/browser-files";
-import { fileUrl, serverHomeDirectory } from "../lib/file-reference";
-import { fileUriPath } from "../lib/composer-restoration";
-import {
-  FileLinkMenu,
-  LinkActionsProvider,
-  LinkedText,
-  type LinkActions,
-  type WebLinkDestination,
-} from "./link-actions";
+import { serverHomeDirectory } from "../lib/file-reference";
+import { LinkActionsProvider, type LinkActions, type WebLinkDestination } from "./link-actions";
 import { useSessionTranscriptProjection } from "../hooks/use-session-transcript-projection";
 import { useMcpElicitations } from "../hooks/use-mcp-elicitations";
 import { useSessionRequests, useSessionFamilyRequestViews } from "../hooks/use-session-requests";
-import type { OwnedPendingRequestView } from "../lib/session-family-requests";
 import { useSessionActivityForSession } from "../hooks/use-session-activity";
 import { useRunningShells } from "../hooks/use-running-shells";
-import { RunningWorkControl } from "./running-work-control";
+import { useRunningWork } from "./running-work-control";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import {
-  useCacheSession,
   useProjectCatalog,
   useSessionCatalog,
   useSessionCatalogSelector,
 } from "../hooks/use-session-catalog";
 import { cn } from "../lib/cn";
 import { isChatSession } from "../lib/chats";
-import { BoundedScroll } from "./transcript/bounded-scroll";
-import { EditFromHereProvider, EditFromHereButton } from "./transcript/edit-from-here";
+import { EditFromHereProvider } from "./transcript/edit-from-here";
 import { firstUnseenMessage } from "../lib/transcript-unread";
 import { NewMessagesDivider, UnreadContext } from "./transcript/unread-divider";
 import { TranscriptArtifactContext } from "./transcript/artifact-context";
+import { TranscriptModelsContext } from "./transcript/model-switch";
+import {
+  PendingApprovalContext,
+  PendingApprovalStore,
+  pendingApprovalsByPart,
+} from "./transcript/pending-approvals";
 import { createMarkdownSessionOpener } from "../lib/markdown-session-links";
 import { writeClipboardText } from "../lib/clipboard";
 import { likelyCacheBusts, type LikelyCacheBust } from "../lib/cache-bust";
 import { resolveSessionProjectionPreference } from "../lib/session-projection-policy";
 import { withPersistedTurnFailures } from "../lib/persisted-turn-failures";
-import { parallelActivityLabel } from "../lib/parallel-activity";
+import {
+  sessionActivityLabel,
+  sessionActivityStatus,
+  type SessionActivityStatus,
+} from "../lib/session-activity-status";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
 import { reviewOfferUserMessageID } from "../lib/turn-review-offer";
-import { TurnReviewOffer } from "./turn-review-offer";
-import { UsageLimitActions } from "./usage-limit-actions";
-import { ClaudeCodeFailureActions } from "./claude-code-failure-actions";
+import { TurnReviewActions } from "./turn-review-offer";
+import { TurnChangedFiles } from "./transcript/turn-changed-files";
+import { TranscriptDiffScopeContext } from "./script-call-diffs";
 import {
   ResponseSelectionAsk,
   responseAnchorSelector,
   responseRowIndex,
   responseSelectionSource,
 } from "./response-selection-ask";
-import { projectToolExecution } from "../lib/tool-executions";
-import { projectArtifactCalls } from "../lib/artifact-calls";
 import { recordStreamingCommit } from "../lib/streaming-latency";
+import { samePlainValue, useStableList, useStableValue } from "../lib/stable-value";
 import {
   composerTranscriptPageDirection,
+  nearTranscriptTurns,
   readTranscriptScrollUpdate,
   normalizeTranscriptWheelDelta,
+  transcriptWheelIsSideways,
   scheduleTranscriptScrollFrame,
   transcriptKeyboardScrollDelta,
   transcriptPageScrollTop,
   transcriptScrollTargetConsumesDelta,
+  transcriptSubmissionFollowsBottom,
   type TranscriptScrollIntent,
 } from "../lib/transcript-scroll";
 import { prefersReducedMotion } from "../hooks/use-reduced-motion";
 import { showErrorToast } from "../lib/toast-error";
 import {
-  createReasoningTitle,
-  isPlainReadEntry,
-  sameTurnActivityGroup,
-  splitReasoningContent,
   type TranscriptBackgroundFacts,
   type TranscriptPresentationRow,
   type TranscriptProjectionRow,
-  type TurnActivityGroup,
   type TranscriptTurn,
-  type TurnPart,
   type TurnPostFinalItem,
 } from "../lib/turn-projection";
 import {
-  isTool,
-  messageRole,
   messageText,
   pendingRequestViews,
   projectForSession,
   projectLocation,
   projectName,
   sessionIsAdditionalCheckout,
-  type PendingFormFieldView,
   type PendingRequestView,
 } from "../lib/view-models";
 import { palot } from "../services/palot";
@@ -161,81 +159,72 @@ import { useSessionFork } from "../hooks/use-session-fork";
 import { useTranscriptNavigation } from "../hooks/use-transcript-navigation";
 import { useTranscriptPrompts } from "../hooks/use-transcript-prompts";
 import { useTranscriptInfiniteScroll } from "../hooks/use-transcript-infinite-scroll";
+import {
+  transcriptPrependPinnedIndexes,
+  useTranscriptPrependAnchor,
+  type TranscriptPrependPin,
+} from "../hooks/use-transcript-prepend-anchor";
 import { TranscriptRail } from "./transcript-rail";
 import { TranscriptFindBar, useTaskViewShortcuts, useTranscriptFind } from "./transcript-find";
-import { transcriptFindPartKey, transcriptPartText } from "../lib/transcript-search";
 import {
-  CompactionBoundary,
   CompactionTranscriptContext,
   type CompactionTranscriptActions,
 } from "./transcript/compaction-row";
 import { compactionAnchorSelector, turnIndexForMessage } from "./transcript/compaction-anchor";
 import { compactionHistory } from "../lib/context-usage";
-import { latestTurnThought } from "./transcript/live-thought";
+import { LiveTurnContext, type LiveTurnInputs } from "./transcript/live-turn-context";
 import { ParentTaskBreadcrumb } from "./transcript/parent-breadcrumb";
-import { PlanCard } from "./transcript/plan-card";
-import { GoalCard } from "./transcript/goal-card";
+import {
+  composerOpenTabAtom,
+  useStandingTabs,
+  type ComposerRunningWork,
+} from "./composer/composer-standing";
+import type { ComposerRequest } from "./composer/composer-requests";
+import { lastMessageLimit } from "../lib/usage-limit-reset";
+import { latestPlan, planItems } from "./transcript/plan";
+import { ActivityGroups, TurnActivity, turnShowsBar } from "./transcript/activity-group";
+import { MessageRow } from "./transcript/message-row";
+import { PendingRequests } from "./transcript/pending-requests";
+import { formatElapsed } from "../lib/duration";
+import { useCurrentTime } from "./transcript/shared";
+import { TimelineBoundary } from "./transcript/timeline-parts";
 import { SessionHistoryDialog } from "./session-history-dialog";
-import { PermissionPreview } from "./permission-preview";
 import { useVcsInfo } from "../hooks/use-vcs-info";
 import { CheckoutBranchPicker } from "./branch-picker";
 import { Composer } from "./composer";
 import { ConnectionDestination } from "./connection-destination";
-import { FileAttachment } from "./file-attachment";
 import { useFileReferenceOpener } from "./file-reference-opener";
+import { isLocalMarkdownWebLink, MarkdownWorkspaceProvider } from "./markdown-content";
 import {
-  isLocalMarkdownWebLink,
-  MarkdownContent,
-  MarkdownWorkspaceProvider,
-  useWorkspaceDirectory,
-  useWorkspaceFileOpener,
-} from "./markdown-content";
+  MessageQuoteOpenerContext,
+  type MessageQuoteOpener,
+} from "./transcript/user-message-quotes";
 import { NewTask } from "./new-task";
 import { OpenInSelector } from "./open-in-selector";
 import { MoveToProjectDialog } from "./move-to-project-dialog";
 import { PullRequestControl } from "./pull-requests/pull-request-control";
+import { ShipButton } from "./ship-button";
 import { SessionExportMenu, type SessionHistoryActions } from "./session-context-menu";
-import { GuestPendingMessages } from "./guest-links";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import { AttachmentGroup } from "./ui/attachment";
+import { useGuestPendingMessages } from "./guest-links";
 import { Badge } from "./ui/badge";
-import { Bubble, BubbleContent } from "./ui/bubble";
 import { Button } from "./ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
-import { Message, MessageContent } from "./ui/message";
-import {
-  Questionnaire,
-  QuestionnaireActions,
-  QuestionnaireChoice,
-  QuestionnaireChoiceDescription,
-  QuestionnaireChoices,
-  QuestionnaireDescription,
-  QuestionnaireInput,
-  QuestionnaireItem,
-  QuestionnaireNext,
-  QuestionnairePrevious,
-  QuestionnaireProgress,
-  QuestionnaireSubmit,
-  QuestionnaireTitle,
-} from "./ui/questionnaire";
 import { Input } from "./ui/input";
-import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { ScrollAreaRoot, ScrollViewport, ScrollBar } from "./ui/scroll-area";
 import { IconButton, LoadingButton } from "./ui";
 import { ThinkingShimmer } from "./thinking-shimmer";
 import { ReadImagePreview } from "./read-image-preview";
-import { ReadToolExecutionGroup, StandaloneShellExecution, ToolExecution } from "./tool-execution";
+import { StandaloneShellExecution } from "./tool-execution";
 import {
   projectBackgroundWork,
-  SubagentLaunch,
-  SubagentResponse,
+  SubagentReportsContext,
+  subagentReportsByChild,
+  SubagentComposerNote,
   SubagentSessionDock,
+  sessionPresentation,
   type BackgroundWorkItem,
 } from "./subagent-activity";
-
-export { CompactionBoundary };
 
 const EMPTY_DIFFS: FileDiffInfo[] = [];
 const EMPTY_EXECUTION_STATES = new Map<string, SessionExecutionState>();
@@ -245,8 +234,6 @@ const EMPTY_MODELS: PalotModel[] = [];
 const MAX_PINNED_VIRTUAL_TURNS = 16;
 const INITIAL_TRANSCRIPT_STABLE_FRAMES = 3;
 const MAX_INITIAL_TRANSCRIPT_SETTLE_MS = 250;
-const PREPEND_ANCHOR_STABLE_FRAMES = 8;
-const MAX_PREPEND_ANCHOR_SETTLE_MS = 1_000;
 
 function nestedScrollConsumesDelta(root: HTMLElement, target: EventTarget | null, delta: number) {
   let element = target instanceof HTMLElement ? target : null;
@@ -294,7 +281,17 @@ function estimateTranscriptTurnSize(turn: TranscriptTurn | undefined): number {
   return Math.max(72, size);
 }
 
-export function Thread({ sessionID }: { sessionID?: string }) {
+export function Thread({
+  sessionID,
+  openedView,
+}: {
+  sessionID?: string;
+  /**
+   * The task's read state from when it was opened, null while it is still being read fresh.
+   * Without it, the state cached when the view mounts decides what is unseen.
+   */
+  openedView?: OpenedSessionView | null;
+}) {
   const selectedSessionID = useAtomValue(selectedSessionIDAtom);
   const targetSessionID = sessionID ?? selectedSessionID;
   const selectSession = useCallback(
@@ -306,7 +303,7 @@ export function Thread({ sessionID }: { sessionID?: string }) {
   );
   const session = useSessionCatalogSelector(selectSession, sameThreadSession);
   if (!session) return <NewTask />;
-  return <SessionThread session={session} />;
+  return <SessionThread session={session} openedView={openedView} />;
 }
 
 function sameThreadSession(left: PalotSession | null, right: PalotSession | null): boolean {
@@ -328,7 +325,13 @@ function sameThreadSession(left: PalotSession | null, right: PalotSession | null
   );
 }
 
-const SessionThread = memo(function SessionThread({ session }: { session: PalotSession }) {
+const SessionThread = memo(function SessionThread({
+  session,
+  openedView,
+}: {
+  session: PalotSession;
+  openedView: OpenedSessionView | null | undefined;
+}) {
   const runtime = useAtomValue(runtimeAtom);
   return (
     <main
@@ -336,23 +339,35 @@ const SessionThread = memo(function SessionThread({ session }: { session: PalotS
       aria-label="Current task"
       data-palot-task-view=""
     >
-      <SessionThreadContents key={`${runtime?.connectionID}:${session.id}`} session={session} />
+      <SessionThreadContents
+        key={`${runtime?.connectionID}:${session.id}`}
+        session={session}
+        openedView={openedView}
+      />
     </main>
   );
 });
 
 const SessionThreadContents = memo(function SessionThreadContents({
   session,
+  openedView,
 }: {
   session: PalotSession;
+  openedView: OpenedSessionView | null | undefined;
 }) {
   "use no memo";
   const transcript = useSessionTranscript(session);
   const requestsQuery = useSessionRequests(session.id);
   const messages = transcript.messages;
-  const [unreadSession] = useState(() => ({ idleAt: session.idleAt, viewedAt: session.viewedAt }));
+  const [mountedView] = useState<OpenedSessionView>(() => ({
+    ...(session.idleAt === undefined ? {} : { idleAt: session.idleAt }),
+    ...(session.viewedAt === undefined ? {} : { viewedAt: session.viewedAt }),
+  }));
+  // Null until the route has read the task fresh; nothing is unseen, or landed on, before that.
+  const unreadSession = openedView === undefined ? mountedView : openedView;
   const [unreadCleared, setUnreadCleared] = useState(false);
-  const unreadMessageID = unreadCleared ? null : firstUnseenMessage(unreadSession, messages);
+  const unreadMessageID =
+    unreadCleared || !unreadSession ? null : firstUnseenMessage(unreadSession, messages);
   const requests = requestsQuery.data ?? null;
   const loading = transcript.isPending || transcript.isHydrating;
   const [animateTranscriptEntrance] = useState(transcript.isPending);
@@ -361,23 +376,13 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const executionStates = activity?.execution ?? EMPTY_EXECUTION_STATES;
   const runtimeStatus = activity?.status ?? null;
   const execution = executionStates.get(session.id) ?? null;
-  const subagentProgress = calculateSubagentProgress(
-    executionStates,
-    session.id,
-    execution?.startedAt ?? null,
-  );
   const loadingOlder = transcript.isFetchingNextPage;
   const olderRequestRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
-  const prependAnchorRef = useRef<{
-    turnID: string | null;
-    turnCount: number;
-    viewportTop: number;
-    fallbackHeight: number;
-    fallbackScrollTop: number;
-  } | null>(null);
+  // The older-history anchor, read by callbacks declared before the hook runs.
+  const prependAnchorRef = useRef<{ isHolding(): boolean } | null>(null);
   const bottomLockedRef = useRef(true);
   const bottomFollowFrameRef = useRef<number | null>(null);
   const lastFollowedVirtualHeightRef = useRef<number | null>(null);
@@ -407,6 +412,14 @@ const SessionThreadContents = memo(function SessionThreadContents({
   const forkFromPrompt = useSessionFork();
   const handleMessageAdmitted = useCallback(() => {
     setUnreadCleared(true);
+    // A reader who scrolled up keeps their place; Scroll to bottom stays available.
+    if (
+      !transcriptSubmissionFollowsBottom({
+        locked: bottomLockedRef.current,
+        metrics: scrollRef.current,
+      })
+    )
+      return;
     setSubmissionScrollRequest((current) => current + 1);
   }, []);
   const setBottomLock = useCallback((locked: boolean) => {
@@ -418,7 +431,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
     if (
       !viewport ||
       !bottomLockedRef.current ||
-      prependAnchorRef.current ||
+      prependAnchorRef.current?.isHolding() ||
       scrollIntentRef.current !== null
     )
       return;
@@ -495,10 +508,13 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [workbench, session.location],
   );
   const setContextMessageTarget = useSetAtom(contextMessageTargetAtom);
-  const requestViews = useMemo(
-    () => (requests ? pendingRequestViews(requests, messages) : []),
-    [requests, messages],
+  // Streaming rebuilds the views per chunk; equal content keeps one identity so the
+  // composer, dock and approval store skip the chunk.
+  const requestViews = useStableList(
+    useMemo(() => (requests ? pendingRequestViews(requests, messages) : []), [requests, messages]),
   );
+  const dockMessages = useStableValue(messages, sameDockMessages);
+  const usageLimit = useMemo(() => lastMessageLimit(messages), [messages]);
   const projectionPreference = useAtomValue(sessionProjectionPreferenceAtom);
   const showTimelineCacheBusts = useAtomValue(showTimelineCacheBustsAtom);
   const projectionPolicy = useMemo(
@@ -509,22 +525,34 @@ const SessionThreadContents = memo(function SessionThreadContents({
   useLayoutEffect(() => {
     recordStreamingCommit(session.id, transcript.connectionID);
   }, [messages, session.id, transcript.connectionID]);
-  const pendingInputs = useMemo(
-    () => requestViews.filter((request) => request.type === "input"),
-    [requestViews],
+  const pendingInputs = useStableList(
+    useMemo(() => requestViews.filter((request) => request.type === "input"), [requestViews]),
   );
+  // Tool rows read their own approval from this store, so a request re-renders only its row.
+  const [pendingApprovals] = useState(() => new PendingApprovalStore());
+  const setAttentionTarget = useSetAtom(attentionTargetAtom);
+  const focusApproval = useCallback(
+    (requestID: string) =>
+      setAttentionTarget({ sessionID: session.id, requestID, type: "permission" }),
+    [session.id, setAttentionTarget],
+  );
+  useLayoutEffect(() => {
+    pendingApprovals.update(pendingApprovalsByPart(requestViews), focusApproval);
+  }, [focusApproval, pendingApprovals, requestViews]);
   // MCP servers ask for input through forms owned by the task's location, not the task.
   const elicitations = useMcpElicitations(
     transcript.connectionID,
     session.location.directory,
     !session.parentID,
   );
-  const composerRequests = useMemo(
-    () => [
-      ...requestViews.filter((request) => request.type === "question" || request.type === "form"),
-      ...elicitations,
-    ],
-    [elicitations, requestViews],
+  const composerRequests = useStableList(
+    useMemo(
+      () => [
+        ...requestViews.filter((request) => request.type === "question" || request.type === "form"),
+        ...elicitations,
+      ],
+      [elicitations, requestViews],
+    ),
   );
   const projectedMessages = useMemo(() => {
     const boundary = session.revert?.messageID;
@@ -544,6 +572,25 @@ const SessionThreadContents = memo(function SessionThreadContents({
     initialLocation: session.location,
     policy: projectionPolicy,
   });
+  const subagentReports = useMemo(
+    () => subagentReportsByChild(projection.background.subagentResponses),
+    [projection.background.subagentResponses],
+  );
+  const subagentsOnBackgroundWork = useMemo(
+    () =>
+      new Set(
+        [...subagentReports]
+          .filter(([, reports]) => reports.at(-1)?.backgroundWork)
+          .map(([childID]) => childID),
+      ),
+    [subagentReports],
+  );
+  const subagentProgress = calculateSubagentProgress(
+    executionStates,
+    session.id,
+    execution?.startedAt ?? null,
+    subagentsOnBackgroundWork,
+  );
   const turnRows = projection.rows;
   const layoutOwner = JSON.stringify([transcript.connectionID, session.id]);
   const windowWidth = window.innerWidth;
@@ -587,8 +634,10 @@ const SessionThreadContents = memo(function SessionThreadContents({
     if (row.kind === "boundary")
       return row.group.entries.some((entry) => entry.message.id === unreadMessageID);
     if (row.kind === "activity")
-      return row.turn.activity.some((group) =>
-        group.entries.some((entry) => entry.message.id === unreadMessageID),
+      return row.turn.activity.some(
+        (group) =>
+          group.entries.some((entry) => entry.message.id === unreadMessageID) ||
+          group.messages?.some((message) => message.id === unreadMessageID),
       );
     return false;
   });
@@ -598,10 +647,78 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [unreadRow?.id, clearUnread],
   );
   const latestUserTurnIndex = turnRows.findLastIndex((row) => row.turn.user !== null);
-  const activeTurnIndex = turnRows.at(-1)?.turn.status === "working" ? turnRows.length - 1 : -1;
+  const activeTurnIndex = workingTurnIndex(turnRows, pendingInputs);
   const isWorking = activeTurnIndex >= 0;
+  const familyRequests = useSessionFamilyRequestViews(session.id);
+  // The request cards' set: this task's requests, MCP forms, and its subagents' requests.
+  const liveRequests = useStableList(
+    useMemo(
+      () => [
+        ...requestViews,
+        ...elicitations,
+        ...familyRequests.filter((request) => request.sessionID !== session.id),
+      ],
+      [elicitations, familyRequests, requestViews, session.id],
+    ),
+  );
+  const stopRequestedAt = useAtomValue(sessionStopRequestsAtom).get(session.id) ?? null;
+  const clearSessionStop = useSetAtom(clearSessionStopAtom);
+  useEffect(() => {
+    if (stopRequestedAt === null) return;
+    if (!isWorking && runtimeStatus?.type !== "busy" && runtimeStatus?.type !== "retry") {
+      clearSessionStop(session.id);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => clearSessionStop(session.id),
+      Math.max(0, stopRequestedAt + SESSION_STOPPING_MS - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [clearSessionStop, isWorking, runtimeStatus?.type, session.id, stopRequestedAt]);
+  const workingTurn = isWorking ? turnRows[activeTurnIndex]!.turn : null;
+  const liveLabel = useMemo(() => {
+    if (!workingTurn) return null;
+    const status = sessionActivityStatus({
+      turn: workingTurn,
+      requests: liveRequests,
+      runtimeStatus,
+      stopping: stopRequestedAt !== null,
+    });
+    return status ? sessionActivityLabel(status).label : null;
+  }, [liveRequests, runtimeStatus, stopRequestedAt, workingTurn]);
+  const focusLiveRequest = useCallback(
+    (requestID: string) => {
+      const request = liveRequests.find((candidate) => candidate.id === requestID);
+      if (!request) return;
+      setAttentionTarget({
+        sessionID:
+          "sessionID" in request && typeof request.sessionID === "string"
+            ? request.sessionID
+            : session.id,
+        requestID,
+        type: request.type,
+      });
+    },
+    [liveRequests, session.id, setAttentionTarget],
+  );
+  const moveToBackground = useCallback(() => {
+    void palot
+      .backgroundSession(session.id)
+      .catch((error) => showErrorToast("Could not move the command to the background", error));
+  }, [session.id]);
+  const liveTurn = useMemo<LiveTurnInputs>(
+    () => ({
+      requests: liveRequests,
+      runtimeStatus,
+      stopping: stopRequestedAt !== null,
+      label: liveLabel,
+      focusRequest: focusLiveRequest,
+      moveToBackground,
+    }),
+    [focusLiveRequest, liveLabel, liveRequests, moveToBackground, runtimeStatus, stopRequestedAt],
+  );
   const [pinnedVirtualTurnIDs, setPinnedVirtualTurnIDs] = useState<string[]>([]);
-  const [prependPinnedTurnID, setPrependPinnedTurnID] = useState<string | null>(null);
+  const [prependPin, setPrependPin] = useState<TranscriptPrependPin | null>(null);
   const [navigationPinnedTurnID, setNavigationPinnedTurnID] = useState<string | null>(null);
   const [findPinnedTurnID, setFindPinnedTurnID] = useState<string | null>(null);
   const pinVirtualTurn = useCallback((turnID: string) => {
@@ -609,10 +726,10 @@ const SessionThreadContents = memo(function SessionThreadContents({
       current.includes(turnID) ? current : [...current, turnID].slice(-MAX_PINNED_VIRTUAL_TURNS),
     );
   }, []);
-  const clearPrependAnchor = useCallback(() => {
-    prependAnchorRef.current = null;
-    setPrependPinnedTurnID(null);
-  }, []);
+  const prependPinnedIndexes = useMemo(
+    () => transcriptPrependPinnedIndexes(prependPin, turnRows),
+    [prependPin, turnRows],
+  );
   const getVirtualTurnKey = useCallback(
     (index: number) => turnRows[index]?.id ?? index,
     [turnRows],
@@ -621,15 +738,37 @@ const SessionThreadContents = memo(function SessionThreadContents({
     (index: number) => estimateTranscriptTurnSize(turnRows[index]?.turn),
     [turnRows],
   );
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | null>(null);
+  // The near turns the range last included. TanStack reruns the range extractor only when the
+  // visible range changes, so onChange compares after resizes and scroll ends and asks for a rerun.
+  const nearTurnsKeyRef = useRef("");
+  const [nearTurnsRevision, setNearTurnsRevision] = useState(0);
+  const readNearTurns = useCallback(
+    (range: { startIndex: number; endIndex: number } | null) => {
+      const instance = virtualizerRef.current;
+      if (!initialTranscriptVisible || !range || !instance?.scrollRect) return [];
+      if (instance.scrollOffset === null) return [];
+      return nearTranscriptTurns({
+        startIndex: range.startIndex,
+        endIndex: range.endIndex,
+        items: instance.measurementsCache,
+        scrollOffset: instance.scrollOffset,
+        viewportHeight: instance.scrollRect.height,
+      });
+    },
+    [initialTranscriptVisible],
+  );
   const extractVirtualTurnRange = useCallback(
     (range: Range) => {
       const indexes = defaultRangeExtractor(range);
+      const near = readNearTurns(range);
+      nearTurnsKeyRef.current = near.join(",");
+      indexes.push(...near);
       if (activeTurnIndex >= 0 && !indexes.includes(activeTurnIndex)) {
         indexes.push(activeTurnIndex);
       }
-      if (prependPinnedTurnID) {
-        const index = turnRows.findIndex((row) => row.id === prependPinnedTurnID);
-        if (index >= 0 && !indexes.includes(index)) indexes.push(index);
+      for (const index of prependPinnedIndexes) {
+        if (!indexes.includes(index)) indexes.push(index);
       }
       if (navigationPinnedTurnID) {
         const index = turnRows.findIndex((row) => row.id === navigationPinnedTurnID);
@@ -653,10 +792,12 @@ const SessionThreadContents = memo(function SessionThreadContents({
       activeTurnIndex,
       bottomLocked,
       latestUserTurnIndex,
+      nearTurnsRevision,
       pinnedVirtualTurnIDs,
-      prependPinnedTurnID,
+      prependPinnedIndexes,
       navigationPinnedTurnID,
       findPinnedTurnID,
+      readNearTurns,
       turnRows,
     ],
   );
@@ -674,12 +815,18 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [messages],
   );
   const inlineRequestIDs = projection.inlineRequestIDs;
-  const floatingRequests = useMemo(
-    () =>
-      requestViews.filter(
-        (request) => request.type === "permission" && !inlineRequestIDs.has(request.id),
-      ),
-    [inlineRequestIDs, requestViews],
+  const floatingRequests = useStableList(
+    useMemo(
+      () =>
+        // Until the transcript has loaded, a request's tool call is not there to sit beside:
+        // deciding then would show it in the composer's panel and move it a moment later.
+        loading
+          ? []
+          : requestViews.filter(
+              (request) => request.type === "permission" && !inlineRequestIDs.has(request.id),
+            ),
+      [inlineRequestIDs, loading, requestViews],
+    ),
   );
   const scrollerContentStyle = useMemo(
     () => ({
@@ -701,7 +848,8 @@ const SessionThreadContents = memo(function SessionThreadContents({
     getItemKey: getVirtualTurnKey,
     estimateSize: estimateVirtualTurnSize,
     rangeExtractor: extractVirtualTurnRange,
-    overscan: initialTranscriptVisible ? 1 : 0,
+    // Neighbouring turns are mounted by distance (nearTranscriptTurns), not by count.
+    overscan: 0,
     paddingStart: cursor ? 64 : 32,
     paddingEnd: (composerDockHeight ?? 0) + 16,
     scrollPaddingEnd: (composerDockHeight ?? 0) + 16,
@@ -722,6 +870,9 @@ const SessionThreadContents = memo(function SessionThreadContents({
     directDomUpdates: true,
     directDomUpdatesMode: "position",
     onChange: (instance) => {
+      if (readNearTurns(instance.range).join(",") !== nearTurnsKeyRef.current) {
+        setNearTurnsRevision((revision) => revision + 1);
+      }
       navigationGeometryRef.current?.();
       const height = instance.getTotalSize();
       if (height === lastFollowedVirtualHeightRef.current) return;
@@ -729,9 +880,30 @@ const SessionThreadContents = memo(function SessionThreadContents({
       scrollToBottomNow();
     },
   });
+  useLayoutEffect(() => {
+    virtualizerRef.current = virtualizer;
+  }, [virtualizer]);
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = bottomLocked ? () => false : undefined;
   const virtualItems = virtualizer.getVirtualItems();
   const virtualTranscriptHeight = virtualizer.getTotalSize();
+  // Declared after the virtualizer so its layout effect sees the positions TanStack wrote.
+  const prependAnchor = useTranscriptPrependAnchor({
+    viewport: scrollRef,
+    rows: turnRows,
+    historyStartID: messages[0]?.id ?? null,
+    hasMore: cursor,
+    bottomInset: composerDockHeight ?? 0,
+    layoutVersion: virtualTranscriptHeight,
+    willScroll: () => {
+      scrollIntentRef.current = "anchor";
+    },
+    didScroll: (scrollTop) => {
+      previousScrollTopRef.current = scrollTop;
+    },
+    pin: setPrependPin,
+  });
+  prependAnchorRef.current = prependAnchor;
+  const releasePrependAnchor = prependAnchor.release;
   const hasVirtualTurns = turnRows.length > 0;
   const saveLayoutRef = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
@@ -767,9 +939,9 @@ const SessionThreadContents = memo(function SessionThreadContents({
   useLayoutEffect(() => {
     if (submissionScrollRequest === 0) return;
     // An explicit new submission supersedes an in-flight history prepend.
-    clearPrependAnchor();
+    releasePrependAnchor("cancel");
     scrollToBottom();
-  }, [clearPrependAnchor, scrollToBottom, submissionScrollRequest]);
+  }, [releasePrependAnchor, scrollToBottom, submissionScrollRequest]);
   useLayoutEffect(() => {
     // The adapter's layout effect has already applied geometry for new refs and
     // option changes (e.g. composer padding). Correct before this commit paints.
@@ -787,55 +959,6 @@ const SessionThreadContents = memo(function SessionThreadContents({
     if (!hasVirtualTurns) observer.observe(content);
     return () => observer.disconnect();
   }, [composerDockHeight, hasVirtualTurns, scrollToBottomNow, session.id]);
-  useLayoutEffect(() => {
-    const viewport = scrollRef.current;
-    const pendingAnchor = prependAnchorRef.current;
-    if (!pendingAnchor || !viewport) return;
-    let frame = 0;
-    let stableFrames = 0;
-    const startedAt = performance.now();
-    const restoreAnchor = () => {
-      const anchor = prependAnchorRef.current;
-      if (!anchor) return;
-      const timedOut = performance.now() - startedAt >= MAX_PREPEND_ANCHOR_SETTLE_MS;
-      if (turnRows.length <= anchor.turnCount && viewport.scrollHeight <= anchor.fallbackHeight) {
-        if (timedOut) {
-          clearPrependAnchor();
-          return;
-        }
-        frame = requestAnimationFrame(restoreAnchor);
-        return;
-      }
-      scrollIntentRef.current = "anchor";
-      const anchorIndex = anchor.turnID
-        ? turnRows.findIndex((row) => row.id === anchor.turnID)
-        : -1;
-      const anchorElement =
-        anchorIndex >= 0
-          ? viewport.querySelector<HTMLElement>(`[data-index="${anchorIndex}"]`)
-          : null;
-      if (anchorElement) {
-        const viewportTop = viewport.getBoundingClientRect().top;
-        const correction =
-          anchorElement.getBoundingClientRect().top - viewportTop - anchor.viewportTop;
-        if (Math.abs(correction) > 0.5) viewport.scrollTop += correction;
-        stableFrames = Math.abs(correction) <= 0.5 ? stableFrames + 1 : 0;
-      } else {
-        const target =
-          anchor.fallbackScrollTop + Math.max(0, viewport.scrollHeight - anchor.fallbackHeight);
-        if (Math.abs(target - viewport.scrollTop) > 0.5) viewport.scrollTop = target;
-        stableFrames = 0;
-      }
-      previousScrollTopRef.current = viewport.scrollTop;
-      if (stableFrames >= PREPEND_ANCHOR_STABLE_FRAMES || timedOut) {
-        clearPrependAnchor();
-        return;
-      }
-      frame = requestAnimationFrame(restoreAnchor);
-    };
-    restoreAnchor();
-    return () => cancelAnimationFrame(frame);
-  }, [clearPrependAnchor, turnRows, virtualTranscriptHeight]);
   useEffect(() => {
     const clearScrollbarIntent = () => {
       if (scrollIntentRef.current === "scrollbar") scrollIntentRef.current = null;
@@ -862,8 +985,10 @@ const SessionThreadContents = memo(function SessionThreadContents({
       const width = element.parentElement?.clientWidth ?? null;
       setLayoutWidth((current) => (current === width ? current : width));
       const parent = element.parentElement;
+      // The header's border box: its bottom border is outside clientHeight, and this height must
+      // equal the transcript viewport's clientHeight for a retained layout to restore its offset.
       const viewportHeight = parent
-        ? parent.clientHeight - (parent.querySelector("header")?.clientHeight ?? 0)
+        ? parent.clientHeight - (parent.querySelector("header")?.offsetHeight ?? 0)
         : null;
       setLayoutHeight((current) => (current === viewportHeight ? current : viewportHeight));
     };
@@ -936,54 +1061,21 @@ const SessionThreadContents = memo(function SessionThreadContents({
     if (!cursor || loadingOlder || olderRequestRef.current) return false;
     olderRequestRef.current = true;
     try {
-      const viewport = scrollRef.current;
-      if (viewport) {
-        setBottomLock(false);
-        const fallbackHeight = viewport.scrollHeight;
-        const fallbackScrollTop = viewport.scrollTop;
-        let viewportRect = viewport.getBoundingClientRect();
-        let anchorElement = Array.from(
-          viewport.querySelectorAll<HTMLElement>('[data-scroll-anchor="true"]'),
-        )
-          .map((element) => ({ element, rect: element.getBoundingClientRect() }))
-          .filter(({ rect }) => rect.bottom >= viewportRect.top)
-          .toSorted((left, right) => left.rect.top - right.rect.top)[0];
-        const stableTurnID =
-          anchorElement?.element.dataset.turnRowId ??
-          turnRows.find((row) => row.turn.user !== null)?.id ??
-          null;
-        setPrependPinnedTurnID(stableTurnID);
-        prependAnchorRef.current = {
-          turnID: stableTurnID,
-          turnCount: turnRows.length,
-          viewportTop: anchorElement ? anchorElement.rect.top - viewportRect.top : 0,
-          fallbackHeight,
-          fallbackScrollTop,
-        };
-        if (!anchorElement && stableTurnID) {
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-          viewportRect = viewport.getBoundingClientRect();
-          const element = Array.from(
-            viewport.querySelectorAll<HTMLElement>("[data-turn-row-id]"),
-          ).find((candidate) => candidate.dataset.turnRowId === stableTurnID);
-          if (element && prependAnchorRef.current) {
-            anchorElement = { element, rect: element.getBoundingClientRect() };
-            prependAnchorRef.current.viewportTop = anchorElement.rect.top - viewportRect.top;
-          }
-        }
-      }
+      // A reader following the bottom keeps following it: the older page lands above, out of
+      // view. Anyone else keeps what they see where it is.
+      if (!bottomLockedRef.current) prependAnchor.capture();
       const result = await transcript.fetchNextPage();
       if (result.isError) {
         if (isCancelledError(result.error)) {
-          clearPrependAnchor();
+          prependAnchor.release("cancel");
           return false;
         }
         throw result.error;
       }
+      prependAnchor.fetched();
       return true;
     } catch (error) {
-      clearPrependAnchor();
+      prependAnchor.release("cancel");
       showErrorToast("Could not load earlier messages", error);
       return false;
     } finally {
@@ -997,6 +1089,13 @@ const SessionThreadContents = memo(function SessionThreadContents({
     firstMessage: messages[0],
     loaded: projection.prompts,
   });
+  const timelineMessages = useMemo(
+    () =>
+      promptIndex.olderMessages.length === 0
+        ? messages
+        : [...promptIndex.olderMessages, ...messages],
+    [promptIndex.olderMessages, messages],
+  );
   const navigation = useTranscriptNavigation({
     scopeID: `${transcript.connectionID}\0${session.id}`,
     resetKey: submissionScrollRequest,
@@ -1008,7 +1107,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
     bottomInset: composerDockHeight ?? 0,
     pin: setNavigationPinnedTurnID,
     unlock: () => setBottomLock(false),
-    clearAnchor: clearPrependAnchor,
+    clearAnchor: releasePrependAnchor,
     hasMore: cursor,
     loading: loadingOlder || transcript.isHydrating,
     historyStartID: messages[0]?.id ?? null,
@@ -1058,17 +1157,21 @@ const SessionThreadContents = memo(function SessionThreadContents({
     );
   const unreadLanded = useRef(false);
   const landOnUnread = useEffectEvent(() => {
-    if (unreadLanded.current || !unreadRow || !unreadMessageID) return;
+    if (unreadLanded.current) return;
+    // Decide once, when the transcript first settles. Older pages move the first unseen
+    // message further back, and landing then would pull the reader away from where they are.
     unreadLanded.current = true;
+    if (!unreadRow || !unreadMessageID) return;
     revealTurnAnchor(
       turnRows.findIndex((row) => row.id === unreadRow.turnID),
       "[data-palot-unread]",
       "response",
     );
   });
+  const unreadKnown = unreadSession !== null;
   useEffect(() => {
-    if (initialTranscriptVisible && !loading) landOnUnread();
-  }, [initialTranscriptVisible, loading, unreadRow?.id]);
+    if (initialTranscriptVisible && !loading && unreadKnown) landOnUnread();
+  }, [initialTranscriptVisible, loading, unreadKnown, unreadRow?.id]);
   const jumpToRequestedTurn = useEffectEvent(
     ({ messageID, fallbackMessageID }: { messageID: string; fallbackMessageID?: string }) => {
       if (jumpToCompaction(messageID)) return;
@@ -1104,7 +1207,11 @@ const SessionThreadContents = memo(function SessionThreadContents({
     if (direction === "previous" && loadingOlder) return;
     navigation.move(direction);
   };
-  useTaskViewShortcuts({ onFind: find.openFind, onTurn: moveTurn });
+  useTaskViewShortcuts({
+    onFind: find.openFind,
+    onTurn: moveTurn,
+    onJump: () => setHistoryMode("timeline"),
+  });
 
   useLayoutEffect(() => {
     navigationGeometryRef.current = navigation.onGeometryChange;
@@ -1118,10 +1225,10 @@ const SessionThreadContents = memo(function SessionThreadContents({
     resetKey: submissionScrollRequest,
     firstVisibleIndex: virtualizer.range?.startIndex ?? null,
     ready: !loading && initialTranscriptVisible,
-    blocked: loadingOlder || prependPinnedTurnID !== null || navigation.isNavigating,
+    blocked: loadingOlder || prependPin !== null || navigation.isNavigating,
     hasMore: cursor,
     failed: transcript.isFetchNextPageError,
-    canLoad: () => !olderRequestRef.current && prependAnchorRef.current === null,
+    canLoad: () => !olderRequestRef.current && !prependAnchor.isHolding(),
     loadOlder,
   });
 
@@ -1136,9 +1243,9 @@ const SessionThreadContents = memo(function SessionThreadContents({
     [session.id, session.location, setContextMessageTarget, workbench],
   );
   const openTurnChanges = useCallback(
-    (userMessageID: string) => {
+    (userMessageID: string, file?: string) => {
       workbench.openTab(
-        { kind: "turn-diff", location: session.location, userMessageID },
+        { kind: "turn-diff", location: session.location, userMessageID, file },
         { pane: "right" },
       );
     },
@@ -1149,25 +1256,21 @@ const SessionThreadContents = memo(function SessionThreadContents({
     : reviewOfferUserMessageID(turnRows, execution, runtimeStatus);
   const reviewAvailable =
     canFetchOpenCode(runtime) && runtime?.connectionID === transcript.connectionID;
-  const reviewOffer = useMemo(
-    () =>
-      reviewUserMessageID ? (
-        <TurnReviewOffer
-          key={reviewUserMessageID}
-          connectionID={transcript.connectionID}
-          sessionID={session.id}
-          userMessageID={reviewUserMessageID}
-          available={reviewAvailable}
-          onReview={openTurnChanges}
-          onAsked={handleMessageAdmitted}
-        />
-      ) : null,
+  const turnChanges = useMemo<TurnChangesScope>(
+    () => ({
+      // Counts load only from the connection that owns this transcript.
+      profileID: reviewAvailable ? (runtime?.profileID ?? "") : "",
+      connectionID: transcript.connectionID,
+      reviewUserMessageID,
+      open: openTurnChanges,
+      onAsked: handleMessageAdmitted,
+    }),
     [
       handleMessageAdmitted,
       openTurnChanges,
       reviewAvailable,
       reviewUserMessageID,
-      session.id,
+      runtime?.profileID,
       transcript.connectionID,
     ],
   );
@@ -1306,6 +1409,11 @@ const SessionThreadContents = memo(function SessionThreadContents({
       ),
     [compactionWindowsKey],
   );
+  // Code Mode script edits load their diffs from the same turn diff as the changed-files card.
+  const diffScope = useMemo(
+    () => ({ profileID: turnChanges.profileID, sessionID: session.id }),
+    [session.id, turnChanges.profileID],
+  );
   const artifactScope = useMemo(
     () => ({
       connectionID: transcript.connectionID,
@@ -1350,6 +1458,21 @@ const SessionThreadContents = memo(function SessionThreadContents({
     ],
   );
   const openPreferredWebLink = useCallback((href: string) => openWebLink(href), [openWebLink]);
+  const openMessageQuote = useCallback<MessageQuoteOpener>(
+    (quote, event) => {
+      if (quote.kind === "browser") return openWebLink(quote.url);
+      // Removed lines only exist in the diff; added or unchanged ones open in the file.
+      if (quote.removed)
+        return void openFileTab({
+          kind: "file-diff",
+          location: session.location,
+          path: quote.path,
+          mode: "working",
+        });
+      openWorkspaceFile({ path: quote.path, line: quote.startLine, endLine: quote.endLine }, event);
+    },
+    [openFileTab, openWebLink, openWorkspaceFile, session.location],
+  );
 
   const contents = createElement(
     MarkdownWorkspaceProvider,
@@ -1377,7 +1500,23 @@ const SessionThreadContents = memo(function SessionThreadContents({
           forkFromPrompt: () => setHistoryMode("fork"),
         }}
       />
-      {historyMode ? (
+      {historyMode === "timeline" ? (
+        <SessionHistoryDialog
+          messages={timelineMessages}
+          mode="timeline"
+          onClose={() => setHistoryMode(null)}
+          hasMore={promptIndex.earlier.available && !promptIndex.earlier.failed}
+          loading={promptIndex.earlier.loading}
+          error={promptIndex.earlier.failed}
+          onLoadMore={() => void promptIndex.earlier.load()}
+          autoLoad
+          onSelect={(message) => {
+            // Pages the transcript back as far as the prompt.
+            navigation.jump(message.id);
+            setHistoryMode(null);
+          }}
+        />
+      ) : historyMode ? (
         <SessionHistoryDialog
           messages={messages}
           mode={historyMode}
@@ -1436,10 +1575,12 @@ const SessionThreadContents = memo(function SessionThreadContents({
               ref={scrollRef}
               role="region"
               aria-label="Task transcript"
+              data-focus-region="transcript"
               data-bottom-locked={bottomLocked}
               tabIndex={0}
               className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:none]"
               onWheel={(event) => {
+                if (transcriptWheelIsSideways(event)) return;
                 const delta = normalizeTranscriptWheelDelta({
                   deltaY: event.deltaY,
                   deltaMode: event.deltaMode,
@@ -1559,6 +1700,8 @@ const SessionThreadContents = memo(function SessionThreadContents({
                 setBottomLock(update.locked);
                 previousScrollTopRef.current = update.scrollTop;
                 if (intent === "up" || intent === "anchor") scrollIntentRef.current = null;
+                // Scrolling while an older page loads moves the place it must keep.
+                if (intent !== "anchor") prependAnchor.readerMoved();
               }}
               onScrollEnd={() => {
                 pageScrollTargetRef.current = null;
@@ -1591,10 +1734,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
                             role="status"
                             className="flex items-center gap-2 text-meta text-muted-foreground"
                           >
-                            <LoaderCircle
-                              className="size-3 animate-spin motion-reduce:animate-none"
-                              aria-hidden="true"
-                            />
+                            <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />
                             Loading earlier messages…
                           </span>
                         ) : null}
@@ -1614,9 +1754,7 @@ const SessionThreadContents = memo(function SessionThreadContents({
                             showTimelineCacheBusts ? turnCacheBust(turnRow.turn, cacheBusts) : null
                           }
                           onOpenCacheDiagnostic={openCacheDiagnostic}
-                          reviewOffer={
-                            virtualItem.index === turnRows.length - 1 ? reviewOffer : null
-                          }
+                          turnChanges={turnChanges}
                           subagentProgress={
                             virtualItem.index === turnRows.length - 1
                               ? subagentProgress
@@ -1680,27 +1818,32 @@ const SessionThreadContents = memo(function SessionThreadContents({
               loadingOlder={loadingOlder}
               onLoadOlder={() => void loadOlder()}
             />
-            {!bottomLocked && messages.length > 0 ? (
-              <motion.div
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="absolute left-1/2 z-30 -translate-x-1/2"
-                style={scrollButtonStyle}
-              >
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    navigation.cancel();
-                    infiniteScroll.clearIntent();
-                    scrollToBottom();
-                  }}
+            <AnimatePresence initial={false}>
+              {!bottomLocked && messages.length > 0 ? (
+                <motion.div
+                  key="scroll-to-bottom"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 6, transition: spring.fast.exit }}
+                  transition={spring.fast}
+                  className="absolute left-1/2 z-30 -translate-x-1/2"
+                  style={scrollButtonStyle}
                 >
-                  <ChevronDown data-icon="inline-start" aria-hidden="true" />
-                  Scroll to bottom
-                </Button>
-              </motion.div>
-            ) : null}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      navigation.cancel();
+                      infiniteScroll.clearIntent();
+                      scrollToBottom();
+                    }}
+                  >
+                    <ChevronDown data-icon="inline-start" aria-hidden="true" />
+                    Scroll to bottom
+                  </Button>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </ScrollAreaRoot>
         </div>
       )}
@@ -1741,13 +1884,14 @@ const SessionThreadContents = memo(function SessionThreadContents({
         <div className="pointer-events-auto">
           <SessionDockContents
             session={session}
-            revertMessages={messages}
+            revertMessages={dockMessages}
             composerMessages={projection.composerMessages}
             backgroundTranscript={projection.background}
             executionStates={executionStates}
             activityActive={activity?.active ?? false}
             floatingRequests={floatingRequests}
             composerRequests={composerRequests}
+            usageLimit={usageLimit}
             pendingInputs={pendingInputs}
             isWorking={isWorking}
             onMessageAdmitted={handleMessageAdmitted}
@@ -1761,7 +1905,21 @@ const SessionThreadContents = memo(function SessionThreadContents({
     <EditFromHereProvider session={session} running={isWorking || Boolean(activity?.active)}>
       <UnreadContext.Provider value={unreadContext}>
         <TranscriptArtifactContext.Provider value={artifactScope}>
-          <LinkActionsProvider value={linkActions}>{contents}</LinkActionsProvider>
+          <TranscriptModelsContext.Provider value={models}>
+            <PendingApprovalContext.Provider value={pendingApprovals}>
+              <LiveTurnContext.Provider value={liveTurn}>
+                <SubagentReportsContext.Provider value={subagentReports}>
+                  <TranscriptDiffScopeContext.Provider value={diffScope}>
+                    <LinkActionsProvider value={linkActions}>
+                      <MessageQuoteOpenerContext.Provider value={openMessageQuote}>
+                        {contents}
+                      </MessageQuoteOpenerContext.Provider>
+                    </LinkActionsProvider>
+                  </TranscriptDiffScopeContext.Provider>
+                </SubagentReportsContext.Provider>
+              </LiveTurnContext.Provider>
+            </PendingApprovalContext.Provider>
+          </TranscriptModelsContext.Provider>
         </TranscriptArtifactContext.Provider>
       </UnreadContext.Provider>
     </EditFromHereProvider>
@@ -1909,6 +2067,7 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
           disabled={movingDisabled}
         />
       ) : null}
+      {session.parentID || chat ? null : <ShipButton session={session} />}
       {session.parentID || chat ? null : <PullRequestControl session={session} />}
       {!chat && runtime?.capabilities?.localPathActions === true ? (
         <OpenInSelector key={runtime.connectionID} sessionID={session.id} />
@@ -1921,6 +2080,45 @@ export const SessionThreadHeader = memo(function SessionThreadHeader({
   );
 });
 
+/**
+ * The revert dock reads message ids and kinds and the plan card reads the latest plan, so
+ * their list may stay behind while text streams into a message that already exists.
+ */
+function sameDockMessages(held: PalotMessage[], next: PalotMessage[]): boolean {
+  if (held.length !== next.length) return false;
+  for (let index = 0; index < next.length; index += 1) {
+    const before = held[index]!;
+    const after = next[index]!;
+    if (before === after) continue;
+    if (before.id !== after.id || before.type !== after.type) return false;
+    if (!samePlainValue(planParts(before), planParts(after))) return false;
+  }
+  return true;
+}
+
+function planParts(message: PalotMessage) {
+  return message.content.flatMap((part, index) => {
+    const items = planItems(part);
+    return items ? [{ id: part.id ?? index, items }] : [];
+  });
+}
+
+/**
+ * A subagent session's agent name ("explore"), for "From explore subagent" on its requests.
+ * The catalog is read when a request arrives, so its churn never re-renders the composer.
+ */
+function useSubagentAgentNames(): (sessionID: string) => string | null {
+  const sessions = useSessionCatalog();
+  const sessionsRef = useRef(sessions);
+  useLayoutEffect(() => {
+    sessionsRef.current = sessions;
+  });
+  return useCallback((id: string) => {
+    const child = sessionsRef.current.find((candidate) => candidate.id === id);
+    return child ? sessionPresentation(child).agent.toLowerCase() : null;
+  }, []);
+}
+
 const SessionDockContents = memo(function SessionDockContents({
   session,
   revertMessages,
@@ -1930,6 +2128,7 @@ const SessionDockContents = memo(function SessionDockContents({
   activityActive,
   floatingRequests,
   composerRequests,
+  usageLimit,
   pendingInputs,
   isWorking,
   onMessageAdmitted,
@@ -1943,56 +2142,59 @@ const SessionDockContents = memo(function SessionDockContents({
   activityActive: boolean;
   floatingRequests: PendingRequestView[];
   composerRequests: PendingRequestView[];
+  usageLimit: ProviderLimit | null;
   pendingInputs: PendingRequestView[];
   isWorking: boolean;
   onMessageAdmitted(): void;
   onModelsChange(models: PalotModel[]): void;
 }) {
   const familyRequests = useSessionFamilyRequestViews(session.id);
-  const dockRequests = useMemo(
-    () => [
-      ...composerRequests,
-      ...familyRequests.filter((request) => request.sessionID !== session.id),
-    ],
-    [composerRequests, familyRequests, session.id],
+  const agentOf = useSubagentAgentNames();
+  // The request panel's set: permissions not shown beside their tool call, questions and
+  // forms, location-wide MCP forms, and every subagent's requests.
+  const panelRequests = useStableList(
+    useMemo(
+      () => [
+        ...floatingRequests,
+        ...composerRequests,
+        ...familyRequests.filter((request) => request.sessionID !== session.id),
+      ],
+      [composerRequests, familyRequests, floatingRequests, session.id],
+    ),
   );
   return (
     <>
-      <PendingRequests sessionID={session.id} requests={floatingRequests} />
-      <SessionRevertDock session={session} messages={revertMessages} />
-      <GoalCard key={`goal:${session.id}`} sessionID={session.id} location={session.location} />
-      <PlanCard key={session.id} sessionID={session.id} messages={revertMessages} />
-      {session.parentID ? null : <VoiceStage sessionID={session.id} />}
-      {session.parentID ? (
-        <>
-          <PendingRequests sessionID={session.id} requests={dockRequests} />
-          <SubagentSessionDock session={session} />
-        </>
-      ) : (
-        <ParentSessionComposer
-          session={session}
-          messages={composerMessages}
-          backgroundTranscript={backgroundTranscript}
-          executionStates={executionStates}
-          activityActive={activityActive}
-          composerRequests={dockRequests}
-          pendingInputs={pendingInputs}
-          isWorking={isWorking}
-          onMessageAdmitted={onMessageAdmitted}
-          onModelsChange={onModelsChange}
-        />
-      )}
+      {/* A subagent task takes messages too (OpenCode reports each round to its parent). */}
+      {session.parentID ? <SubagentSessionDock session={session} /> : null}
+      <SessionComposer
+        session={session}
+        messages={composerMessages}
+        dockMessages={revertMessages}
+        backgroundTranscript={backgroundTranscript}
+        executionStates={executionStates}
+        activityActive={activityActive}
+        requests={panelRequests}
+        agentOf={agentOf}
+        usageLimit={usageLimit}
+        pendingInputs={pendingInputs}
+        isWorking={isWorking}
+        onMessageAdmitted={onMessageAdmitted}
+        onModelsChange={onModelsChange}
+      />
     </>
   );
 });
 
-const ParentSessionComposer = memo(function ParentSessionComposer({
+const SessionComposer = memo(function SessionComposer({
   session,
   messages,
+  dockMessages,
   backgroundTranscript,
   executionStates,
   activityActive,
-  composerRequests,
+  requests,
+  agentOf,
+  usageLimit,
   pendingInputs,
   isWorking,
   onMessageAdmitted,
@@ -2000,10 +2202,14 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
 }: {
   session: PalotSession;
   messages: PalotMessage[];
+  /** Message ids, kinds and plan parts; text streaming into a message keeps it unchanged. */
+  dockMessages: PalotMessage[];
   backgroundTranscript: TranscriptBackgroundFacts;
   executionStates: Map<string, SessionExecutionState>;
   activityActive: boolean;
-  composerRequests: PendingRequestView[];
+  requests: ComposerRequest[];
+  agentOf(sessionID: string): string | null;
+  usageLimit: ProviderLimit | null;
   pendingInputs: PendingRequestView[];
   isWorking: boolean;
   onMessageAdmitted(): void;
@@ -2046,13 +2252,33 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
   const backgroundWork =
     projectedBackgroundWork.length === 0 ? EMPTY_BACKGROUND_WORK : projectedBackgroundWork;
   const project = projectForSession(projects, session) ?? null;
-  const requestBody = useMemo(
-    () =>
-      composerRequests.length > 0 ? (
-        <PendingRequests sessionID={session.id} requests={composerRequests} inline />
-      ) : undefined,
-    [composerRequests, session.id],
+  const openTab = useAtomValue(composerOpenTabAtom(session.id));
+  const runningWork = useRunningWork({
+    session,
+    sessionIDs: shellSessionIDs,
+    items: backgroundWork,
+    profileID: runtime?.profileID ?? "",
+    connectionID: runtime?.connectionID ?? "",
+    open: openTab === "background",
+  });
+  const plan = useStableValue(
+    useMemo(() => latestPlan(dockMessages), [dockMessages]),
+    samePlainValue,
   );
+  const standing = useStandingTabs({ session, messages: dockMessages, plan });
+  // Running work reaches the composer as a stable atom that only its tab, its panel and a
+  // waiting steer read, so its changes do not re-render the composer.
+  const store = useStore();
+  const [runningWorkAtom] = useState(() =>
+    atom<ComposerRunningWork>({ items: EMPTY_BACKGROUND_WORK, work: null }),
+  );
+  const work = runtime ? runningWork : null;
+  useLayoutEffect(() => {
+    const current = store.get(runningWorkAtom);
+    if (current.items !== backgroundWork || current.work !== work)
+      store.set(runningWorkAtom, { items: backgroundWork, work });
+  }, [backgroundWork, runningWorkAtom, store, work]);
+  const guests = useGuestPendingMessages(session.id);
   const isAdditionalCheckout = sessionIsAdditionalCheckout(session, project ?? undefined);
   const navigateToNewTask = useCallback(
     () =>
@@ -2063,11 +2289,14 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
       ),
     [chat, navigate, runtime?.profileID, session.projectID],
   );
+  const subagent = Boolean(session.parentID);
   const composerContextBar = useMemo(
     () => (
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-0.5 gap-y-1">
         <ConnectionDestination />
-        {chat ? null : (
+        {subagent ? (
+          <SubagentComposerNote />
+        ) : chat ? null : (
           <div
             className="flex h-6 min-w-0 items-center gap-1 px-1.5 text-meta leading-none font-medium text-foreground"
             title={isAdditionalCheckout ? "Additional checkout" : "Current checkout"}
@@ -2077,16 +2306,7 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
           </div>
         )}
         <div className="ml-auto flex h-6 min-w-0 items-center gap-2 px-1.5 text-meta leading-none text-muted-foreground max-[560px]:ml-0">
-          {runtime ? (
-            <RunningWorkControl
-              session={session}
-              sessionIDs={shellSessionIDs}
-              items={backgroundWork}
-              profileID={runtime.profileID}
-              connectionID={runtime.connectionID}
-            />
-          ) : null}
-          {chat ? null : (
+          {chat || subagent ? null : (
             <>
               <GitBranch className="size-3 shrink-0" aria-hidden="true" />
               <span className="truncate">
@@ -2099,157 +2319,31 @@ const ParentSessionComposer = memo(function ParentSessionComposer({
         </div>
       </div>
     ),
-    [
-      chat,
-      backgroundWork,
-      branchQuery.data?.currentBranch,
-      branchQuery.isPending,
-      isAdditionalCheckout,
-      session.id,
-      session,
-      shellSessionIDs,
-      runtime,
-    ],
+    [chat, subagent, branchQuery.data?.currentBranch, branchQuery.isPending, isAdditionalCheckout],
   );
 
   return (
     <>
-      <GuestPendingMessages sessionID={session.id} />
       <Composer
         key={session.id}
         session={session}
         messages={messages}
         isWorking={isWorking}
-        backgroundWork={backgroundWork}
-        requestBody={requestBody}
+        runningWork={runningWorkAtom}
+        standing={standing}
+        requests={requests}
+        guests={guests}
+        agentOf={agentOf}
+        usageLimit={usageLimit}
         onMessageAdmitted={onMessageAdmitted}
         onNavigateToNewTask={navigateToNewTask}
         onModelsChange={onModelsChange}
         pendingInputs={pendingInputs}
-        contextBarMode="compact"
         contextBar={composerContextBar}
       />
     </>
   );
 });
-
-const SessionRevertDock = memo(
-  function SessionRevertDock({
-    session,
-    messages,
-  }: {
-    session: PalotSession;
-    messages: PalotMessage[];
-  }) {
-    const cacheSession = useCacheSession();
-    const [action, setAction] = useState<"restore" | "commit" | null>(null);
-    const revert = session.revert;
-    if (!revert) return null;
-    const boundary = messages.findIndex((message) => message.id === revert.messageID);
-    const affectedMessages =
-      boundary < 0
-        ? 0
-        : messages.slice(boundary).filter((message) => message.type === "user").length;
-    const affectedMessageCount = Math.max(1, affectedMessages);
-    const files = revert.files ?? [];
-    const additions = files.reduce((total, file) => total + file.additions, 0);
-    const deletions = files.reduce((total, file) => total + file.deletions, 0);
-
-    const run = async (next: "restore" | "commit") => {
-      setAction(next);
-      try {
-        const updated =
-          next === "restore"
-            ? await palot.clearSessionRevert(session.id)
-            : await palot.commitSessionRevert(session.id);
-        if (updated) cacheSession(updated);
-      } catch (error) {
-        showErrorToast(
-          next === "restore" ? "Could not restore reverted work" : "Could not finalize undo",
-          error,
-        );
-      } finally {
-        setAction(null);
-      }
-    };
-
-    return (
-      <div
-        className="mx-auto mb-2 w-[calc(100%-32px)] max-w-[740px] overflow-hidden rounded-lg border border-warning/35 bg-warning/8 shadow-sm max-[720px]:w-[calc(100%-20px)]"
-        aria-live="polite"
-      >
-        <div className="flex min-h-10 items-center gap-2 px-3 py-2">
-          <Undo2 className="size-4 shrink-0 text-warning" aria-hidden="true" />
-          <div className="min-w-0 flex-1">
-            <div className="text-xs font-medium text-foreground">Undo staged</div>
-            <div className="truncate text-micro text-muted-foreground">
-              {affectedMessageCount} {affectedMessageCount === 1 ? "message" : "messages"}
-              {files.length > 0
-                ? ` and ${files.length} changed ${files.length === 1 ? "file" : "files"}`
-                : ""}
-            </div>
-          </div>
-          {files.length > 0 ? (
-            <div className="flex shrink-0 items-center gap-1.5 font-mono text-micro tabular-nums max-[560px]:hidden">
-              <span className="text-success">+{additions}</span>
-              <span className="text-destructive">-{deletions}</span>
-            </div>
-          ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={action !== null}
-            onClick={() => void run("restore")}
-          >
-            {action === "restore" ? (
-              <LoaderCircle className="animate-spin" aria-hidden="true" />
-            ) : (
-              <RotateCcw aria-hidden="true" />
-            )}
-            Restore
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            size="xs"
-            disabled={action !== null}
-            onClick={() => void run("commit")}
-          >
-            {action === "commit" ? (
-              <LoaderCircle className="animate-spin" aria-hidden="true" />
-            ) : (
-              <Undo2 aria-hidden="true" />
-            )}
-            Finalize undo
-          </Button>
-        </div>
-        {files.length > 0 ? (
-          <div className="flex gap-1 overflow-x-auto border-t border-warning/20 px-3 py-1.5">
-            {files.slice(0, 5).map((file) => (
-              <span
-                key={file.file}
-                className="max-w-48 shrink-0 truncate rounded bg-background/65 px-1.5 py-0.5 font-mono text-code-compact text-muted-foreground"
-                title={file.file}
-              >
-                {file.file}
-              </span>
-            ))}
-            {files.length > 5 ? (
-              <span className="shrink-0 px-1 py-0.5 text-micro text-muted-foreground">
-                +{files.length - 5} more
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    );
-  },
-  (previous, next) => {
-    if (!previous.session.revert && !next.session.revert) return true;
-    return previous.session === next.session && previous.messages === next.messages;
-  },
-);
 
 const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnItem({
   source,
@@ -2258,7 +2352,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   sessionID,
   cacheBust,
   onOpenCacheDiagnostic,
-  reviewOffer,
+  turnChanges,
   subagentProgress,
   virtualIndex,
   virtualSize,
@@ -2273,7 +2367,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
   sessionID: string;
   cacheBust: LikelyCacheBust | null;
   onOpenCacheDiagnostic: (messageID: string) => void;
-  reviewOffer: React.ReactNode;
+  turnChanges: TurnChangesScope;
   subagentProgress: { active: number; total: number };
   virtualIndex: number;
   virtualSize: number;
@@ -2350,7 +2444,7 @@ const TranscriptPresentationTurnItem = memo(function TranscriptPresentationTurnI
             />
           </Fragment>
         ))}
-        {reviewOffer}
+        <TurnChangesCard turn={turn} sessionID={sessionID} scope={turnChanges} />
       </article>
     </div>
   );
@@ -2364,7 +2458,7 @@ function sameTranscriptPresentationTurnItemProps(
     sessionID: string;
     cacheBust: LikelyCacheBust | null;
     onOpenCacheDiagnostic: (messageID: string) => void;
-    reviewOffer: React.ReactNode;
+    turnChanges: TurnChangesScope;
     subagentProgress: { active: number; total: number };
     virtualIndex: number;
     virtualSize: number;
@@ -2380,7 +2474,7 @@ function sameTranscriptPresentationTurnItemProps(
     sessionID: string;
     cacheBust: LikelyCacheBust | null;
     onOpenCacheDiagnostic: (messageID: string) => void;
-    reviewOffer: React.ReactNode;
+    turnChanges: TurnChangesScope;
     subagentProgress: { active: number; total: number };
     virtualIndex: number;
     virtualSize: number;
@@ -2398,7 +2492,7 @@ function sameTranscriptPresentationTurnItemProps(
     previous.sessionID === next.sessionID &&
     previous.cacheBust === next.cacheBust &&
     previous.onOpenCacheDiagnostic === next.onOpenCacheDiagnostic &&
-    previous.reviewOffer === next.reviewOffer &&
+    previous.turnChanges === next.turnChanges &&
     previous.virtualIndex === next.virtualIndex &&
     previous.virtualSize === next.virtualSize &&
     previous.isLastTurn === next.isLastTurn &&
@@ -2409,6 +2503,59 @@ function sameTranscriptPresentationTurnItemProps(
     previous.subagentProgress.total === next.subagentProgress.total
   );
 }
+
+export interface TurnChangesScope {
+  /** Empty when the transcript's connection cannot load diffs. */
+  profileID: string;
+  connectionID: string;
+  /** The latest settled prompt, whose card also offers the review follow-ups. */
+  reviewUserMessageID: string | null;
+  /** Opens the turn's diff, scrolled to `file` when given. */
+  open(userMessageID: string, file?: string): void;
+  onAsked(): void;
+}
+
+const NO_CHANGED_FILES: readonly string[] = [];
+
+/**
+ * The files a finished turn changed, under its answer or, without one, under its work. The
+ * latest settled turn keeps the card even without snapshot data, so its diff can name the files.
+ */
+export const TurnChangesCard = memo(function TurnChangesCard({
+  turn,
+  sessionID,
+  scope,
+}: {
+  turn: TranscriptTurn;
+  sessionID: string;
+  scope: TurnChangesScope;
+}) {
+  const user = turn.user;
+  if (!user || user.optimistic === true || turn.status === "working") return null;
+  if (turn.kind !== undefined && turn.kind !== "conversation") return null;
+  const files = turn.changedFiles ?? NO_CHANGED_FILES;
+  const latest = scope.reviewUserMessageID === user.id;
+  if (files.length === 0 && !latest) return null;
+  return (
+    <TurnChangedFiles
+      profileID={scope.profileID}
+      sessionID={sessionID}
+      userMessageID={user.id}
+      files={files}
+      onOpenDiff={(file) => scope.open(user.id, file)}
+      actions={
+        latest ? (
+          <TurnReviewActions
+            connectionID={scope.connectionID}
+            sessionID={sessionID}
+            userMessageID={user.id}
+            onAsked={scope.onAsked}
+          />
+        ) : undefined
+      }
+    />
+  );
+});
 
 function rowReceivesCacheBust(row: TranscriptPresentationRow, turn: TranscriptTurn): boolean {
   if (turn.kind !== undefined && turn.kind !== "conversation" && turn.kind !== "subagent") {
@@ -2487,6 +2634,7 @@ const TranscriptPresentationRowContent = memo(function TranscriptPresentationRow
           turn={turn}
           sessionID={sessionID}
           preventAutoCollapse={subagentProgress.active > 0}
+          runningSubagents={subagentProgress.active}
         />
         {showCacheBust ? (
           <CacheBustWarning warning={cacheBust} onOpen={onOpenCacheDiagnostic} />
@@ -2532,24 +2680,26 @@ const TranscriptPresentationRowContent = memo(function TranscriptPresentationRow
     return <PostFinalItems items={row.items} />;
   }
   const { turn } = row;
-  return turn.status === "working" ? (
-    <ActiveTurnMeta
-      startedAt={turn.startedAt}
-      label={activeTurnLabel(turn)}
-      activity={parallelActivityLabel(turn)}
-      thought={latestTurnThought(turn)}
-    />
-  ) : null;
+  return turn.status === "working" ? <ActiveTurnMeta turn={turn} /> : null;
 }, sameTranscriptPresentationRowContentProps);
 
-export function activeTurnLabel(turn: TranscriptTurn): "Working" | "Finishing" {
-  if (!turn.final) return "Working";
-  const hasToolActivity = turn.activity.some(
-    (group) => group.kind === "tools" || group.kind === "subagent-tool",
+/**
+ * The running turn, or -1. Prompts still waiting in the inbox show as turns of their own after
+ * it; they have not started, so they neither end nor replace the turn that is running.
+ */
+export function workingTurnIndex(
+  rows: readonly TranscriptProjectionRow[],
+  pendingInputs: readonly PendingRequestView[],
+): number {
+  const undelivered = new Set(pendingInputs.map((input) => input.id));
+  const index = rows.findLastIndex(
+    ({ turn }) =>
+      turn.users.length === 0 ||
+      turn.activity.length > 0 ||
+      turn.final !== null ||
+      turn.users.some((user) => !undelivered.has(user.id)),
   );
-  const finalMessageSettled =
-    turn.final.message.finish !== null && turn.final.message.finish !== "tool-calls";
-  return hasToolActivity || finalMessageSettled ? "Finishing" : "Working";
+  return rows[index]?.turn.status === "working" ? index : -1;
 }
 
 function sameTranscriptPresentationRowContentProps(
@@ -2654,9 +2804,9 @@ export const FinalMessageMeta = memo(
         : modelName;
     const responseMessageID = turn.final?.message.id;
     const tokensPerSecond = turn.tokensPerSecond === null ? null : turn.tokensPerSecond.toFixed(1);
-    const hasWorkDuration = turn.workCompletedAt !== null;
-    const duration = formatWorkedFor(turn.startedAt, turn.workCompletedAt ?? completedAt);
-    const durationTitle = hasWorkDuration ? `Worked for ${duration}` : `Completed in ${duration}`;
+    // The same whole-turn duration as the turn bar.
+    const duration = formatElapsed(Math.max(1_000, completedAt - turn.startedAt));
+    const durationTitle = `Worked for ${duration}`;
     const time = new Intl.DateTimeFormat(undefined, {
       hour: "numeric",
       minute: "2-digit",
@@ -2745,1719 +2895,122 @@ export const FinalMessageMeta = memo(
   },
 );
 
-function formatWorkedFor(startedAt: number, completedAt: number): string {
-  const seconds = Math.max(1, Math.round((completedAt - startedAt) / 1_000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
+/** Seconds a foreground command runs before the live line offers to move it to the background. */
+const BACKGROUND_OFFER_MS = 5_000;
+
+/** The words of the live line; a permission names its command or path when the request has one. */
+function liveTurnWords(
+  status: SessionActivityStatus,
+  requests: readonly PendingRequestView[],
+  now?: number,
+): { label: string; detail: string | null } {
+  const words = sessionActivityLabel(status, now);
+  if (status.kind !== "approval") return words;
+  const detail = requests
+    .find((request) => request.id === status.requestID)
+    ?.detail?.split("\n")
+    .find((line) => line.trim())
+    ?.trim();
+  return detail ? { ...words, detail } : words;
 }
 
-function formatWorkingFor(startedAt: number, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - startedAt) / 1_000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}m ${remainder.toString().padStart(2, "0")}s`;
-}
-
-function useCurrentTime(active = true): number {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!active) return;
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, [active]);
-
-  return now;
-}
-
-export function ActiveTurnMeta({
-  startedAt,
-  label = "Working",
-  activity = null,
-  thought = null,
-}: {
-  startedAt: number;
-  label?: "Working" | "Finishing";
-  /** Concurrent tool work, such as "Reading 3 files". */
-  activity?: string | null;
-  /** The agent's latest reasoning line while reasoning summaries are shown. */
-  thought?: string | null;
-}) {
-  const now = useCurrentTime();
-
-  const duration = formatWorkingFor(startedAt, now);
-  return (
-    <div
-      data-palot-active-turn-status
-      className="mt-1 flex h-6 min-w-0 items-center gap-1.5 text-xs leading-none tabular-nums text-muted-foreground/55"
-    >
-      <span
-        className="flex min-w-0 items-center gap-1.5"
-        role="status"
-        aria-label={`${label}${activity ? `, ${activity.toLowerCase()},` : ""} for ${duration}`}
-      >
-        <ThinkingShimmer>{label}</ThinkingShimmer>
-        {activity ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <span className="min-w-0 truncate">{activity}</span>
-          </>
-        ) : null}
-        <span aria-hidden="true">·</span>
-        <span className="shrink-0">{duration}</span>
-      </span>
-      {thought ? (
-        // Outside the live region so streaming thoughts do not interrupt screen readers.
-        <>
-          <span aria-hidden="true">·</span>
-          <span
-            className="min-w-0 flex-1 basis-0 truncate text-muted-foreground/70"
-            title={thought}
-            data-palot-active-turn-thought
-          >
-            {thought}
-          </span>
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function TurnActivityDurationLabel({ turn }: { turn: TranscriptTurn }) {
-  const now = useCurrentTime(
-    turn.status === "working" && turn.workCompletedAt === null && turn.completedAt === null,
-  );
-  const duration = formatWorkedFor(turn.startedAt, turn.workCompletedAt ?? turn.completedAt ?? now);
-  if (turn.status === "working") {
-    return turn.workCompletedAt === null ? `Working for ${duration}` : `Worked for ${duration}`;
-  }
-  if (turn.status === "interrupted") return `Stopped after ${duration}`;
-  if (turn.status === "failed") return `Failed after ${duration}`;
-  return turn.workCompletedAt === null ? `Completed in ${duration}` : `Worked for ${duration}`;
-}
-
-const activityDisclosureTriggerClassName =
-  "h-auto min-h-7 max-w-full justify-start py-1 pr-0 pl-0! text-xs font-normal hover:bg-transparent! hover:text-foreground aria-expanded:bg-transparent!";
-const activityDisclosureTitleClassName = "min-w-0 truncate text-foreground/85";
-
-function TurnActivitySummary({ turn }: { turn: TranscriptTurn }) {
-  return (
-    <span className="flex min-w-0 flex-1 items-center gap-1 text-left">
-      <span className={activityDisclosureTitleClassName}>
-        <TurnActivityDurationLabel turn={turn} />
-      </span>
-    </span>
-  );
-}
-
-function activityAnchors(group: TurnActivityGroup): TurnActivityGroup[] {
-  return group.entries.flatMap((entry): TurnActivityGroup[] => {
-    if (!isTool(entry.part)) return [];
-    // A published artifact is a deliverable: its card stays in view when the activity folds.
-    if (
-      projectArtifactCalls(entry.part, entry.index)?.calls.some(
-        (call) => call.operation === "create" || call.operation === "update",
-      )
-    ) {
-      return [
-        {
-          id: `artifact:${entryID(entry)}`,
-          kind: "tools",
-          title: "Artifact",
-          status: group.status,
-          entries: [entry],
-          presentation: "individual",
-        },
-      ];
-    }
-    if (
-      group.presentation !== "grouped" ||
-      projectToolExecution(entry.part, entry.index).kind !== "subagent"
-    ) {
-      return [];
-    }
-    return [
-      {
-        id: entryID(entry),
-        kind: "subagent-tool" as const,
-        title: "Delegated work",
-        status: group.status,
-        entries: [entry],
-      },
-    ];
-  });
-}
-
-export function TurnActivity({
-  turn,
-  sessionID,
-  preventAutoCollapse = false,
-}: {
-  turn: TranscriptTurn;
-  sessionID: string;
-  preventAutoCollapse?: boolean;
-}) {
-  const disclosureAtom = useMemo(
-    () => turnActivityOpenAtomFamily(sessionID, turn.id),
-    [sessionID, turn.id],
-  );
-  const [persistedOpen, setPersistedOpen] = useAtom(disclosureAtom);
-  const [interacted, setInteracted] = useState(false);
-  const defaultOpen = preventAutoCollapse || !turn.shouldAutoCollapse || !turn.canCollapse;
-  const canDisclose = turn.blockingRequests.length === 0;
-  const open = canDisclose ? (persistedOpen ?? defaultOpen) : true;
-
-  if (turn.activity.length === 0) return null;
-
-  // A returned child is a chronological event, not another timed period of parent work.
-  if (turn.kind === "subagent") {
-    return <ActivityGroups groups={turn.activity} live={false} sessionID={sessionID} />;
-  }
-
-  if (turn.activity.length > 0 && turn.activity.every((group) => group.kind === "compaction")) {
-    return (
-      <div className="my-2">
-        <ActivityGroups
-          groups={turn.activity}
-          live={turn.status === "working"}
-          sessionID={sessionID}
-        />
-      </div>
-    );
-  }
-
-  if (!canDisclose) {
-    return (
-      <div className="my-2">
-        <div className="mb-1 flex h-7 items-center gap-1.5 text-meta text-muted-foreground/75">
-          <TurnActivitySummary turn={turn} />
-        </div>
-        <ActivityGroups
-          groups={turn.activity}
-          live={turn.status === "working"}
-          sessionID={sessionID}
-        />
-      </div>
-    );
-  }
-
-  const pinnedActivity = turn.activity.flatMap((group) => {
-    if (group.pinned || group.kind === "subagent" || group.kind === "subagent-tool") return [group];
-    return activityAnchors(group);
-  });
-
-  if (pinnedActivity.length > 0) {
-    return (
-      <Collapsible
-        open={open}
-        onOpenChange={(value) => {
-          setInteracted(true);
-          setPersistedOpen(value);
-        }}
-        data-palot-turn-activity
-        className="my-3"
-      >
-        <CollapsibleTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={activityDisclosureTriggerClassName}
-            />
-          }
-        >
-          <TurnActivitySummary turn={turn} />
-          {open ? (
-            <ChevronDown data-icon="inline-end" aria-hidden="true" />
-          ) : (
-            <ChevronRight data-icon="inline-end" aria-hidden="true" />
-          )}
-        </CollapsibleTrigger>
-        {!open ? (
-          <div className="pt-2">
-            <ActivityGroups groups={pinnedActivity} live={false} sessionID={sessionID} />
-          </div>
-        ) : null}
-        <CollapsibleContent smooth animate={interacted} className="pt-2">
-          <ActivityGroups
-            groups={turn.activity}
-            live={turn.status === "working"}
-            sessionID={sessionID}
-          />
-        </CollapsibleContent>
-      </Collapsible>
-    );
-  }
-
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={(value) => {
-        setInteracted(true);
-        setPersistedOpen(value);
-      }}
-      data-palot-turn-activity
-      className="my-3"
-    >
-      <CollapsibleTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={activityDisclosureTriggerClassName}
-          />
-        }
-      >
-        <TurnActivitySummary turn={turn} />
-        {open ? (
-          <ChevronDown data-icon="inline-end" aria-hidden="true" />
-        ) : (
-          <ChevronRight data-icon="inline-end" aria-hidden="true" />
-        )}
-      </CollapsibleTrigger>
-      <CollapsibleContent smooth animate={interacted} className="pt-2">
-        <ActivityGroups
-          groups={turn.activity}
-          live={turn.status === "working"}
-          sessionID={sessionID}
-        />
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function ActivityGroups({
-  groups,
-  live,
-  sessionID,
-  reveal = false,
-  revealGeneration = 0,
-}: {
-  groups: TurnActivityGroup[];
-  live: boolean;
-  sessionID: string;
-  reveal?: boolean;
-  revealGeneration?: number;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      {groups.map((group, index) => (
-        <ActivityGroupItem
-          key={group.id}
-          group={group}
-          live={live && index === groups.length - 1}
-          reveal={reveal}
-          revealGeneration={revealGeneration}
-          sessionID={sessionID}
-        />
-      ))}
-    </div>
-  );
-}
-
-const ActivityGroupItem = memo(
-  function ActivityGroupItem({
-    group,
-    live,
-    reveal,
-    revealGeneration,
-    sessionID,
-  }: {
-    group: TurnActivityGroup;
-    live: boolean;
-    reveal: boolean;
-    revealGeneration: number;
-    sessionID: string;
-  }) {
-    if (group.kind === "input") {
-      return (
-        <div className="my-2 flex flex-col gap-2">
-          {(group.messages ?? []).map((message) => (
-            <MessageRow key={message.id} message={message} />
-          ))}
-        </div>
-      );
-    }
-    if (group.kind === "content") return <ActivityParts entries={group.entries} live={live} />;
-    if (group.kind === "compaction") return <CompactionBoundary group={group} />;
-    if (group.kind === "boundary") return <TimelineBoundary group={group} />;
-    if (group.kind === "subagent") return <SubagentResponse group={group} />;
-    if (group.kind === "subagent-tool") {
-      return <SubagentLaunch group={group} parentSessionID={sessionID} />;
-    }
-    if (
-      group.showReasoningSummaries === false &&
-      group.entries.every((entry) => entry.part.type === "reasoning")
-    ) {
-      return (
-        <div className="flex min-h-7 flex-col justify-center text-xs text-muted-foreground">
-          <span className="text-foreground/75">{group.title}</span>
-          {live && group.currentAction ? (
-            <ThinkingShimmer className="text-meta">{group.currentAction}</ThinkingShimmer>
-          ) : null}
-        </div>
-      );
-    }
-    if (group.presentation === "individual") {
-      return (
-        <GroupedActivityDetails
-          entries={group.entries}
-          live={live}
-          detailsDefaultOpen={group.detailsDefaultOpen}
-          showReasoningSummaries={group.showReasoningSummaries}
-          sessionID={sessionID}
-          groupSameFileReads={group.groupSameFileReads}
-        />
-      );
-    }
-    return (
-      <ActivityGroup
-        group={group}
-        live={live}
-        defaultOpen={reveal || group.defaultOpen}
-        revealGeneration={revealGeneration}
-        sessionID={sessionID}
-      />
-    );
-  },
-  (previous, next) =>
-    previous.live === next.live &&
-    previous.reveal === next.reveal &&
-    previous.revealGeneration === next.revealGeneration &&
-    previous.sessionID === next.sessionID &&
-    sameTurnActivityGroup(previous.group, next.group),
-);
-
-export function ActivityGroup({
-  group,
-  live,
-  defaultOpen = false,
-  revealGeneration = 0,
-  sessionID = "",
-}: {
-  group: TurnActivityGroup;
-  live: boolean;
-  defaultOpen?: boolean;
-  revealGeneration?: number;
-  sessionID?: string;
-}) {
-  const disclosureAtom = useMemo(
-    () => activityGroupOpenAtomFamily(sessionID, group.id),
-    [sessionID, group.id],
-  );
-  const [persistedOpen, setPersistedOpen] = useAtom(disclosureAtom);
-  const [animate, setAnimate] = useState(false);
-  const appliedRevealGeneration = useRef(0);
-  const hasError =
-    group.status === "failed" ||
-    group.entries.some((entry) => {
-      if (!isTool(entry.part)) return false;
-      const state = entry.part.state;
-      return Boolean(
-        state && typeof state === "object" && !Array.isArray(state) && state.status === "error",
-      );
-    });
-  const forcedOpen = group.forceOpen === true;
-  const open = forcedOpen ? true : (persistedOpen ?? defaultOpen);
-  const shimmer = live || group.kind === "compaction";
-  const visibleAnchors = activityAnchors(group);
-
-  useEffect(() => {
-    if (revealGeneration <= appliedRevealGeneration.current) return;
-    appliedRevealGeneration.current = revealGeneration;
-    setPersistedOpen(true);
-  }, [revealGeneration, setPersistedOpen]);
-
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={(value) => {
-        if (forcedOpen) return;
-        setAnimate(true);
-        setPersistedOpen(value);
-      }}
-      data-palot-activity-group={group.kind}
-      className="my-1 min-w-0 text-muted-foreground"
-    >
-      <CollapsibleTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={activityDisclosureTriggerClassName}
-          />
-        }
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-1 text-left">
-          <span className={activityDisclosureTitleClassName}>{group.title}</span>
-          {shimmer && group.currentAction ? (
-            <ThinkingShimmer className="min-w-0 truncate text-muted-foreground">
-              · {group.currentAction}
-            </ThinkingShimmer>
-          ) : null}
-        </span>
-        {hasError ? <span className="sr-only">Failed</span> : null}
-        {open ? (
-          <ChevronDown data-icon="inline-end" aria-hidden="true" />
-        ) : (
-          <ChevronRight data-icon="inline-end" aria-hidden="true" />
-        )}
-      </CollapsibleTrigger>
-      {!open && visibleAnchors.length > 0 ? (
-        <ActivityGroups groups={visibleAnchors} live={false} sessionID={sessionID} />
-      ) : null}
-      <CollapsibleContent smooth animate={animate} className="min-w-0 pt-1">
-        <GroupedActivityDetails
-          entries={group.entries}
-          live={live}
-          detailsDefaultOpen={group.detailsDefaultOpen}
-          showReasoningSummaries={group.showReasoningSummaries}
-          sessionID={sessionID}
-          groupSameFileReads={group.groupSameFileReads}
-        />
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-type ActivityDetailRow =
-  | { id: string; kind: "reasoning"; entries: TurnPart[] }
-  | { id: string; kind: "reads"; entries: TurnPart[] }
-  | { id: string; kind: "read"; path: string; entries: TurnPart[] }
-  | { id: string; kind: "compaction"; entry: TurnPart }
-  | { id: string; kind: "part"; entry: TurnPart };
-
-function activityDetailRows(
-  entries: TurnPart[],
-  groupSameFileReads = false,
-  showReasoningSummaries = true,
-  groupAdjacentReads = true,
-): ActivityDetailRow[] {
-  const rows: ActivityDetailRow[] = [];
-  for (const [entryIndex, entry] of entries.entries()) {
-    if (groupAdjacentReads && isPlainReadEntry(entry)) {
-      const previous = rows.at(-1);
-      if (previous?.kind === "reads" && previous.entries.at(-1) === entries[entryIndex - 1])
-        previous.entries.push(entry);
-      else rows.push({ id: entryID(entry), kind: "reads", entries: [entry] });
-      continue;
-    }
-    if (entry.part.type === "compaction") {
-      rows.push({
-        id: entry.part.id ?? `${entry.message.id}:compaction:${entry.index}`,
-        kind: "compaction",
-        entry,
-      });
-      continue;
-    }
-    if (entry.part.type !== "reasoning") {
-      const execution =
-        groupSameFileReads && isPlainReadEntry(entry)
-          ? projectToolExecution(entry.part, entry.index)
-          : null;
-      if (execution?.kind === "read" && execution.path !== "Unknown path") {
-        const previous = rows.at(-1);
-        const existing =
-          previous?.kind === "read" && previous.path === execution.path ? previous : null;
-        if (existing) existing.entries.push(entry);
-        else {
-          rows.push({
-            id: entry.part.id ?? `${entry.message.id}:read:${entry.index}`,
-            kind: "read",
-            path: execution.path,
-            entries: [entry],
-          });
-        }
-        continue;
-      }
-      rows.push({
-        id: entry.part.id ?? `${entry.message.id}:${entry.part.type}:${entry.index}`,
-        kind: "part",
-        entry,
-      });
-      continue;
-    }
-    if (!showReasoningSummaries) continue;
-    if (!messageText(entry.message, entry.part).trim()) continue;
-    const previous = rows.at(-1);
-    if (previous?.kind === "reasoning") {
-      previous.entries.push(entry);
-    } else {
-      rows.push({
-        id: entry.part.id ?? `${entry.message.id}:reasoning:${entry.index}`,
-        kind: "reasoning",
-        entries: [entry],
-      });
-    }
-  }
-  return rows;
-}
-
-function GroupedActivityDetails({
-  entries,
-  live,
-  detailsDefaultOpen = false,
-  showReasoningSummaries = true,
-  sessionID,
-  groupSameFileReads = false,
-  groupAdjacentReads = true,
-}: {
-  entries: TurnPart[];
-  live: boolean;
-  detailsDefaultOpen?: boolean;
-  showReasoningSummaries?: boolean;
-  sessionID: string;
-  groupSameFileReads?: boolean;
-  groupAdjacentReads?: boolean;
-}) {
-  const rows = activityDetailRows(
-    entries,
-    groupSameFileReads,
-    showReasoningSummaries,
-    groupAdjacentReads,
-  );
-  const lastEntry = entries.at(-1);
-  return (
-    <div className="flex flex-col gap-1">
-      {rows.map((row) =>
-        row.kind === "reasoning" ? (
-          row.entries.length > 1 &&
-          row.entries.every(
-            (entry) =>
-              entry.part.presentation !== "preamble" && entry.part.presentation !== "recap",
-          ) ? (
-            <ThoughtGroupDisclosure
-              key={row.id}
-              entries={row.entries}
-              live={live && row.entries.includes(lastEntry!)}
-              defaultOpen={showReasoningSummaries}
-            />
-          ) : (
-            <div key={row.id} className="flex flex-col gap-1">
-              {row.entries.map((entry) => (
-                <ThoughtDisclosure
-                  key={entryID(entry)}
-                  entry={entry}
-                  live={live && entry === lastEntry}
-                  defaultOpen={showReasoningSummaries}
-                />
-              ))}
-            </div>
-          )
-        ) : row.kind === "reads" ? (
-          <CompactReadGroup
-            key={row.id}
-            entries={row.entries}
-            sessionID={sessionID}
-            defaultOpen={detailsDefaultOpen}
-            groupSameFileReads={groupSameFileReads}
-          />
-        ) : row.kind === "read" ? (
-          <ReadToolExecutionGroup
-            key={row.id}
-            entries={row.entries.map((entry) => ({ part: entry.part, index: entry.index }))}
-            defaultOpen={detailsDefaultOpen}
-          />
-        ) : row.kind === "compaction" ? (
-          <CompactionBoundary
-            key={row.id}
-            group={{
-              id: row.id,
-              kind: "compaction",
-              title: "Compacting context",
-              status:
-                row.entry.part.status === "failed"
-                  ? "failed"
-                  : row.entry.part.status === "running"
-                    ? "running"
-                    : "completed",
-              entries: [row.entry],
-            }}
-          />
-        ) : (
-          <ActivityPartDetail
-            key={row.id}
-            entry={row.entry}
-            live={live && row.entry.message.completedAt === null}
-            defaultOpen={detailsDefaultOpen}
-            sessionID={sessionID}
-          />
-        ),
-      )}
-    </div>
-  );
-}
-
-function CompactReadGroup({
-  entries,
-  sessionID,
-  defaultOpen,
-  groupSameFileReads,
-}: {
-  entries: TurnPart[];
-  sessionID: string;
-  defaultOpen: boolean;
-  groupSameFileReads: boolean;
-}) {
-  const disclosure = useMemo(
-    () => activityGroupOpenAtomFamily(sessionID, `reads:${entryID(entries[0]!)}`),
-    [sessionID, entries],
-  );
-  const [persistedOpen, setOpen] = useAtom(disclosure);
-  const [animate, setAnimate] = useState(false);
-  if (entries.length === 1)
-    return (
-      <ToolExecution part={entries[0]!.part} index={entries[0]!.index} defaultOpen={defaultOpen} />
-    );
-  const count = new Set(
-    entries.map((entry) => {
-      const view = projectToolExecution(entry.part, entry.index);
-      return view.kind === "read" ? view.path : "";
-    }),
-  ).size;
-  const open = persistedOpen ?? defaultOpen;
-  if (count === 1 && groupSameFileReads) {
-    return (
-      <ReadToolExecutionGroup
-        entries={entries.map((entry) => ({ part: entry.part, index: entry.index }))}
-        defaultOpen={defaultOpen}
-      />
-    );
-  }
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={(value) => {
-        setAnimate(true);
-        setOpen(value);
-      }}
-      data-palot-read-group
-      className="my-0.5 min-w-0 text-muted-foreground"
-    >
-      <CollapsibleTrigger
-        render={<Button variant="ghost" size="sm" className={activityDisclosureTriggerClassName} />}
-      >
-        <FileText data-icon="inline-start" aria-hidden="true" />
-        <span className="min-w-0 flex-1 text-left">
-          Read {count} {count === 1 ? "file" : "files"}
-        </span>
-        {open ? (
-          <ChevronDown data-icon="inline-end" aria-hidden="true" />
-        ) : (
-          <ChevronRight data-icon="inline-end" aria-hidden="true" />
-        )}
-      </CollapsibleTrigger>
-      <CollapsibleContent smooth animate={animate} className="min-w-0 pl-3">
-        <GroupedActivityDetails
-          entries={entries}
-          live={false}
-          detailsDefaultOpen={defaultOpen}
-          sessionID={sessionID}
-          groupSameFileReads={groupSameFileReads}
-          groupAdjacentReads={false}
-        />
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function ActivityPartDetail({
-  entry,
-  live,
-  defaultOpen,
-  sessionID,
-}: {
-  entry: TurnPart;
-  live: boolean;
-  defaultOpen: boolean;
-  sessionID: string;
-}) {
-  if (isTool(entry.part)) {
-    const execution = projectToolExecution(entry.part, entry.index);
-    if (execution.kind === "subagent") {
-      const status =
-        execution.status === "error"
-          ? "failed"
-          : execution.status === "running"
-            ? "running"
-            : execution.status === "pending"
-              ? "pending"
-              : "completed";
-      return (
-        <SubagentLaunch
-          group={{
-            id: entryID(entry),
-            kind: "subagent-tool",
-            title: execution.description || "Delegated work",
-            status,
-            entries: [entry],
-          }}
-          parentSessionID={sessionID}
-        />
-      );
-    }
-  }
-  return (
-    <MessagePartView
-      message={entry.message}
-      part={entry.part}
-      index={entry.index}
-      live={live}
-      defaultOpen={defaultOpen}
-    />
-  );
-}
-
-function entryID(entry: TurnPart): string {
-  return entry.part.id ?? `${entry.message.id}:${entry.part.type}:${entry.index}`;
-}
-
-export function TimelineBoundary({ group }: { group: TurnActivityGroup }) {
-  const part = group.entries[0]?.part;
-  if (!part) return null;
-  const data =
-    part.data && typeof part.data === "object" && !Array.isArray(part.data) ? part.data : {};
-  if (data.kind === "synthetic") return <SyntheticUpdate group={group} />;
-  return <StandardTimelineBoundary group={group} part={part} />;
-}
-
-function StandardTimelineBoundary({
-  group,
-  part,
-}: {
-  group: TurnActivityGroup;
-  part: PalotMessageContent;
-}) {
-  const data =
-    part.data && typeof part.data === "object" && !Array.isArray(part.data) ? part.data : {};
-  const detail = part.text?.trim();
-  const failed = group.status === "failed";
-  const running = group.status === "running";
-  const interrupted = group.status === "interrupted";
-  const role = failed ? "alert" : running ? "status" : "separator";
-  const label = part.name ?? group.title;
-  const retryAt = typeof data.at === "number" ? data.at : null;
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!running || retryAt === null) return;
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, [retryAt, running]);
-
-  const retryDelay = retryAt === null ? null : Math.max(0, Math.ceil((retryAt - now) / 1_000));
-  const visibleLabel = retryDelay && retryDelay > 0 ? `${label} in ${retryDelay}s` : label;
-
-  if (failed || interrupted) {
-    const Icon = failed ? CircleAlert : CircleStop;
-    return (
-      <div
-        className={cn(
-          "my-3 flex min-w-0 items-start gap-2.5 rounded-lg border px-3 py-2.5",
-          failed ? "border-destructive/25 bg-destructive/[0.045]" : "border-border/60 bg-muted/20",
-        )}
-        role={role}
-        aria-label={label}
-        data-palot-boundary={typeof data.kind === "string" ? data.kind : "session"}
-      >
-        <Icon
-          className={cn(
-            "mt-0.5 size-3.5 shrink-0",
-            failed ? "text-destructive" : "text-muted-foreground/75",
-          )}
-          aria-hidden="true"
-        />
-        <div className="min-w-0">
-          <p
-            className={cn(
-              "m-0 text-xs font-medium",
-              failed ? "text-destructive" : "text-foreground/80",
-            )}
-          >
-            {label}
-          </p>
-          {detail ? (
-            <p
-              className={cn(
-                "mt-0.5 mb-0 text-xs/relaxed",
-                failed ? "text-destructive/80" : "text-muted-foreground/70",
-              )}
-            >
-              <LinkedText text={detail} />
-            </p>
-          ) : null}
-          {failed ? <UsageLimitActions message={group.entries[0]?.message} /> : null}
-          {failed ? <ClaudeCodeFailureActions detail={detail} /> : null}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="my-3 flex min-w-0 flex-col gap-1.5"
-      role={role}
-      aria-label={visibleLabel}
-      data-palot-boundary={typeof data.kind === "string" ? data.kind : "session"}
-    >
-      <div className={cn("flex items-center gap-3 text-xs", "text-muted-foreground/65")}>
-        <span className="h-px min-w-6 flex-1 bg-border/70" aria-hidden="true" />
-        {running ? <ThinkingShimmer>{visibleLabel}</ThinkingShimmer> : <span>{label}</span>}
-        <span className="h-px min-w-6 flex-1 bg-border/70" aria-hidden="true" />
-      </div>
-      {detail ? (
-        <p className={cn("m-0 text-center text-xs/relaxed", "text-muted-foreground/55")}>
-          <LinkedText text={detail} />
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function SyntheticUpdate({ group }: { group: TurnActivityGroup }) {
-  const [open, setOpen] = useState(false);
-  const part = group.entries[0]?.part;
-  if (!part) return null;
-  const detail = part.text?.trim();
-  const label = part.name ?? group.title;
-
-  if (!detail) {
-    return (
-      <div
-        className="my-2 flex h-7 min-w-0 items-center gap-2 text-xs text-muted-foreground"
-        role="status"
-        aria-label={label}
-        data-palot-synthetic-update={group.id}
-      >
-        <Sparkles className="size-3.5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 truncate text-foreground/75">{label}</span>
-      </div>
-    );
-  }
-
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="my-2 min-w-0 text-muted-foreground"
-      data-palot-synthetic-update={group.id}
-    >
-      <CollapsibleTrigger
-        disabled={!detail}
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 max-w-full justify-start px-0 text-xs font-normal hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent"
-          />
-        }
-      >
-        <Sparkles data-icon="inline-start" aria-hidden="true" />
-        <span className="min-w-0 truncate text-left text-foreground/75">{label}</span>
-        {detail ? (
-          open ? (
-            <ChevronDown data-icon="inline-end" aria-hidden="true" />
-          ) : (
-            <ChevronRight data-icon="inline-end" aria-hidden="true" />
-          )
-        ) : null}
-      </CollapsibleTrigger>
-      {detail ? (
-        <CollapsibleContent className="ml-5 max-w-3xl">
-          <BoundedScroll
-            className="rounded-lg border border-border/50 bg-muted/15"
-            viewportClassName="max-h-[32rem] px-3 py-2.5"
-          >
-            <MarkdownContent value={detail} className="text-xs/relaxed text-foreground/75" />
-          </BoundedScroll>
-        </CollapsibleContent>
-      ) : null}
-    </Collapsible>
-  );
-}
-
-function ThoughtGroupDisclosure({
-  entries,
-  live,
-  defaultOpen = false,
-}: {
-  entries: TurnPart[];
-  live: boolean;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const interacted = useRef(false);
-  const [animate, setAnimate] = useState(false);
-  const thoughts = useMemo(
-    () =>
-      entries.map((entry) => {
-        const text = messageText(entry.message, entry.part).trim();
-        return {
-          id: entryID(entry),
-          title: createReasoningTitle(text),
-          content: splitReasoningContent(text),
-        };
-      }),
-    [entries],
-  );
-  const duration = useMemo(() => {
-    const created = entries.flatMap((entry) =>
-      entry.part.time?.created === undefined ? [] : [entry.part.time.created],
-    );
-    const completed = entries.flatMap((entry) =>
-      entry.part.time?.completed === undefined ? [] : [entry.part.time.completed],
-    );
-    if (created.length !== entries.length || completed.length !== entries.length) return null;
-    return formatThoughtDuration(Math.max(...completed) - Math.min(...created));
-  }, [entries]);
-  const done = !live || entries.every((entry) => entry.part.time?.completed !== undefined);
-  const stateLabel = "Reasoning";
-  const title = open ? stateLabel : `${stateLabel}: ${thoughts.at(-1)?.title ?? "Reasoning"}`;
-  const summary = `${entries.length} steps${duration ? ` · ${duration}` : ""}`;
-
-  useEffect(() => {
-    if (!interacted.current) setOpen(defaultOpen);
-  }, [defaultOpen]);
-
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={(value) => {
-        interacted.current = true;
-        setAnimate(true);
-        setOpen(value);
-      }}
-      className="my-0.5 min-w-0 text-muted-foreground"
-    >
-      <CollapsibleTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={`${title} · ${summary}`}
-            className="h-7 w-full justify-start px-0! text-xs font-normal hover:bg-transparent! hover:text-foreground aria-expanded:bg-transparent!"
-          />
-        }
-      >
-        <Brain data-icon="inline-start" aria-hidden="true" />
-        {done ? (
-          <span className="min-w-0 flex-1 truncate text-left text-foreground/80 transition-colors group-hover/button:text-foreground">
-            {title}
-          </span>
-        ) : (
-          <ThinkingShimmer className="min-w-0 flex-1 truncate text-left transition-colors group-hover/button:text-foreground">
-            {title}
-          </ThinkingShimmer>
-        )}
-        <span className="shrink-0 tabular-nums text-muted-foreground/65 transition-colors group-hover/button:text-foreground/80">
-          {summary}
-        </span>
-        {open ? (
-          <ChevronDown data-icon="inline-end" aria-hidden="true" />
-        ) : (
-          <ChevronRight data-icon="inline-end" aria-hidden="true" />
-        )}
-      </CollapsibleTrigger>
-      <CollapsibleContent smooth animate={animate} className="min-w-0 pt-1">
-        {/* One train of thought: every step shares a single capped scroll region. */}
-        <BoundedScroll
-          label="Reasoning steps"
-          follow={!done}
-          className="my-1 border-l border-border/70"
-          viewportClassName="max-h-96"
-        >
-          <div className="flex flex-col gap-3 pr-3 pl-3 text-xs/relaxed text-muted-foreground">
-            {thoughts.map((thought) => (
-              <div key={thought.id}>
-                {thought.content.title ? (
-                  <div className="font-medium text-foreground/80">{thought.content.title}</div>
-                ) : null}
-                {thought.content.body ? (
-                  <MarkdownContent
-                    value={thought.content.body}
-                    className={cn(
-                      "text-xs/relaxed text-muted-foreground",
-                      thought.content.title && "mt-1",
-                    )}
-                  />
-                ) : thought.content.title ? null : (
-                  thought.title
-                )}
-              </div>
-            ))}
-          </div>
-        </BoundedScroll>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-export function ThoughtDisclosure({
-  entry,
-  live,
-  defaultOpen = false,
-}: {
-  entry: TurnPart;
-  live: boolean;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const interacted = useRef(false);
-  const [animate, setAnimate] = useState(false);
-  const text = messageText(entry.message, entry.part).trim();
-  const content = useMemo(() => splitReasoningContent(text), [text]);
-  const completedAt = entry.part.time?.completed;
-  const duration =
-    completedAt === undefined || entry.part.time?.created === undefined
-      ? null
-      : formatThoughtDuration(completedAt - entry.part.time.created);
-  const done = completedAt !== undefined || !live;
-  const presentationLabel =
-    entry.part.presentation === "preamble"
-      ? "Update"
-      : entry.part.presentation === "recap"
-        ? "Recap"
-        : "Reasoning";
-  const label = `${presentationLabel}${content.title ? `: ${content.title}` : ""}`;
-  const compact = !text.includes("\n") || Boolean(content.title && !content.body);
-  useEffect(() => {
-    if (!interacted.current) setOpen(defaultOpen);
-  }, [defaultOpen]);
-  if (!text) return null;
-  if (compact) {
-    const compactLabel = content.title ?? createReasoningTitle(text);
-    return (
-      <div className="my-0.5 flex h-7 min-w-0 items-center gap-1 text-xs text-muted-foreground">
-        <Brain className="size-3 shrink-0" aria-hidden="true" />
-        {done ? (
-          <span className="min-w-0 flex-1 truncate text-foreground/80">
-            {presentationLabel}: {compactLabel}
-          </span>
-        ) : (
-          <ThinkingShimmer className="min-w-0 flex-1 truncate">
-            {presentationLabel}: {compactLabel}
-          </ThinkingShimmer>
-        )}
-        {duration ? <span className="shrink-0 tabular-nums opacity-65">{duration}</span> : null}
-      </div>
-    );
-  }
-
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={(value) => {
-        interacted.current = true;
-        setAnimate(true);
-        setOpen(value);
-      }}
-      className="my-0.5 min-w-0 text-muted-foreground"
-    >
-      <CollapsibleTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 w-full justify-start px-0! text-xs font-normal hover:bg-transparent! hover:text-foreground aria-expanded:bg-transparent!"
-          />
-        }
-      >
-        <Brain data-icon="inline-start" aria-hidden="true" />
-        {done ? (
-          <span className="min-w-0 flex-1 truncate text-left text-foreground/80 transition-colors group-hover/button:text-foreground">
-            {label}
-          </span>
-        ) : (
-          <ThinkingShimmer className="min-w-0 flex-1 truncate text-left transition-colors group-hover/button:text-foreground">
-            {label}
-          </ThinkingShimmer>
-        )}
-        {duration ? (
-          <span className="shrink-0 tabular-nums text-muted-foreground/65 transition-colors group-hover/button:text-foreground/80">
-            {duration}
-          </span>
-        ) : null}
-        {open ? (
-          <ChevronDown data-icon="inline-end" aria-hidden="true" />
-        ) : (
-          <ChevronRight data-icon="inline-end" aria-hidden="true" />
-        )}
-      </CollapsibleTrigger>
-      <CollapsibleContent smooth animate={animate} className="min-w-0 pt-1">
-        <div className="my-1">
-          {content.title && !content.body ? (
-            <div className="border-l border-border/70 pl-3 text-xs/relaxed text-muted-foreground">
-              {content.title}
-            </div>
-          ) : null}
-          {content.body ? (
-            <BoundedScroll label="Reasoning" follow={!done} viewportClassName="max-h-80">
-              <MarkdownContent
-                value={content.body}
-                className="pr-3 text-xs/relaxed text-muted-foreground"
-              />
-            </BoundedScroll>
-          ) : null}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function formatThoughtDuration(durationMs: number): string {
-  const clamped = Math.max(0, durationMs);
-  if (clamped < 1_000) return `${Math.round(clamped)}ms`;
-  return `${(clamped / 1_000).toFixed(1).replace(/\.0$/, "")}s`;
-}
-
-function ActivityParts({ entries, live }: { entries: TurnPart[]; live: boolean }) {
-  return (
-    <div className="flex flex-col gap-1">
-      {entries.map((entry) => (
-        <MessagePartView
-          key={`${entry.message.id}:${entry.part.id ?? entry.index}`}
-          message={entry.message}
-          part={entry.part}
-          index={entry.index}
-          live={live && entry.message.completedAt === null}
-        />
-      ))}
-    </div>
-  );
-}
-
-export const MessageRow = memo(function MessageRow({
-  message,
-  parts: selectedParts,
-  className,
-}: {
-  message: PalotMessage;
-  parts?: PalotMessageContent[];
-  className?: string;
-}) {
-  const role = messageRole(message);
-  const parts =
-    selectedParts ??
-    (message.content.length > 0 ? message.content : [{ type: "text", text: message.text ?? "" }]);
-  const align = role === "user" ? "end" : "start";
-  const userContentSummary = role === "user" ? summarizeMessageParts(parts) : null;
-  const hasUserText =
-    role === "user" &&
-    (Boolean(message.fileReferences?.length || message.skillReferences?.length) ||
-      parts.some(
-        (part) => !("text" in part) || (typeof part.text === "string" && part.text.trim() !== ""),
-      ));
-  const userContent = (
-    <>
-      {message.fileReferences?.length || message.skillReferences?.length ? (
-        <MessageReferences
-          files={message.fileReferences ?? []}
-          skills={message.skillReferences ?? []}
-        />
-      ) : null}
-      {parts.map((part, index) => (
-        <MessagePartView
-          key={part.id ?? `${message.id}-${index}`}
-          message={message}
-          part={part}
-          index={index}
-          live={message.completedAt === null}
-        />
-      ))}
-    </>
-  );
-  return (
-    <Message role="article" aria-label={`${role} message`} align={align} className={className}>
-      <MessageContent>
-        <Bubble
-          align={align}
-          variant={role === "user" ? "secondary" : "ghost"}
-          className={cn(role === "assistant" && "w-full")}
-        >
-          <BubbleContent className={cn(role === "assistant" && "w-full")}>
-            {/* Attachments lead the text, matching the composer. */}
-            {message.files?.length ? (
-              <MessageAttachments files={message.files} className={cn(hasUserText && "mb-2")} />
-            ) : null}
-            {userContentSummary ? (
-              <ExpandableUserMessageContent
-                likelyLong={userContentSummary.likelyLong}
-                accessibleText={userContentSummary.text}
-              >
-                {userContent}
-              </ExpandableUserMessageContent>
-            ) : (
-              userContent
-            )}
-          </BubbleContent>
-        </Bubble>
-        {role === "user" ? <EditFromHereButton message={message} /> : null}
-      </MessageContent>
-    </Message>
-  );
-});
-
-const COLLAPSED_USER_MESSAGE_HEIGHT = 208;
-
-function summarizeMessageParts(parts: PalotMessageContent[]): {
-  likelyLong: boolean;
-  text: string;
-} {
-  const textParts: string[] = [];
-  let lines = 0;
-  for (const part of parts) {
-    if (!("text" in part) || typeof part.text !== "string") continue;
-    textParts.push(part.text);
-    lines += part.text.split("\n").length - 1;
-  }
-  const text = textParts.join("\n");
-  return { likelyLong: text.length > 700 || lines > 12, text };
-}
-
-function ExpandableUserMessageContent({
-  children,
-  likelyLong,
-  accessibleText,
-}: {
-  children: React.ReactNode;
-  likelyLong: boolean;
-  accessibleText: string;
-}) {
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [measured, setMeasured] = useState(false);
-  const [measuredOverflow, setMeasuredOverflow] = useState(false);
-  const overflowing = measured ? measuredOverflow : likelyLong;
-  const collapsed = overflowing && !expanded;
-
-  useLayoutEffect(() => {
-    const content = contentRef.current;
-    if (!content) return;
-    const measure = () => {
-      if (content.scrollHeight <= 0) return;
-      setMeasured(true);
-      setMeasuredOverflow(content.scrollHeight > COLLAPSED_USER_MESSAGE_HEIGHT + 1);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div>
-      <div
-        className={cn("relative", collapsed && "overflow-hidden")}
-        style={collapsed ? { maxHeight: COLLAPSED_USER_MESSAGE_HEIGHT } : undefined}
-      >
-        {collapsed && accessibleText ? <span className="sr-only">{accessibleText}</span> : null}
-        <div
-          ref={contentRef}
-          inert={collapsed ? true : undefined}
-          aria-hidden={collapsed || undefined}
-        >
-          {children}
-        </div>
-        {collapsed ? (
-          <span
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-linear-to-t from-secondary to-transparent"
-            aria-hidden="true"
-          />
-        ) : null}
-      </div>
-      {overflowing ? (
-        <button
-          type="button"
-          className="mt-1.5 text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {expanded ? "Show less" : "Read more"}
-        </button>
-      ) : null}
-    </div>
-  );
+/** What screen readers hear: no per-second countdown and no streaming thought. */
+function liveTurnAnnouncement(
+  status: SessionActivityStatus,
+  requests: readonly PendingRequestView[],
+): string {
+  if (status.kind === "thinking") return "Working";
+  const { label, detail } = liveTurnWords(status, requests);
+  return detail ? `${label}, ${detail}` : label;
 }
 
 /**
- * Keys by URI plus its occurrence, not list position. The server echo lists inline-delivered files
- * before path-delivered ones, so positional keys would remount (and flash) optimistic previews.
+ * The running turn's one live line: what the task is doing or waiting on. The turn bar holds the
+ * clock; this line shows elapsed time only while the turn has no bar yet.
  */
-function attachmentKeys(files: NonNullable<PalotMessage["files"]>) {
-  const seen = new Map<string, number>();
-  return files.map((file) => {
-    const occurrence = seen.get(file.uri) ?? 0;
-    seen.set(file.uri, occurrence + 1);
-    return { key: `${file.uri}#${occurrence}`, file };
-  });
-}
-
-function MessageAttachments({
-  files,
-  className,
-}: {
-  files: NonNullable<PalotMessage["files"]>;
-  className?: string;
-}) {
-  return (
-    <AttachmentGroup
-      className={cn("max-w-full justify-start py-0", className)}
-      aria-label="Attachments"
-    >
-      {attachmentKeys(files).map(({ key, file }) => (
-        <FileAttachment key={key} file={file} />
-      ))}
-    </AttachmentGroup>
-  );
-}
-
-function MessageReferences({
-  files,
-  skills,
-}: {
-  files: NonNullable<PalotMessage["fileReferences"]>;
-  skills: NonNullable<PalotMessage["skillReferences"]>;
-}) {
-  return (
-    <div className="mb-2 flex max-w-full flex-wrap justify-end gap-1.5" aria-label="References">
-      {files.map((file, index) => (
-        <MessageFileReference key={`${file.uri}:${file.mention.start}:${index}`} file={file} />
-      ))}
-      {skills.map((skill, index) => (
-        <span
-          key={`${skill.id}:${skill.mention.start}:${index}`}
-          className="flex max-w-64 items-center gap-1.5 rounded-md border border-foreground/10 bg-background/45 px-2 py-1 text-xs"
-        >
-          <Sparkles className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="truncate">${skill.id}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-const MESSAGE_REFERENCE_CLASS =
-  "flex max-w-64 items-center gap-1.5 rounded-md border border-foreground/10 bg-background/45 px-2 py-1 text-xs";
-
-/** A mentioned file opens like a transcript file link; other references only offer their path. */
-function MessageFileReference({
-  file,
-}: {
-  file: NonNullable<PalotMessage["fileReferences"]>[number];
-}) {
-  const opener = useWorkspaceFileOpener();
-  const directory = useWorkspaceDirectory();
-  const path = fileUriPath(file.uri);
-  const content = (
+export function ActiveTurnMeta({ turn }: { turn: TranscriptTurn }) {
+  const live = useContext(LiveTurnContext);
+  const now = useCurrentTime();
+  const requests = live?.requests ?? EMPTY_LIVE_REQUESTS;
+  const status = sessionActivityStatus({
+    turn,
+    requests,
+    runtimeStatus: live?.runtimeStatus ?? null,
+    stopping: live?.stopping ?? false,
+  }) ?? { kind: "working" as const };
+  const { label, detail } = liveTurnWords(status, requests, now);
+  const announcement = liveTurnAnnouncement(status, requests);
+  const waiting = status.kind === "approval" || status.kind === "answer";
+  const offerBackground =
+    status.kind === "command" &&
+    status.canBackground &&
+    status.startedAt !== null &&
+    now - status.startedAt >= BACKGROUND_OFFER_MS &&
+    live !== null;
+  const elapsed = turnShowsBar(turn) ? null : formatElapsed(now - turn.startedAt);
+  const words = (
     <>
-      <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="truncate">@{file.name}</span>
+      {waiting ? (
+        <span className="shrink-0 text-foreground/80">{label}</span>
+      ) : (
+        <ThinkingShimmer className="min-w-0 truncate">{label}</ThinkingShimmer>
+      )}
+      {detail ? (
+        <>
+          <span aria-hidden="true">·</span>
+          <span className="min-w-0 truncate" title={detail}>
+            {detail}
+          </span>
+        </>
+      ) : null}
+      {elapsed ? (
+        <>
+          <span aria-hidden="true">·</span>
+          <span className="shrink-0">{elapsed}</span>
+        </>
+      ) : null}
     </>
   );
-  if (!path) {
-    return (
-      <span className={MESSAGE_REFERENCE_CLASS} title={file.uri}>
-        {content}
-      </span>
-    );
-  }
-  // A workspace file's URI ends with the path it mentions; a reference names a folder elsewhere.
-  const mentioned = file.mention.text.replace(/^@/, "");
-  const workspaceFile = path.replaceAll("\\", "/").endsWith(`/${mentioned}`);
-  if (!opener || !workspaceFile) {
-    return (
-      <FileLinkMenu reference={{ path }} directory={directory}>
-        <span className={MESSAGE_REFERENCE_CLASS} title={path}>
-          {content}
-        </span>
-      </FileLinkMenu>
-    );
-  }
-  const open = (event: React.MouseEvent | React.KeyboardEvent) => {
-    event.preventDefault();
-    opener({ path }, event);
-  };
-  return (
-    <FileLinkMenu reference={{ path }} directory={directory} onOpen={opener}>
-      <a
-        href={fileUrl(path)}
-        title={path}
-        aria-label={`Open ${path}`}
-        onClick={open}
-        className={cn(
-          MESSAGE_REFERENCE_CLASS,
-          "cursor-pointer text-foreground outline-none hover:bg-background/70 focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70",
-        )}
-      >
-        {content}
-      </a>
-    </FileLinkMenu>
-  );
-}
 
-function MessagePartView({
-  message,
-  part,
-  index,
-  live = false,
-  defaultOpen = false,
-}: {
-  message: PalotMessage;
-  part: PalotMessageContent;
-  index: number;
-  live?: boolean;
-  defaultOpen?: boolean;
-}) {
-  if (isTool(part)) return <ToolExecution part={part} index={index} defaultOpen={defaultOpen} />;
-  if (part.type === "compaction") {
-    const group: TurnActivityGroup = {
-      id: part.id ?? `${message.id}:compaction:${index}`,
-      kind: "compaction",
-      title: "Compacting context",
-      status:
-        part.status === "failed" ? "failed" : part.status === "running" ? "running" : "completed",
-      entries: [{ message, part, index }],
-    };
-    return <CompactionBoundary group={group} />;
-  }
-  if (part.type === "timeline-boundary") {
-    return (
-      <TimelineBoundary
-        group={{
-          id: part.id ?? `${message.id}:boundary:${index}`,
-          kind: "boundary",
-          title: part.name ?? "Session update",
-          status:
-            part.status === "failed"
-              ? "failed"
-              : part.status === "running"
-                ? "running"
-                : part.status === "interrupted"
-                  ? "interrupted"
-                  : "completed",
-          entries: [{ message, part, index }],
-        }}
-      />
-    );
-  }
-  if (part.type === "reasoning") {
-    const reasoning = messageText(message, part).trim();
-    return reasoning ? <ThoughtDisclosure entry={{ message, part, index }} live={live} /> : null;
-  }
-  const value = transcriptPartText(message, part);
-  if (!value) return null;
-  return (
-    // Find in task maps data matches to rendered text through this key.
-    <div data-transcript-find-part={transcriptFindPartKey(message, part)} className="contents">
-      <MarkdownContent value={value} streaming={live && message.type === "assistant"} />
-    </div>
-  );
-}
-
-/** The location a location-wide MCP elicitation is settled through, when the request is one. */
-function locationOf(request: PendingRequestView): { locationDirectory?: string } {
-  return request.locationDirectory ? { locationDirectory: request.locationDirectory } : {};
-}
-
-export const PendingRequests = memo(function PendingRequests({
-  sessionID,
-  requests,
-  inline = false,
-}: {
-  sessionID: string;
-  requests: Array<
-    PendingRequestView & Partial<Pick<OwnedPendingRequestView, "sessionID" | "sessionTitle">>
-  >;
-  inline?: boolean;
-}) {
-  const [responding, setResponding] = useState<Set<string>>(new Set());
-  const [attentionTarget, setAttentionTarget] = useAtom(attentionTargetAtom);
-
-  useEffect(() => {
-    if (
-      !attentionTarget ||
-      !requests.some(
-        (request) =>
-          (request.sessionID ?? sessionID) === attentionTarget.sessionID &&
-          request.id === attentionTarget.requestID &&
-          request.type === attentionTarget.type,
-      ) ||
-      attentionTarget.type === "input"
-    ) {
-      return;
-    }
-    const element = document.querySelector<HTMLElement>(
-      `[data-palot-request-session-id="${CSS.escape(attentionTarget.sessionID)}"][data-palot-request-id="${CSS.escape(attentionTarget.requestID)}"][data-palot-request-type="${CSS.escape(attentionTarget.type)}"]`,
-    );
-    if (!element) return;
-    element.scrollIntoView({ block: "center", behavior: "smooth" });
-    element.querySelector<HTMLElement>("button, input, textarea, select")?.focus();
-    setAttentionTarget(null);
-  }, [attentionTarget, requests, sessionID, setAttentionTarget]);
-
-  async function respond(requestID: string, action: () => Promise<void>, fallback: string) {
-    setResponding((current) => new Set(current).add(requestID));
-    try {
-      await action();
-    } catch (error) {
-      showErrorToast(fallback, error);
-    } finally {
-      setResponding((current) => {
-        const next = new Set(current);
-        next.delete(requestID);
-        return next;
-      });
-    }
-  }
-
-  function replyPermission(
-    ownerSessionID: string,
-    responseKey: string,
-    requestID: string,
-    value: "once" | "always" | "reject",
-    message?: string,
-  ) {
-    return respond(
-      responseKey,
-      () =>
-        palot.replyPermission({
-          sessionID: ownerSessionID,
-          requestID,
-          reply: value,
-          ...(message ? { message } : {}),
-        }),
-      "Could not answer this request",
-    );
-  }
-
-  const cardRequests = requests.filter((request) => request.type !== "input");
-  if (cardRequests.length === 0) return null;
   return (
     <div
-      className={cn(
-        "relative z-30 flex flex-col gap-2 overflow-y-auto overscroll-contain p-1",
-        inline
-          ? "my-1 max-h-[min(42vh,24rem)] w-full"
-          : "mx-auto mb-2 max-h-[min(42vh,24rem)] w-[calc(100%-32px)] max-w-[740px] max-[720px]:w-[calc(100%-20px)]",
-      )}
-      aria-live="polite"
+      data-palot-active-turn-status={status.kind}
+      className="mt-1 flex h-6 min-w-0 items-center gap-1.5 text-xs leading-none tabular-nums text-muted-foreground/55"
     >
-      {cardRequests.map((request) => {
-        const ownerSessionID = request.sessionID ?? sessionID;
-        const responseKey = `${ownerSessionID}:${request.type}:${request.id}`;
-        const disabled = responding.has(responseKey);
-        const requestKey = `${responseKey}:${JSON.stringify({ questions: request.questions, fields: request.fields, delivery: request.delivery })}`;
-        return (
-          <motion.div
-            key={requestKey}
-            data-palot-request-id={request.id}
-            data-palot-request-session-id={ownerSessionID}
-            data-palot-request-type={request.type}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            {request.locationDirectory ? (
-              <p className="mb-1 truncate px-1 text-meta font-medium text-muted-foreground">
-                MCP server request
-              </p>
-            ) : ownerSessionID !== sessionID ? (
-              <p
-                className="mb-1 truncate px-1 text-meta font-medium text-warning"
-                title={request.sessionTitle}
-              >
-                Subagent · {request.sessionTitle ?? "Delegated task"}
-              </p>
-            ) : null}
-            {request.type === "question" ? (
-              <QuestionRequestCard
-                request={request}
-                disabled={disabled}
-                compact={inline}
-                onSubmit={(answers) =>
-                  respond(
-                    responseKey,
-                    () =>
-                      palot.replyForm({
-                        sessionID: ownerSessionID,
-                        formID: request.id,
-                        answer: Object.fromEntries(
-                          answers.map((values, index) => [
-                            `q${index}`,
-                            request.questions[index]?.multiple ? values : (values[0] ?? ""),
-                          ]),
-                        ),
-                      }),
-                    "Could not submit these answers",
-                  )
-                }
-                onDismiss={() =>
-                  respond(
-                    responseKey,
-                    () =>
-                      palot.cancelForm({
-                        sessionID: ownerSessionID,
-                        formID: request.id,
-                      }),
-                    "Could not dismiss this question",
-                  )
-                }
-              />
-            ) : request.type === "form" ? (
-              <FormRequestCard
-                request={request}
-                disabled={disabled}
-                compact={inline}
-                onSubmit={(answer) =>
-                  respond(
-                    responseKey,
-                    () =>
-                      palot.replyForm({
-                        sessionID: ownerSessionID,
-                        formID: request.id,
-                        answer,
-                        ...locationOf(request),
-                      }),
-                    "Could not submit this form",
-                  )
-                }
-                onCancel={() =>
-                  respond(
-                    responseKey,
-                    () =>
-                      palot.cancelForm({
-                        sessionID: ownerSessionID,
-                        formID: request.id,
-                        ...locationOf(request),
-                      }),
-                    "Could not cancel this form",
-                  )
-                }
-              />
-            ) : (
-              <PermissionRequestCard
-                request={request}
-                disabled={disabled}
-                onReply={(value, message) =>
-                  replyPermission(ownerSessionID, responseKey, request.id, value, message)
-                }
-              />
-            )}
-          </motion.div>
-        );
-      })}
+      {/* Announces state changes only; the visible words below change with every tick. */}
+      <span role="status" className="sr-only">
+        {announcement}
+      </span>
+      {waiting && live ? (
+        <button
+          type="button"
+          aria-label={`${announcement}. Show the request`}
+          onClick={() => live.focusRequest(status.requestID)}
+          className="flex min-w-0 items-center gap-1.5 rounded-sm outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30"
+        >
+          {words}
+        </button>
+      ) : (
+        <span className="flex min-w-0 items-center gap-1.5" aria-hidden="true">
+          {words}
+        </span>
+      )}
+      {offerBackground ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="text-muted-foreground"
+          onClick={live.moveToBackground}
+        >
+          Move to background
+        </Button>
+      ) : null}
     </div>
   );
-});
+}
+
+const EMPTY_LIVE_REQUESTS: readonly PendingRequestView[] = [];
 
 export function PostFinalItems({ items }: { items: TurnPostFinalItem[] }) {
   const resources = items.filter((item) => item.kind !== "diff");
@@ -4487,625 +3040,6 @@ export function PostFinalItems({ items }: { items: TurnPostFinalItem[] }) {
         </div>
       ))}
     </div>
-  );
-}
-
-function RequestCard({
-  request,
-  children,
-  compact = false,
-  showHeader = true,
-}: {
-  request: PendingRequestView;
-  children: React.ReactNode;
-  compact?: boolean;
-  showHeader?: boolean;
-}) {
-  const titleID = `request-${request.id}-title`;
-  return (
-    <Alert
-      role="region"
-      aria-labelledby={showHeader ? titleID : undefined}
-      aria-label={showHeader ? undefined : request.title}
-      className={cn(
-        "gap-3 p-3",
-        compact
-          ? "border-0 bg-transparent px-1 py-1 shadow-none"
-          : "bg-card/95 shadow-lg backdrop-blur-xl",
-      )}
-    >
-      {showHeader ? (
-        <div className="flex items-center justify-between gap-3">
-          <AlertTitle id={titleID}>{request.title}</AlertTitle>
-          <Badge variant="outline">
-            {request.type === "input" ? (request.delivery ?? "pending") : request.type}
-          </Badge>
-        </div>
-      ) : null}
-      {children}
-    </Alert>
-  );
-}
-
-function PermissionRequestCard({
-  request,
-  disabled,
-  onReply,
-}: {
-  request: PendingRequestView;
-  disabled: boolean;
-  onReply: (value: "once" | "always" | "reject", message?: string) => Promise<void>;
-}) {
-  const [rejecting, setRejecting] = useState(false);
-  const [reason, setReason] = useState("");
-  return (
-    <RequestCard request={request}>
-      {request.permissionPreview ? <PermissionPreview preview={request.permissionPreview} /> : null}
-      <AlertDescription className="flex flex-col gap-2 text-left text-pretty">
-        {request.detail ? (
-          <span>
-            <LinkedText text={request.detail} />
-          </span>
-        ) : null}
-        {request.resources.length > 0 ? (
-          <span className="flex flex-col gap-1">
-            <span className="text-micro font-medium text-foreground">Requested</span>
-            {request.resources.map((resource, index) => (
-              <code
-                key={`${resource}:${index}`}
-                className="rounded bg-muted/70 px-1.5 py-1 font-mono text-code-compact break-all text-foreground"
-              >
-                {resource}
-              </code>
-            ))}
-          </span>
-        ) : null}
-        {request.savePatterns.length > 0 ? (
-          <span className="flex flex-col gap-1">
-            <span className="text-micro font-medium text-foreground">
-              Remember for this project
-            </span>
-            {request.savePatterns.map((pattern, index) => (
-              <code
-                key={`${pattern}:${index}`}
-                className="rounded bg-muted/70 px-1.5 py-1 font-mono text-code-compact break-all text-foreground"
-              >
-                {pattern}
-              </code>
-            ))}
-          </span>
-        ) : (
-          <span className="text-micro">
-            Project-wide approval is unavailable because OpenCode did not provide a reusable
-            pattern.
-          </span>
-        )}
-        <span className="text-micro">Deny stops all pending protected actions in this task.</span>
-      </AlertDescription>
-      {rejecting ? (
-        <div
-          className="flex flex-col gap-2"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.stopPropagation();
-              setRejecting(false);
-            }
-          }}
-        >
-          <label className="text-compact" htmlFor={`reject-${request.id}`}>
-            Rejection reason (optional)
-          </label>
-          <Input
-            id={`reject-${request.id}`}
-            autoFocus
-            value={reason}
-            disabled={disabled}
-            placeholder="Tell OpenCode what to do differently"
-            onChange={(event) => setReason(event.target.value)}
-          />
-          <div className="flex justify-end gap-2">
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={disabled}
-              onClick={() => setRejecting(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="xs"
-              variant="destructive"
-              disabled={disabled}
-              onClick={() => void onReply("reject", reason.trim() || undefined)}
-            >
-              Confirm denial
-            </Button>
-          </div>
-        </div>
-      ) : null}
-      {rejecting ? null : (
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={disabled}
-            onClick={() => setRejecting(true)}
-          >
-            Deny
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            disabled={disabled}
-            onClick={() => void onReply("once")}
-          >
-            Allow once
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            disabled={disabled || request.savePatterns.length === 0}
-            title={
-              request.savePatterns.length === 0
-                ? "OpenCode did not provide a reusable project pattern"
-                : "Save these patterns for every task in this project"
-            }
-            onClick={() => void onReply("always")}
-          >
-            Always allow for this project
-          </Button>
-        </div>
-      )}
-    </RequestCard>
-  );
-}
-
-function QuestionRequestCard({
-  request,
-  disabled,
-  onSubmit,
-  onDismiss,
-  compact = false,
-}: {
-  request: PendingRequestView;
-  disabled: boolean;
-  onSubmit: (answers: string[][]) => Promise<void>;
-  onDismiss: () => Promise<void>;
-  compact?: boolean;
-}) {
-  const items = useMemo(
-    () =>
-      request.questions.map((question, index) => ({
-        name: `q${index}`,
-        required: true,
-        disabled,
-        choices: question.options.map((option) => ({ value: option.label })),
-      })),
-    [disabled, request.questions],
-  );
-
-  return (
-    <RequestCard request={request} compact={compact} showHeader={false}>
-      <Questionnaire
-        className="relative"
-        items={items}
-        shortcuts="numbers"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const data = new FormData(event.currentTarget);
-          const answers = request.questions.map((_, index) =>
-            data
-              .getAll(`q${index}`)
-              .filter((value): value is string => typeof value === "string")
-              .map((value) => value.trim())
-              .filter(Boolean),
-          );
-          void onSubmit(answers);
-        }}
-      >
-        <QuestionnaireProgress
-          className="absolute top-0 right-0"
-          render={(props, { current, total }) => (
-            <div {...props}>
-              {current}/{total}
-            </div>
-          )}
-        />
-        {request.questions.map((question, questionIndex) => (
-          <QuestionnaireItem
-            key={`${request.id}:${questionIndex}`}
-            name={`q${questionIndex}`}
-            multiple={question.multiple}
-            required
-            disabled={disabled}
-          >
-            <QuestionnaireTitle className="w-full pr-12">
-              <LinkedText text={question.question} />
-            </QuestionnaireTitle>
-            {question.multiple ? (
-              <QuestionnaireDescription>Select multiple</QuestionnaireDescription>
-            ) : null}
-            <QuestionnaireChoices>
-              {question.options.map((option) => (
-                <QuestionnaireChoice key={option.label} value={option.label}>
-                  <span className="font-medium text-foreground">{option.label}</span>
-                  {option.description ? (
-                    <QuestionnaireChoiceDescription>
-                      {option.description}
-                    </QuestionnaireChoiceDescription>
-                  ) : null}
-                </QuestionnaireChoice>
-              ))}
-              {question.custom ? (
-                <QuestionnaireInput
-                  disabled={disabled}
-                  placeholder="Other answer…"
-                  aria-label={`${question.header} custom answer`}
-                />
-              ) : null}
-            </QuestionnaireChoices>
-          </QuestionnaireItem>
-        ))}
-        <QuestionnaireActions className="grid-cols-[auto_minmax(0,1fr)_auto_auto]">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="col-start-1"
-            disabled={disabled}
-            onClick={() => void onDismiss()}
-          >
-            Dismiss
-          </Button>
-          <QuestionnairePrevious size="sm" className="col-start-2" />
-          <QuestionnaireNext size="sm" className="col-start-4" />
-          <QuestionnaireSubmit size="sm" className="col-start-4" disabled={disabled}>
-            {disabled ? "Sending" : "Send"}
-          </QuestionnaireSubmit>
-        </QuestionnaireActions>
-      </Questionnaire>
-    </RequestCard>
-  );
-}
-
-function initialFormAnswers(fields: PendingFormFieldView[]): Record<string, FormValue> {
-  return Object.fromEntries(
-    fields.flatMap((field) => {
-      if (field.defaultValue !== undefined) return [[field.key, field.defaultValue]];
-      return field.type === "boolean" ? [[field.key, false]] : [];
-    }),
-  );
-}
-
-function formFieldVisible(
-  field: PendingFormFieldView,
-  answers: Record<string, FormValue>,
-): boolean {
-  return field.when.every((condition) => {
-    const answer = answers[condition.key];
-    const matched = Array.isArray(answer)
-      ? typeof condition.value === "string" && answer.includes(condition.value)
-      : answer === condition.value;
-    return condition.op === "eq" ? matched : !matched;
-  });
-}
-
-function formFieldValid(field: PendingFormFieldView, value: FormValue | undefined): boolean {
-  if (field.type === "external") return true;
-  if (value === undefined) return !field.required;
-  if (typeof value === "string") {
-    if (value.trim().length === 0) return !field.required;
-    if (field.minLength !== undefined && value.length < field.minLength) return false;
-    if (field.maxLength !== undefined && value.length > field.maxLength) return false;
-    if (field.pattern) {
-      try {
-        if (!new RegExp(field.pattern).test(value)) return false;
-      } catch {
-        return false;
-      }
-    }
-    if (field.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return false;
-    if (field.format === "uri") {
-      try {
-        new URL(value);
-      } catch {
-        return false;
-      }
-    }
-    if (
-      field.options.length > 0 &&
-      !field.custom &&
-      !field.options.some((option) => (option.value ?? option.label) === value)
-    ) {
-      return false;
-    }
-    return true;
-  }
-  if (typeof value === "number") {
-    if (field.minimum !== undefined && value < field.minimum) return false;
-    if (field.maximum !== undefined && value > field.maximum) return false;
-    if (field.type === "integer" && !Number.isInteger(value)) return false;
-    return true;
-  }
-  if (Array.isArray(value)) {
-    if (field.required && value.length === 0) return false;
-    if (field.minItems !== undefined && value.length < field.minItems) return false;
-    if (field.maxItems !== undefined && value.length > field.maxItems) return false;
-    if (
-      !field.custom &&
-      value.some((item) => !field.options.some((option) => (option.value ?? option.label) === item))
-    ) {
-      return false;
-    }
-    return true;
-  }
-  return typeof value === "boolean";
-}
-
-function FormRequestCard({
-  request,
-  disabled,
-  onSubmit,
-  onCancel,
-  compact = false,
-}: {
-  request: PendingRequestView;
-  disabled: boolean;
-  onSubmit: (answer: Record<string, FormValue>) => Promise<void>;
-  onCancel: () => Promise<void>;
-  compact?: boolean;
-}) {
-  const [answers, setAnswers] = useState<Record<string, FormValue>>(() =>
-    initialFormAnswers(request.fields),
-  );
-  const enabledFields = request.fields.filter((field) => formFieldVisible(field, answers));
-  const visibleFields = enabledFields.filter((field) => !field.hidden);
-  const valid = visibleFields.every((field) => formFieldValid(field, answers[field.key]));
-
-  function setAnswer(key: string, value: FormValue | undefined) {
-    setAnswers((current) => {
-      if (value !== undefined) return { ...current, [key]: value };
-      const next = { ...current };
-      delete next[key];
-      return next;
-    });
-  }
-
-  const submittedAnswers = Object.fromEntries(
-    enabledFields.flatMap((field) => {
-      const value = answers[field.key];
-      return value === undefined || field.type === "external" ? [] : [[field.key, value]];
-    }),
-  );
-
-  return (
-    <RequestCard request={request} compact={compact}>
-      {request.detail ? (
-        <AlertDescription className="text-left text-pretty">
-          <LinkedText text={request.detail} />
-        </AlertDescription>
-      ) : null}
-      <div className="flex flex-col gap-3">
-        {visibleFields.map((field) => (
-          <FormFieldControl
-            key={field.key}
-            field={field}
-            value={answers[field.key]}
-            disabled={disabled}
-            onChange={(value) => setAnswer(field.key, value)}
-          />
-        ))}
-      </div>
-      <div className="flex items-center justify-end gap-1.5">
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          disabled={disabled}
-          onClick={() => void onCancel()}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="xs"
-          disabled={disabled || !valid}
-          onClick={() => void onSubmit(submittedAnswers)}
-        >
-          {disabled ? "Submitting" : "Submit"}
-        </Button>
-      </div>
-    </RequestCard>
-  );
-}
-
-function FormFieldControl({
-  field,
-  value,
-  disabled,
-  onChange,
-}: {
-  field: PendingFormFieldView;
-  value: FormValue | undefined;
-  disabled: boolean;
-  onChange: (value: FormValue | undefined) => void;
-}) {
-  const label = (
-    <span className="flex items-center gap-1 text-xs font-medium text-foreground">
-      {field.title}
-      {field.required ? (
-        <span aria-hidden="true" className="text-destructive">
-          *
-        </span>
-      ) : null}
-    </span>
-  );
-  if (field.type === "external") {
-    return (
-      <div className="flex flex-col gap-1.5">
-        {label}
-        {field.description ? (
-          <span className="text-micro text-muted-foreground">
-            <LinkedText text={field.description} />
-          </span>
-        ) : null}
-        {field.url ? (
-          <Button size="xs" variant="outline" render={<a href={field.url} />}>
-            Open required step
-          </Button>
-        ) : null}
-      </div>
-    );
-  }
-  if (field.type === "boolean") {
-    return (
-      <label className="flex items-center justify-between gap-3 rounded-lg border border-input bg-input/20 px-2.5 py-2">
-        <span className="flex min-w-0 flex-col gap-0.5">
-          {label}
-          {field.description ? (
-            <span className="text-micro text-muted-foreground">
-              <LinkedText text={field.description} />
-            </span>
-          ) : null}
-        </span>
-        <Switch
-          checked={value === true}
-          disabled={disabled}
-          onCheckedChange={(checked) => onChange(Boolean(checked))}
-        />
-      </label>
-    );
-  }
-  if (field.type === "multiselect") {
-    const selected = Array.isArray(value) ? value : [];
-    return (
-      <fieldset className="flex flex-col gap-1.5">
-        <legend>{label}</legend>
-        {field.description ? (
-          <span className="text-micro text-muted-foreground">
-            <LinkedText text={field.description} />
-          </span>
-        ) : null}
-        {field.options.map((option) => {
-          const optionValue = option.value ?? option.label;
-          return (
-            <label
-              key={optionValue}
-              className="flex items-start gap-2 rounded-lg border border-input bg-input/20 px-2.5 py-2 text-xs"
-            >
-              <input
-                className="mt-0.5 size-3.5 accent-primary"
-                type="checkbox"
-                checked={selected.includes(optionValue)}
-                disabled={disabled}
-                onChange={() =>
-                  onChange(
-                    selected.includes(optionValue)
-                      ? selected.filter((item) => item !== optionValue)
-                      : [...selected, optionValue],
-                  )
-                }
-              />
-              <span className="flex flex-col gap-0.5">
-                <span className="font-medium text-foreground">{option.label}</span>
-                {option.description ? (
-                  <span className="text-muted-foreground">{option.description}</span>
-                ) : null}
-              </span>
-            </label>
-          );
-        })}
-        {field.custom ? (
-          <Input
-            disabled={disabled}
-            placeholder="Add a custom value and press Enter"
-            aria-label={`${field.title} custom value`}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || !event.currentTarget.value.trim()) return;
-              event.preventDefault();
-              const next = event.currentTarget.value.trim();
-              if (!selected.includes(next)) onChange([...selected, next]);
-              event.currentTarget.value = "";
-            }}
-          />
-        ) : null}
-      </fieldset>
-    );
-  }
-  const inputType =
-    field.type === "number" || field.type === "integer"
-      ? "number"
-      : field.format === "email"
-        ? "email"
-        : field.format === "uri"
-          ? "url"
-          : field.format === "date"
-            ? "date"
-            : field.format === "date-time"
-              ? "datetime-local"
-              : "text";
-  return (
-    <label className="flex flex-col gap-1.5">
-      {label}
-      {field.description ? (
-        <span className="text-micro text-muted-foreground">
-          <LinkedText text={field.description} />
-        </span>
-      ) : null}
-      {field.type === "string" && field.options.length > 0 && !field.custom ? (
-        <select
-          className="h-8 rounded-md border border-input bg-input/20 px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-          value={typeof value === "string" ? value : ""}
-          disabled={disabled}
-          required={field.required}
-          onChange={(event) => onChange(event.target.value)}
-        >
-          <option value="">Select an option</option>
-          {field.options.map((option) => (
-            <option key={option.value ?? option.label} value={option.value ?? option.label}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <>
-          <Input
-            type={inputType}
-            list={field.options.length > 0 ? `${field.key}-options` : undefined}
-            value={typeof value === "string" || typeof value === "number" ? value : ""}
-            disabled={disabled}
-            required={field.required}
-            placeholder={field.placeholder}
-            min={field.minimum}
-            max={field.maximum}
-            minLength={field.minLength}
-            maxLength={field.maxLength}
-            pattern={field.pattern}
-            step={field.type === "integer" ? 1 : undefined}
-            onChange={(event) =>
-              onChange(
-                field.type === "number" || field.type === "integer"
-                  ? event.target.value === ""
-                    ? undefined
-                    : Number(event.target.value)
-                  : event.target.value,
-              )
-            }
-          />
-          {field.options.length > 0 ? (
-            <datalist id={`${field.key}-options`}>
-              {field.options.map((option) => (
-                <option key={option.value ?? option.label} value={option.value ?? option.label}>
-                  {option.label}
-                </option>
-              ))}
-            </datalist>
-          ) : null}
-        </>
-      )}
-    </label>
   );
 }
 

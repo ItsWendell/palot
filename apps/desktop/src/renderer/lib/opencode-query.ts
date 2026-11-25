@@ -51,6 +51,9 @@ export const openCodeKeys = {
     [...openCodeKeys.artifacts(connectionID), directory] as const,
   usageLimits: (connectionID: string, directory: string) =>
     [...openCodeKeys.all(connectionID), "usage-limits", directory] as const,
+  /** Server-wide: OpenCode reads voice credentials from its global configuration. */
+  voiceModels: (connectionID: string) =>
+    [...openCodeKeys.all(connectionID), "voice-models"] as const,
   sessions: (connectionID: string) => [...openCodeKeys.all(connectionID), "sessions"] as const,
   rootSessions: (connectionID: string) =>
     [...openCodeKeys.sessions(connectionID), "roots"] as const,
@@ -78,6 +81,14 @@ export const openCodeKeys = {
     ] as const,
   runningShellsRoot: (connectionID: string) =>
     [...openCodeKeys.sessions(connectionID), "running-shells"] as const,
+  /** A task family's live background jobs (server-wide, no location is loaded to read them). */
+  backgroundJobsRoot: (connectionID: string) =>
+    [...openCodeKeys.runningShellsRoot(connectionID), "\0jobs"] as const,
+  backgroundJobs: (connectionID: string, sessionID: string) =>
+    [...openCodeKeys.backgroundJobsRoot(connectionID), sessionID] as const,
+  /** A task family's running background Code Mode scripts. */
+  backgroundScripts: (connectionID: string, sessionID: string) =>
+    [...openCodeKeys.sessions(connectionID), "background-scripts", sessionID] as const,
   runningShells: (connectionID: string, location: LocationRef) =>
     [
       ...openCodeKeys.runningShellsRoot(connectionID),

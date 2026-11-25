@@ -12,6 +12,10 @@ export const router = createRouter({
   context: { store: rendererStore, queryClient: rendererQueryClient },
   defaultPreload: "intent",
   defaultPreloadStaleTime: 30_000,
+  // Loader data lives in the query cache, so the router need not keep left matches. Keeping
+  // them also leaks: an aborted match's abort reason holds the navigation before it, so every
+  // cached match roots the whole navigation history (router-core 1.171, about 9 KB a switch).
+  defaultGcTime: 0,
   defaultPendingMs: 150,
   defaultPendingMinMs: 150,
   defaultErrorComponent: RenderErrorRecovery,

@@ -33,13 +33,15 @@ describe("Palot data recovery", () => {
     expect(readFileSync(path.join(locations.database, "palot.sqlite-wal"), "utf8")).toBe("wal-v1");
   });
 
-  it("resets Palot preferences while preserving server profiles and encrypted credentials", async () => {
+  it("resets Palot preferences while preserving server profiles, credentials and route ownership", async () => {
     const locations = fixture();
     for (const name of [
       "appearance.json",
       "malformed.json",
       "opencode-connections.json",
       "opencode-credentials.json",
+      "tailscale-web-access.json",
+      "guest-link-route.json",
     ]) {
       writeFileSync(path.join(locations.data, name), name === "malformed.json" ? "{" : "{}");
     }
@@ -54,6 +56,8 @@ describe("Palot data recovery", () => {
     expect(() => readFileSync(path.join(locations.data, "malformed.json"))).toThrow();
     expect(readFileSync(path.join(locations.data, "opencode-connections.json"), "utf8")).toBe("{}");
     expect(readFileSync(path.join(locations.data, "opencode-credentials.json"), "utf8")).toBe("{}");
+    expect(readFileSync(path.join(locations.data, "tailscale-web-access.json"), "utf8")).toBe("{}");
+    expect(readFileSync(path.join(locations.data, "guest-link-route.json"), "utf8")).toBe("{}");
   });
 
   it("removes only Palot-owned data, including encrypted credentials, logs, and attachment temp", async () => {

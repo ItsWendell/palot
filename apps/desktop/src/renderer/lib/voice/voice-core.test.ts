@@ -269,7 +269,20 @@ describe("VoiceAgentRelay", () => {
     const running = (title: string) =>
       turn({
         activity: [
-          { id: "g", kind: "tools", title, status: "running", entries: [], currentAction: title },
+          {
+            id: "g",
+            kind: "tools",
+            title,
+            status: "running",
+            entries: [
+              {
+                message: message(""),
+                part: { type: "tool", id: title, name: "tool", state: { status: "running" } },
+                index: 0,
+              },
+            ],
+            currentAction: title,
+          },
         ],
       });
     now = 10_000;
@@ -290,6 +303,18 @@ describe("VoiceAgentRelay", () => {
     expect(
       relay.update({ turns: [running("Editing 'a.ts'")], requests: [], busy: true }).outputs,
     ).toHaveLength(1);
+  });
+
+  it("keeps its spoken wording for answers and replies", () => {
+    const relay = new VoiceAgentRelay(() => 1_000);
+    const question = { ...permission("q1", "Which branch?"), type: "question" as const };
+    expect(relay.update({ turns: [], requests: [question], busy: false }).status).toBe(
+      "Waiting for your answer",
+    );
+    expect(
+      relay.update({ turns: [turn({ reply: "Done" })], requests: [], busy: true }).status,
+    ).toBe("Writing a reply");
+    expect(relay.update({ turns: [turn({})], requests: [], busy: false }).status).toBeNull();
   });
 
   it("reports failures without reading the reply as a success", () => {

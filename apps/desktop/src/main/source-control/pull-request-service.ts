@@ -41,6 +41,7 @@ import {
   PULL_REQUEST_WATCH_READ_FAILURE_LIMIT,
   evaluatePullRequestWatch,
   newPullRequestWatch,
+  pullRequestTerminalMessage,
   pullRequestUnreadableMessage,
   pullRequestWatchMessage,
 } from "./pull-request-watch";
@@ -76,6 +77,8 @@ export interface SourceControlSessions {
     complete: boolean;
     createdAt: number;
     updatedAt: number;
+    /** When the task was archived, or null. */
+    archivedAt: number | null;
   }>;
   /** Queues a prompt that wakes the agent after its current turn. */
   prompt(
@@ -110,6 +113,13 @@ export interface PullRequestServiceOptions {
   gitForProfile?(profileID: string): Promise<Pick<GitRunner, "pullRequestContext">>;
   git: Pick<GitRunner, "pullRequestContext">;
   emit(event: SourceControlChangedEvent): void;
+  /** A watched PR became ready to merge and its agent was told; the person merges. */
+  notifyReady?(input: {
+    profileID: string;
+    sessionID: string;
+    number: number;
+    title: string;
+  }): void;
   now?: () => number;
   env?: () => Readonly<Record<string, string | undefined>>;
   log?: { warn(message: string, data?: Record<string, unknown>): void };
@@ -674,6 +684,7 @@ export class PullRequestService {
       }
     }
 
+    await this.wakeTerminalWatches(touch);
     await this.settleTerminal(touch);
     for (const [profileID, sessionIDs] of changed)
       this.emitPullRequests(profileID, [...sessionIDs], "synced");
@@ -896,10 +907,8 @@ export class PullRequestService {
     touch: (link: LinkIdentity) => void,
   ): Promise<void> {
     const watch = link.watch!;
-    if (snapshot.state === "merged" || snapshot.state === "closed") {
-      if (this.repository.endWatch(link, snapshot.state, now, watch)) touch(link);
-      return;
-    }
+    // `wakeTerminalWatches` sends the last wake and ends the watch, after every read.
+    if (isTerminal(snapshot)) return;
     // Waking needs the task's connection; leave the state untouched so the news waits.
     if (!detail || !this.options.sessions.connected(link.profileID)) return;
     const report = evaluatePullRequestWatch(watch, detail, viewer);
@@ -934,18 +943,81 @@ export class PullRequestService {
       return;
     }
     touch(link);
+    if (report.changes.some((change) => change.kind === "ready"))
+      this.options.notifyReady?.({
+        profileID: link.profileID,
+        sessionID: link.sessionID,
+        number: snapshot.number,
+        title: snapshot.title,
+      });
     if (report.exhausted) this.repository.endWatch(link, "comment-limit", now, watch);
     else this.repository.updateWatch(link, { ...report.next, lastWakeAt: now }, now);
   }
 
-  /** Settles tasks whose linked PR became merged or closed. */
+  /**
+   * A watched PR that merged or closed wakes its task once more, so the agent does the
+   * post-merge steps and settles the task itself; the watch then ends with the PR's state. The
+   * stored watch is the dedupe: it stays on until the wake is queued, so a restart or an offline
+   * connection between the merge and the wake still sends it once. Archived tasks are not woken.
+   */
+  private async wakeTerminalWatches(touch: (link: LinkIdentity) => void): Promise<void> {
+    const now = this.now();
+    const links = this.repository
+      .list()
+      .filter((link) => this.options.isLocalProfile(link.profileID) === true);
+    for (const link of links) {
+      const watch = link.watch;
+      const state = link.snapshot.state;
+      if (!watch || (state !== "merged" && state !== "closed")) continue;
+      if (!this.options.sessions.connected(link.profileID)) continue;
+      let archived: boolean;
+      try {
+        archived =
+          (await this.options.sessions.activity(link.profileID, link.sessionID)).archivedAt !==
+          null;
+      } catch (error) {
+        this.options.log?.warn("pull request watch end check failed", { error: String(error) });
+        continue;
+      }
+      if (!this.stillWatching(link, watch)) {
+        touch(link);
+        continue;
+      }
+      if (!archived) {
+        try {
+          await this.options.sessions.prompt(
+            link.profileID,
+            link.sessionID,
+            pullRequestTerminalMessage({
+              number: link.snapshot.number,
+              title: link.snapshot.title,
+              url: link.snapshot.url,
+              state,
+              baseBranch: link.snapshot.baseBranch,
+            }),
+            this.metadata(link, [state]),
+          );
+        } catch (error) {
+          // The watch stays on, so the next sweep sends it again.
+          this.options.log?.warn("pull request watch end wake failed", { error: String(error) });
+          continue;
+        }
+      }
+      if (!this.repository.endWatch(link, state, now, watch)) continue;
+      // The woken agent settles the task after its post-merge steps; Palot does not.
+      if (!archived) this.repository.recordSettle(link, false, now);
+      touch(link);
+    }
+  }
+
+  /** Settles tasks whose linked PR became merged or closed, unless a watch still owns that. */
   private async settleTerminal(touch: (link: LinkIdentity) => void): Promise<void> {
     const now = this.now();
     const links = this.repository
       .list()
       .filter((link) => this.options.isLocalProfile(link.profileID) === true);
     for (const link of links) {
-      if (!isTerminal(link.snapshot) || link.settleCheckedAt !== null) continue;
+      if (!isTerminal(link.snapshot) || link.settleCheckedAt !== null || link.watch) continue;
       if (!this.options.sessions.connected(link.profileID)) continue;
       // Another open PR on the same task still holds it open.
       const openSibling = links.some(
@@ -981,7 +1053,6 @@ export class PullRequestService {
         now,
       );
       this.repository.recordSettle(link, true, now);
-      if (link.watch) this.repository.endWatch(link, "settled", now);
       touch(link);
       this.emitPullRequests(link.profileID, [link.sessionID], "settled");
     }

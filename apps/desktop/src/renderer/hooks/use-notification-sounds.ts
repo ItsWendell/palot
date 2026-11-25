@@ -88,8 +88,10 @@ export function useNotificationSounds(
       desktopSettings: () => store.get(desktopNotificationSettingsAtom),
       focused: () => document.hasFocus(),
       owner: ownership.owns,
-      isChildSession: (connectionID, sessionID) =>
-        Boolean(reconciler.session(connectionID, sessionID)?.parentID),
+      parentOf: (connectionID, sessionID) => {
+        const session = reconciler.session(connectionID, sessionID);
+        return session ? (session.parentID ?? null) : undefined;
+      },
       play,
       now: Date.now,
     });
@@ -100,6 +102,7 @@ export function useNotificationSounds(
     return () => {
       active = false;
       unsubscribe();
+      controller.dispose();
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("pagehide", onPageHide);
       ownership.release();

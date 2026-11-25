@@ -24,14 +24,20 @@ const mocks = vi.hoisted(() => ({
   catalog: vi.fn(),
   client: vi.fn(),
   locations: vi.fn(async (): Promise<{ directory: string }[]> => []),
+  // Servers before 2.2.6 have no job list.
+  jobs: vi.fn(async (): Promise<{ sessionID: string }[]> => {
+    throw new Error("Not Found");
+  }),
 }));
-vi.mock("../services/palot", () => ({ palot: { listRunningShells: mocks.shells } }));
+vi.mock("../services/palot", () => ({
+  palot: { listRunningShells: mocks.shells, subscribe: () => () => undefined },
+}));
 vi.mock("../services/opencode-client", () => ({
   openCodeClient: (connectionID: string) => {
     mocks.client(connectionID);
     return {
       shell: { get: mocks.get },
-      experimental: { persistentPty: { list: mocks.terminals } },
+      experimental: { persistentPty: { list: mocks.terminals }, job: { list: mocks.jobs } },
       debug: { location: { list: mocks.locations } },
     };
   },
@@ -368,6 +374,49 @@ describe("session process scope", () => {
     await waitFor(() => expect(directories().sort()).toEqual(["/repo", "/wt-idle", "/wt-warm"]));
     hook.unmount();
     client.clear();
+  });
+
+  it("with a job list, reads only directories with live family jobs, also when opened", async () => {
+    const root = { id: "root", location: { directory: "/repo" } } as PalotSession;
+    const busy = { id: "busy", parentID: "root", location: { directory: "/wt-busy" } };
+    const idle = { id: "idle", parentID: "root", location: { directory: "/wt-idle" } };
+    mocks.catalog.mockReturnValue([root, busy, idle]);
+    mocks.locations.mockResolvedValue([]);
+    mocks.jobs.mockResolvedValueOnce([{ sessionID: "busy" }]);
+    mocks.jobs.mockResolvedValue([{ sessionID: "busy" }]);
+    mocks.shells.mockReset();
+    mocks.shells.mockImplementation(async (location) =>
+      location.directory === "/wt-busy" ? [{ ...command("busy-shell"), sessionID: "busy" }] : [],
+    );
+    mocks.terminals.mockResolvedValue([]);
+    const store = createStore();
+    store.set(runtimeAtom, { connectionID: "one", profileID: "profile", connected: true } as never);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <Provider store={store}>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </Provider>
+    );
+    const directories = () => mocks.shells.mock.calls.map(([location]) => location.directory);
+    const hook = renderHook(({ open }) => useSessionProcesses(root, new Set(["root"]), open), {
+      wrapper,
+      initialProps: { open: false },
+    });
+    await waitFor(() => expect(directories().sort()).toEqual(["/repo", "/wt-busy"]));
+    await waitFor(() => expect(hook.result.current.commands).toBe(1));
+    expect(mocks.jobs).toHaveBeenCalledWith(
+      { sessionID: "root", descendants: true, kind: "shell", status: "running" },
+      expect.anything(),
+    );
+    hook.rerender({ open: true });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: openCodeKeys.runningShellsRoot("one") });
+    });
+    expect(directories()).not.toContain("/wt-idle");
+    hook.unmount();
+    client.clear();
+    mocks.jobs.mockReset();
+    mocks.jobs.mockRejectedValue(new Error("Not Found"));
   });
 
   it("skips the loaded-location list when the whole family shares the task directory", async () => {

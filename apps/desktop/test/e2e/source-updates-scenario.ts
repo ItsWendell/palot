@@ -35,9 +35,10 @@ export async function checkSourceUpdateInstructions(page: Page, runRoot: string)
     .toBe(
       "https://github.com/ItsWendell/palot/blob/main/docs/installation.md#updating-and-uninstalling",
     );
-  await expect(page.getByRole("status")).toContainText(
-    "Opened source installation and update instructions",
-  );
+  // The app shell has its own empty live region, so match the announcement by its text.
+  await expect(
+    page.getByRole("status").filter({ hasText: "Opened source installation" }),
+  ).toContainText("Opened source installation and update instructions");
   await page.screenshot({ path: join(runRoot, "about-source-updates.png") });
 }
 

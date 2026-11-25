@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createStore } from "jotai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { composerDraftAtomFamily } from "../../atoms/ui";
 import { composerScope } from "../../lib/composer-scope";
 import { project, renderPullRequestsPage, task } from "./page-test-support";
@@ -289,6 +289,95 @@ describe("PullRequestsPage list", () => {
       composerDraftAtomFamily(composerScope("profile", `new:${project.id}:${project.canonical}:`)),
     );
     expect(draft.text).toBe("Work on this pull request: https://github.com/acme/web/pull/8");
+  });
+
+  it("fixes failing checks in a new task when no task owns the pull request", async () => {
+    let answerLogs: (() => void) | undefined;
+    const logs = vi.fn(
+      (input: { checkRunIDs: number[] }) =>
+        new Promise<{
+          ok: true;
+          value: { checkRunID: number; step: string | null; excerpt: string | null }[];
+        }>((resolve) => {
+          answerLogs = () =>
+            resolve({
+              ok: true,
+              value: input.checkRunIDs.map((checkRunID) => ({
+                checkRunID,
+                step: "Run tests",
+                excerpt: "FAIL src/a.test.ts",
+              })),
+            });
+        }),
+    );
+    installSourceControl({
+      pullRequestCheckLogs: logs,
+      pullRequestDetail: async (ref) => ({
+        ok: true,
+        value: pullRequestDetail(ref.number, {
+          mergeable: "conflicting",
+          checkRuns: [
+            {
+              name: "build",
+              workflow: null,
+              status: "completed",
+              conclusion: "failure",
+              required: false,
+              url: "https://github.com/acme/web/actions/runs/9",
+              startedAt: null,
+              completedAt: null,
+              checkRunID: 99,
+            },
+          ],
+        }),
+      }),
+    });
+    const { router, store } = renderPullRequestsPage({ pr: "github.com/acme/web/8" });
+    expect(await screen.findByRole("button", { name: "Resolve conflicts" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Fix review comments" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Fix failing checks" }));
+    // The logs are read on press; the button says so until they arrive.
+    const busy = await screen.findByRole("button", { name: /Reading check logs/ });
+    expect(busy.hasAttribute("disabled")).toBe(true);
+    expect(logs).toHaveBeenCalledWith({
+      host: "github.com",
+      repository: "acme/web",
+      number: 8,
+      checkRunIDs: [99],
+    });
+    answerLogs?.();
+    await waitFor(() => expect(router.state.location.pathname).toBe("/new"));
+    const draft = store.get(
+      composerDraftAtomFamily(composerScope("profile", `new:${project.id}:${project.canonical}:`)),
+    );
+    expect(draft.text).toMatch(/^<pr-context label="PR #8 · 1 failing check">\n/);
+    expect(draft.text).toContain(
+      [
+        "1. build (failed)",
+        "   Details: https://github.com/acme/web/actions/runs/9",
+        '   Failed step "Run tests", last lines:',
+        "   ```",
+        "   FAIL src/a.test.ts",
+        "   ```",
+      ].join("\n"),
+    );
+  });
+
+  it("adds a repair to the task that owns the pull request and opens it", async () => {
+    installSourceControl({
+      listPullRequestLinks: async () => ({ ok: true, value: [pullRequestLink("other-task", 5)] }),
+      pullRequestDetail: async (ref) => ({
+        ok: true,
+        value: pullRequestDetail(ref.number, { mergeable: "conflicting" }),
+      }),
+    });
+    const { router, store } = renderPullRequestsPage({ pr: "github.com/acme/web/5" });
+    await userEvent.click(await screen.findByRole("button", { name: "Resolve conflicts" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/other-task"));
+    const draft = store.get(
+      composerDraftAtomFamily(composerScope("profile", "session:other-task")),
+    );
+    expect(draft.text).toMatch(/^<pr-context label="PR #5 · merge conflicts">\n/);
   });
 
   it("links the selected pull request to the current task and opens linked tasks", async () => {

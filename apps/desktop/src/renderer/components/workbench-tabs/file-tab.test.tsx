@@ -1,7 +1,7 @@
 import type { FileContents } from "@pierre/diffs";
 import type { FileProps } from "@pierre/diffs/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ import { FileTab } from "./file-tab";
 import { composerStateAtomFamily } from "../../atoms/composer-state";
 import { composerScope } from "../../lib/composer-scope";
 import { formatReviewComment } from "../../lib/review-comments";
+import { useTaskViewShortcuts } from "../transcript-find";
 
 const mocks = vi.hoisted(() => ({
   file: vi.fn(
@@ -213,6 +214,13 @@ it("preserves dirty edits on a watch refresh and offers explicit conflict resolu
   );
 });
 
+it("enables editing only once the edit session holds the file", () => {
+  renderTab(editableTab, true);
+  // The first render precedes the session's read, whose generation bump replaces the document.
+  expect(mocks.file.mock.calls[0]![0].edit).toBe(false);
+  expect(mocks.file.mock.lastCall![0].edit).toBe(true);
+});
+
 it("renders read-only with a reason when another connection is focused", () => {
   const { store, rerender } = renderTab(editableTab, true);
   act(() =>
@@ -309,3 +317,144 @@ it.each([false, true])(
     expect(screen.queryByLabelText("Pending comments on line 3")).toBeNull();
   },
 );
+
+function TranscriptHarness({ onFind }: { onFind(): void }) {
+  useTaskViewShortcuts({ onFind, onTurn: () => {}, onJump: () => {} });
+  return (
+    <div data-palot-task-view="">
+      <button type="button">Transcript</button>
+    </div>
+  );
+}
+
+function renderInPane(tab: Extract<WorkbenchTab, { kind: "file" }>, onTranscriptFind = vi.fn()) {
+  const store = createStore();
+  const queryClient = new QueryClient();
+  const tree = () => (
+    <QueryClientProvider client={queryClient}>
+      <Provider store={store}>
+        <TranscriptHarness onFind={onTranscriptFind} />
+        <section data-workbench-pane="right">
+          <FileTab tab={tab} />
+        </section>
+      </Provider>
+    </QueryClientProvider>
+  );
+  const view = render(tree());
+  return { transcriptFind: onTranscriptFind, rerender: () => view.rerender(tree()) };
+}
+
+const findKey = { key: "f", code: "KeyF", ctrlKey: true };
+const findStatusText = () =>
+  within(screen.getByRole("search", { name: "Find in file" })).getByRole("status").textContent;
+
+it("finds in the source view with Mod+F, steps through matches and leaves the transcript's find alone", async () => {
+  mocks.query.data = new TextEncoder().encode("const value = 1;\nvalue += value;\n");
+  const { transcriptFind } = renderInPane(editableTab);
+
+  fireEvent.keyDown(screen.getByRole("button", { name: "Transcript" }), findKey);
+  expect(transcriptFind).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("search", { name: "Find in file" })).toBeNull();
+
+  const source = screen.getByRole("textbox", { name: "File contents" });
+  source.focus();
+  expect(fireEvent.keyDown(source, findKey)).toBe(false);
+  expect(transcriptFind).toHaveBeenCalledOnce();
+  const input = screen.getByRole("textbox", { name: "Find in file" });
+  await act(async () => {
+    fireEvent.change(input, { target: { value: "VALUE" } });
+  });
+  await waitFor(() => expect(findStatusText()).toBe("1 of 3"));
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(findStatusText()).toBe("2 of 3");
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+  expect(findStatusText()).toBe("3 of 3");
+
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByRole("search", { name: "Find in file" })).toBeNull();
+  expect(document.activeElement).toBe(source);
+});
+
+it("finds text in a rendered Markdown preview and closes when the view switches to source", async () => {
+  mocks.query.data = new TextEncoder().encode(
+    "# Alpha guide\n\nSome **al**pha text.\n\n- alpha item\n",
+  );
+  renderInPane({ ...editableTab, resource: { ...editableTab.resource, path: "guide.md" } });
+  const heading = screen.getByRole("heading", { name: "Alpha guide" });
+  fireEvent.keyDown(heading, findKey);
+  const input = screen.getByRole("textbox", { name: "Find in file" });
+  await act(async () => {
+    fireEvent.change(input, { target: { value: "alpha" } });
+  });
+  // Matches cross inline formatting, as in Find in task.
+  await waitFor(() => expect(findStatusText()).toBe("1 of 3"));
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(findStatusText()).toBe("2 of 3");
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(findStatusText()).toBe("1 of 3");
+  await act(async () => {
+    fireEvent.change(input, { target: { value: "missing" } });
+  });
+  await waitFor(() => expect(findStatusText()).toBe("No results"));
+
+  fireEvent.click(screen.getByRole("button", { name: "Source" }));
+  expect(screen.queryByRole("search", { name: "Find in file" })).toBeNull();
+});
+
+it("finds cells of a virtualized table preview from its data", async () => {
+  const rows = Array.from(
+    { length: 400 },
+    (_, index) => `row${index},${index % 100 === 7 ? "needle" : "hay"}`,
+  );
+  const csv = `name,value\n${rows.join("\n")}\n`;
+  mocks.query.data = new TextEncoder().encode(csv);
+  const pane = renderInPane({
+    ...editableTab,
+    resource: { ...editableTab.resource, path: "data.csv" },
+  });
+  fireEvent.keyDown(screen.getByRole("table", { name: "Table: data.csv" }), findKey);
+  const input = screen.getByRole("textbox", { name: "Find in file" });
+  await act(async () => {
+    fireEvent.change(input, { target: { value: "needle" } });
+  });
+  // Rows 7, 107, 207 and 307 match although only the first rows are mounted.
+  await waitFor(() => expect(findStatusText()).toBe("1 of 4"));
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+  expect(findStatusText()).toBe("4 of 4");
+
+  // Searching the same query again (here the file reloads) keeps the match stepped to.
+  mocks.query.data = new TextEncoder().encode(csv);
+  pane.rerender();
+  await act(() => new Promise((resolve) => setTimeout(resolve, 150)));
+  expect(findStatusText()).toBe("4 of 4");
+});
+
+it("says when the shown file cannot be searched", () => {
+  mocks.query.data = new TextEncoder().encode("legacy");
+  renderInPane({ ...editableTab, resource: { ...editableTab.resource, path: "legacy.doc" } });
+  fireEvent.keyDown(screen.getByText("Preview unavailable"), findKey);
+  expect(findStatusText()).toBe("This file has no preview to search.");
+  const input = screen.getByRole("textbox", { name: "Find in file" });
+  // Focused as the bar appears, so an Escape pressed straight after Mod+F closes it.
+  expect(document.activeElement).toBe(input);
+  expect((input as HTMLInputElement).readOnly).toBe(true);
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByRole("search", { name: "Find in file" })).toBeNull();
+});
+
+it("copies the shown text, unsaved edits included, and confirms it", async () => {
+  const writeClipboardText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("palot", { ...window.palot, writeClipboardText });
+  try {
+    renderTab(editableTab, true);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "const value = 2;\n" } });
+    fireEvent.click(screen.getByRole("button", { name: "Copy contents" }));
+    await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith("const value = 2;\n"));
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
+    expect(mocks.write).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

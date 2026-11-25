@@ -74,3 +74,12 @@ it("folds viewed and very large files until the reader says otherwise", () => {
     false,
   );
 });
+
+it("folds lockfiles and generated files only when the collapse setting is on", () => {
+  const none = new Map<string, boolean>();
+  expect(isFileCollapsed(prFile("bun.lock"), none, true)).toBe(true);
+  expect(isFileCollapsed(prFile("src/routeTree.gen.ts"), none, true)).toBe(true);
+  expect(isFileCollapsed(prFile("src/app.test.ts"), none, true)).toBe(false);
+  expect(isFileCollapsed(prFile("bun.lock"), none, false)).toBe(false);
+  expect(isFileCollapsed(prFile("bun.lock"), new Map([["bun.lock", false]]), true)).toBe(false);
+});

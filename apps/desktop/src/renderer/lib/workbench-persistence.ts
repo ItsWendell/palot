@@ -135,6 +135,7 @@ function parseTab(value: unknown): WorkbenchTab | null {
         ...(value.resource.error !== undefined ? { error: value.resource.error } : {}),
         ...(quote ? { quote } : {}),
         ...(followUps ? { followUps } : {}),
+        ...(value.resource.unread === true ? { unread: true } : {}),
       },
     };
   }

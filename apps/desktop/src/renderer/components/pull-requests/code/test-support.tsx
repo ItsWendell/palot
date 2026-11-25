@@ -5,6 +5,7 @@
 import type { CodeViewItem, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewProps } from "@pierre/diffs/react";
 import { act } from "@testing-library/react";
+import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
 import { vi, type Mock } from "vitest";
 import type {
   PalotSourceControlApi,
@@ -164,11 +165,40 @@ type AnyCodeViewProps = CodeViewProps<unknown, undefined>;
 let latestProps: AnyCodeViewProps | null = null;
 
 /** Renders each item's custom header, and annotations for expanded diffs. */
-export function FakeCodeView(props: AnyCodeViewProps) {
+/** CodeView's own search panel; opened by its Mod+F shortcut unless shortcuts are disabled. */
+export const codeViewOpenSearch: Mock<() => void> = vi.fn();
+
+export function FakeCodeView(props: AnyCodeViewProps & { ref?: Ref<unknown> }) {
   latestProps = props;
   const items = (props.items ?? []) as readonly CodeViewItem<unknown>[];
+  useImperativeHandle(props.ref, () => ({
+    openSearch: codeViewOpenSearch,
+    scrollTo: () => {},
+    getInstance: () => undefined,
+  }));
+  const root = useRef<HTMLDivElement | null>(null);
+  const disabled = props.options?.searchOptions?.disableShortcuts === true;
+  useEffect(() => {
+    // As @pierre/diffs does: CodeView binds Mod+F and Mod+Alt+F on its root, capturing.
+    const element = root.current;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (disabled || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      event.stopPropagation();
+      codeViewOpenSearch();
+    };
+    element?.addEventListener("keydown", onKeyDown, true);
+    return () => element?.removeEventListener("keydown", onKeyDown, true);
+  }, [disabled]);
   return (
-    <div ref={props.containerRef}>
+    <div
+      ref={(element) => {
+        root.current = element;
+        const containerRef = props.containerRef as Ref<HTMLDivElement> | undefined;
+        if (typeof containerRef === "function") containerRef(element);
+        else if (containerRef) containerRef.current = element;
+      }}
+    >
       {items.map((item) => (
         <section
           key={item.id}

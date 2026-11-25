@@ -1,6 +1,7 @@
 import type {
   ModelInfo,
   Project,
+  PromptFileAttachment,
   ProviderInfo,
   SessionInfo,
   SessionMessageInfo,
@@ -129,6 +130,24 @@ describe("OpenCode message mapping", () => {
       );
     },
   );
+
+  it("keeps a stored image's reference for the preview instead of inline bytes", () => {
+    const ref = `media:${"a".repeat(64)}`;
+    const stored = mapMessage({
+      id: "stored",
+      type: "user",
+      time: { created: 1 },
+      text: "",
+      // The 2.2.7 client types still name only inline files; a media read sends `uri` instead.
+      files: [
+        { uri: ref, mime: "image/png", name: "shot.png", source: { type: "inline" } },
+        { uri: `media:${"b".repeat(64)}`, mime: "text/plain", source: { type: "inline" } },
+      ] as unknown as PromptFileAttachment[],
+    });
+    expect(stored.files?.[0]).toMatchObject({ previewMedia: ref, name: "shot.png" });
+    expect(stored.files?.[0]?.previewDataUrl).toBeUndefined();
+    expect(stored.files?.[1]?.previewMedia).toBeUndefined();
+  });
 
   it.each([
     ["image/svg+xml", "AAAA"],
@@ -262,6 +281,30 @@ describe("OpenCode message mapping", () => {
         },
       ],
     });
+  });
+
+  it("maps OpenCode's recorded first token when a step has one (after 2.2.7)", () => {
+    const step = {
+      id: "message-step",
+      type: "assistant",
+      time: { created: 20, completed: 30 },
+      agent: "build",
+      model: { id: "model", providerID: "provider" },
+      content: [],
+    } as SessionMessageInfo;
+    // `time.firstToken` is newer than the pinned contract, so the fixture adds it by hand.
+    const recorded = {
+      ...step,
+      time: { created: 20, firstToken: 23, streamed: 28, completed: 30 },
+    };
+
+    expect(mapMessage(recorded as SessionMessageInfo)).toMatchObject({
+      createdAt: 20,
+      firstTokenAt: 23,
+      firstTokenRecordedAt: 23,
+      streamedAt: 28,
+    });
+    expect(mapMessage(step)).not.toHaveProperty("firstTokenRecordedAt");
   });
 
   it("projects completed and failed compaction messages", () => {

@@ -1,39 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { PalotSession, SessionRequestSnapshot, SessionTriageSnapshot } from "../../shared";
 import {
-  CHATS_PROJECT_FILTER,
   autoSettleCandidates,
   idleInboxTasks,
-  inboxSessionState,
-  inboxMatchesProject,
+  inboxOrderingAt,
   type InboxSessionView,
-  orderInboxSection,
-  orderInboxSessions,
   projectSessionInbox,
 } from "./session-inbox";
-
-describe("inboxSessionState", () => {
-  it("prioritizes attention, running, and failure over unread", () => {
-    expect(inboxSessionState({ attention: true, failed: true, running: true }, true)).toBe(
-      "attention",
-    );
-    expect(inboxSessionState({ attention: false, failed: true, running: true }, true)).toBe(
-      "running",
-    );
-    expect(inboxSessionState({ attention: false, failed: false, running: true }, true)).toBe(
-      "running",
-    );
-  });
-
-  it("shows unread only for idle tasks", () => {
-    expect(inboxSessionState({ attention: false, failed: false, running: false }, true)).toBe(
-      "unread",
-    );
-    expect(
-      inboxSessionState({ attention: false, failed: false, running: false }, false),
-    ).toBeNull();
-  });
-});
 
 const root: PalotSession = {
   id: "root",
@@ -107,35 +80,14 @@ describe("projectSessionInbox", () => {
     });
     const item = result.inbox[0]!;
     expect(item).toMatchObject({ kind: "chat", projectName: "Chat", project: null });
-    expect(inboxMatchesProject(item, null)).toBe(true);
-    expect(inboxMatchesProject(item, CHATS_PROJECT_FILTER)).toBe(true);
-    expect(inboxMatchesProject(item, chat.projectID)).toBe(false);
 
     const moved = project(null, emptyRequests, inactive, {
       ...chat,
       location: { directory: "/repo" },
     }).inbox[0]!;
     expect(moved.kind).toBe("task");
-    expect(inboxMatchesProject(moved, CHATS_PROJECT_FILTER)).toBe(false);
   });
 
-  it("filters real projects independently of chats", () => {
-    const item = project(null).inbox[0]!;
-    const task = {
-      ...item,
-      project: {
-        id: root.projectID,
-        canonical: "/repo",
-        name: "Palot",
-        sandboxes: [],
-        vcs: null,
-        updatedAt: 1,
-      },
-    };
-    expect(inboxMatchesProject(task, root.projectID)).toBe(true);
-    expect(inboxMatchesProject(task, "other-project")).toBe(false);
-    expect(inboxMatchesProject(task, CHATS_PROJECT_FILTER)).toBe(false);
-  });
   it("restores persisted failure state after live execution state is gone", () => {
     const result = project(null, emptyRequests, inactive, { ...root, outcome: "failed" });
 
@@ -199,7 +151,11 @@ describe("projectSessionInbox", () => {
       session,
     );
     expect(blocked.settled).toHaveLength(0);
-    expect(blocked.inbox[0]).toMatchObject({ attention: true, canSettle: false });
+    expect(blocked.inbox[0]).toMatchObject({
+      attention: true,
+      canSettle: false,
+      attentionStatus: { kind: "approval", requestID: "permission", detail: "shell" },
+    });
   });
 
   it("lets a repaired running snapshot override an old persisted failure", () => {
@@ -360,6 +316,27 @@ describe("projectSessionInbox", () => {
     });
   });
 
+  it("keeps a task running while a subagent's report waits to wake it", () => {
+    const report = {
+      ...emptyRequests,
+      inbox: [
+        {
+          id: "report",
+          sessionID: root.id,
+          time: { created: 20 },
+          type: "synthetic" as const,
+          payload: {
+            text: '<subagent sessionID="child" state="completed">Done.</subagent>',
+            metadata: { source: "subagent", childID: "child", state: "completed" },
+          },
+          delivery: "steer" as const,
+        },
+      ],
+    };
+    expect(project(null, report).inbox[0]).toMatchObject({ running: true, canSettle: false });
+    expect(project(null).inbox[0]).toMatchObject({ running: false });
+  });
+
   it("keeps running tasks in start order while their activity timestamps change", () => {
     const first = { ...root, id: "first", updatedAt: 300 };
     const second = { ...root, id: "second", updatedAt: 400 };
@@ -493,66 +470,14 @@ describe("projectSessionInbox", () => {
   });
 });
 
-describe("orderInboxSessions", () => {
-  const oldSession = {
-    ...root,
-    id: "old",
-    updatedAt: 10,
-    idleAt: 10,
-  };
-  const newSession = {
-    ...root,
-    id: "new",
-    updatedAt: 20,
-    idleAt: 20,
-    viewedAt: 20,
-  };
-  const items = projectSessionInbox({
-    sessions: [oldSession, newSession],
-    projects: [],
-    requests: new Map([
-      [
-        oldSession.id,
-        {
-          ...emptyRequests,
-          permissions: [
-            { id: "permission", sessionID: oldSession.id, action: "shell", resources: [] },
-          ],
-        },
-      ],
-    ]),
-    activeIDs: new Set(),
-    runningSinceBySession: new Map(),
-    triage: null,
-    now: 500,
-  }).inbox;
-
-  it("orders by activity or attention without mutating the source shelf", () => {
-    expect(orderInboxSessions(items, { ordering: "newest", unreadFirst: false })).toMatchObject([
-      { session: { id: "new" } },
-      { session: { id: "old" } },
-    ]);
-    expect(orderInboxSessions(items, { ordering: "oldest", unreadFirst: false })).toMatchObject([
-      { session: { id: "old" } },
-      { session: { id: "new" } },
-    ]);
-    expect(orderInboxSessions(items, { ordering: "attention", unreadFirst: false })).toMatchObject([
-      { session: { id: "old" } },
-      { session: { id: "new" } },
-    ]);
-    expect(items).toMatchObject([{ session: { id: "old" } }, { session: { id: "new" } }]);
-  });
-
-  it("can promote unread tasks ahead of the selected activity ordering", () => {
-    expect(orderInboxSessions(items, { ordering: "newest", unreadFirst: true })).toMatchObject([
-      { session: { id: "old" } },
-      { session: { id: "new" } },
-    ]);
-  });
-});
-
 describe("stable inbox ordering", () => {
-  const newest = { ordering: "newest", unreadFirst: false } as const;
+  // The task list orders by this key (newest first); streaming never moves it.
+  const newest = (items: readonly InboxSessionView[]) =>
+    items.toSorted(
+      (left, right) =>
+        inboxOrderingAt(right) - inboxOrderingAt(left) ||
+        left.session.id.localeCompare(right.session.id),
+    );
   const task = (id: string, times: Partial<PalotSession> = {}): PalotSession => ({
     ...root,
     id,
@@ -583,13 +508,13 @@ describe("stable inbox ordering", () => {
     const child = task("child", { parentID: early.id, updatedAt: 60 });
     const running = { early: 100, late: 200, child: 150 };
     const before = inbox({ sessions: [early, late, child], running });
-    expect(ids(orderInboxSessions(before.inbox, newest))).toEqual(["late", "early"]);
+    expect(ids(newest(before.inbox))).toEqual(["late", "early"]);
 
     const streamed = inbox({
       sessions: [{ ...early, updatedAt: 900 }, late, { ...child, updatedAt: 950 }],
       running,
     });
-    expect(ids(orderInboxSessions(streamed.inbox, newest))).toEqual(["late", "early"]);
+    expect(ids(newest(streamed.inbox))).toEqual(["late", "early"]);
   });
 
   it("moves a task once when its turn finishes", () => {
@@ -600,82 +525,13 @@ describe("stable inbox ordering", () => {
       sessions: [finished, working, idle],
       running: { finished: 100, working: 200 },
     });
-    expect(ids(orderInboxSessions(during.inbox, newest))).toEqual(["idle", "working", "finished"]);
+    expect(ids(newest(during.inbox))).toEqual(["idle", "working", "finished"]);
 
     const after = inbox({
       sessions: [{ ...finished, idleAt: 400, updatedAt: 400 }, working, idle],
       running: { working: 200 },
     });
-    expect(ids(orderInboxSessions(after.inbox, newest))).toEqual(["finished", "idle", "working"]);
-    expect(
-      ids(orderInboxSessions(after.inbox, { ordering: "oldest", unreadFirst: false })),
-    ).toEqual(["working", "idle", "finished"]);
-  });
-
-  it("puts needs input, then failed tasks first when ordering by attention", () => {
-    const blocked = task("blocked", { idleAt: 10 });
-    const failed = task("failed", { idleAt: 20, outcome: "failed" });
-    const recent = task("recent", { idleAt: 30 });
-    const result = inbox({
-      sessions: [recent, failed, blocked],
-      requests: new Map([
-        [
-          blocked.id,
-          {
-            ...emptyRequests,
-            permissions: [{ id: "p", sessionID: blocked.id, action: "shell", resources: [] }],
-          },
-        ],
-      ]),
-    });
-    expect(
-      ids(orderInboxSessions(result.inbox, { ordering: "attention", unreadFirst: false })),
-    ).toEqual(["blocked", "failed", "recent"]);
-  });
-
-  it("keeps pinned by pin time and snoozed by wake time regardless of view ordering", () => {
-    const record = (sessionID: string, pinnedAt: number | null, snoozedUntil: number | null) => ({
-      sessionID,
-      disposition: "inbox" as const,
-      settledThrough: null,
-      pinnedAt,
-      snoozedUntil,
-      snoozedThrough: null,
-      updatedAt: 1,
-    });
-    const result = inbox({
-      sessions: [
-        task("pin-old", { idleAt: 90, viewedAt: 0 }),
-        task("pin-new", { idleAt: 10, viewedAt: 20 }),
-        task("wake-late", { idleAt: 10, viewedAt: 0 }),
-        task("wake-soon", { idleAt: 90, viewedAt: 100 }),
-      ],
-      running: {},
-      triage: {
-        profileID: "local",
-        bootstrapThrough: null,
-        sessions: [
-          record("pin-old", 1, null),
-          record("pin-new", 2, null),
-          record("wake-late", null, 2_000),
-          record("wake-soon", null, 1_000),
-        ],
-      },
-    });
-    for (const preferences of [
-      { ordering: "newest", unreadFirst: true },
-      { ordering: "oldest", unreadFirst: false },
-      { ordering: "attention", unreadFirst: true },
-    ] as const) {
-      expect(ids(orderInboxSection("pinned", result.pinned, preferences))).toEqual([
-        "pin-new",
-        "pin-old",
-      ]);
-      expect(ids(orderInboxSection("snoozed", result.snoozed, preferences))).toEqual([
-        "wake-soon",
-        "wake-late",
-      ]);
-    }
+    expect(ids(newest(after.inbox))).toEqual(["finished", "idle", "working"]);
   });
 });
 

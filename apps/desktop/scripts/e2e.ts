@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import { access, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { inspect as inspectError, parseArgs, promisify } from "node:util";
@@ -13,15 +13,17 @@ import { fileURLToPath } from "node:url";
 import { OpenCode } from "@opencode/client";
 import { Service } from "@opencode/client/service";
 import { chromium, type Browser, type CDPSession, type Page } from "@playwright/test";
-import packageJson from "../package.json" with { type: "json" };
 import { isSupportedOpenCodeVersion } from "../src/main/opencode-version.ts";
 import { scenarioNames, scenarios } from "../test/e2e/scenarios.ts";
+import { describeRequirements, unmetRequirements } from "../test/e2e/scenario-requirements.ts";
 import { demoScenarios } from "../test/e2e/demo-scenarios.ts";
 import { showcaseScenarios } from "../test/e2e/showcase-scenarios.ts";
 import { TestLLMServer } from "../test/e2e/test-llm-server.ts";
 import { assertVideoPrerequisites, startVideoCapture } from "../test/e2e/video.ts";
 import { captureShowcaseAssets } from "./showcase-assets.ts";
 import { E2ERun } from "./e2e-lifecycle.ts";
+import { runBatch } from "./e2e-batch.ts";
+import { OPENCODE_VERSION, findOpenCodeBinary } from "./opencode-binary.ts";
 import {
   findWestonBinary,
   privateElectronEnvironment,
@@ -35,21 +37,45 @@ const execFileAsync = promisify(execFile);
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WORKSPACE_ROOT = path.resolve(APP_ROOT, "../..");
 const allScenarios = { ...scenarios, ...showcaseScenarios, ...demoScenarios };
+/** Flags that watch, profile or retain one run; a batch would repeat or block on them. */
+const SINGLE_RUN_FLAGS = [
+  "inspect",
+  "inspect-on-failure",
+  "video",
+  "keep",
+  "visible",
+  "profile",
+  "trace",
+  "app-trace",
+  "css-selector-stats",
+  "react-profile",
+  "react-scan",
+  "showcase",
+] as const;
 const { values: options, positionals } = parseCommandLine();
 const display = selectDisplay(options.display);
-const EXPECTED_OPENCODE_VERSION =
-  options["opencode-version"] ?? packageJson.devDependencies["@opencode/client"];
+const EXPECTED_OPENCODE_VERSION = options["opencode-version"] ?? OPENCODE_VERSION;
 if (!isSupportedOpenCodeVersion(EXPECTED_OPENCODE_VERSION))
   throw new Error("E2E runtime overrides must be a supported stable 2.x or reviewed beta version.");
 if (options.help) {
-  console.log(`Usage: bun run test:e2e -- [scenario] [options]
+  console.log(`Usage: bun run test:e2e -- [scenario...] [options]
 
-Run an isolated native desktop scenario. Defaults to smoke, with
+Run isolated native desktop scenarios. Defaults to smoke, with
 successful artifacts removed. Requires OpenCode ${EXPECTED_OPENCODE_VERSION}.
+
+Several scenarios, or a tier, build once and run one after another, each in
+its own run directory. The batch prints one line per scenario (passed, flaky,
+failed with its kept run directory), writes .local/desktop-e2e/last-run.json in
+the primary checkout, and exits nonzero only if a scenario failed. Opt-in
+scenarios that need a single-run flag such as --profile, or explicit
+environment, are skipped in a batch and counted separately; run them by name.
 
 Options:
   --help                      Show this help without building or launching
-  --list                      List scenarios without building or launching
+  --list                      List scenarios and their tiers without building or launching
+  --tier <name>               Run every scenario in a tier (${scenarioTiers().join(", ")})
+  --retries <n>               Rerun a failed scenario up to n times; a pass on retry is flaky
+                              (default 1 for several scenarios, 0 for one)
   --display <private|desktop>  Linux defaults to private Weston; other platforms to desktop
   --visible                   Show an inactive window on the selected display
   --executable <path>         Test an already-packaged executable without rebuilding
@@ -72,6 +98,8 @@ Options:
   --showcase                  Capture showcase assets; implies --glass --visible --keep
 
 Only one of --trace, --app-trace, and --css-selector-stats may be used.
+${SINGLE_RUN_FLAGS.map((flag) => `--${flag}`).join(", ")}
+apply to one scenario only.
 --renderer-opaque and --renderer-glass cannot be combined.
 Set OPENCODE_BIN to the exact-version OpenCode executable if needed.
 --display=desktop uses the host display; visible windows may reflow a tiling desktop.
@@ -82,19 +110,72 @@ and is retained as video.mp4 beside video.json. It is not compositor/FPS evidenc
 Examples:
   bun run test:e2e -- --list
   bun run test:e2e -- smoke
+  bun run test:e2e -- smoke onboarding usage
+  bun run test:e2e -- --tier core
   bun run test:e2e -- smoke --visible --inspect
   bun run test:e2e -- session-switch-performance --trace --react-profile`);
   process.exit(0);
 }
 if (options.list) {
-  for (const name of scenarioNames()) console.log(`${name}: ${scenarios[name].description}`);
+  for (const name of scenarioNames()) console.log(listing(name, scenarios[name]));
   for (const [name, scenario] of Object.entries({ ...showcaseScenarios, ...demoScenarios })) {
-    console.log(`${name}: ${scenario.description}`);
+    console.log(listing(name, scenario));
   }
   process.exit(0);
 }
+const requestedNames = [
+  ...new Set([...positionals, ...(options.tier ? tierScenarioNames(options.tier) : [])]),
+];
+const severalScenarios = requestedNames.length > 1 || options.tier !== undefined;
+const retries =
+  options.retries === undefined ? (severalScenarios ? 1 : 0) : Number(options.retries);
+if (severalScenarios || retries > 0) {
+  for (const requested of requestedNames) {
+    const candidate = allScenarios[requested as keyof typeof allScenarios];
+    if (
+      "requiresFocus" in candidate &&
+      candidate.requiresFocus &&
+      display !== "private" &&
+      !options.focus
+    )
+      throw new Error(
+        `${requested} requires native window focus; pass --focus on the desktop display.`,
+      );
+  }
+  // The batch's single build must match what each scenario run would build itself.
+  process.env.PALOT_REACT_SCAN = "0";
+  const runOptions = { flags: setFlags(), env: process.env };
+  const primaryCheckout = await resolvePrimaryCheckout();
+  process.exit(
+    await runBatch({
+      names: requestedNames.length ? requestedNames : ["smoke"],
+      tier: options.tier,
+      retries,
+      forwardedArgs: forwardedArguments(),
+      entrypoint: fileURLToPath(import.meta.url),
+      appRoot: APP_ROOT,
+      artifactsRoot: path.join(primaryCheckout, ".local/desktop-e2e"),
+      build: !options.executable,
+      // vite.renderer.config.ts compiles E2E-only renderer behaviour for this scenario.
+      buildKey: (scenarioName) => (scenarioName === "inbox-polish" ? scenarioName : ""),
+      // Opt-in scenarios need single-run flags or explicit environment; run those by name.
+      skipReason: (scenarioName) => {
+        const unmet = unmetRequirements(
+          allScenarios[scenarioName as keyof typeof allScenarios],
+          runOptions,
+        );
+        return unmet.length ? describeRequirements(unmet) : undefined;
+      },
+    }),
+  );
+}
 const name = positionals[0] ?? "smoke";
 const scenario = allScenarios[name as keyof typeof allScenarios];
+const unmet = unmetRequirements(scenario, { flags: setFlags(), env: process.env });
+if (unmet.length) {
+  console.error(`Palot E2E: ${name} ${describeRequirements(unmet)}`);
+  process.exit(1);
+}
 const requiresFocus = scenario && "requiresFocus" in scenario && scenario.requiresFocus;
 if (requiresFocus && display !== "private" && !options.focus)
   throw new Error(`${name} requires native window focus; pass --focus on the desktop display.`);
@@ -178,31 +259,40 @@ const lifecycle = new E2ERun(name, {
 });
 
 try {
-  const primaryCheckout = await resolvePrimaryCheckout();
+  const primaryCheckout = await resolvePrimaryCheckout(lifecycle.signal);
   await lifecycle.initialize(path.join(primaryCheckout, ".local/desktop-e2e"));
   runRoot = lifecycle.root;
   lifecycle.phase("prerequisites");
   const weston = display === "private" ? await findWestonBinary() : null;
-  const binary = await findOpenCodeBinary();
+  const binary = await findOpenCodeBinary({
+    version: EXPECTED_OPENCODE_VERSION,
+    primaryCheckout,
+    signal: lifecycle.signal,
+  });
+  lifecycle.check();
   if (video) await assertVideoPrerequisites();
   lifecycle.check();
   const electronPath = packagedExecutable ?? (createRequire(import.meta.url)("electron") as string);
   const privateDisplay = weston ? await startPrivateDisplay(lifecycle, weston) : null;
   lifecycle.phase("build");
   if (packagedExecutable) await access(packagedExecutable, constants.X_OK);
-  else await runBuild();
+  // A batch runner has already built this checkout for the scenario.
+  else if (process.env.PALOT_E2E_PREBUILT !== "1") await runBuild();
   lifecycle.phase("fixtures");
   const projectDirectory = path.join(
     runRoot,
     "projectName" in scenario ? scenario.projectName : showcase ? "palot" : "project",
   );
   const home = path.join(runRoot, "home");
-  if ("homeOutsideCheckout" in scenario && scenario.homeOutsideCheckout) {
+  if (!("homeInsideCheckout" in scenario && scenario.homeInsideCheckout)) {
     // OpenCode resolves a folder to the nearest enclosing repository, and run roots live in
-    // this checkout. The service resolves its working directory through the link, so its
-    // default folder is outside any repository; the link keeps the home with the artifacts.
+    // this checkout. A home inside it makes OpenCode register the checkout as a project as
+    // soon as something asks about the home folder, and move commit-less tasks into it
+    // mid-run. The service resolves its working directory through the link, so its default
+    // folder is outside any repository; the link keeps the home with the artifacts.
     externalHome = await mkdtemp(path.join(tmpdir(), "palot-e2e-home-"));
     await symlink(externalHome, home, "dir");
+    lifecycle.discover({ home: externalHome });
   }
   const palotUserData = path.join(runRoot, "palot-user-data");
   await Promise.all([
@@ -534,7 +624,13 @@ try {
   if (page && runRoot && !lifecycle.signal.aborted)
     await page
       .screenshot({ path: path.join(runRoot, "failure.png"), timeout: 5_000 })
-      .catch(() => undefined);
+      .catch((screenshotError: unknown) =>
+        // A screenshot needs a new frame; a window that is not painting cannot give one.
+        console.error(
+          "Palot E2E failure screenshot unavailable (is the renderer producing frames?):",
+          screenshotError instanceof Error ? screenshotError.message : screenshotError,
+        ),
+      );
   if (runRoot) console.error(`Palot E2E artifacts: ${runRoot}`);
   console.error(error);
   if (videoCapture) {
@@ -564,6 +660,10 @@ try {
     }
   } finally {
     lifecycle.dispose();
+    if (process.env.PALOT_E2E_RESULT_FILE)
+      await writeFile(process.env.PALOT_E2E_RESULT_FILE, JSON.stringify({ runRoot }), {
+        mode: 0o600,
+      }).catch((error) => console.error("Could not report the run to the batch:", error));
   }
 }
 
@@ -599,13 +699,31 @@ function parseCommandLine() {
         executable: { type: "string" },
         "opencode-version": { type: "string" },
         display: { type: "string" },
+        tier: { type: "string" },
+        retries: { type: "string" },
       },
     });
     const { values, positionals } = result;
-    if (positionals.length > 1) throw new Error("Specify only one E2E scenario");
-    const name = positionals[0];
-    if (name !== undefined && !Object.hasOwn(allScenarios, name)) {
-      throw new Error(`Unknown E2E scenario '${name}'. Use --list to see available scenarios`);
+    for (const name of positionals) {
+      if (!Object.hasOwn(allScenarios, name))
+        throw new Error(`Unknown E2E scenario '${name}'. Use --list to see available scenarios`);
+    }
+    if (values.tier !== undefined && !scenarioTiers().includes(values.tier)) {
+      throw new Error(
+        `Unknown E2E tier '${values.tier}'. Choose one of: ${scenarioTiers().join(", ")}`,
+      );
+    }
+    if (values.retries !== undefined && !/^\d+$/.test(values.retries)) {
+      throw new Error("--retries takes a whole number of extra attempts, such as --retries 1");
+    }
+    const count = new Set([...positionals, ...(values.tier ? tierScenarioNames(values.tier) : [])])
+      .size;
+    const singleRunFlag = SINGLE_RUN_FLAGS.find((flag) => values[flag]);
+    if ((count > 1 || values.tier !== undefined) && singleRunFlag) {
+      throw new Error(`--${singleRunFlag} works with one scenario only; run that scenario alone`);
+    }
+    if (Number(values.retries) > 0 && (values.inspect || values["inspect-on-failure"])) {
+      throw new Error("--inspect and --inspect-on-failure cannot be combined with --retries");
     }
     if (
       [values.trace, values["app-trace"], values["css-selector-stats"]].filter(Boolean).length > 1
@@ -619,7 +737,7 @@ function parseCommandLine() {
     return result;
   } catch (error) {
     console.error(`Palot E2E: ${error instanceof Error ? error.message : String(error)}`);
-    console.error("Usage: bun run test:e2e -- [scenario] [options]. Use --help for examples.");
+    console.error("Usage: bun run test:e2e -- [scenario...] [options]. Use --help for examples.");
     process.exit(1);
   }
 }
@@ -674,13 +792,52 @@ async function runBuild(): Promise<void> {
   }).completed;
 }
 
-async function resolvePrimaryCheckout(): Promise<string> {
+async function resolvePrimaryCheckout(signal?: AbortSignal): Promise<string> {
   const { stdout } = await execFileAsync(
     "git",
     ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    { cwd: WORKSPACE_ROOT, signal: lifecycle.signal },
+    { cwd: WORKSPACE_ROOT, signal },
   );
   return path.dirname(stdout.trim());
+}
+
+function scenarioTier(scenario: object): string | undefined {
+  return "tier" in scenario && typeof scenario.tier === "string" ? scenario.tier : undefined;
+}
+
+function scenarioTiers(): string[] {
+  return [
+    ...new Set(Object.values(allScenarios).flatMap((scenario) => scenarioTier(scenario) ?? [])),
+  ].sort();
+}
+
+function tierScenarioNames(tier: string): string[] {
+  return Object.entries(allScenarios).flatMap(([name, scenario]) =>
+    scenarioTier(scenario) === tier ? [name] : [],
+  );
+}
+
+function listing(name: string, scenario: { description: string }): string {
+  const tier = scenarioTier(scenario);
+  return `${name}: ${scenario.description}${tier ? ` [${tier}]` : ""}`;
+}
+
+/** Names of the boolean or string options set on this invocation. */
+function setFlags(): Set<string> {
+  return new Set(
+    Object.entries(options).flatMap(([option, value]) =>
+      value === undefined || value === false ? [] : [option],
+    ),
+  );
+}
+
+/** The options of this invocation that each scenario run of a batch also needs. */
+function forwardedArguments(): string[] {
+  return Object.entries(options).flatMap(([option, value]) => {
+    if (option === "tier" || option === "retries" || value === undefined || value === false)
+      return [];
+    return value === true ? [`--${option}`] : [`--${option}=${value}`];
+  });
 }
 
 async function allocatePort(): Promise<number> {
@@ -798,40 +955,6 @@ async function stopPerformanceTrace(session: CDPSession, outputPath: string): Pr
     if (stream) await session.send("IO.close", { handle: stream }).catch(() => undefined);
     await session.detach().catch(() => undefined);
   }
-}
-
-async function findOpenCodeBinary(): Promise<string> {
-  const pathDirectories = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
-  const candidates = [
-    process.env.OPENCODE_BIN,
-    path.join(homedir(), ".opencode/bin/opencode2"),
-    path.join(homedir(), ".local/bin/opencode2"),
-    path.join(homedir(), ".bun/bin/opencode2"),
-    "/opt/homebrew/bin/opencode2",
-    "/usr/local/bin/opencode2",
-    ...pathDirectories.map((directory) => path.join(directory, "opencode2")),
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  for (const candidate of new Set(candidates)) {
-    lifecycle.check();
-    try {
-      await access(candidate, constants.X_OK);
-      const { stdout, stderr } = await execFileAsync(candidate, ["--version"], {
-        timeout: 5_000,
-        signal: lifecycle.signal,
-      });
-      if (
-        `${stdout}\n${stderr}`
-          .split(/\s+/)
-          .some((token) => token.replace(/^v/, "") === EXPECTED_OPENCODE_VERSION)
-      )
-        return candidate;
-    } catch {
-      continue;
-    }
-  }
-  throw new Error(
-    `OpenCode ${EXPECTED_OPENCODE_VERSION} is required for Palot E2E tests. Set OPENCODE_BIN to its executable path.`,
-  );
 }
 
 function environment(overrides: Record<string, string>): Record<string, string> {

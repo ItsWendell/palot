@@ -1,3 +1,4 @@
+import { atom } from "jotai";
 import { persistedAtom, persistedStorageKey } from "./persisted";
 
 export const ONBOARDING_VERSION = 1;
@@ -28,3 +29,10 @@ export const onboardingCompletedVersionAtom = persistedAtom({
 export function onboardingComplete(completedVersion: number): boolean {
   return completedVersion >= ONBOARDING_VERSION;
 }
+
+/**
+ * Set once the launch has decided not to open onboarding (completed, preview, an explicit launch
+ * target, or the user navigating first). Until then the launch route does not open a task, so
+ * first-run onboarding is not mistaken for the user leaving.
+ */
+export const onboardingSkippedAtom = atom(false);

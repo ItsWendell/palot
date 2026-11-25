@@ -22,6 +22,8 @@ type Discovery = {
   cdpPort?: number;
   pageWebSocketUrl?: string;
   llmPort?: number;
+  /** The isolated home's real location when it lives outside the run directory. */
+  home?: string;
 };
 type CleanupError = {
   resource: string;

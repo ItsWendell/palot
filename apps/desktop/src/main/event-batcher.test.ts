@@ -122,4 +122,52 @@ describe("OpenCodeEventBatcher", () => {
       sentEvents: 2,
     });
   });
+
+  it("batches two interleaved connections separately, in order", () => {
+    vi.useFakeTimers();
+    const batches: PalotEventBatch[] = [];
+    const batcher = new OpenCodeEventBatcher((batch) => batches.push(batch));
+
+    for (let index = 0; index < 3; index++) {
+      for (const connectionID of ["local", "remote"]) {
+        batcher.push(event("session.text.delta", {}, `${connectionID}-${index}`), {
+          ...context,
+          connectionID,
+        });
+      }
+    }
+    vi.advanceTimersByTime(8);
+
+    expect(batches).toHaveLength(2);
+    for (const connectionID of ["local", "remote"]) {
+      const [batch] = batches.filter((batch) => batch.connectionID === connectionID);
+      expect(batch?.events.map((item) => item.id)).toEqual(
+        [0, 1, 2].map((index) => `${connectionID}-${index}`),
+      );
+      expect(batch?.events.map((item) => item.receiveSequence)).toEqual([1, 2, 3]);
+    }
+    expect(batcher.snapshotMetrics()).toMatchObject({ flushes: 2, contextFlushes: 0 });
+  });
+
+  it("flushes only the connection whose stream epoch changed", () => {
+    vi.useFakeTimers();
+    const batches: PalotEventBatch[] = [];
+    const batcher = new OpenCodeEventBatcher((batch) => batches.push(batch));
+    const remote = { ...context, connectionID: "remote" };
+
+    batcher.push(event("session.text.delta", {}, "local-1"), context);
+    batcher.push(event("session.text.delta", {}, "remote-1"), remote);
+    batcher.push(event("session.text.delta", {}, "local-2"), { ...context, streamEpoch: 2 });
+
+    expect(batches.map((batch) => batch.events.map((item) => item.id))).toEqual([["local-1"]]);
+    vi.advanceTimersByTime(8);
+    expect(
+      batches.map((batch) => [batch.connectionID, batch.streamEpoch, batch.events.length]),
+    ).toEqual([
+      ["connection-1", 1, 1],
+      ["remote", 1, 1],
+      ["connection-1", 2, 1],
+    ]);
+    expect(batcher.snapshotMetrics().contextFlushes).toBe(1);
+  });
 });

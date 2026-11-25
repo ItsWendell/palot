@@ -60,15 +60,23 @@ export const terminalRenameScenario: Scenario = {
       await client.experimental.persistentPty.update({ ptyID, title: ELSEWHERE });
       const elsewhere = bottom.getByRole("tab", { name: ELSEWHERE, exact: true });
       await expect(elsewhere).toBeVisible();
-      await page.getByRole("button", { name: /^Running work: / }).click();
-      await expect(
-        page.getByRole("button").filter({ has: page.getByText(ELSEWHERE, { exact: true }) }),
-      ).toBeVisible();
+      // Running work is a tab on the composer's top edge; its panel lists the terminal.
+      await page
+        .getByRole("toolbar", { name: "Task context" })
+        .locator('[data-slot="composer-tab"][data-value="background"]')
+        .click();
+      const runningWork = page.getByRole("region", { name: "Running work", exact: true });
+      const terminalRow = runningWork
+        .getByRole("button")
+        .filter({ has: page.getByText(ELSEWHERE, { exact: true }) });
+      await expect(terminalRow).toBeVisible();
       await page.screenshot({
         path: join(runRoot, "terminal-rename-running-work.png"),
         animations: "disabled",
       });
+      await terminalRow.focus();
       await page.keyboard.press("Escape");
+      await expect(runningWork).toBeHidden();
 
       // Emptying the field from the context menu restores the automatic title.
       await elsewhere.click({ button: "right" });

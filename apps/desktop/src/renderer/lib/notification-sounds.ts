@@ -3,6 +3,11 @@
  * Event qualification mirrors `main/notification-policy.ts`.
  */
 import type { DesktopNotificationSettings, PalotEvent } from "../../shared";
+import {
+  createFamilyCompletionTracker,
+  type FamilyCompletion,
+  type FamilyCompletionTracker,
+} from "../../shared/family-completion";
 
 export type NotificationSoundEvent = "turnCompleted" | "turnFailed" | "permission" | "question";
 export type NotificationSoundID = "chime" | "pop" | "bell" | "ripple";
@@ -89,14 +94,31 @@ export interface NotificationSoundControllerOptions {
   focused(): boolean;
   /** Whether this window plays sounds; only one Palot window should. */
   owner(): boolean;
-  isChildSession(connectionID: string, sessionID: string): boolean;
+  /** A session's parent: null for a task, undefined when unknown. */
+  parentOf(connectionID: string, sessionID: string): string | null | undefined;
   play(sound: NotificationSoundID): void;
   now(): number;
+  setTimer?(callback: () => void, ms: number): unknown;
+  clearTimer?(handle: unknown): void;
 }
 
-/** Plays at most one sound per live event, throttled across events. */
+const FAMILY_EVENTS = new Set([
+  "session.inbox.enqueued",
+  "session.inbox.delivered",
+  "session.execution.started",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+]);
+
+/**
+ * Plays at most one sound per live event, throttled across events. A turn sound plays once a
+ * task and all its subagents are idle (see `shared/family-completion.ts`), not each time the
+ * task's own run ends while subagents still work.
+ */
 export function createNotificationSoundController(options: NotificationSoundControllerOptions) {
   const seen = new Set<string>();
+  const trackers = new Map<string, FamilyCompletionTracker>();
   let lastPlayedAt = Number.NEGATIVE_INFINITY;
 
   const claim = (key: string) => {
@@ -106,28 +128,66 @@ export function createNotificationSoundController(options: NotificationSoundCont
     return true;
   };
 
+  const attempt = (kind: NotificationSoundEvent, createdAt: number | null) => {
+    const now = options.now();
+    if (createdAt !== null && now - createdAt > NOTIFICATION_SOUND_STALE_MS) return;
+    const sound = options.preferences()[kind];
+    if (sound === "off") return;
+    if (kind === "turnCompleted" || kind === "turnFailed") {
+      if (options.desktopSettings()?.turnCompletion === "unfocused" && options.focused()) return;
+    }
+    if (!options.owner()) return;
+    if (now - lastPlayedAt < NOTIFICATION_SOUND_THROTTLE_MS) return;
+    lastPlayedAt = now;
+    options.play(sound);
+  };
+
+  const finished = (connectionID: string, completion: FamilyCompletion) => {
+    if (completion.outcome === "interrupted") return;
+    // Subagent turns finish inside their task's work; only the task is news.
+    if (options.parentOf(connectionID, completion.rootID)) return;
+    if (!claim(`${connectionID}:${completion.eventID}`)) return;
+    attempt(
+      completion.outcome === "succeeded" ? "turnCompleted" : "turnFailed",
+      completion.eventCreatedAt,
+    );
+  };
+
+  const tracker = (connectionID: string) => {
+    let value = trackers.get(connectionID);
+    if (!value) {
+      value = createFamilyCompletionTracker({
+        parentOf: (sessionID) => options.parentOf(connectionID, sessionID),
+        onFinished: (completion) => finished(connectionID, completion),
+        ...(options.setTimer ? { setTimer: options.setTimer } : {}),
+        ...(options.clearTimer ? { clearTimer: options.clearTimer } : {}),
+      });
+      trackers.set(connectionID, value);
+    }
+    return value;
+  };
+
   return {
     handle(connectionID: string, events: readonly PalotEvent[]): void {
       for (const event of events) {
+        if (FAMILY_EVENTS.has(event.type)) {
+          tracker(connectionID).handle({
+            id: event.id,
+            type: event.type,
+            data: event.data,
+            createdAt: event.createdAt,
+          });
+          continue;
+        }
         const candidate = notificationSoundCandidate(event);
         if (!candidate) continue;
         if (!claim(`${connectionID}:${event.id}`)) continue;
-        const now = options.now();
-        if (now - event.createdAt > NOTIFICATION_SOUND_STALE_MS) continue;
-        const sound = options.preferences()[candidate.kind];
-        if (sound === "off") continue;
-        if (candidate.kind === "turnCompleted" || candidate.kind === "turnFailed") {
-          // Subagent turns finish inside their parent's work; only the parent is news.
-          if (options.isChildSession(connectionID, candidate.sessionID)) continue;
-          if (options.desktopSettings()?.turnCompletion === "unfocused" && options.focused()) {
-            continue;
-          }
-        }
-        if (!options.owner()) continue;
-        if (now - lastPlayedAt < NOTIFICATION_SOUND_THROTTLE_MS) continue;
-        lastPlayedAt = now;
-        options.play(sound);
+        attempt(candidate.kind, event.createdAt);
       }
+    },
+    dispose(): void {
+      for (const value of trackers.values()) value.reset();
+      trackers.clear();
     },
   };
 }

@@ -1,6 +1,6 @@
 {
   "name": "palot-2",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "private": true,
   "license": "MIT",
   "workspaces": [
@@ -31,10 +31,12 @@
     "test": "vp run --filter @palot/desktop test",
     "test:e2e": "bun run --cwd apps/desktop test:e2e",
     "test:e2e:list": "bun run --cwd apps/desktop test:e2e:list",
+    "test:e2e:core": "bun run test:e2e -- --tier core",
+    "test:e2e:prune": "bun apps/desktop/scripts/e2e-prune.ts",
     "showcase": "bun run --cwd apps/desktop showcase",
     "demo": "bun run --cwd apps/desktop demo",
-    "perf:doctor": "vp dlx react-doctor@0.9.14 apps/desktop --scope changed --include-untracked --blocking none --no-score --no-supply-chain",
-    "perf:doctor:full": "vp dlx react-doctor@0.9.14 apps/desktop --scope full --blocking none --no-score --no-supply-chain",
+    "perf:doctor": "vp dlx react-doctor@0.9.23 apps/desktop --scope changed --include-untracked --blocking none --no-score --no-supply-chain",
+    "perf:doctor:full": "vp dlx react-doctor@0.9.23 apps/desktop --scope full --blocking none --no-score --no-supply-chain",
     "perf:react-check": "vp exec -- oxlint apps/desktop/src/renderer -c apps/desktop/oxlint.react-compiler.json",
     "perf:compiler": "vp run --filter @palot/desktop build:renderer:compiler",
     "perf:compiler:annotation": "vp run --filter @palot/desktop build:renderer:compiler:annotation",
@@ -54,7 +56,7 @@
     "perf:parallel:trace": "bun run test:e2e -- parallel-session-performance --app-trace",
     "perf:scan:render": "bun run test:e2e -- render-react-scan --react-scan --react-profile",
     "typecheck": "vp run --filter @palot/desktop typecheck",
-    "check": "bun run format:check && bun run lint && bun run --cwd packages/orbits check-types && bun run typecheck && bun run opencode:coverage:check && bun run test",
+    "check": "bun run format:check && bun run lint && bun run --cwd packages/orbits check-types && bun run --cwd packages/opencode-voice-coordinator check-types && bun run typecheck && bun apps/desktop/scripts/check-effect-pin.ts && bun run opencode:coverage:check && bun run test && bun run --cwd packages/opencode-voice-coordinator test",
     "lint": "vp lint --report-unused-disable-directives",
     "format": "vp fmt --ignore-path .formatignore",
     "format:check": "vp fmt --check --ignore-path .formatignore",
@@ -70,18 +72,18 @@
     "clean": "vp run --filter @palot/desktop clean"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.90.0",
-    "vite-plus": "1.4.0"
+    "@oxlint/plugins": "1.93.0",
+    "vite-plus": "1.6.0"
   },
   "overrides": {
-    "@shikijs/core": "4.5.0",
-    "@shikijs/themes": "4.5.0",
-    "@shikijs/types": "4.5.0",
+    "@shikijs/core": "4.6.0",
+    "@shikijs/themes": "4.6.0",
+    "@shikijs/types": "4.6.0",
     "katex": "0.19.1",
     "legacy-javascript": "0.0.1",
-    "shiki": "4.5.0",
+    "shiki": "4.6.0",
     "third-party-web": "0.30.0",
-    "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0"
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.6.0"
   },
   "engines": {
     "bun": "1.4.4",
@@ -93,7 +95,6 @@
     "electron-builder",
     "electron-winstaller",
     "msgpackr-extract",
-    "msw",
     "objc-js"
   ]
 }

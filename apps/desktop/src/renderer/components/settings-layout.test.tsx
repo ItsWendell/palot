@@ -1,4 +1,5 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import {
@@ -8,6 +9,8 @@ import {
   SettingsNotice,
   SettingsRow,
 } from "./settings-layout";
+import { TooltipProvider } from "./ui/tooltip";
+import { settingReset } from "../lib/setting-reset";
 
 afterEach(cleanup);
 
@@ -82,4 +85,51 @@ it("discloses advanced settings on demand", async () => {
   await user.click(trigger);
   expect(trigger.getAttribute("aria-expanded")).toBe("true");
   expect(screen.getByRole("heading", { name: "Debug logging" })).toBeTruthy();
+});
+
+it("offers a reset only while the value differs from its default, and restores it", async () => {
+  const user = userEvent.setup();
+  function Harness() {
+    const [enabled, setEnabled] = useState(false);
+    return (
+      <TooltipProvider>
+        <SettingsRow
+          title="Context meter"
+          reset={settingReset(enabled, false, setEnabled)}
+          control={
+            <input
+              type="checkbox"
+              aria-label="Show context meter"
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
+            />
+          }
+        />
+      </TooltipProvider>
+    );
+  }
+  render(<Harness />);
+  const toggle = screen.getByRole("checkbox", { name: "Show context meter" });
+  expect(screen.queryByRole("button", { name: "Reset Context meter to default" })).toBeNull();
+  await user.click(toggle);
+  const reset = screen.getByRole("button", { name: "Reset Context meter to default" });
+  reset.focus();
+  await user.keyboard("{Enter}");
+  expect((toggle as HTMLInputElement).checked).toBe(false);
+  expect(screen.queryByRole("button", { name: "Reset Context meter to default" })).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(toggle));
+});
+
+it("stacks a wide control under its label", () => {
+  render(
+    <SettingsRow
+      title="Instructions"
+      layout="stacked"
+      htmlFor="instructions"
+      control={<textarea id="instructions" />}
+    />,
+  );
+  const row = screen.getByLabelText("Instructions").closest("[data-slot=settings-row]");
+  expect(row?.getAttribute("data-layout")).toBe("stacked");
+  expect(screen.queryByRole("button", { name: /Reset/ })).toBeNull();
 });

@@ -36,9 +36,11 @@ import {
 } from "./opencode-native-scope";
 import { closePalotDatabase } from "./database/client";
 import { hydrateShellEnvironment } from "./shell-environment";
+import { clearStaleGpuCaches } from "./gpu-cache";
 import { automationService } from "./automations/service";
 import { shutdownSourceControlService, sourceControlService } from "./source-control/runtime";
 import { desktopNavigation } from "./desktop-navigation";
+import { PALOT_PROTOCOL } from "../shared/task-link";
 import { desktopNotificationService } from "./notification-service";
 import { appearanceService } from "./appearance-service";
 import { destroyTray, installTray } from "./tray";
@@ -46,10 +48,13 @@ import { destroyOpenCodeAttentionIndex } from "./attention-index";
 import { palotToolHost, shutdownPalotToolHost } from "./palot-tools";
 import { shutdownGuestLinks } from "./guest-links/runtime";
 import { restoreWindowState, saveWindowState, trackWindowState } from "./window-state";
-import { startupWindowPresentation } from "./window-startup";
+import { presentWhenReady, startupWindowPresentation } from "./window-startup";
 import { openExternalUrl } from "./external-url";
+import { routeWindowOpen } from "./window-open-route";
+import { stopAppImageZygotesBeforeExit } from "./appimage-zygotes";
 import {
   cleanupStagedAttachments,
+  configureAttachmentStorage,
   shutdownAttachmentStorage,
   inspectPickedFiles,
 } from "./file-attachments";
@@ -66,6 +71,8 @@ import { linuxDesktopDiagnostics, windowManagerOwnsClose } from "./linux-desktop
 import { WINDOW_MANAGER_OWNS_CLOSE_ARGUMENT } from "../shared/window-chrome";
 import { configureSecureStorage } from "./secure-storage";
 import { DESKTOP_HELP, parseDesktopLaunch } from "./desktop-launch";
+import { createProcessFailureHandler } from "./startup-failure";
+import { runShutdownSequence } from "./shutdown-sequence";
 import { stat } from "node:fs/promises";
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -138,7 +145,11 @@ const workspaceWindows = new Set<BrowserWindow>();
 const windowTargets = new Map<BrowserWindow, PalotOpenTarget>();
 const sessionWindowScopes = new WeakMap<BrowserWindow, SessionWindowScope>();
 let startupFailureReported = false;
+/** Set once the first main window has loaded. */
+let startupFinished = false;
 let quitting = false;
+/** Quitting never waits longer than this for teardown; guest-route cleanup alone can take 90 s. */
+const SHUTDOWN_DEADLINE_MS = 10_000;
 
 function reportStartupFailure(failure: unknown): void {
   if (startupFailureReported || quitting) return;
@@ -147,8 +158,13 @@ function reportStartupFailure(failure: unknown): void {
   void app.whenReady().then(() => showRecoveryWindow(failure));
 }
 
-process.on("uncaughtException", reportStartupFailure);
-process.on("unhandledRejection", reportStartupFailure);
+const handleProcessFailure = createProcessFailureHandler({
+  startupFinished: () => startupFinished,
+  recover: reportStartupFailure,
+  log: (message, failure) => log.error(message, failure),
+});
+process.on("uncaughtException", (error) => handleProcessFailure("exception", error));
+process.on("unhandledRejection", (reason) => handleProcessFailure("rejection", reason));
 
 async function createWindow(
   sessionID?: string,
@@ -247,7 +263,7 @@ async function createWindow(
 
   // Session windows are shown by their caller only after the owner is revalidated.
   if (!sessionID && startupPresentation !== "hidden") {
-    window.once("ready-to-show", () => {
+    presentWhenReady(window, () => {
       if (showcaseBackdrop && !showcaseBackdrop.isDestroyed()) showcaseBackdrop.showInactive();
       if (showcase) {
         // Keep the native capture scene above unrelated desktop windows.
@@ -280,13 +296,20 @@ async function createWindow(
 
   if (chrome.tier === "liquid-glass") {
     window.webContents.once("did-finish-load", () => {
-      void installLiquidGlass(window, glassOptions).then((tier) => {
-        if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.chromeTierChanged, tier);
-      });
+      void installLiquidGlass(window, glassOptions)
+        .then((tier) => {
+          if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.chromeTierChanged, tier);
+        })
+        .catch((error) => log.error("Liquid glass could not be installed", error));
     });
   }
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void openExternalUrl(url);
+    routeWindowOpen(url, {
+      openExternal: (external) => void openExternalUrl(external),
+      openFileLink: (link) => {
+        if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.terminalFileLink, link);
+      },
+    });
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
@@ -379,6 +402,11 @@ if (helpRequested) {
 } else if (!hasSingleInstanceLock) {
   app.quit();
 } else {
+  // Only the instance that owns userData may delete caches; this runs before Chromium opens them.
+  clearStaleGpuCaches({
+    userData: app.getPath("userData"),
+    electronVersion: process.versions.electron,
+  });
   const handleLaunch = async (args: string[], cwd: string) => {
     const target = parseDesktopLaunch(args, cwd) ?? { type: "open" as const };
     if (target.type === "project" && !(await stat(target.directory)).isDirectory())
@@ -396,11 +424,27 @@ if (helpRequested) {
   app.on("second-instance", (_event, args, cwd) => {
     void handleLaunch(args, cwd).catch((error) => log.warn("Desktop launch failed", error));
   });
+  // macOS hands `palot://` links over as an event (Linux and Windows pass them as arguments).
+  // Before the window exists the target waits in desktopNavigation for the first window.
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    void handleLaunch([url], process.cwd()).catch((error) =>
+      log.warn("Desktop link failed", error),
+    );
+  });
+  // Installed builds own `palot://`; the most recently started channel receives links.
+  // Development and E2E runs leave the system's handler alone.
+  if (
+    app.isPackaged &&
+    !process.env.PALOT_E2E_USER_DATA &&
+    !app.isDefaultProtocolClient(PALOT_PROTOCOL)
+  )
+    app.setAsDefaultProtocolClient(PALOT_PROTOCOL);
 
   void app
     .whenReady()
     .then(async () => {
-      hydrateShellEnvironment();
+      await hydrateShellEnvironment();
       await appearanceService().initializeDesktopAppearance();
       powerMonitor.on("resume", () => openCodeRuntime.recoverEventStream("resume"));
       installPermissionPolicy(session.defaultSession, { allowMicrophone: isWorkspaceContents });
@@ -409,6 +453,7 @@ if (helpRequested) {
       } catch (error) {
         log.warn("Could not apply spelling preferences", error);
       }
+      configureAttachmentStorage(app.getPath("userData"));
       await cleanupStagedAttachments();
       app.setAboutPanelOptions({
         applicationName: buildIdentity.displayName,
@@ -432,9 +477,11 @@ if (helpRequested) {
           return window && workspaceWindows.has(window) ? window : null;
         },
         sessionWindowScope: (window) => sessionWindowScopes.get(window),
-        openSessionWindow: async (sessionID, owner) => {
+        openSessionWindow: async (sessionID, owner, background) => {
           const window = await createWindow(sessionID, owner);
-          if (process.env.PALOT_E2E_INACTIVE === "1") window.showInactive();
+          // In the background the window appears behind this one; window managers that always
+          // focus new windows may still raise it.
+          if (background || process.env.PALOT_E2E_INACTIVE === "1") window.showInactive();
           else {
             window.show();
             window.focus();
@@ -483,6 +530,7 @@ if (helpRequested) {
       palotToolHost().start();
       sourceControlService().start();
       await createWindow();
+      startupFinished = true;
       app.on("activate", () => {
         void showMainWindow();
       });
@@ -496,35 +544,51 @@ if (helpRequested) {
   let shutdownStarted = false;
   // User-local Linux upgrades request the same orderly teardown as File → Quit.
   if (process.platform === "linux") process.on("SIGTERM", () => app.quit());
+  // Every exit path: from an AppImage, Chromium's zygotes would outlive the image's mount.
+  if (process.platform === "linux" && process.env.APPIMAGE) {
+    process.once("exit", () => {
+      stopAppImageZygotesBeforeExit();
+    });
+  }
   app.on("before-quit", (event) => {
     if (shutdownStarted) return;
     event.preventDefault();
     shutdownStarted = true;
     quitting = true;
-    if (mainWindow && !mainWindow.isDestroyed() && process.env.PALOT_SHOWCASE !== "1") {
-      saveWindowState(mainWindow);
-    }
-    desktopNotificationService().shutdown();
-    shutdownVoiceHost();
-    appearanceService().shutdown();
-    const trayShutdown = destroyTray();
-    void automationService()
-      .shutdown()
-      .finally(async () => {
-        await trayShutdown;
-        await shutdownGuestLinks();
-        destroyOpenCodeAttentionIndex();
-        await shutdownPalotToolHost().catch((error) =>
-          log.warn("Palot tool shutdown failed", error),
-        );
-        await shutdownBrowserPane();
-        await shutdownSourceControlService().catch((error) =>
-          log.warn("Source control shutdown failed", error),
-        );
-        await openCodeRuntime.shutdown();
-        closePalotDatabase();
-        await shutdownAttachmentStorage();
-        app.quit();
-      });
+    // The tray is torn down alongside the automation service and awaited after it.
+    let trayShutdown: Promise<void> = Promise.resolve();
+    void runShutdownSequence(
+      [
+        {
+          name: "window state",
+          run: () => {
+            if (mainWindow && !mainWindow.isDestroyed() && process.env.PALOT_SHOWCASE !== "1")
+              saveWindowState(mainWindow);
+          },
+        },
+        { name: "notifications", run: () => desktopNotificationService().shutdown() },
+        { name: "voice host", run: shutdownVoiceHost },
+        { name: "appearance", run: () => appearanceService().shutdown() },
+        {
+          name: "tray",
+          run: () => {
+            trayShutdown = destroyTray();
+            // Handled by the "tray" wait below; this only keeps it from counting as unhandled.
+            trayShutdown.catch(() => undefined);
+          },
+        },
+        { name: "automations", run: () => automationService().shutdown() },
+        { name: "tray", run: () => trayShutdown },
+        { name: "guest links", run: shutdownGuestLinks },
+        { name: "attention index", run: destroyOpenCodeAttentionIndex },
+        { name: "Palot tools", run: shutdownPalotToolHost },
+        { name: "browser pane", run: shutdownBrowserPane },
+        { name: "source control", run: shutdownSourceControlService },
+        { name: "OpenCode runtime", run: () => openCodeRuntime.shutdown() },
+        { name: "database", run: closePalotDatabase },
+        { name: "attachments", run: shutdownAttachmentStorage },
+      ],
+      { deadlineMs: SHUTDOWN_DEADLINE_MS, log: (...entry) => log.warn(...entry) },
+    ).finally(() => app.quit());
   });
 }

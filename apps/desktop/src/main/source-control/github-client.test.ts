@@ -253,3 +253,58 @@ describe("GitHubClient", () => {
     ).rejects.toMatchObject({ code: "forbidden" });
   });
 });
+
+describe("GitHub downloads", () => {
+  it("follows the redirect without the token and keeps only the tail", async () => {
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).startsWith("https://api.github.com/"))
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://logs.example.invalid/job?sig=signed" },
+        });
+      expect((init!.headers as Record<string, string>).authorization).toBeUndefined();
+      return new Response(`${"a".repeat(100)}\nlast line`);
+    });
+    const { github } = client(fetch as typeof globalThis.fetch);
+    const text = await github.download({
+      host: "github.com",
+      path: "repos/acme/web/actions/jobs/1/logs",
+      priority: "interactive",
+      tailBytes: 12,
+    });
+    expect(text).toBe("aa\nlast line");
+    const first = fetch.mock.calls[0]!;
+    expect(String(first[0])).toBe("https://api.github.com/repos/acme/web/actions/jobs/1/logs");
+    expect(first[1]).toMatchObject({ redirect: "manual" });
+    expect((first[1]!.headers as Record<string, string>).authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("refuses an insecure link and never repeats the signed link in errors", async () => {
+    const fetch = vi.fn(async (url: string | URL | Request) =>
+      String(url).startsWith("https://api.github.com/")
+        ? new Response(null, {
+            status: 302,
+            headers: { location: "https://logs.example.invalid/job?sig=signed" },
+          })
+        : new Response("gone", { status: 410 }),
+    );
+    const { github } = client(fetch as typeof globalThis.fetch);
+    const request = {
+      host: "github.com",
+      path: "repos/acme/web/actions/jobs/1/logs",
+      priority: "interactive" as const,
+      tailBytes: 100,
+    };
+    const error = await github.download(request).catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(GitHubApiError);
+    expect((error as GitHubApiError).code).toBe("not-found");
+    expect(String((error as Error).message)).not.toContain("sig=");
+
+    fetch.mockImplementation(
+      async () =>
+        new Response(null, { status: 302, headers: { location: "http://logs.example.invalid/x" } }),
+    );
+    await expect(github.download(request)).rejects.toThrow("insecure");
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+});

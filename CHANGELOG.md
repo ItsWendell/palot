@@ -5,6 +5,329 @@ file records user-visible changes. Internal refactors belong in Git history
 unless they change behavior, compatibility, security, privacy, or release
 operations.
 
+## 0.24.0
+
+This remains an experimental pre-release, not a supported stable release.
+
+### Added
+
+- **One task list replaces the Inbox and Projects sidebars.** Tasks that need you (an approval,
+  a question, a failure) sit in **Needs you** at the top, oldest wait first; then pinned tasks,
+  then the rest with finished, unseen work first. Pinned, Working, Snoozed and Settled are
+  sections that collapse to one line with a count. **View** chooses how it's grouped (Inbox,
+  Project or Server), where working tasks sit, and whether idle tasks get one line or two; the
+  same choices are in Settings under Desktop behavior. Chats are tasks without a project and get
+  a **Chats** group when grouped by project.
+- Every row says what its task is doing in its second line: "Working · 42s", "Finished · 5m ago",
+  "Waiting for approval · bash", what it's running, what the last turn changed, or "Stopped". A
+  small pencil after a title marks a message you started there and haven't sent.
+- Act from the list without opening the task: **Allow once** or **Deny** an approval, pick an
+  answer to a question, step through several requests on one task, **Retry** a failed one. A
+  request that just appeared ignores clicks and keys for a moment, and focus moves to the next
+  task that needs you.
+- Keyboard triage on the focused row: E settle, S snooze, P pin, U read or unread, Space quick
+  look, A allow, D deny, F2 rename, J/K or the arrow keys to move. From anywhere: Alt+Up/Down
+  opens the previous or next task, Mod+Alt+A the next task that needs you, Mod+1…9 the first nine
+  rows (hold Mod to see the numbers); these leave open dialogs, menus and pickers alone. Shift-
+  and Mod-click select several rows to settle, snooze or mark read at once.
+- **Working docks at the bottom of the task list** by default. The dock shows about four rows,
+  scrolls inside itself, collapses to its header with a count, and disappears when nothing runs.
+  People who had chosen "Under Needs you" or "In the list" keep their choice.
+- **Mark all as read** in the list's View menu, for the tasks the current filter shows, with Undo.
+  **Mark as unread** and **Mark as read** in a task's menu.
+- **Mod+Shift+S settles the open task** from anywhere, like E on its row: the same toast with Undo,
+  and the next task in the list opens.
+- **Open in background** in a task row's menu, or a middle-click, opens the task in a new window
+  behind the current one. Some Linux window managers raise new windows regardless.
+- **Move to folder…** in a task's menu and the command palette moves the task to another project
+  or any folder, with OpenCode's session move. If the folder it leaves has uncommitted changes,
+  the dialog lists them and asks you to move anyway.
+- **Task links.** Copy link in a task's menu, next to **Copy task ID**, copies a
+  `palot://task/<id>` link that brings Palot forward on that task and its server. Installed builds
+  register the `palot://` scheme, as does a reinstalled local Nightly or Arch install on Linux;
+  malformed or unknown links are ignored.
+- **One ship button in the task header** offers the next step for the task's checkout and its
+  linked pull request: Commit, Commit & push, Push, Push & create PR, Create PR or View PR, and
+  nothing once everything is shipped. A commit shows the generated message for editing first, and
+  the steps run with named stages in one popover. A failed stage says what failed and keeps the
+  commit. It refuses with the reason when the branch is behind or has diverged, on a detached
+  HEAD, with unresolved conflicts, or when a pull request would be empty, and on the default
+  branch it asks for a feature branch named after the task. It fetches the remote before deciding
+  (at most once per 30 seconds, carrying on with "Couldn't check origin" when offline).
+  Mod+Shift+Enter presses it. Nothing is pushed without that press.
+- **Ship & watch.** When the ship button opens or finds a pull request, its last stage watches it
+  for the task, so the agent hears about failing checks, reviews and conflicts. The stage is
+  ticked by default and remembered; it is the same "Watch pull request" checkbox the Create pull
+  request dialog shows. View PR on an unwatched pull request offers Watch beside it.
+- **Ready to merge, or what is still needed.** A linked pull request says "Ready to merge" or
+  "Still needed: approval, branch behind" from its draft state, review decision, merge state,
+  required checks and open review threads, in the task header, the Pull requests detail header
+  and the task row's PR mark. Hosts that don't report a part say so. A watched pull request wakes
+  its agent once when it becomes ready, telling it that merging is up to you, and Palot shows a
+  desktop notification.
+- **Fix review comments**, **Fix failing checks** and **Resolve conflicts** on a linked pull
+  request add one chip to the composer, such as "PR #34 · 3 review comments", that gives the agent
+  a numbered list of each unresolved comment, failing check or conflict. Fix failing checks adds
+  the last 80 lines of each failing GitHub Actions step (capped at 8 KB per check), or
+  "(log unavailable)". From the Pull requests screen the chip goes to the task that owns the PR,
+  or a new task.
+- **Message a subagent directly.** A subagent's task has the normal composer; OpenCode runs the
+  message in the subagent and sends its answer to the main task as a report.
+- **Edit a goal in place.** Saving sets the goal again, so it restarts from round 1; the field
+  says so before you save.
+- **A picker for `/review`**: uncommitted changes, the branch against its base, a commit, or saved
+  instructions (Settings → General → Review instructions).
+- **Comments as quotes in the transcript.** Review and browser element comments in a sent message
+  show as compact chips (`src/a.ts:L12–18` and the comment) that open the file, its diff for
+  removed lines, or the page. Copy prompt still copies the full text.
+- **Jump to message** (Mod+Alt+G, the command palette, or the task's menu, where it replaces
+  Prompt timeline) searches every prompt in the task, also ones not loaded yet.
+- **Unread side answers.** A side question whose answer arrives while its tab isn't showing gets a
+  dot on its tab until you open it.
+- Alt+Enter while a task is working queues a message ahead of the others, and queued messages
+  after the first have **Move to top**. Mod+Enter on an empty composer steers the first queued
+  message.
+- The transcript marks where you switched model, reasoning effort or agent mid-task, and a tool
+  call waiting for approval shows **Needs approval** on its row.
+- **OpenCode automations on the Scheduled page**, in their own section for every project on every
+  connected server: their trigger in plain words, what they do, status, next and last run, and
+  links to the task they prompt and the task that created them. Pause, Resume and Delete work from
+  the row. The section stays hidden when a server has automations off or doesn't support them.
+- **Prompts an automation sent say so**: "Automation · <name>" with a clock above the bubble ("ran
+  late" when it fired late), linking to Scheduled. They offer no Edit, Up in the composer skips
+  them, and message search lists them as Automation.
+- **More on the Usage page**: cache hit rate and cost per million tokens, overall and per model;
+  the ten most expensive tasks including their subagents; the share of spend that scheduled tasks
+  and automations started; Code Mode against direct tool calls and the tools that fail most;
+  per-project usage; and CSV or JSON export. A note says what the reported cost includes.
+- **What's left on paid models, in the model picker.** Models that OpenCode Console limits show
+  what remains on their row ("62% left · resets 18:00"). The selected model warns once per limit
+  window under 15% and when it reaches its limit. Limits refresh when a turn ends.
+- **Each usage limit says which one it is and how to go on**: "OpenCode Go 5 hour limit reached",
+  "Workspace usage limit reached", "<model> spend limit reached", "ChatGPT usage limit reached" or
+  "ChatGPT workspace limit reached", with when it resets, and Switch model, Turn on Extra Usage
+  for Go, ChatGPT usage, or Copy request for admin.
+- **Find in file tabs** (Mod+F): the same find bar as the transcript searches source, rendered
+  Markdown, notebooks, documents and tables, including rows not yet scrolled into view. Images,
+  PDFs, audio and video say find isn't available. Mod+Alt+F opens the editor's find and replace.
+- **Viewed marks in Changes**, as in a pull request's Code tab: ticking one folds the file, the
+  toolbar counts "3 of 8 viewed", and the mark lapses with "Changed since viewed" when the agent
+  changes the file again.
+- **Copy contents** and **Save a copy…** in a text file tab's toolbar, using the text as shown,
+  unsaved edits included.
+- **Keep the side panel when switching tasks**, an opt-in setting under Settings → General →
+  Desktop behavior.
+- Ctrl/Cmd-click a file path in a terminal (`src/app.ts:12`, `./build.sh`, compiler output such
+  as `main.c:1:25`) or a `file://` hyperlink (with `#L12` fragments, also from a terminal on a
+  remote server) to open it in the workbench.
+- **Switching from another agent?** Settings → General and an optional last step of the welcome
+  guide start a "Switch from …" task for Claude Code, Codex, T3 Code, Pi, Cursor, the OpenCode app
+  or another agent. Its prompt has the agent look first, propose a plan, wait for your OK, back up
+  every file it changes, keep secrets out of files, and say how to undo it. Copy prompt gives you
+  the same prompt. Palot itself detects and changes nothing.
+- **Machines (experimental).** Settings → Machines lists the machines linked to each server with
+  `experimental.machines` on, with their state, system and how they link. Add machine makes a
+  single-use join string; OpenCode 2.4.1 has no worker command that joins with it yet, and the
+  dialog says so. Calls that ran on another machine show its name, and links to its files offer
+  Copy path instead of opening locally.
+- **Connect to another computer** and **Share this computer** walk through pairing in numbered
+  steps: a one-time code with its QR and a live expiry, a name for this computer, and help when
+  other devices can't reach it. Pairing a server Palot already knows renews its sign-in.
+- A failed connection says which part broke: the address, the tunnel or proxy, the HTTPS
+  certificate, an expired pairing code, a refused sign-in, or an OpenCode that's too old.
+- Each server row in Settings → Connections shows its address, OpenCode version, why it's offline
+  with Reconnect, and one menu to rename, test, pair again, edit or remove it. Test connection
+  uses the saved sign-in.
+- **Warning before restarting OpenCode with tasks running**, naming up to five and asking you to
+  "Restart anyway".
+- Optional **Check for Palot updates** in Settings → About, off by default: a daily check for a
+  newer stable release that links to its notes. It never downloads or installs anything.
+- Settings → Permissions: edit a saved approval's action or pattern in place (OpenCode 2.1.0 or
+  later).
+- Add MCP server has a **Share across projects** switch (OpenCode `pool: true`).
+- Provider and MCP sign-in accept the redirect URL pasted from the browser.
+- Voice chat asks the server which voice models it can start, and says why when none can.
+- **Send now** (or Mod+Enter) for a browser element comment.
+- A mouse's back and forward buttons go back and forward in Palot.
+- F6 and Shift+F6 move focus between the task list, transcript, composer and workbench; function
+  keys can now be bound without a modifier.
+- Files dropped or pasted from the file manager attach by path.
+- Right-click an email address in a reply to copy it.
+- OpenCode's error reference in error toasts ("UnknownError · ref …").
+
+### Changed
+
+- **The composer is rebuilt around one text field.** Mentions, files and comments are chips that
+  one Backspace removes. At rest it shows `+`, the agent, one "model · effort" pill (with a short
+  model name such as "Opus 5.5" after the maker's icon), the context pie, the microphone and one
+  primary button; in a narrow window labels drop first, then the pie and microphone fold into
+  `…`. Markdown is always styled as you type (the Rich composer beta setting is gone), up to
+  8,000 characters.
+- `+` turns the composer into a launcher for files, recent outputs, stashed prompts, commands,
+  skills, mentions, shell commands and the task's approvals. Mod+/ opens it too, and `/`, `@` or
+  `$` open it at that category. The separate stash and recent output buttons are gone. Mod+K is
+  the command palette.
+- One primary button sends, queues or steers (your default), runs a shell command, or stops; Stop
+  sits beside it while you have a draft. Holding Mod shows the other delivery. The delivery menu
+  is gone; Send to several models stays on Shift-click, the launcher and the model popover.
+- Goal, plan, voice chat, Undo staged and running work are tabs on the composer's top edge, one
+  panel at a time. Permissions, questions, forms and guest messages wait in one panel above the
+  text field and page "1 of 3". Escape never answers a request; one that arrives while you type
+  waits until you pause, and a draft never becomes its feedback.
+- One notice line above the composer covers a missing workspace, a lost connection, a usage limit
+  and the suggestion to compact first. Queued messages, comments and errors sit inside the
+  composer.
+- Up in the composer recalls up to 200 recent prompts per project instead of 25.
+- **The transcript is rebuilt around whole turns.** A prompt and all its work, steers included,
+  form one turn that folds to one line, such as "Worked for 2m 5s · changed 3 files +40 −12 · ran
+  4 commands · 1 failed". A running turn shows one clock and one status line saying what it's
+  doing or waiting on; a long command offers **Move to background**, and after Stop it reads
+  "Stopping". Durations use one format everywhere.
+- Every finished turn that changed files lists them in a card with line counts, opening that
+  turn's changes at the file; the latest also offers **Ask for review**.
+- Activity summaries lead with what changed and count failures, failed rows say what was
+  attempted ("Tried to read app.ts"), and notices and finished background work get their own
+  quiet rows.
+- Sending while scrolled up keeps your place; **Scroll to bottom** takes you to the new message.
+- **Subagents.** Ready for OpenCode's always-background subagents: a subagent row follows its
+  child task and shows its latest report. Nested subagents show under the subagent that started
+  them and fold behind a count when finished. "Finished" (and its notification and sound) waits
+  until the task and every subagent under it are idle; until then the turn reads "Waiting for 2
+  subagents", and `wait_tasks`, `settle_task` and scheduled runs wait the same way.
+- **Code Mode.** With OpenCode's `full_codemode`, a script's commands, reads, edits and searches
+  show as their usual rows instead of an "Orchestrating" card, with the script's source and result
+  one `{}` click away. A script that threw ends with "Script failed: …". With OpenCode 2.4, edit,
+  write and patch rows show the diff the script reports, files written with `Bun.write` get their
+  own row, and running work lists background scripts and can stop them.
+- Generated videos (OpenCode 2.4's `generate_video`) get their own notice that plays the video;
+  generation calls show their prompt. Search rows name the folder they searched, and OpenCode's
+  session tools read "Rename task" and "Move task".
+- A watched pull request that merges or closes wakes its task one last time to do post-merge steps
+  and settle, instead of Palot settling it silently. The wake is sent once, also when Palot was
+  closed, and never to an archived task. Tasks without a watch still settle on merge.
+- While OpenCode retries after a usage or rate limit, the transcript says "Usage limit reached ·
+  retrying (attempt 2)" with the reset time if known. An empty balance (HTTP 402) reads "Out of
+  credits".
+- Changes, Turn changes and file diff tabs show a change rail beside the diff with changed lines,
+  Find matches and the visible part; click or drag to jump.
+- Lockfiles, generated files and migrations start collapsed with a quiet label in Changes, Turn
+  changes and a pull request's Code tab, and tests get a "Test" label. Their lines are counted
+  apart ("+ 1 lockfile, 2 generated"). Turn it off with **Collapse lockfiles and generated files**
+  in the diff options menu.
+- Mod+F inside any diff (Changes, Turn changes, a single file's diff, a pull request's Code tab)
+  opens Palot's Find in diff; the diff viewer's own search is on Mod+Alt+F.
+- A Markdown table's **Copy as table** (was Copy as TSV) also puts an HTML table on the clipboard.
+- Settings read as a list: one centred column, label on the left and control on the right, and
+  **Reset to default** beside a setting you changed. Timeline settings lead with the three styles,
+  with fine-tuning under Advanced.
+- The rail has one **Tasks** button instead of Inbox and Projects. Settings no longer has a default
+  sidebar, and "Show inbox / Show projects" in the command palette became "Group tasks by …".
+  Settle idle tasks, Add project folder, Import task and Manage worktrees moved into the list's
+  View menu.
+- The task list uses Palot's overlay scrollbar and scrolls to a task opened from elsewhere. The
+  list's New task starts where Mod+N does.
+- Submenus open after the pointer rests on an item and close a moment after it leaves.
+- Server-stored images (OpenCode 2.2.0 or later with `experimental.media_blob`) are shown by
+  default, so tasks with many screenshots load less data.
+- Browser comment screenshots are stored once per message, making such tasks about 40% lighter to
+  load. Streaming replies redraw less, and Palot's agent tools send about 12% less text per turn.
+- Electron 45.3.1 (Chromium 156.0.8078.96) and refreshed bundled libraries, including the SQLite
+  engine for database previews and the diff and syntax highlighting engine.
+- OpenCode 2.4.1 (from 2.2.5). The client, protocol and browser plugin, the tested-version check
+  and the release-smoke runtime move to 2.4.1; stable 2.x services from 2.0.7 still connect.
+  Along the way: agents can make videos and the image tool is `generate_image` (2.4), voice picks
+  GPT-Live by the engine the server reports (2.4), GPT-6.2 caches its system prompt and timed-out
+  shell commands keep running in the background (2.3.2), long tasks compact in the background by
+  default (2.3.1), usage limits are read again when a credential changes (2.2.7), and running work
+  reads only the folders with background jobs (2.2.6).
+
+### Fixed
+
+- Find in diff and Find in task no longer lose a key typed right after Mod+F, and typing straight
+  after clicking into a file in the editor no longer loses the first keystrokes while Palot is busy.
+- Opening a task lands on what you haven't seen even when Palot's copy of the task was out of
+  date.
+- Loading earlier messages keeps the message you were reading in place, also when you keep
+  scrolling while it loads, and scrolling up no longer jumps to the first unread reply. Swiping
+  sideways across a wide table no longer stops following new output.
+- Switching tasks no longer rebuilds the task you're leaving, returns to a task at its saved
+  position, and no longer keeps every earlier navigation in memory. The prompt rail appears on a
+  cold load.
+- A response's tok/s counts reasoning tokens, measures from the first streamed token (OpenCode
+  after 2.2.7), and no longer spikes when a provider sends a step all at once.
+- Commands and tools you stop or cancel read as stopped, not failed, and don't count as failures;
+  background commands that timed out or were killed say so. A tool call stopped before it was
+  written no longer shows as an empty row.
+- A subagent no longer reads "Finished" while its own subagent or background work still runs, or
+  while a report quotes "Background work still running:".
+- A running subagent's card no longer flickers or briefly disappears when the task's own turn
+  ends while the subagent keeps working.
+- A shell command moved to the background after it started shows its later result on its row.
+  With OpenCode 2.4, background results show their output instead of a raw `<background-result>`
+  tag, and `<system-update>` instructions read "Instruction update".
+- A command OpenCode can't analyze no longer asks about "Path: \*" and doesn't offer "Always
+  allow". Permission prompts for MCP and other tools list every argument.
+- A review comment on a removed line tells the agent it is in the old version of the file.
+- Sending while an attachment uploads waits for the upload and then sends.
+- Pasting from Word, Pages and similar editors pastes the text instead of a picture of it.
+- Pasted screenshots and long text in stashed prompts and drafts survive a restart, and starting
+  one Palot channel no longer deletes another channel's unsent pastes.
+- Task mentions show by title instead of `@session:ses_…`.
+- A forked task's first notice reads **Forked from** and the source task's name.
+- A single `~` in your own messages stays as typed.
+- Fenced `latex`, `math` and `tex` blocks render as display math.
+- Shortened text never cuts an emoji in half.
+- The command palette marks failed tasks with a red **Failed** dot, and "xhigh" reads "Extra
+  high".
+- Screen readers announce changed diff lines as "Added" or "Removed".
+- In a narrow window, opening Changes no longer pushes the side panel off the screen.
+- File previews (images, PDFs, databases, archives, documents, audio and video) keep their place
+  across tab switches, and an open preview no longer resets when another file changes. A folder
+  deleted and recreated no longer shows the old files.
+- Pasting more than 1 MiB into a terminal arrives in order, or says why it couldn't.
+- Escape and Enter in the browser's Find in page leave an input method alone.
+- Answered request cards fade out, and focus moves to the message box.
+- With Reduce Motion on, spinners keep moving and fades still fade; only movement is removed.
+  Panes animate on their own, and buttons show a pressed state.
+- Settings and project settings opened by a reload use the connected server and project.
+- Errors in connection settings no longer start with "Error invoking remote method…", a server
+  paired from settings shows in the task list without a reload, and a connected server can be
+  renamed.
+- Palot connects by itself when the local OpenCode service starts after it, and starting a
+  connection you had disabled keeps it connected.
+- After lost live updates or a reconnect, Palot keeps retrying to reload the open task, so replies
+  and delivered prompts no longer go missing. Events from several servers no longer interfere.
+- Slash commands longer than 30 seconds and slow worktree setup no longer time out.
+- Opening the browser pane while a project is still loading waits for its plugins.
+- Guest links work again after Palot restarts, crashes or resets settings.
+- On Linux with Wayland, the window no longer stays hidden when the page loads slowly at startup.
+- Quitting the Linux AppImage no longer leaves Chromium helper processes running, and quitting no
+  longer hangs on a slow cleanup step (at most 10 seconds).
+- After an Electron update, Palot clears Chromium's GPU caches once, avoiding blank areas.
+- A background error after startup is logged instead of opening the recovery window.
+- Login-shell environment variables load when your shell sets a DEBUG trap or prints on startup.
+- Opening a file in an external editor handles paths with spaces, `#` or `%`.
+- Generated commit messages, pull request text and review guides use the model a task in that
+  project would use, instead of falling back to OpenCode's hosted free models ("Free usage limit
+  reached").
+- Choosing a palette under Settings → Appearance → Theme while it followed the system no longer
+  makes the Theme section vanish until you leave the page.
+- Onboarding: a fresh install connected to a server with tasks opens onboarding, skipping the
+  project step uses the most recent project, and a workspace reload no longer ends it.
+- Keyboard shortcut settings refuse keys that belong to a locked shortcut.
+- Smaller fixes: MCP form descriptions link URLs, the command list closes for `//` and plain
+  paths, paths shortened with `...` are no longer broken links, a compaction stays visible when
+  its turn folds, and a message sent to an idle task no longer flashes as queued.
+
+### Security
+
+- Pull request watch wakes quote comments as untrusted text, so a comment can't pass as your
+  instructions to the agent.
+- Palot keeps local OpenCode traffic, including the service password, off Node's environment
+  proxy (`NODE_USE_ENV_PROXY=1`).
+- On Linux without a keyring, Connection settings and the log say that saved passwords and tokens
+  are only obfuscated, and the credential file is readable only by you.
+
 ## 0.23.0
 
 This remains an experimental pre-release, not a supported stable release. 0.22.0 was

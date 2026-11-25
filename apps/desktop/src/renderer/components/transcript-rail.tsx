@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import type { TranscriptPrompt } from "../lib/transcript-outline";
+import { cutHead } from "../../shared/text-cut";
 
 const PITCH = 10;
 const OVERSCAN = 4;
@@ -252,7 +253,7 @@ const PromptRail = memo(function PromptRail({
                   key={prompt.messageID}
                   id={optionID(prompt.messageID)}
                   role="option"
-                  aria-label={prompt.label.slice(0, 240)}
+                  aria-label={cutHead(prompt.label, 240)}
                   aria-selected={focused ? prompt.messageID === focusedID : active}
                   aria-posinset={index + 1}
                   aria-setsize={prompts.length}
@@ -294,7 +295,7 @@ const PromptRail = memo(function PromptRail({
         >
           <div className="p-3">
             <span className="line-clamp-3 whitespace-pre-wrap break-words">
-              {preview.label.slice(0, 240)}
+              {cutHead(preview.label, 240)}
             </span>
           </div>
         </div>

@@ -44,72 +44,61 @@ interface DeliveryContext {
   streamEpoch: number;
 }
 
+interface PendingBatch {
+  context: DeliveryContext;
+  events: PalotEvent[];
+  receivedAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
 export class OpenCodeEventBatcher {
-  private readonly pending: PalotEvent[] = [];
-  private context: DeliveryContext | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  // One queue per connection, so interleaved monitored servers keep batching independently.
+  private readonly pending = new Map<string, PendingBatch>();
   // Renderer gap detection tracks each connection independently, even though
   // this transport multiplexes all monitored runtimes.
   private readonly sequences = new Map<string, { batch: number; receive: number }>();
-  private receivedAt = 0;
   private readonly metrics = emptyMetrics();
 
   constructor(private readonly onFlush: FlushHandler) {}
 
   push(event: PalotEventInput, context: DeliveryContext): void {
+    const current = this.pending.get(context.connectionID);
     if (
-      this.context &&
-      (this.context.connectionID !== context.connectionID ||
-        this.context.contractVersion !== context.contractVersion ||
-        this.context.streamEpoch !== context.streamEpoch)
+      current &&
+      (current.context.contractVersion !== context.contractVersion ||
+        current.context.streamEpoch !== context.streamEpoch)
     ) {
-      this.flush("context");
+      this.flushConnection(context.connectionID, "context");
     }
-    this.context = context;
-    if (this.pending.length === 0) this.receivedAt = Date.now();
-    this.pending.push({ ...event, receiveSequence: ++this.sequence(context.connectionID).receive });
+    let batch = this.pending.get(context.connectionID);
+    if (!batch) {
+      batch = { context, events: [], receivedAt: Date.now(), timer: null };
+      this.pending.set(context.connectionID, batch);
+    }
+    batch.events.push({
+      ...event,
+      receiveSequence: ++this.sequence(context.connectionID).receive,
+    });
     this.metrics.receivedEvents += 1;
-    if (this.pending.length >= MAX_PENDING_EVENTS) {
-      this.flush("capacity");
+    if (batch.events.length >= MAX_PENDING_EVENTS) {
+      this.flushConnection(context.connectionID, "capacity");
       return;
     }
     this.metrics.bufferedEvents += 1;
-    this.schedule();
+    batch.timer ??= setTimeout(
+      () => this.flushConnection(context.connectionID, "timer"),
+      BATCH_INTERVAL_MS,
+    );
   }
 
+  /** Flushes every connection's pending events. */
   flush(reason: FlushReason = "manual"): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    if (this.pending.length === 0) return;
-    const context = this.context;
-    if (!context) throw new Error("OpenCode event batch has no delivery context");
-    const events = this.pending.splice(0);
-    this.context = null;
-    const batch = {
-      ...context,
-      batchSequence: ++this.sequence(context.connectionID).batch,
-      receivedAt: this.receivedAt,
-      sentAt: Date.now(),
-      events,
-    };
-    this.metrics.flushes += 1;
-    this.metrics.sentEvents += events.length;
-    this.metrics.totalQueueDurationMs += batch.sentAt - batch.receivedAt;
-    if (reason === "timer") this.metrics.timedFlushes += 1;
-    else if (reason === "immediate") this.metrics.immediateFlushes += 1;
-    else if (reason === "capacity") this.metrics.capacityFlushes += 1;
-    else if (reason === "context") this.metrics.contextFlushes += 1;
-    else this.metrics.manualFlushes += 1;
-    this.onFlush(batch);
-    this.receivedAt = 0;
+    for (const connectionID of this.pending.keys()) this.flushConnection(connectionID, reason);
   }
 
   dispose(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    this.pending.length = 0;
-    this.context = null;
-    this.receivedAt = 0;
+    for (const batch of this.pending.values()) if (batch.timer) clearTimeout(batch.timer);
+    this.pending.clear();
   }
 
   snapshotMetrics(): OpenCodeEventBatcherMetrics {
@@ -125,8 +114,27 @@ export class OpenCodeEventBatcher {
     return sequence;
   }
 
-  private schedule(): void {
-    if (this.timer) return;
-    this.timer = setTimeout(() => this.flush("timer"), BATCH_INTERVAL_MS);
+  private flushConnection(connectionID: string, reason: FlushReason): void {
+    const pending = this.pending.get(connectionID);
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    this.pending.delete(connectionID);
+    if (pending.events.length === 0) return;
+    const batch = {
+      ...pending.context,
+      batchSequence: ++this.sequence(connectionID).batch,
+      receivedAt: pending.receivedAt,
+      sentAt: Date.now(),
+      events: pending.events,
+    };
+    this.metrics.flushes += 1;
+    this.metrics.sentEvents += batch.events.length;
+    this.metrics.totalQueueDurationMs += batch.sentAt - batch.receivedAt;
+    if (reason === "timer") this.metrics.timedFlushes += 1;
+    else if (reason === "immediate") this.metrics.immediateFlushes += 1;
+    else if (reason === "capacity") this.metrics.capacityFlushes += 1;
+    else if (reason === "context") this.metrics.contextFlushes += 1;
+    else this.metrics.manualFlushes += 1;
+    this.onFlush(batch);
   }
 }

@@ -5,7 +5,6 @@ import {
   orderProjects,
   pendingRequestViews,
   projectForSession,
-  selectRecentSessions,
   sessionIsAdditionalCheckout,
   visibleProjects,
 } from "./view-models";
@@ -125,57 +124,6 @@ describe("visibleProjects", () => {
     nested.location.directory = "/same/packages/app";
 
     expect(projectForSession([global, repository], nested)?.id).toBe("repository");
-  });
-});
-
-describe("selectRecentSessions", () => {
-  it("sorts recent sessions by latest activity", () => {
-    const sessions = [
-      session("old", "p1", 1),
-      session("newest", "p1", 3),
-      session("newer", "p2", 2),
-    ];
-
-    expect(selectRecentSessions(sessions, new Set(), 2).map((value) => value.id)).toEqual([
-      "newest",
-      "newer",
-    ]);
-  });
-
-  it("sorts completed sessions by their idle transition instead of metadata updates", () => {
-    const metadataUpdated = { ...session("metadata", "p1", 3), idleAt: 1 };
-    const recentlyIdle = { ...session("idle", "p1", 2), idleAt: 4 };
-
-    expect(
-      selectRecentSessions([metadataUpdated, recentlyIdle], new Set(), 2).map((value) => value.id),
-    ).toEqual(["idle", "metadata"]);
-  });
-
-  it("pins all active sessions before filling the recent limit", () => {
-    const sessions = [
-      session("active-old", "p1", 1),
-      session("recent", "p1", 4),
-      session("active-new", "p2", 3),
-      session("older", "p2", 2),
-    ];
-
-    expect(
-      selectRecentSessions(sessions, new Set(["active-old", "active-new"]), 3).map(
-        (value) => value.id,
-      ),
-    ).toEqual(["active-new", "active-old", "recent"]);
-  });
-
-  it("does not hide active sessions when they exceed the recent limit", () => {
-    const sessions = [
-      session("active-1", "p1", 1),
-      session("active-2", "p1", 2),
-      session("recent", "p1", 3),
-    ];
-
-    expect(
-      selectRecentSessions(sessions, new Set(["active-1", "active-2"]), 1).map((value) => value.id),
-    ).toEqual(["active-2", "active-1"]);
   });
 });
 
@@ -424,6 +372,10 @@ describe("pendingRequestViews", () => {
     expect(pendingRequestViews(requests).map((request) => request.ownerMessageID)).toEqual([
       "assistant",
       "assistant",
+    ]);
+    expect(pendingRequestViews(requests).map((request) => request.toolPartID)).toEqual([
+      "call",
+      undefined,
     ]);
   });
 

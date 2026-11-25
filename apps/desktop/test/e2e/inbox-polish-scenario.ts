@@ -1,7 +1,10 @@
 import { expect, type Page } from "@playwright/test";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
+import { showTaskColumn, taskRowBySession, tasksRailButton } from "./task-list.ts";
 
 export const inboxPolishScenario: Scenario = {
   description:
@@ -24,22 +27,41 @@ export const inboxPolishScenario: Scenario = {
     await composer.focus();
     await expect(composer).toBeFocused();
     await composer.fill("Save this prompt for later");
-    await expect(composer).toHaveValue("Save this prompt for later");
+    await expect(composer).toHaveJSProperty("value", "Save this prompt for later");
+    // Large pasted text is staged as a file; the stash keeps its own durable copy of it.
+    const attachments = page.getByRole("group", { name: "Attachments", exact: true });
+    await composer.evaluate((element) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "stashed pasted text\n".repeat(2100));
+      element.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+    });
+    await expect(attachments).toContainText("Pasted text · 2100 lines");
     await composer.press(process.platform === "darwin" ? "Meta+s" : "Control+s");
     await expect(page.getByText("Prompt stashed", { exact: true })).toBeVisible();
-    await expect(composer).toHaveValue("");
+    await expect(composer).toHaveJSProperty("value", "");
     const persisted = await readStashStorage(page);
     expect(persisted).toHaveLength(1);
-    expect(JSON.parse(persisted[0]![1]).value[0].draft.text).toBe("Save this prompt for later");
+    const stashed = JSON.parse(persisted[0]![1]).value[0];
+    expect(stashed.draft.text).toBe("Save this prompt for later");
+    expect(stashed.files).toHaveLength(1);
+    const stashedFile = fileURLToPath(stashed.files[0].uri);
+    expect(stashedFile).toMatch(/composer-attachments[\\/]stash[\\/]pasted-text-/);
+    expect(existsSync(stashedFile)).toBe(true);
     await page.reload();
     await expect(composer).toBeVisible();
     await expect(dock).not.toHaveAttribute("inert");
     expect(await readStashStorage(page)).toEqual(persisted);
-    await page.getByRole("button", { name: "Prompt stash", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Restore Save this prompt for later", exact: true })
-      .click();
-    await expect(composer).toHaveValue("Save this prompt for later");
+    // Stashed prompts come back through the composer's launcher.
+    await page.getByRole("button", { name: "Add files, commands and more", exact: true }).click();
+    await page.getByRole("option", { name: /^Stashed prompts/ }).click();
+    await page.getByRole("option", { name: /^Save this prompt for later/ }).click();
+    await expect(composer).toHaveJSProperty("value", "Save this prompt for later");
+    // After the reload the chip shows the staged file by name.
+    await expect(attachments).toContainText(/pasted-text-/);
+    // Restoring stages the file again and removes the stash's copy.
+    await expect.poll(() => existsSync(stashedFile)).toBe(false);
     await expect(page.locator('[data-slot="popover-content"]')).toHaveCount(0);
     await page.screenshot({ path: join(runRoot, "stash-restored.png") });
 
@@ -51,8 +73,8 @@ export const inboxPolishScenario: Scenario = {
       title: "Sweep task two",
       location: session.location,
     });
-    const inboxButton = page.getByRole("button", { name: /^Show inbox/ });
-    if ((await inboxButton.getAttribute("aria-pressed")) !== "true") await inboxButton.click();
+    const inboxButton = tasksRailButton(page);
+    await showTaskColumn(page);
     await page.evaluate(
       async (ids) => {
         const profileID = (await window.palot.runtimeStatus()).profileID!;
@@ -66,15 +88,11 @@ export const inboxPolishScenario: Scenario = {
       },
       [first.id, second.id],
     );
-    const row = (title: string) =>
-      page
-        .locator("[data-inbox-card]")
-        .filter({ has: page.getByRole("button", { name: new RegExp(`^Open ${title},`) }) });
-    const one = row("Sweep task one");
-    const two = row("Sweep task two");
+    const one = taskRowBySession(page, first.id);
+    const two = taskRowBySession(page, second.id);
     await expect(one).toBeVisible();
     await expect(two).toBeVisible();
-    const settleButton = one.getByRole("button", { name: "Settle task", exact: true });
+    const settleButton = one.getByRole("button", { name: "Settle", exact: true });
     await expect(settleButton).toHaveAttribute("data-inbox-settle");
     await page.mouse.move(850, 400);
     const actionOpacity = () =>
@@ -150,12 +168,16 @@ export const inboxPolishScenario: Scenario = {
     });
     expect(
       events.some(
-        (event) => event.type === "pointermove" && event.trusted && event.hitRow === second.id,
+        (event) =>
+          event.type === "pointermove" &&
+          event.trusted &&
+          Boolean(event.hitRow?.includes(second.id)),
       ),
     ).toBe(true);
     expect(
       events.some(
-        (event) => event.type === "pointerup" && event.trusted && event.hitRow === second.id,
+        (event) =>
+          event.type === "pointerup" && event.trusted && Boolean(event.hitRow?.includes(second.id)),
       ),
     ).toBe(true);
     await writeFile(
@@ -178,7 +200,7 @@ export const inboxPolishScenario: Scenario = {
     await expect(one).toBeVisible();
     await page.screenshot({ path: join(runRoot, "route-error-recovery.png") });
     await page.getByRole("button", { name: "Reload view", exact: true }).click();
-    await expect(composer).toHaveValue("Save this prompt for later");
+    await expect(composer).toHaveJSProperty("value", "Save this prompt for later");
   },
   async assert(page) {
     await expect(page.getByRole("textbox", { name: "Message Palot", exact: true })).toBeVisible();

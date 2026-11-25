@@ -23,7 +23,8 @@ export const processPickerScenario: Scenario = {
     });
     let terminalID: string | undefined;
     let commandRemoved = false;
-    const picker = page.getByRole("button", { name: /^Running work:/ });
+    // Running work is a tab on the composer's top edge; its panel lists the processes.
+    const picker = runningWorkTab(page);
     const output = page.getByRole("region", { name: "Command output", exact: true });
     const commandTab = page.getByRole("tab", { name: COMMAND, exact: true });
     const commandRow = page.getByRole("button").filter({
@@ -31,7 +32,7 @@ export const processPickerScenario: Scenario = {
     });
 
     try {
-      await expect(picker).toHaveAccessibleName("Running work: 1 running");
+      await expect(picker).toHaveAccessibleName("1 running");
       await picker.click();
       await expect(commandRow).toContainText("This conversation · Running");
       await commandRow.click();
@@ -68,7 +69,7 @@ export const processPickerScenario: Scenario = {
         size: { cols: 80, rows: 24 },
       });
       terminalID = terminal.id;
-      await expect(picker).toHaveAccessibleName("Running work: 1 running · 1 terminal");
+      await expect(picker).toHaveAccessibleName("1 running · 1 terminal");
       await picker.click();
       const terminalRow = page.getByRole("button").filter({
         has: page.getByText(TERMINAL_TITLE, { exact: true }),
@@ -103,7 +104,7 @@ export const processPickerScenario: Scenario = {
       await picker.click();
       page.once("dialog", (dialog) => void dialog.accept());
       await page.getByRole("button", { name: `Stop ${COMMAND}`, exact: true }).click();
-      await expect(picker).toHaveAccessibleName("Running work: 1 terminal");
+      await expect(picker).toHaveAccessibleName("1 terminal");
       commandRemoved = true;
       await expect(client.shell.get({ id: shell.data.id, location })).rejects.toMatchObject({
         _tag: "ShellNotFoundError",
@@ -125,6 +126,12 @@ export const processPickerScenario: Scenario = {
     await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeVisible();
   },
 };
+
+function runningWorkTab(page: Page) {
+  return page
+    .getByRole("toolbar", { name: "Task context" })
+    .locator('[data-slot="composer-tab"][data-value="background"]');
+}
 
 async function assertConnected(page: Page) {
   const runtime = await page.evaluate(() =>
@@ -148,8 +155,8 @@ async function captureSizes(page: Page, surface: Locator, runRoot: string, name:
     expect(bounds!.height).toBeGreaterThan(40);
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(641);
-    await page.getByRole("button", { name: /^Running work:/ }).click();
-    const popup = page.locator('[data-slot="popover-content"]').filter({ hasText: "Running work" });
+    await runningWorkTab(page).click();
+    const popup = page.getByRole("region", { name: "Running work", exact: true });
     await expect(popup).toBeVisible();
     const popupBounds = await popup.boundingBox();
     expect(popupBounds).not.toBeNull();
@@ -161,6 +168,8 @@ async function captureSizes(page: Page, surface: Locator, runRoot: string, name:
       .poll(() => page.evaluate(() => document.documentElement.style.colorScheme))
       .toBe("dark");
     await page.screenshot({ path: join(runRoot, `${name}-920x640-dark.png`) });
+    // The tab keeps the editor focused; Escape closes the panel from inside it.
+    await popup.getByRole("button").first().focus();
     await page.keyboard.press("Escape");
     await expect(popup).toBeHidden();
   } finally {

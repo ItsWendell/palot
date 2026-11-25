@@ -1,7 +1,9 @@
+import { sessionActivityLabel, sessionActivityStatus } from "../session-activity-status";
 import type { TranscriptTurn } from "../turn-projection";
 import type { PendingRequestView } from "../view-models";
 import { splitForAppend, VOICE_APPEND_CHARACTER_LIMIT } from "./voice-protocol";
 import { leadingParagraphs, speakableText } from "./voice-prompts";
+import { cutHead } from "../../../shared/text-cut";
 
 export interface VoiceRelayFrame {
   turns: readonly TranscriptTurn[];
@@ -38,18 +40,19 @@ function turnText(turn: TranscriptTurn): string {
   return (final.part.text ?? final.message.text ?? "").trim();
 }
 
-function workingStatus(turn: TranscriptTurn | undefined): string | null {
-  if (!turn || turn.status !== "working") return null;
-  const group = turn.activity.at(-1);
-  if (turn.final && turn.final.part.streaming) return "Writing a reply";
-  const title = group?.currentAction ?? group?.title;
-  return title?.trim() || "Working";
-}
-
-function requestStatus(requests: readonly PendingRequestView[]): string | null {
-  if (requests.some((request) => request.type === "permission")) return "Waiting for your approval";
-  if (requests.length > 0) return "Waiting for your answer";
-  return null;
+/** The call UI's progress line; spoken context keeps its own wording for approval and replies. */
+function relayStatus(frame: VoiceRelayFrame, latest: TranscriptTurn | undefined): string | null {
+  const activity = sessionActivityStatus({
+    turn: latest ?? null,
+    requests: frame.requests,
+    runtimeStatus: null,
+  });
+  const waiting = activity?.kind === "approval" || activity?.kind === "answer";
+  if (!frame.busy && !waiting) return null;
+  if (!activity) return "Working";
+  if (activity.kind === "approval") return "Waiting for your approval";
+  if (activity.kind === "answering") return "Writing a reply";
+  return sessionActivityLabel(activity).label;
 }
 
 function describeRequest(request: PendingRequestView): string {
@@ -118,8 +121,7 @@ export class VoiceAgentRelay {
       });
     }
 
-    const status =
-      requestStatus(frame.requests) ?? (frame.busy ? (workingStatus(latest) ?? "Working") : null);
+    const status = relayStatus(frame, latest);
 
     if (this.awaitingSince !== null && frame.busy && status && status !== this.lastProgress) {
       const now = this.now();
@@ -181,7 +183,7 @@ export class VoiceAgentRelay {
       { kind: "commentary", delegationID, content: `The backend finished: ${lead}` },
     ];
     if (rest) {
-      const silent = rest.length > SILENT_LIMIT ? `${rest.slice(0, SILENT_LIMIT)}…` : rest;
+      const silent = rest.length > SILENT_LIMIT ? `${cutHead(rest, SILENT_LIMIT)}…` : rest;
       for (const chunk of splitForAppend(`More detail from the backend's reply: ${silent}`)) {
         outputs.push({ kind: "thinking", delegationID, content: chunk });
       }

@@ -1,5 +1,8 @@
 import { File as CodeFile, type SelectedLineRange, type LineAnnotation } from "@pierre/diffs/react";
 import {
+  Check,
+  Copy,
+  Download,
   FileCode2,
   FolderOpen,
   Globe,
@@ -8,13 +11,15 @@ import {
   RefreshCw,
   SquareArrowOutUpRight,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { splitMarkdownFrontmatter } from "../../lib/markdown-frontmatter";
 import { useAtomValue } from "jotai";
 import { resolvedAppearanceAtom } from "../../atoms/appearance";
 import { experimentalBrowserAtom } from "../../atoms/ui";
 import { useWorkbenchCommands } from "../../atoms/workbench";
 import { runtimeAtom } from "../../atoms/workspace";
 import { useBrowserSession } from "../../hooks/use-browser-session";
+import { useClipboardCopy } from "../../hooks/use-clipboard-copy";
 import { useFileWatch } from "../../hooks/use-file-watch";
 import { useImageZoom } from "../../hooks/use-image-zoom";
 import { useWorkspaceFile } from "../../hooks/use-workspace-file";
@@ -49,6 +54,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Spinner } from "../ui/spinner";
 import { Banner } from "../ui/banner";
 import { FileEditor, useFileEditing } from "./file-editor";
+import { FileFindBar, useFileFind, type FileFindMode } from "./file-find";
 import { classifyWorkspaceFile, type WorkspaceFilePreview } from "./workspace-file-preview";
 import { isRichFilePreview, RichFilePreview } from "./rich-file-preview";
 import { ReviewCommentEditor, useReviewComments } from "../review-comment-editor";
@@ -133,7 +139,7 @@ function MarkdownDocumentPreview({
         homeDirectory={homeDirectory}
       >
         {opener.picker}
-        <MarkdownContent value={text} onTaskEdit={onTaskEdit} className="mx-auto max-w-4xl" />
+        <MarkdownFileBody text={text} onTaskEdit={onTaskEdit} />
       </MarkdownWorkspaceProvider>
     </LinkActionsProvider>
   );
@@ -186,6 +192,7 @@ export function FileTab({
     return "text" in draft ? draft : { kind: "text" as const, text: editing.state.contents };
   }, [diskPreview, editing.state.contents, retainDraft, tab.resource.path]);
   const [sourceView, setSourceView] = useState(false);
+  const { copiedKey, copy } = useClipboardCopy();
   // A cached read-only file can still add local context to its own task's draft.
   const review = useReviewComments(
     tab.resource.profileID,
@@ -276,6 +283,16 @@ export function FileTab({
     ],
   );
 
+  const [sourceContainer, setSourceContainer] = useState<HTMLDivElement | null>(null);
+  const [previewRoot, setPreviewRoot] = useState<HTMLDivElement | null>(null);
+  const find = useFileFind({
+    mode: fileFindMode(preview, showSource),
+    sourceText: editing.state.generation ? editing.state.contents : text,
+    sourceContainer,
+    previewRoot,
+    contentKey: preview,
+  });
+
   const fullPath = joinFilePath(tab.resource.location.directory, tab.resource.path);
   const fileHref = fileUrl(fullPath, tab.resource.line);
   const localFiles =
@@ -287,9 +304,13 @@ export function FileTab({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col bg-card"
+      // Clicks on text that cannot take focus still focus the tab, so Mod+F reaches it.
+      tabIndex={-1}
+      className="flex min-h-0 flex-1 flex-col bg-card outline-none"
       onKeyDownCapture={(event) => {
+        find.onKeyDownCapture(event);
         if (
+          event.isPropagationStopped() ||
           !active ||
           !isText ||
           !(event.metaKey || event.ctrlKey) ||
@@ -399,6 +420,39 @@ export function FileTab({
             <Globe className="size-3.5" aria-hidden="true" />
           </Button>
         ) : null}
+        {isText ? (
+          <>
+            {/* The shown text, unsaved edits included; it is already here for remote files too. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={copiedKey === "contents" ? "Copied" : "Copy contents"}
+              title={copiedKey === "contents" ? "Copied" : "Copy contents"}
+              onClick={() => void copy(text, "contents")}
+            >
+              {copiedKey === "contents" ? (
+                <Check className="size-3.5" aria-hidden="true" />
+              ) : (
+                <Copy className="size-3.5" aria-hidden="true" />
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Save a copy…"
+              title="Save a copy…"
+              onClick={() => {
+                palot
+                  .saveTextFileCopy(tab.resource.path, text)
+                  .catch((error: unknown) => showErrorToast("Could not save a copy", error));
+              }}
+            >
+              <Download className="size-3.5" aria-hidden="true" />
+            </Button>
+          </>
+        ) : null}
         <Button
           type="button"
           variant="ghost"
@@ -479,118 +533,136 @@ export function FileTab({
           </>
         }
       />
-      {query.isPending && !retainDraft ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-muted-foreground">
-          <Spinner /> Loading file
-        </div>
-      ) : query.isError && !retainDraft ? (
-        <Empty className="rounded-none p-5">
-          <EmptyHeader>
-            <EmptyTitle>Could not load file</EmptyTitle>
-            <EmptyDescription>{query.error.message}</EmptyDescription>
-          </EmptyHeader>
-          <Button type="button" variant="outline" size="sm" onClick={() => void query.refetch()}>
-            <RefreshCw data-icon="inline-start" /> Retry
-          </Button>
-        </Empty>
-      ) : preview?.kind === "too-large" ||
-        preview?.kind === "binary" ||
-        preview?.kind === "unsupported-office" ? (
-        <Empty className="rounded-none p-5">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <FileCode2 aria-hidden="true" />
-            </EmptyMedia>
-            <EmptyTitle>Preview unavailable</EmptyTitle>
-            <EmptyDescription>
-              {preview.kind === "too-large"
-                ? `${tab.resource.path} exceeds the ${preview.limitMiB} MiB preview limit.`
-                : preview.kind === "unsupported-office"
-                  ? "Office previews support .docx, .xlsx, .pptx, .odt, .ods and .odp. Legacy, template and macro-enabled formats are not supported."
-                  : `${tab.resource.path} is not a supported image, PDF, document, SQLite database, archive, audio, video, font, notebook, table, diagram or UTF-8 text file.`}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : !active && preview && "data" in preview ? null : preview &&
-        isRichFilePreview(preview) &&
-        !("text" in preview && showSource) ? (
-        <RichFilePreview preview={preview} path={tab.resource.path} />
-      ) : preview?.kind === "office" ? (
-        <Suspense fallback={<PreviewLoading />}>
-          <OfficePreview
-            key={tab.resource.path}
-            data={preview.data}
-            format={preview.format}
-            path={tab.resource.path}
-          />
-        </Suspense>
-      ) : preview?.kind === "pdf" ? (
-        <Suspense
-          fallback={
-            <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-meta text-muted-foreground">
-              <Spinner /> Loading PDF preview
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <FileFindBar find={find} />
+        <div ref={setPreviewRoot} className="flex min-h-0 flex-1 flex-col">
+          {/* Previews stay mounted in a hidden tab so scroll, page and zoom survive a switch. */}
+          {query.isPending && !retainDraft ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-muted-foreground">
+              <Spinner /> Loading file
             </div>
-          }
-        >
-          <PdfPreview key={tab.resource.path} data={preview.data} path={tab.resource.path} />
-        </Suspense>
-      ) : preview?.kind === "image" ? (
-        <ImageFilePreview preview={preview} path={tab.resource.path} />
-      ) : preview?.kind === "audio" || preview?.kind === "video" ? (
-        <MediaFilePreview preview={preview} path={tab.resource.path} />
-      ) : preview?.kind === "markdown" && !showSource ? (
-        <div className="palot-native-scrollbar min-h-0 flex-1 overflow-auto p-5">
-          {scope ? (
-            <MarkdownDocumentPreview
-              tab={tab}
-              scope={scope}
-              pane={pane}
-              text={text}
-              onTaskEdit={
-                ownsConnection && !editing.state.saving
-                  ? (contents) => editing.session.change(contents)
-                  : undefined
+          ) : query.isError && !retainDraft ? (
+            <Empty className="rounded-none p-5">
+              <EmptyHeader>
+                <EmptyTitle>Could not load file</EmptyTitle>
+                <EmptyDescription>{query.error.message}</EmptyDescription>
+              </EmptyHeader>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void query.refetch()}
+              >
+                <RefreshCw data-icon="inline-start" /> Retry
+              </Button>
+            </Empty>
+          ) : preview?.kind === "too-large" ||
+            preview?.kind === "binary" ||
+            preview?.kind === "unsupported-office" ? (
+            <Empty className="rounded-none p-5">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <FileCode2 aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle>Preview unavailable</EmptyTitle>
+                <EmptyDescription>
+                  {preview.kind === "too-large"
+                    ? `${tab.resource.path} exceeds the ${preview.limitMiB} MiB preview limit.`
+                    : preview.kind === "unsupported-office"
+                      ? "Office previews support .docx, .xlsx, .pptx, .odt, .ods and .odp. Legacy, template and macro-enabled formats are not supported."
+                      : `${tab.resource.path} is not a supported image, PDF, document, SQLite database, archive, audio, video, font, notebook, table, diagram or UTF-8 text file.`}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : preview && isRichFilePreview(preview) && !("text" in preview && showSource) ? (
+            <RichFilePreview preview={preview} path={tab.resource.path} />
+          ) : preview?.kind === "office" ? (
+            <Suspense fallback={<PreviewLoading />}>
+              <OfficePreview
+                key={tab.resource.path}
+                data={preview.data}
+                format={preview.format}
+                path={tab.resource.path}
+              />
+            </Suspense>
+          ) : preview?.kind === "pdf" ? (
+            <Suspense
+              fallback={
+                <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-meta text-muted-foreground">
+                  <Spinner /> Loading PDF preview
+                </div>
               }
-            />
+            >
+              <PdfPreview
+                key={tab.resource.path}
+                data={preview.data}
+                path={tab.resource.path}
+                active={active}
+              />
+            </Suspense>
+          ) : preview?.kind === "image" ? (
+            <ImageFilePreview preview={preview} path={tab.resource.path} />
+          ) : preview?.kind === "audio" || preview?.kind === "video" ? (
+            <MediaFilePreview preview={preview} path={tab.resource.path} active={active} />
+          ) : preview?.kind === "markdown" && !showSource ? (
+            <div className="palot-native-scrollbar min-h-0 flex-1 overflow-auto p-5">
+              {scope ? (
+                <MarkdownDocumentPreview
+                  tab={tab}
+                  scope={scope}
+                  pane={pane}
+                  text={text}
+                  onTaskEdit={
+                    ownsConnection && !editing.state.saving
+                      ? (contents) => editing.session.change(contents)
+                      : undefined
+                  }
+                />
+              ) : (
+                <MarkdownFileBody
+                  text={text}
+                  onTaskEdit={
+                    ownsConnection && !editing.state.saving
+                      ? (contents) => editing.session.change(contents)
+                      : undefined
+                  }
+                />
+              )}
+            </div>
           ) : (
-            <MarkdownContent
-              value={text}
-              onTaskEdit={
-                ownsConnection && !editing.state.saving
-                  ? (contents) => editing.session.change(contents)
-                  : undefined
-              }
-              className="mx-auto max-w-4xl"
-            />
+            <div
+              ref={setSourceContainer}
+              className="palot-native-scrollbar min-h-0 flex-1 overflow-auto bg-[var(--code-background)]"
+            >
+              {ownsConnection || editing.state.dirty ? (
+                <FileEditor
+                  path={tab.resource.path}
+                  contents={editing.state.generation ? editing.state.contents : text}
+                  generation={editing.state.generation}
+                  // The session's first read bumps the generation, which replaces Pierre's
+                  // document; keystrokes before it would be lost, so edit only after it.
+                  editable={ownsConnection && editing.state.generation > 0}
+                  onChange={(contents) => editing.session.change(contents)}
+                  selectedLines={commentRange ?? selectedLines}
+                  options={options}
+                  lineAnnotations={lineAnnotations}
+                  renderAnnotation={renderAnnotation}
+                />
+              ) : (
+                <CodeFile
+                  file={file}
+                  selectedLines={commentRange ?? selectedLines}
+                  options={options}
+                  lineAnnotations={lineAnnotations}
+                  renderAnnotation={renderAnnotation}
+                  style={pierreViewerStyle}
+                  className="min-w-full"
+                />
+              )}
+            </div>
           )}
         </div>
-      ) : (
-        <div className="palot-native-scrollbar min-h-0 flex-1 overflow-auto bg-[var(--code-background)]">
-          {ownsConnection || editing.state.dirty ? (
-            <FileEditor
-              path={tab.resource.path}
-              contents={editing.state.generation ? editing.state.contents : text}
-              generation={editing.state.generation}
-              editable={ownsConnection}
-              onChange={(contents) => editing.session.change(contents)}
-              selectedLines={commentRange ?? selectedLines}
-              options={options}
-              lineAnnotations={lineAnnotations}
-              renderAnnotation={renderAnnotation}
-            />
-          ) : (
-            <CodeFile
-              file={file}
-              selectedLines={commentRange ?? selectedLines}
-              options={options}
-              lineAnnotations={lineAnnotations}
-              renderAnnotation={renderAnnotation}
-              style={pierreViewerStyle}
-              className="min-w-full"
-            />
-          )}
-        </div>
-      )}
+      </div>
       {review.enabled && commentRange && isText && showSource ? (
         <ReviewCommentEditor
           key={`${tab.resource.path}:${commentRange.start}:${commentRange.end}`}
@@ -614,6 +686,25 @@ export function FileTab({
       ) : null}
     </div>
   );
+}
+
+/** What Find searches in the view the tab shows; mirrors the view choice in `FileTab`. */
+function fileFindMode(preview: WorkspaceFilePreview | null, showSource: boolean): FileFindMode {
+  if (!preview) return { unavailable: "Find is available once the file loads." };
+  if (
+    preview.kind === "too-large" ||
+    preview.kind === "binary" ||
+    preview.kind === "unsupported-office"
+  )
+    return { unavailable: "This file has no preview to search." };
+  if (isRichFilePreview(preview) && !("text" in preview && showSource)) return "preview";
+  if (preview.kind === "office") return "preview";
+  if (preview.kind === "pdf") return { unavailable: "Find is not available in PDF previews." };
+  if (preview.kind === "image") return { unavailable: "Find is not available in images." };
+  if (preview.kind === "audio" || preview.kind === "video")
+    return { unavailable: `Find is not available in ${preview.kind} previews.` };
+  if (preview.kind === "markdown" && !showSource) return "preview";
+  return "source";
 }
 
 /** The preview half of a Preview/Source toggle, or null for files shown only as source. */
@@ -769,12 +860,23 @@ function ZoomableImage({ src, alt, onError }: { src: string; alt: string; onErro
 function MediaFilePreview({
   preview,
   path,
+  active = true,
 }: {
   preview: Extract<WorkspaceFilePreview, { kind: "audio" | "video" }>;
   path: string;
+  /** A hidden tab keeps its player and position but never keeps playing. */
+  active?: boolean;
 }) {
   const url = usePreviewObjectURL(preview);
   const [failedURL, setFailedURL] = useState<string | null>(null);
+  const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const attachMedia = useCallback((element: HTMLMediaElement | null) => {
+    mediaRef.current = element;
+  }, []);
+
+  useEffect(() => {
+    if (!active) mediaRef.current?.pause();
+  }, [active]);
 
   if (!url) return <PreviewLoading />;
   if (failedURL === url) return <PreviewFailed path={path} />;
@@ -782,6 +884,7 @@ function MediaFilePreview({
     <div className="palot-native-scrollbar flex min-h-0 flex-1 items-center justify-center overflow-auto p-5">
       {preview.kind === "audio" ? (
         <audio
+          ref={attachMedia}
           key={url}
           src={url}
           controls
@@ -792,6 +895,7 @@ function MediaFilePreview({
         />
       ) : (
         <video
+          ref={attachMedia}
           key={url}
           src={url}
           controls
@@ -842,5 +946,45 @@ function PreviewFailed({ path }: { path: string }) {
         <EmptyDescription>Could not display {path}.</EmptyDescription>
       </EmptyHeader>
     </Empty>
+  );
+}
+
+/** A Markdown file's YAML frontmatter shows as properties above the document, not as text. */
+function MarkdownFileBody({
+  text,
+  onTaskEdit,
+}: {
+  text: string;
+  onTaskEdit?: (contents: string) => void;
+}) {
+  const { frontmatter, body } = useMemo(() => splitMarkdownFrontmatter(text), [text]);
+  return (
+    <div className="mx-auto flex max-w-4xl flex-col gap-4">
+      {frontmatter ? (
+        <section aria-label="Properties" className="rounded-md border px-3 py-2 text-compact">
+          {frontmatter.properties ? (
+            <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1">
+              {frontmatter.properties.map((property, index) => (
+                <Fragment key={`${property.key}:${index}`}>
+                  <dt className="truncate text-muted-foreground">{property.key}</dt>
+                  <dd className="min-w-0 whitespace-pre-wrap break-words">{property.value}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          ) : (
+            <pre className="overflow-auto whitespace-pre-wrap break-all font-mono text-code-compact">
+              {frontmatter.yaml}
+            </pre>
+          )}
+        </section>
+      ) : null}
+      <MarkdownContent
+        value={body}
+        // Task edits rewrite the whole file, so keep the frontmatter in front of the body.
+        onTaskEdit={
+          onTaskEdit ? (contents) => onTaskEdit(`${frontmatter?.raw ?? ""}${contents}`) : undefined
+        }
+      />
+    </div>
   );
 }

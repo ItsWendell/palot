@@ -145,6 +145,45 @@ export function resolveSessionProjectionPreference(
   };
 }
 
+const ADVANCED_SETTINGS = [
+  "keepCurrentActivityExpanded",
+  "groupTitle",
+  "groupSameFileReads",
+] as const satisfies readonly (keyof ResolvedSessionProjectionPolicy)[];
+const CATEGORY_RULES = ["presentation", "details", "foldedTurn"] as const;
+
+/**
+ * How many fine-tuning values (every value except the preset, reasoning summaries and
+ * completed-turn folding) resolve differently from the chosen preset.
+ */
+export function customizedAdvancedProjectionCount(preference: SessionProjectionPreference): number {
+  const preset = SESSION_PROJECTION_PRESETS[preference.preset];
+  const resolved = resolveSessionProjectionPreference(preference);
+  let count = ADVANCED_SETTINGS.filter((key) => resolved[key] !== preset[key]).length;
+  for (const category of ACTIVITY_CATEGORIES) {
+    count += CATEGORY_RULES.filter(
+      (rule) => resolved.categories[category][rule] !== preset.categories[category][rule],
+    ).length;
+  }
+  return count;
+}
+
+/** Drops the fine-tuning overrides and keeps the preset and the two main switches. */
+export function resetAdvancedProjection(
+  preference: SessionProjectionPreference,
+): SessionProjectionPreference {
+  return {
+    version: 2,
+    preset: preference.preset,
+    ...(preference.showReasoningSummaries === undefined
+      ? {}
+      : { showReasoningSummaries: preference.showReasoningSummaries }),
+    ...(preference.foldCompletedTurns === undefined
+      ? {}
+      : { foldCompletedTurns: preference.foldCompletedTurns }),
+  };
+}
+
 export function isSessionProjectionPreference(
   value: unknown,
 ): value is SessionProjectionPreference {
@@ -225,6 +264,7 @@ export function activityCategory(part: PalotMessageContent, index: number): Acti
       return "web";
     case "subagent":
       return "delegation";
+    // A Code Mode script's calls are rows of their own; the script's own row is other work.
     case "execute":
     case "image-generation":
     case "generic":

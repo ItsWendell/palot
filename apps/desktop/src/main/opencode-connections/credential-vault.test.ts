@@ -1,7 +1,9 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
-import { OpenCodeCredentialVault } from "./credential-vault";
+import { describe, expect, it, vi } from "vitest";
+import { OpenCodeCredentialVault, safeStorageEncryption } from "./credential-vault";
+
+vi.mock("electron-log/main", () => ({ default: { warn: vi.fn() } }));
 
 class MemoryStore {
   readonly credentials: Record<string, string> = {};
@@ -18,6 +20,7 @@ class MemoryStore {
 
 const encryption = {
   available: () => true,
+  weak: () => false,
   encrypt: (value: string) => Buffer.from(`encrypted:${value}`),
   decrypt: (value: Buffer) => value.toString().replace(/^encrypted:/, ""),
 };
@@ -56,5 +59,44 @@ describe("OpenCodeCredentialVault", () => {
     expect(() => vault.storeCredential({ type: "bearer", token: "secret" })).toThrow(
       "Secure credential storage is unavailable",
     );
+  });
+
+  function safeStorage(backend: string) {
+    return {
+      isEncryptionAvailable: () => true,
+      getSelectedStorageBackend: () => backend as "basic_text",
+      encryptString: (value: string) => Buffer.from(`encrypted:${value}`),
+      decryptString: (value: Buffer) => value.toString().replace(/^encrypted:/, ""),
+    };
+  }
+
+  it("reports Linux basic_text as weak and keeps saving and reading", () => {
+    const store = new MemoryStore();
+    const earlier = new OpenCodeCredentialVault(store, encryption).storeCredential({
+      type: "bearer",
+      token: "earlier",
+    });
+    const vault = new OpenCodeCredentialVault(
+      store,
+      safeStorageEncryption(safeStorage("basic_text"), "linux"),
+    );
+
+    expect(vault.protection()).toBe("basic-text");
+    expect(vault.headers(earlier)).toEqual({ authorization: "Bearer earlier" });
+    const saved = vault.storeCredential({ type: "bearer", token: "later" });
+    expect(vault.headers(saved)).toEqual({ authorization: "Bearer later" });
+  });
+
+  it.each([
+    ["linux", "gnome_libsecret"],
+    ["linux", "kwallet6"],
+    ["darwin", "basic_text"],
+    ["win32", "basic_text"],
+  ] as const)("reports %s with %s as encrypted", (platform, backend) => {
+    const vault = new OpenCodeCredentialVault(
+      new MemoryStore(),
+      safeStorageEncryption(safeStorage(backend), platform),
+    );
+    expect(vault.protection()).toBe("encrypted");
   });
 });

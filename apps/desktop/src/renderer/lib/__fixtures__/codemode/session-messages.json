@@ -1,0 +1,606 @@
+[
+  {
+    "id": "msg_1ee1ad414001doTS1sNnCM820s",
+    "time": {
+      "created": 1794996098539
+    },
+    "text": "Read notes.md, app.js and the image logo.png (all in one script) and tell me in one short line what the image shows and what app.js exports.",
+    "type": "user"
+  },
+  {
+    "id": "msg_1ee1ad5f3001rf6bHNeG9guIQx",
+    "time": {
+      "created": 1794996098551,
+      "firstToken": 1794996099954,
+      "streamed": 1794996100770,
+      "completed": 1794996100838
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "reasoning",
+        "text": "(reasoning)",
+        "time": {
+          "created": 1794996099958,
+          "completed": 1794996100372
+        }
+      },
+      {
+        "type": "tool",
+        "id": "toolu_01DVon3otndM8RVPr7qJ8V5b",
+        "name": "execute",
+        "executed": false,
+        "state": {
+          "status": "completed",
+          "input": {
+            "code": "const [notes, app, logo] = await Promise.all([\n  tools.read({ path: \"notes.md\" }),\n  tools.read({ path: \"app.js\" }),\n  tools.read({ path: \"logo.png\" }),\n]);\nreturn { notes, app, logo };"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"notes\":{\"type\":\"text\",\"content\":\"# Notes\\n\\nStatus: draft\\nOwner: nobody\\n\",\"offset\":1,\"lineCount\":4},\"app\":{\"type\":\"text\",\"content\":\"export function greet(name) {\\n  return \\\"Hello \\\" + name\\n}\\n\",\"offset\":1,\"lineCount\":3},\"logo\":{\"type\":\"media\",\"uri\":\"file:///repo/logo.png\",\"mime\":\"image/png\",\"name\":\"logo.png\"}}"
+            },
+            {
+              "type": "file",
+              "uri": "data:image/png;base64,iVBORw0KGgo=",
+              "mime": "image/png",
+              "name": "logo.png"
+            }
+          ],
+          "metadata": {
+            "toolCalls": [
+              {
+                "tool": "read",
+                "status": "completed",
+                "input": {
+                  "path": "notes.md"
+                }
+              },
+              {
+                "tool": "read",
+                "status": "completed",
+                "input": {
+                  "path": "app.js"
+                }
+              },
+              {
+                "tool": "read",
+                "status": "completed",
+                "input": {
+                  "path": "logo.png"
+                }
+              }
+            ],
+            "truncated": false
+          }
+        },
+        "time": {
+          "created": 1794996100377,
+          "ran": 1794996100766,
+          "completed": 1794996100818
+        }
+      }
+    ],
+    "snapshot": {
+      "start": "51d478e0a1b75311ac9d9744f92c61993381785c",
+      "end": "51d478e0a1b75311ac9d9744f92c61993381785c",
+      "files": []
+    },
+    "finish": "tool-calls",
+    "tokens": {
+      "input": 2,
+      "output": 145,
+      "reasoning": 61,
+      "cache": {
+        "read": 0,
+        "write": 38431
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1adef4001P31H5aX2O2hl3H",
+    "time": {
+      "created": 1794996100859,
+      "firstToken": 1794996101845,
+      "streamed": 1794996102553,
+      "completed": 1794996102566
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "reasoning",
+        "text": "(reasoning)",
+        "time": {
+          "created": 1794996101846,
+          "completed": 1794996102285
+        }
+      },
+      {
+        "type": "text",
+        "text": "The image is a plain two-colour block, red on the left and blue on the right, with no text or logo visible. `app.js` exports one function, `greet(name)`, which returns `\"Hello \" + name`."
+      }
+    ],
+    "snapshot": {
+      "start": "51d478e0a1b75311ac9d9744f92c61993381785c",
+      "end": "51d478e0a1b75311ac9d9744f92c61993381785c",
+      "files": []
+    },
+    "finish": "stop",
+    "tokens": {
+      "input": 2,
+      "output": 65,
+      "reasoning": 115,
+      "cache": {
+        "read": 38431,
+        "write": 423
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1ae5af001q5s5ch10vKH8TP",
+    "time": {
+      "created": 1794996102575
+    },
+    "type": "idle",
+    "outcome": "succeeded"
+  },
+  {
+    "id": "msg_1ee1b1743001he29NnSqI5jvAn",
+    "time": {
+      "created": 1794996115281
+    },
+    "text": "In one script: change Status in notes.md to review, and in app.js switch greet to a template literal and add an exported farewell(name) function. Then, in the same or a second script, run the shell commands `ls missing-dir` (expected to fail) and `git diff --stat`. Reply with one line.",
+    "type": "user"
+  },
+  {
+    "id": "msg_1ee1b175c001LDTgMcWjMHrACZ",
+    "time": {
+      "created": 1794996115301,
+      "firstToken": 1794996115971,
+      "streamed": 1794996118845,
+      "completed": 1794996118985
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "reasoning",
+        "text": "(reasoning)",
+        "time": {
+          "created": 1794996115975,
+          "completed": 1794996118149
+        }
+      },
+      {
+        "type": "tool",
+        "id": "toolu_01TC1Ld5s1zAJ4NwczZNpdaS",
+        "name": "execute",
+        "executed": false,
+        "state": {
+          "status": "completed",
+          "input": {
+            "code": "await tools.edit({\n  path: \"notes.md\",\n  oldString: \"Status: draft\",\n  newString: \"Status: review\",\n});\nawait tools.edit({\n  path: \"app.js\",\n  oldString: '  return \"Hello \" + name\\n}\\n',\n  newString: '  return `Hello ${name}`\\n}\\n\\nexport function farewell(name) {\\n  return `Goodbye ${name}`\\n}\\n',\n});\nconst [missing, diff] = await Promise.all([\n  tools.shell({ command: \"ls missing-dir\" }),\n  tools.shell({ command: \"git diff --stat\" }),\n]);\nreturn { missing, diff };"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"missing\":{\"exitCode\":2,\"output\":\"ls: cannot access 'missing-dir': No such file or directory\\n\",\"wallTimeSeconds\":0.002},\"diff\":{\"exitCode\":0,\"output\":\" app.js   | 6 +++++-\\n notes.md | 2 +-\\n 2 files changed, 6 insertions(+), 2 deletions(-)\\n\",\"wallTimeSeconds\":0.002}}"
+            }
+          ],
+          "metadata": {
+            "toolCalls": [
+              {
+                "tool": "edit",
+                "status": "completed",
+                "input": {
+                  "path": "notes.md",
+                  "oldString": "Status: draft",
+                  "newString": "Status: review"
+                }
+              },
+              {
+                "tool": "edit",
+                "status": "completed",
+                "input": {
+                  "path": "app.js",
+                  "oldString": "  return \"Hello \" + name\n}\n",
+                  "newString": "  return `Hello ${name}`\n}\n\nexport function farewell(name) {\n  return `Goodbye ${name}`\n}\n"
+                }
+              },
+              {
+                "tool": "shell",
+                "status": "completed",
+                "input": {
+                  "command": "ls missing-dir"
+                }
+              },
+              {
+                "tool": "shell",
+                "status": "completed",
+                "input": {
+                  "command": "git diff --stat"
+                }
+              }
+            ],
+            "truncated": false
+          }
+        },
+        "time": {
+          "created": 1794996118156,
+          "ran": 1794996118842,
+          "completed": 1794996118964
+        }
+      }
+    ],
+    "snapshot": {
+      "start": "51d478e0a1b75311ac9d9744f92c61993381785c",
+      "end": "dcf1214891386be083d918709790864db0a56596",
+      "files": ["app.js", "notes.md"]
+    },
+    "finish": "tool-calls",
+    "tokens": {
+      "input": 4,
+      "output": 271,
+      "reasoning": 491,
+      "cache": {
+        "read": 38854,
+        "write": 274
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1b25d5001vYSPkQCvzPOJQ0",
+    "time": {
+      "created": 1794996119003,
+      "firstToken": 1794996119669,
+      "streamed": 1794996119965,
+      "completed": 1794996119974
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "Done: `notes.md` status is now review, `app.js` uses a template literal in `greet` and exports a new `farewell(name)`, `ls missing-dir` failed as expected (exit 2), and `git diff --stat` reports 2 files changed, 6 insertions, 2 deletions."
+      }
+    ],
+    "snapshot": {
+      "start": "dcf1214891386be083d918709790864db0a56596",
+      "end": "dcf1214891386be083d918709790864db0a56596",
+      "files": []
+    },
+    "finish": "stop",
+    "tokens": {
+      "input": 2,
+      "output": 98,
+      "reasoning": 0,
+      "cache": {
+        "read": 39128,
+        "write": 911
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1b29bd001XcpVL7cepme9dA",
+    "time": {
+      "created": 1794996119997
+    },
+    "type": "idle",
+    "outcome": "succeeded"
+  },
+  {
+    "id": "msg_1ee1ceb85001hiNE0SjWCsYuNJ",
+    "time": {
+      "created": 1794996235693
+    },
+    "text": "Run ./slow.sh with the shell tool inside one Code Mode script (no background flag) and return its output. Reply with one line.",
+    "type": "user"
+  },
+  {
+    "id": "msg_1ee1cedb5001LGeqTJtNP56pI7",
+    "time": {
+      "created": 1794996235706,
+      "firstToken": 1794996236331,
+      "streamed": 1794996236531,
+      "completed": 1794996246550
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "tool",
+        "id": "toolu_01VCD7VseHy8CPNVfnHPeBxM",
+        "name": "execute",
+        "executed": false,
+        "state": {
+          "status": "completed",
+          "input": {
+            "code": "return await tools.shell({ command: \"./slow.sh\" });"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Script cm_1ee1cf0d7001JiOLQuwCfI2t7F is still running; its result will arrive in this session."
+            }
+          ],
+          "metadata": {
+            "jobID": "cm_1ee1cf0d7001JiOLQuwCfI2t7F",
+            "truncated": false
+          }
+        },
+        "time": {
+          "created": 1794996236333,
+          "ran": 1794996236499,
+          "completed": 1794996246537
+        }
+      }
+    ],
+    "snapshot": {
+      "start": "dcf1214891386be083d918709790864db0a56596",
+      "end": "dcf1214891386be083d918709790864db0a56596",
+      "files": []
+    },
+    "finish": "tool-calls",
+    "tokens": {
+      "input": 4,
+      "output": 79,
+      "reasoning": 0,
+      "cache": {
+        "read": 40039,
+        "write": 142
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1d1821001e3tAn6YZLNzeA0",
+    "time": {
+      "created": 1794996246565,
+      "firstToken": 1794996247242,
+      "streamed": 1794996247531,
+      "completed": 1794996247537
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "reasoning",
+        "text": "(reasoning)",
+        "time": {
+          "created": 1794996247248,
+          "completed": 1794996247294
+        }
+      },
+      {
+        "type": "text",
+        "text": "`./slow.sh` is still running inside the Code Mode script, so I don't have its output yet. The result will arrive in this session when it finishes."
+      }
+    ],
+    "snapshot": {
+      "start": "dcf1214891386be083d918709790864db0a56596",
+      "end": "dcf1214891386be083d918709790864db0a56596",
+      "files": []
+    },
+    "finish": "stop",
+    "tokens": {
+      "input": 2,
+      "output": 48,
+      "reasoning": 30,
+      "cache": {
+        "read": 40181,
+        "write": 129
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1d1bfa001oQHqne11l6qhlw",
+    "time": {
+      "created": 1794996247546
+    },
+    "type": "idle",
+    "outcome": "succeeded"
+  },
+  {
+    "id": "msg_1ee1d18060011N30CJx6jJkJjO",
+    "metadata": {
+      "source": "codemode",
+      "jobID": "cm_1ee1cf0d7001JiOLQuwCfI2t7F",
+      "state": "completed"
+    },
+    "time": {
+      "created": 1794996261615
+    },
+    "text": "<codemode id=\"cm_1ee1cf0d7001JiOLQuwCfI2t7F\" state=\"completed\">\n{\"exitCode\":0,\"output\":\"slow-done\\n\",\"wallTimeSeconds\":25.005}\n</codemode>",
+    "description": "Code Mode script",
+    "type": "synthetic"
+  },
+  {
+    "id": "msg_1ee1d52f30015G057Mv3qOymdw",
+    "time": {
+      "created": 1794996261621,
+      "firstToken": 1794996262172,
+      "streamed": 1794996262384,
+      "completed": 1794996262395
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "`./slow.sh` finished with exit code 0 and printed `slow-done` after about 25 seconds."
+      }
+    ],
+    "snapshot": {
+      "start": "dcf1214891386be083d918709790864db0a56596",
+      "end": "dcf1214891386be083d918709790864db0a56596",
+      "files": []
+    },
+    "finish": "stop",
+    "tokens": {
+      "input": 4,
+      "output": 37,
+      "reasoning": 0,
+      "cache": {
+        "read": 40310,
+        "write": 160
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1d56020014QXe0WYHU3BxxS",
+    "time": {
+      "created": 1794996262402
+    },
+    "type": "idle",
+    "outcome": "succeeded"
+  },
+  {
+    "id": "msg_1ee1df0b9001baliUknc7MtmUO",
+    "time": {
+      "created": 1794996302017
+    },
+    "text": "In one Code Mode script use Promise.allSettled to: (a) run a websearch for \"Bun runtime latest release\" if a websearch tool exists, and (b) read the file missing.txt (it does not exist; that failure is expected). Return both results. Then reply in one line.",
+    "type": "user"
+  },
+  {
+    "id": "msg_1ee1df0c5001SBBUrjXDcGI4Q2",
+    "time": {
+      "created": 1794996302024,
+      "firstToken": 1794996302893,
+      "streamed": 1794996303150,
+      "completed": 1794996313182
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "tool",
+        "id": "toolu_01Cvo3Y8SBQqFcSY5LSV5rJ9",
+        "name": "execute",
+        "executed": false,
+        "state": {
+          "status": "completed",
+          "input": {
+            "code": "const results = await Promise.allSettled([\n  tools.websearch({ query: \"Bun runtime latest release\" }),\n  tools.read({ path: \"missing.txt\" }),\n]);\nreturn results;"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Script cm_1ee1df532001nvQzkGVDgD57oo is still running; its result will arrive in this session."
+            }
+          ],
+          "metadata": {
+            "jobID": "cm_1ee1df532001nvQzkGVDgD57oo",
+            "truncated": false
+          }
+        },
+        "time": {
+          "created": 1794996302895,
+          "ran": 1794996303142,
+          "completed": 1794996313165
+        }
+      }
+    ],
+    "snapshot": {
+      "start": "dcf1214891386be083d918709790864db0a56596",
+      "end": "dcf1214891386be083d918709790864db0a56596",
+      "files": []
+    },
+    "finish": "tool-calls",
+    "tokens": {
+      "input": 4,
+      "output": 123,
+      "reasoning": 0,
+      "cache": {
+        "read": 40470,
+        "write": 129
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1e1c6b001p4mZ4QcPhrAGvW",
+    "time": {
+      "created": 1794996313201,
+      "firstToken": 1794996313779,
+      "streamed": 1794996314079,
+      "completed": 1794996314085
+    },
+    "type": "assistant",
+    "agent": "build",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "providerID": "anthropic",
+      "variant": "default"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "The combined script (web search for \"Bun runtime latest release\" plus the expected-to-fail read of `missing.txt`) is still running, and both results will arrive in this session when it finishes."
+      }
+    ],
+    "snapshot": {
+      "start": "dcf1214891386be083d918709790864db0a56596",
+      "end": "dcf1214891386be083d918709790864db0a56596",
+      "files": []
+    },
+    "finish": "stop",
+    "tokens": {
+      "input": 2,
+      "output": 61,
+      "reasoning": 0,
+      "cache": {
+        "read": 40599,
+        "write": 169
+      }
+    }
+  },
+  {
+    "id": "msg_1ee1e1fea001o4wDlVS0XJ5WZ9",
+    "time": {
+      "created": 1794996314090
+    },
+    "type": "idle",
+    "outcome": "succeeded"
+  }
+]

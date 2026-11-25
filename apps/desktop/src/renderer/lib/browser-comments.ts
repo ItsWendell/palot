@@ -1,5 +1,9 @@
 import type { PalotMessage } from "../../shared";
 import type { PalotBrowserComment } from "../../shared/browser-contract";
+import { mediaRef } from "./media-refs";
+
+const MAX_PREVIEW_LENGTH = 262144;
+const JPEG_PREVIEW = /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/;
 
 export function isBrowserComment(value: unknown): value is PalotBrowserComment {
   if (!value || typeof value !== "object") return false;
@@ -24,10 +28,13 @@ export function isBrowserComment(value: unknown): value is PalotBrowserComment {
     [element.ref, element.text, element.name, element.role, item.bindingID].every(
       (value) => value === undefined || (typeof value === "string" && value.length <= 256),
     ) &&
+    // A captured JPEG, or the server-stored attached file a restored comment reads it from.
     (item.preview === undefined ||
       (typeof item.preview === "string" &&
-        item.preview.length <= 262144 &&
-        /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(item.preview)))
+        item.preview.length <= MAX_PREVIEW_LENGTH &&
+        (JPEG_PREVIEW.test(item.preview) || mediaRef(item.preview) !== undefined))) &&
+    (item.previewFile === undefined ||
+      (typeof item.previewFile === "string" && item.previewFile.length <= 256))
   );
 }
 
@@ -44,8 +51,10 @@ export function browserCommentPreviewName(comment: Pick<PalotBrowserComment, "id
 
 /** Preview bytes belong to their comment, not to the independent attachment list. */
 export function isBrowserCommentPreview(name: string | undefined, message: PalotMessage): boolean {
-  return browserCommentsFromMessage(message).some(
-    (comment) => !!comment.preview && browserCommentPreviewName(comment) === name,
+  return storedBrowserComments(message).some(
+    (comment) =>
+      (comment.previewFile !== undefined && comment.previewFile === name) ||
+      (!!comment.preview && browserCommentPreviewName(comment) === name),
   );
 }
 
@@ -88,12 +97,31 @@ export function formatBrowserComment(comment: PalotBrowserComment): string {
   return `The user commented on the ${JSON.stringify(element.label)} element in browser tab ${JSON.stringify(comment.tabID)} at ${JSON.stringify(comment.url)}${details ? ` (${details})` : ""}: ${comment.comment}`;
 }
 
-export function browserCommentsFromMessage(message: PalotMessage): PalotBrowserComment[] {
+function storedBrowserComments(message: PalotMessage): PalotBrowserComment[] {
   const data = message.data;
   const metadata = data && typeof data === "object" && !Array.isArray(data) ? data.metadata : null;
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
   const comments = (metadata as Record<string, unknown>).browserComments;
-  return Array.isArray(comments)
-    ? comments.filter(isBrowserComment).map(durableBrowserComment)
-    : [];
+  return Array.isArray(comments) ? comments.filter(isBrowserComment) : [];
+}
+
+/** The image of the message's attached file, as read with or without server-stored media. */
+function attachedPreview(message: PalotMessage, name: string): string | undefined {
+  const file = message.files?.find((item) => item.name === name);
+  if (!file || file.mime.toLowerCase() !== "image/jpeg") return undefined;
+  return file.previewDataUrl ?? file.previewMedia;
+}
+
+/**
+ * Restores a sent message's comments with their previews. Older messages carry the preview
+ * inline; newer ones name the attached file that holds it.
+ */
+export function browserCommentsFromMessage(message: PalotMessage): PalotBrowserComment[] {
+  return storedBrowserComments(message).map((stored) => {
+    const { previewFile, ...comment } = durableBrowserComment(stored);
+    if (comment.preview || !previewFile) return comment;
+    const preview = attachedPreview(message, previewFile);
+    const restored = preview ? { ...comment, preview } : comment;
+    return isBrowserComment(restored) ? restored : comment;
+  });
 }

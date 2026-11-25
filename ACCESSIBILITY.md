@@ -24,6 +24,14 @@ need broader coverage, and no conformance claim is made.
 - Major dialogs trap keyboard focus and return it to the invoking control when
   that control still exists.
 
+## Keyboard navigation
+
+- F6 moves focus to the next major area and Shift+F6 to the previous one: the
+  task list, the transcript, the composer, then the workbench when it is open.
+  Focus returns to the last focused element in that area. The keys work from
+  inside terminals and code editors, do nothing while a modal dialog is open,
+  and can be changed in Settings → Keyboard shortcuts.
+
 ## Reporting an accessibility issue
 
 Open a [GitHub Issue](https://github.com/ItsWendell/palot/issues) with:

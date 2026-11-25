@@ -2,14 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cancelTranscriptScrollFrame,
   composerTranscriptPageDirection,
+  nearTranscriptTurns,
   transcriptPageScrollTop,
   nextTranscriptBottomLock,
   normalizeTranscriptWheelDelta,
+  transcriptWheelIsSideways,
   readTranscriptScrollUpdate,
   scheduleTranscriptScrollFrame,
   transcriptDistanceFromBottom,
   transcriptKeyboardScrollDelta,
   transcriptScrollTargetConsumesDelta,
+  transcriptSubmissionFollowsBottom,
 } from "./transcript-scroll";
 
 describe("transcript keyboard intent", () => {
@@ -246,6 +249,15 @@ describe("transcript bottom lock", () => {
     );
   });
 
+  it.each([
+    { deltaX: 5, deltaY: -30, shiftKey: false, sideways: false },
+    { deltaX: 80, deltaY: -30, shiftKey: false, sideways: true },
+    { deltaX: -80, deltaY: 30, shiftKey: false, sideways: true },
+    { deltaX: 0, deltaY: -30, shiftKey: true, sideways: true },
+  ])("tells sideways wheel gestures from reading up or down: %j", ({ sideways, ...wheel }) => {
+    expect(transcriptWheelIsSideways(wheel)).toBe(sideways);
+  });
+
   it("lets nested scroll panes consume gestures until their boundary", () => {
     const metrics = { scrollTop: 20, scrollHeight: 500, clientHeight: 200 };
 
@@ -274,5 +286,81 @@ describe("transcript bottom lock", () => {
     expect(callback).toHaveBeenCalledOnce();
     expect(frame.current).toBeNull();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("near transcript turns", () => {
+  // Three turns: a tall one, the visible one (index 1), and a short one below.
+  const items = [
+    { start: 0, end: 2000 },
+    { start: 2000, end: 3000 },
+    { start: 3000, end: 3100 },
+  ];
+
+  it("leaves neighbouring turns unmounted while they are far from the viewport", () => {
+    expect(
+      nearTranscriptTurns({
+        startIndex: 1,
+        endIndex: 1,
+        items,
+        scrollOffset: 2400,
+        viewportHeight: 300,
+      }),
+    ).toEqual([]);
+  });
+
+  it("mounts the neighbours that are about to scroll into view", () => {
+    expect(
+      nearTranscriptTurns({
+        startIndex: 1,
+        endIndex: 1,
+        items,
+        scrollOffset: 2100,
+        viewportHeight: 700,
+      }),
+    ).toEqual([0, 2]);
+  });
+
+  it("has no neighbours past either end of the transcript", () => {
+    expect(
+      nearTranscriptTurns({
+        startIndex: 0,
+        endIndex: 2,
+        items,
+        scrollOffset: 0,
+        viewportHeight: 3100,
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("transcript submission follow", () => {
+  const scrolled = { scrollTop: 400, scrollHeight: 3000, clientHeight: 800 };
+  it("takes a reader who follows the bottom along with the sent prompt", () => {
+    expect(
+      transcriptSubmissionFollowsBottom({
+        locked: true,
+        metrics: { ...scrolled, scrollTop: 2200 },
+      }),
+    ).toBe(true);
+  });
+  it("keeps a reader who scrolled up where they are", () => {
+    expect(transcriptSubmissionFollowsBottom({ locked: false, metrics: scrolled })).toBe(false);
+    // Any scroll away from the bottom shows Scroll to bottom, so even a short way up stays put.
+    expect(
+      transcriptSubmissionFollowsBottom({
+        locked: false,
+        metrics: { ...scrolled, scrollTop: 2100 },
+      }),
+    ).toBe(false);
+  });
+  it("follows when the transcript fits its viewport or is not mounted", () => {
+    expect(
+      transcriptSubmissionFollowsBottom({
+        locked: false,
+        metrics: { scrollTop: 0, scrollHeight: 800, clientHeight: 800 },
+      }),
+    ).toBe(true);
+    expect(transcriptSubmissionFollowsBottom({ locked: false, metrics: null })).toBe(true);
   });
 });

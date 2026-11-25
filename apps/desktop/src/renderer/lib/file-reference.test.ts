@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   expandHomePath,
+  fileReferenceAbsolutePath,
   fileReferenceBases,
   fileReferenceHref,
+  fileReferenceMachine,
+  fileReferenceText,
   inferHomeDirectory,
   serverHomeDirectory,
   locationAtMessage,
@@ -16,6 +19,34 @@ import {
 const code = (value: string, allowHome = false) =>
   parseFileReference(value, { source: "code", allowHome });
 const href = (value: string) => parseFileReference(value, { source: "href" });
+
+describe("machine file references", () => {
+  it("reads machine paths in code and keeps them off this computer", () => {
+    expect(code("devbox:/srv/app/src/app.ts:12")).toEqual({
+      path: "/srv/app/src/app.ts",
+      machine: "devbox",
+      line: 12,
+    });
+    expect(code("gpu:~/notes.md")).toEqual({ path: "~/notes.md", machine: "gpu" });
+    const reference = code("devbox:/srv/app/src/app.ts")!;
+    expect(fileReferenceHref(reference, "/repo")).toBeUndefined();
+    expect(fileReferenceText(reference)).toBe("devbox:/srv/app/src/app.ts");
+    expect(fileReferenceAbsolutePath("devbox:/srv/a.ts", "/repo")).toBeNull();
+    expect(fileReferenceMachine({ path: "devbox:/srv/a.ts" })).toEqual({
+      machine: "devbox",
+      path: "/srv/a.ts",
+    });
+  });
+
+  it("leaves Windows drives, URLs and local: paths on the server", () => {
+    expect(code("C:/repo/src/a.ts")).toEqual({ path: "C:/repo/src/a.ts" });
+    expect(code("https://example.com/a.ts")).toBeNull();
+    expect(code("local:/srv/app/a.ts")).toEqual({ path: "/srv/app/a.ts" });
+    expect(fileReferenceAbsolutePath("local:/srv/a.ts", "/repo")).toBe("/srv/a.ts");
+    expect(code("devbox:/")).toBeNull();
+    expect(code("gpu:work/a.ts")).toBeNull();
+  });
+});
 
 describe("parseFileReference", () => {
   it.each([
@@ -32,6 +63,8 @@ describe("parseFileReference", () => {
     "slides.odp",
     "document.rtf",
     "book.epub",
+    "table.csv",
+    "table.tsv",
   ])("links the previewable file %s", (path) => {
     expect(code(path)).toEqual({ path });
   });
@@ -85,6 +118,15 @@ describe("parseFileReference", () => {
     expect(code("//server/share/a.ts")).toBeNull();
     expect(code("docs/my file.md")).toEqual({ path: "docs/my file.md" });
     expect(code("thread.tsx")).toEqual({ path: "thread.tsx" });
+  });
+
+  it("rejects paths an agent shortened with an ellipsis segment", () => {
+    expect(code("src/.../main.ts")).toBeNull();
+    expect(code("/tmp/.../notes.md:12")).toBeNull();
+    expect(code("~/projects/…/notes.md")).toBeNull();
+    expect(code("/tmp/claude-1000/...")).toBeNull();
+    // A name that merely contains dots is still a file.
+    expect(code("src/a...b.ts")).toEqual({ path: "src/a...b.ts" });
   });
 
   it("keeps encoded # and ? in file URL names", () => {

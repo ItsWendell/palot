@@ -1,9 +1,16 @@
 import { Provider, createStore } from "jotai";
+import userEvent from "@testing-library/user-event";
+import { Profiler } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { JsonValue, PalotMessageContent } from "../../shared";
-import { projectToolExecution, type ReadExecution } from "../lib/tool-executions";
+import {
+  executeNestedParts,
+  projectToolExecution,
+  type ReadExecution,
+} from "../lib/tool-executions";
 import { MarkdownWorkspaceProvider } from "./markdown-content";
+import { PendingApprovalContext, PendingApprovalStore } from "./transcript/pending-approvals";
 import {
   normalizeReadExecutions,
   ReadToolExecutionGroup,
@@ -431,7 +438,7 @@ describe("ToolExecution", () => {
     const card = within(result.container);
 
     const trigger = card.getByRole("button", {
-      name: "Read a.ts lines 1–2 Completed in 250 ms",
+      name: "Read a.ts lines 1–2 Completed in 250ms",
     });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(trigger);
@@ -467,7 +474,7 @@ describe("ToolExecution", () => {
 
     render(<ReadToolExecutionGroup entries={reads.map((part, index) => ({ part, index }))} />);
 
-    expect(screen.getByLabelText("Completed in 300 ms").textContent).toBe("300 ms");
+    expect(screen.getByLabelText("Completed in 300ms").textContent).toBe("300ms");
   });
 
   it("shows completed tool duration instead of a checkmark", () => {
@@ -488,7 +495,7 @@ describe("ToolExecution", () => {
       </Provider>,
     );
 
-    expect(screen.getByLabelText("Completed in 1.3 s").textContent).toBe("1.3 s");
+    expect(screen.getByLabelText("Completed in 1.2s").textContent).toBe("1.2s");
     expect(container.querySelector(".lucide-check")).toBeNull();
   });
 
@@ -887,6 +894,27 @@ describe("ToolExecution", () => {
     expect(screen.getByText("Command exited with code 1")).toBeTruthy();
   });
 
+  it("titles a stopped command as stopped, not failed", () => {
+    const part: PalotMessageContent = {
+      type: "tool",
+      id: "shell-stopped",
+      name: "shell",
+      state: {
+        status: "error",
+        input: { command: "sleep 60" },
+        error: { type: "aborted", message: "Tool execution interrupted: shell" },
+      },
+    };
+    const result = render(
+      <Provider store={createStore()}>
+        <ToolExecution part={part} index={0} />
+      </Provider>,
+    );
+    expect(result.container.textContent).toContain("Stopped sleep 60");
+    expect(within(result.container).getByText("Stopped")).toBeTruthy();
+    expect(result.container.textContent).not.toMatch(/failed/i);
+  });
+
   it("titles a completed shell command that exited non-zero as failed", () => {
     const part: PalotMessageContent = {
       type: "tool",
@@ -988,6 +1016,8 @@ describe("ToolExecution", () => {
     const output = within(container).getByLabelText("Search results for value");
     expect(output.classList.contains("overflow-y-auto")).toBe(true);
     expect(output.textContent).toContain("src/a.ts");
+    // The row names the folder it searched.
+    expect(container.textContent).toContain("Searched for “value” in src");
   });
 
   it("does not load remote images from fetched markdown", () => {
@@ -1072,10 +1102,40 @@ describe("ToolExecution", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Failed to fetch https:\/\/example\.com/ }),
+      screen.getByRole("button", { name: /Tried to fetch https:\/\/example\.com/ }),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Failed to fetch https:\/\/example\.com/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Tried to fetch https:\/\/example\.com/ }));
     expect(screen.getByText("Connection refused")).toBeTruthy();
+  });
+
+  it("titles failed calls by what they tried and keeps the Failed badge", () => {
+    const failed = (id: string, name: string, input: Record<string, JsonValue>) => (
+      <ToolExecution
+        key={id}
+        index={0}
+        part={{ type: "tool", id, name, state: { status: "error", input, error: "Nope" } }}
+      />
+    );
+    render(
+      <Provider store={createStore()}>
+        {failed("read", "read", { path: "src/app.ts" })}
+        {failed("edit", "edit", { path: "src/view.ts", oldString: "a", newString: "b" })}
+        {failed("grep", "grep", { pattern: "TODO" })}
+        {failed("list", "list", { path: "src/lib" })}
+        {failed("shell", "shell", { command: "bun test" })}
+      </Provider>,
+    );
+
+    for (const name of [
+      /^Tried to read app\.ts/,
+      /^Tried to edit view\.ts/,
+      /^Tried to search for “TODO”/,
+      /^Tried to list src\/lib/,
+      /^Command failed: bun test/,
+    ]) {
+      const row = screen.getByRole("button", { name });
+      expect(within(row).getByText("Failed")).toBeTruthy();
+    }
   });
 
   it("renders a readable fallback title from the tool name and input", () => {
@@ -1103,7 +1163,7 @@ describe("ToolExecution", () => {
     ).toBeTruthy();
   });
 
-  it("renders execute orchestration without dumping the script into the title", () => {
+  it("renders a script with no recognised calls as one row without dumping it into the title", () => {
     const store = createStore();
     const code = "return await tools.fixtures.add({ a: 1, b: 2 })";
     const part: PalotMessageContent = {
@@ -1129,9 +1189,7 @@ describe("ToolExecution", () => {
       </Provider>,
     );
 
-    const trigger = screen.getByRole("button", {
-      name: /Orchestrated Fixtures add and Bad tool 1 failed/i,
-    });
+    const trigger = screen.getByRole("button", { name: /Ran a script 1 failed/i });
     expect(trigger.textContent).not.toContain(code);
     expect(screen.getByText("Fixtures add")).toBeTruthy();
     expect(screen.getByText("Bad tool")).toBeTruthy();
@@ -1141,6 +1199,75 @@ describe("ToolExecution", () => {
     const result = screen.getByLabelText("JSON result");
     expect(result.textContent).toBe('{\n  "sum": 3,\n  "ok": true,\n  "value": null\n}');
     expect(result.querySelector(".tool-highlight")).toBeTruthy();
+  });
+
+  it("renders a script's calls as the rows of the same calls, with the script one step away", async () => {
+    const user = userEvent.setup();
+    const code = 'return await tools.shell({ command: "git diff --stat" })';
+    const script: PalotMessageContent = {
+      type: "tool",
+      id: "execute-2",
+      name: "execute",
+      state: {
+        status: "completed",
+        input: { code },
+        content: [{ type: "text", text: '{"exitCode":0,"output":"1 file changed"}' }],
+        metadata: {
+          toolCalls: [
+            { tool: "shell", status: "completed", input: { command: "git diff --stat" } },
+          ],
+        },
+      },
+    };
+    const [call] = executeNestedParts(script, 0);
+
+    const { container } = render(
+      <Provider>
+        <ToolExecution part={call!} index={0} />
+      </Provider>,
+    );
+    const row = within(container);
+
+    await user.click(row.getByRole("button", { name: /Ran git diff --stat/ }));
+    expect(row.getByText(/Output isn’t available for commands run inside a script/)).toBeTruthy();
+    expect(row.queryByLabelText("Code Mode script")).toBeNull();
+    await user.click(row.getByRole("button", { name: "Show the script’s result" }));
+    expect(
+      row.getByText((_, element) => element?.tagName === "CODE" && element.textContent === code),
+    ).toBeTruthy();
+    expect(row.getByLabelText("JSON result").textContent).toContain("1 file changed");
+    expect(row.getByRole("button", { name: "Hide script" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
+
+  it("titles a script that threw after its calls with what it threw", () => {
+    const part: PalotMessageContent = {
+      type: "tool",
+      id: "execute-3",
+      name: "execute",
+      state: {
+        status: "error",
+        input: { code: "throw new Error('boom')" },
+        error: { type: "CodeModeError", message: "Error: Example failure after 2 calls" },
+        metadata: {
+          error: true,
+          toolCalls: [{ tool: "read", status: "error", input: { path: "missing.txt" } }],
+        },
+      },
+    };
+
+    const { container } = render(
+      <Provider>
+        <ToolExecution part={part} index={0} />
+      </Provider>,
+    );
+
+    expect(
+      within(container).getByRole("button", {
+        name: /Script failed: Example failure after 2 calls/,
+      }),
+    ).toBeTruthy();
   });
 
   it("renders code-bearing MCP tools with script and structured result sections", () => {
@@ -1167,5 +1294,48 @@ describe("ToolExecution", () => {
     expect(trigger.textContent).not.toContain(code);
     expect(card.getByText("Script")).toBeTruthy();
     expect(card.getByLabelText("JSON result")).toBeTruthy();
+  });
+
+  it("shows Needs approval only while a permission request names the tool part", async () => {
+    const store = new PendingApprovalStore();
+    const focus = vi.fn();
+    const renders: string[] = [];
+    const shell = (id: string): PalotMessageContent => ({
+      type: "tool",
+      id,
+      name: "shell",
+      state: { status: "running", input: { command: `echo ${id}` }, time: { start: 1 } },
+    });
+    render(
+      <PendingApprovalContext.Provider value={store}>
+        {["waiting", "other"].map((id) => (
+          <Profiler key={id} id={id} onRender={() => renders.push(id)}>
+            <ToolExecution index={0} part={shell(id)} />
+          </Profiler>
+        ))}
+      </PendingApprovalContext.Provider>,
+    );
+    expect(screen.queryByRole("button", { name: "Needs approval" })).toBeNull();
+
+    renders.length = 0;
+    act(() => store.update(new Map([["unrelated", "permission-0"]]), focus));
+    expect(screen.queryByRole("button", { name: "Needs approval" })).toBeNull();
+    expect(renders).toEqual([]);
+
+    act(() => store.update(new Map([["waiting", "permission-1"]]), focus));
+    const badge = screen.getByRole("button", { name: "Needs approval" });
+    expect(badge.closest("[data-palot-awaiting-approval]")?.textContent).toContain("echo waiting");
+    expect(renders).toEqual(["waiting"]);
+
+    await userEvent.click(badge);
+    expect(focus).toHaveBeenLastCalledWith("permission-1");
+    focus.mockClear();
+    badge.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(focus).toHaveBeenLastCalledWith("permission-1");
+
+    act(() => store.update(new Map(), focus));
+    expect(screen.queryByRole("button", { name: "Needs approval" })).toBeNull();
+    expect(document.querySelector("[data-palot-awaiting-approval]")).toBeNull();
   });
 });

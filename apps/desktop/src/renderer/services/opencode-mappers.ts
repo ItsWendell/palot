@@ -28,7 +28,9 @@ import type {
   PalotSession,
   PalotSkill,
 } from "../../shared";
+import { mapSessionInfo, mapTokenUsage } from "../../shared/session-mapper";
 import { compactionRecent } from "../lib/context-usage";
+import { mediaRef } from "../lib/media-refs";
 
 const projectCache = new WeakMap<Project, PalotProject>();
 const sessionCache = new WeakMap<SessionInfo, PalotSession>();
@@ -58,13 +60,14 @@ function json(value: unknown, seen = new WeakSet<object>()): JsonValue {
   return result;
 }
 
-function mapTokens(tokens: TokenUsageInfo): PalotSession["tokens"] {
-  return {
-    input: tokens.input,
-    output: tokens.output,
-    reasoning: tokens.reasoning,
-    cache: { ...tokens.cache },
-  };
+/** OpenCode's `time.firstToken` (after 2.2.7; not in the pinned 2.2.7 contract). */
+function recordedFirstToken(
+  time: object,
+): Pick<PalotMessage, "firstTokenAt" | "firstTokenRecordedAt"> {
+  const value = (time as { firstToken?: unknown }).firstToken;
+  return typeof value === "number" && Number.isFinite(value)
+    ? { firstTokenAt: value, firstTokenRecordedAt: value }
+    : {};
 }
 
 export function mapProject(project: Project): PalotProject {
@@ -86,40 +89,7 @@ export function mapProject(project: Project): PalotProject {
 export function mapSession(session: SessionInfo): PalotSession {
   const cached = sessionCache.get(session);
   if (cached) return cached;
-  const mapped = {
-    id: session.id,
-    parentID: session.parentID ?? null,
-    projectID: session.projectID,
-    title: session.title ?? null,
-    agent: session.agent ?? null,
-    model: session.model ? { ...session.model } : null,
-    ...(session.metadata === undefined ? {} : { metadata: { ...session.metadata } }),
-    ...(session.permissions === undefined
-      ? {}
-      : { permissions: mapPermissions(session.permissions) }),
-    location: { ...session.location },
-    createdAt: session.time.created,
-    updatedAt: session.time.updated,
-    ...(session.time.busy === undefined ? {} : { busyAt: session.time.busy }),
-    ...(session.time.idle === undefined ? {} : { idleAt: session.time.idle }),
-    ...(session.time.viewed === undefined ? {} : { viewedAt: session.time.viewed }),
-    ...(session.outcome ? { outcome: session.outcome } : {}),
-    archivedAt: session.time.archived ?? null,
-    cost: typeof session.cost === "number" ? session.cost : null,
-    tokens: mapTokens(session.tokens),
-    ...(session.revert
-      ? {
-          revert: {
-            messageID: session.revert.messageID,
-            ...(session.revert.partID ? { partID: session.revert.partID } : {}),
-            ...(session.revert.snapshot ? { snapshot: session.revert.snapshot } : {}),
-            ...(session.revert.files
-              ? { files: session.revert.files.map((file) => ({ ...file })) }
-              : {}),
-          },
-        }
-      : {}),
-  };
+  const mapped = mapSessionInfo(session, { mapPermissions });
   sessionCache.set(session, mapped);
   return mapped;
 }
@@ -179,7 +149,7 @@ function mapCompactionContent(value: SessionMessageCompaction): PalotMessageCont
     ...(compactionRecent(value) ? { recent: compactionRecent(value) } : {}),
     ...(value.status === "failed" ? { error: value.error.message } : {}),
     ...(value.status !== "running" && value.cost !== undefined ? { cost: value.cost } : {}),
-    ...(value.status !== "running" && value.tokens ? { tokens: mapTokens(value.tokens) } : {}),
+    ...(value.status !== "running" && value.tokens ? { tokens: mapTokenUsage(value.tokens) } : {}),
     data: json(value),
   };
 }
@@ -229,20 +199,30 @@ function attachmentImageDataUrl(attachment: PromptFileAttachment): string | unde
   return `data:${mime};base64,${data}`;
 }
 
+/** With media references on, a stored attachment carries `uri: media:<hash>` instead of `data`. */
+function attachmentImageMedia(attachment: PromptFileAttachment): string | undefined {
+  if (!ATTACHMENT_IMAGE_MIMES.has(attachment.mime.toLowerCase())) return undefined;
+  return mediaRef((attachment as { uri?: unknown }).uri);
+}
+
 function mapFiles(files: PromptFileAttachment[] | undefined) {
   if (!files) return {};
   const attachments = files
     .filter((attachment) => !attachment.mention)
-    .map((attachment, index): PalotFileAttachment => ({
-      uri:
-        attachment.source.type === "uri"
-          ? attachment.source.uri
-          : `opencode-inline:attachment-${index + 1}`,
-      name: attachment.name ?? `Attachment ${index + 1}`,
-      mime: attachment.mime,
-      previewDataUrl: attachmentImageDataUrl(attachment),
-      size: null,
-    }));
+    .map((attachment, index): PalotFileAttachment => {
+      const previewMedia = attachmentImageMedia(attachment);
+      return {
+        uri:
+          attachment.source.type === "uri"
+            ? attachment.source.uri
+            : `opencode-inline:attachment-${index + 1}`,
+        name: attachment.name ?? `Attachment ${index + 1}`,
+        mime: attachment.mime,
+        previewDataUrl: attachmentImageDataUrl(attachment),
+        ...(previewMedia ? { previewMedia } : {}),
+        size: null,
+      };
+    });
   return {
     ...(attachments.length ? { files: attachments } : {}),
     fileReferences: files.flatMap((attachment) =>
@@ -330,7 +310,7 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
     case "assistant":
       agent = message.agent;
       model = { ...message.model };
-      tokens = message.tokens ? mapTokens(message.tokens) : null;
+      tokens = message.tokens ? mapTokenUsage(message.tokens) : null;
       finish = message.finish ?? null;
       rawFinish = message.rawFinish;
       native = message.native ? json(message.native) : undefined;
@@ -365,6 +345,7 @@ export function mapMessage(message: SessionMessageInfo): PalotMessage {
     ...(message.type === "assistant" && message.time.streamed !== undefined
       ? { streamedAt: message.time.streamed }
       : {}),
+    ...(message.type === "assistant" ? recordedFirstToken(message.time) : {}),
     completedAt,
     text,
     agent,

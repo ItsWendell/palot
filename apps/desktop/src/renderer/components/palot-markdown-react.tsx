@@ -648,7 +648,12 @@ function renderCodeBlockReact(
   );
 }
 
-function tableCopy(node: TableNode): { tsv: string; csv: string; markdown: string } {
+function tableCopy(node: TableNode): {
+  tsv: string;
+  csv: string;
+  markdown: string;
+  html: string;
+} {
   const rows = [node.header, ...node.rows].map((row) =>
     row.map((cell) => inlineText(cell.children)),
   );
@@ -667,7 +672,31 @@ function tableCopy(node: TableNode): { tsv: string; csv: string; markdown: strin
     tsv,
     csv,
     markdown: `${markdown.split("\n")[0]}\n${separator}\n${markdown.split("\n").slice(1).join("\n")}`,
+    html: tableHtml(rows, node.align),
   };
+}
+
+/** A plain HTML table, so documents, mail and chat apps paste a real table. */
+function tableHtml(rows: string[][], align: TableNode["align"]): string {
+  const cell = (tag: "th" | "td", value: string, index: number) => {
+    const alignment = align[index];
+    const style = alignment ? ` style="text-align:${alignment}"` : "";
+    return `<${tag}${style}>${escapeHtml(value).replaceAll("\n", "<br>")}</${tag}>`;
+  };
+  const [header = [], ...body] = rows;
+  const head = `<thead><tr>${header.map((value, index) => cell("th", value, index)).join("")}</tr></thead>`;
+  const rowsHtml = body
+    .map((row) => `<tr>${row.map((value, index) => cell("td", value, index)).join("")}</tr>`)
+    .join("");
+  return `<table>${head}<tbody>${rowsHtml}</tbody></table>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function inlineText(nodes: InlineNode[]): string {

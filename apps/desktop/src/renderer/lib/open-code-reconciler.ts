@@ -32,7 +32,7 @@ import {
   sameSessionExecutionState,
   sameSessionRuntimeStatus,
 } from "./opencode-session-reducer";
-import { compareMessages } from "./message-reconcile";
+import { compareMessages, withLiveToolProgress } from "./message-reconcile";
 import {
   EMPTY_SESSION_REQUEST_SNAPSHOT,
   mergeSessionRequestSnapshot,
@@ -376,6 +376,11 @@ function preserveStreamingText(
         ...(current.firstTokenAt !== undefined
           ? { firstTokenAt: incoming.firstTokenAt ?? current.firstTokenAt }
           : {}),
+        ...(current.firstTokenRecordedAt !== undefined
+          ? {
+              firstTokenRecordedAt: incoming.firstTokenRecordedAt ?? current.firstTokenRecordedAt,
+            }
+          : {}),
       }
     : incoming;
 }
@@ -635,14 +640,15 @@ export class OpenCodeReconciler {
     return next;
   }
 
+  /** Returns false when a newer change to the session's requests made this snapshot stale. */
   setRequests(
     connectionID: string,
     sessionID: string,
     value: SessionRequestSnapshot,
     token?: OpenCodeSnapshotToken,
-  ): void {
+  ): boolean {
     const key = openCodeDataGraphKeys.sessionRequest(connectionID, sessionID);
-    if (this.#changedAfter(key, token)) return;
+    if (this.#changedAfter(key, token)) return false;
     this.#upsert(
       requestRecord(
         connectionID,
@@ -650,6 +656,7 @@ export class OpenCodeReconciler {
         mergeSessionRequestSnapshot(this.requests(connectionID, sessionID), value),
       ),
     );
+    return true;
   }
 
   removeRequests(connectionID: string, sessionID: string): void {
@@ -667,12 +674,18 @@ export class OpenCodeReconciler {
     const stale = this.#staleTranscripts.get(connectionID)?.has(sessionID);
     this.#commit((writer, touched) => {
       if (mode === "rooted") {
+        // A queued prompt has a row from its enqueue event, but the transcript holds it only
+        // once delivered. Keep the row while the inbox still lists it as pending.
+        const queued = new Set(
+          this.requests(connectionID, sessionID)?.inbox.map((item) => item.id),
+        );
         for (const record of this.graph.selectSessionRecords(
           connectionID,
           sessionID,
           "session-message",
         )) {
           if (record.kind !== "session-message" || incoming.has(record.entityID)) continue;
+          if (record.value.optimistic === true && queued.has(record.entityID)) continue;
           const key = openCodeDataGraphRecordKey(record);
           if (this.#changedAfter(key, token)) continue;
           writer.delete(key);
@@ -684,16 +697,14 @@ export class OpenCodeReconciler {
         if (this.#changedAfter(key, token)) continue;
         if (mode === "older" && this.graph.collection.has(key)) continue;
         const current = this.graph.collection.get(key);
+        const live = !stale && current?.kind === "session-message" ? current.value : undefined;
         writer.upsert(
           messageRecord(
             connectionID,
             sessionID,
-            preserveStreamingPatchInputs(
-              preserveStreamingText(
-                message,
-                !stale && current?.kind === "session-message" ? current.value : undefined,
-              ),
-              !stale && current?.kind === "session-message" ? current.value : undefined,
+            withLiveToolProgress(
+              preserveStreamingPatchInputs(preserveStreamingText(message, live), live),
+              live,
             ),
           ),
         );
@@ -833,8 +844,13 @@ export class OpenCodeReconciler {
     let execution = applyExecutionEvents(beforeActivity.execution, activityEvents);
     const statuses = applySessionStatusEvents(beforeActivity.statuses, activityEvents);
     const activeIDs = new Set(beforeActivity.activeIDs);
-    const sessions = new Map(this.sessions(connectionID).map((session) => [session.id, session]));
-    const requests = this.requestMap(connectionID);
+    // Most batches only stream transcript content. Collect every session or request
+    // only once an event in the batch writes one; until then read single records.
+    let sessionMap: Map<string, SessionInfo> | undefined;
+    const sessions = () =>
+      (sessionMap ??= new Map(this.sessions(connectionID).map((session) => [session.id, session])));
+    let requestMap: Map<string, SessionRequestSnapshot> | undefined;
+    const requests = () => (requestMap ??= this.requestMap(connectionID));
     const deletedSessionIDs = new Set<string>();
     const touchedSessionIDs = new Set<string>();
     const touchedRequestIDs = new Set<string>();
@@ -843,7 +859,7 @@ export class OpenCodeReconciler {
     for (const event of events) {
       const sessionID = recordSessionID(event);
       if (event.type === "session.created") {
-        sessions.set(event.data.sessionID, {
+        sessions().set(event.data.sessionID, {
           id: event.data.sessionID,
           ...(event.data.parentID ? { parentID: event.data.parentID } : {}),
           projectID: event.data.projectID,
@@ -859,29 +875,31 @@ export class OpenCodeReconciler {
         });
         touchedSessionIDs.add(event.data.sessionID);
       } else if (event.type === "session.deleted") {
-        for (const id of this.#sessionFamilyFromMap(sessions, event.data.sessionID)) {
-          sessions.delete(id);
-          requests.delete(id);
+        for (const id of this.#sessionFamilyFromMap(sessions(), event.data.sessionID)) {
+          sessions().delete(id);
+          requests().delete(id);
           deletedSessionIDs.add(id);
           touchedSessionIDs.add(id);
           touchedRequestIDs.add(id);
           activeIDs.delete(id);
         }
       } else if (sessionID) {
-        const current = sessions.get(sessionID);
+        const current = sessionMap
+          ? sessionMap.get(sessionID)
+          : (this.session(connectionID, sessionID) ?? undefined);
         const updated = current ? this.#applySessionEvent(current, event) : current;
         if (updated && updated !== current) {
-          sessions.set(sessionID, updated);
+          sessions().set(sessionID, updated);
           touchedSessionIDs.add(sessionID);
         }
       }
 
       const requestSessionID = sessionRequestEventSessionID(event);
       if (requestSessionID) {
-        const current = requests.get(requestSessionID) ?? EMPTY_SESSION_REQUEST_SNAPSHOT;
+        const current = requests().get(requestSessionID) ?? EMPTY_SESSION_REQUEST_SNAPSHOT;
         const updated = updateSessionRequests(current, event);
         if (updated !== current) {
-          requests.set(requestSessionID, updated);
+          requests().set(requestSessionID, updated);
           touchedRequestIDs.add(requestSessionID);
         }
       }
@@ -930,11 +948,14 @@ export class OpenCodeReconciler {
       ...statuses.keys(),
     ]);
     const changedMessages = new Map<string, PalotMessage[]>();
+    const previousMessages = new Map<string, PalotMessage[]>();
     for (const [sessionID, sessionEvents] of messageEvents) {
       if (deletedSessionIDs.has(sessionID)) continue;
       const current = this.messages(connectionID, sessionID);
       const next = applyOpenCodeEvents(current, sessionID, sessionEvents);
-      if (next !== current) changedMessages.set(sessionID, next);
+      if (next === current) continue;
+      changedMessages.set(sessionID, next);
+      previousMessages.set(sessionID, current);
     }
     for (const [sessionID, messages] of changedMessages) {
       const current = execution.get(sessionID);
@@ -967,7 +988,7 @@ export class OpenCodeReconciler {
         });
       }
       for (const sessionID of touchedSessionIDs) {
-        const session = sessions.get(sessionID);
+        const session = sessions().get(sessionID);
         const key = openCodeDataGraphKeys.session(connectionID, sessionID);
         if (session) writer.upsert(sessionRecord(connectionID, session));
         else writer.delete(key);
@@ -1000,7 +1021,7 @@ export class OpenCodeReconciler {
       }
       for (const sessionID of touchedRequestIDs) {
         const key = openCodeDataGraphKeys.sessionRequest(connectionID, sessionID);
-        const value = requests.get(sessionID);
+        const value = requests().get(sessionID);
         if (value) writer.upsert(requestRecord(connectionID, sessionID, value));
         else writer.delete(key);
         touched.add(key);
@@ -1018,7 +1039,11 @@ export class OpenCodeReconciler {
           touched.add(key);
           transcriptCandidates.set(key, { sessionID, before: record.value });
         }
+        // The reducer keeps the identity of every message it did not change, and those
+        // are the records already stored, so only new or replaced messages are written.
+        const unchanged = new Set(previousMessages.get(sessionID));
         for (const message of messages) {
+          if (unchanged.has(message)) continue;
           const record = messageRecord(connectionID, sessionID, message);
           const key = openCodeDataGraphRecordKey(record);
           const current = this.graph.collection.get(key);

@@ -6,7 +6,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useSyncExternalStore } from "react";
 import type {
   GitBranchInput,
   PullRequestEditInput,
@@ -30,6 +30,7 @@ import type {
   PullRequestCommentInput,
   PullRequestDetail,
   PullRequestDraftInput,
+  PullRequestCheckLogsInput,
   PullRequestFileViewedInput,
   PullRequestFiles,
   PullRequestLink,
@@ -111,6 +112,8 @@ export const sourceControl = {
   pullRequestTimeline: (input: PullRequestRef & { cursor?: string | null; limit?: number }) =>
     unwrap(bridge().pullRequestTimeline(input)),
   pullRequestFiles: (ref: PullRequestRef) => unwrap(bridge().pullRequestFiles(ref)),
+  pullRequestCheckLogs: (input: PullRequestCheckLogsInput) =>
+    unwrap(bridge().pullRequestCheckLogs(input)),
   setPullRequestFileViewed: (input: PullRequestFileViewedInput) =>
     unwrap(bridge().setPullRequestFileViewed(input)),
   submitPullRequestReview: (input: PullRequestReviewInput) =>
@@ -327,19 +330,52 @@ export function usePullRequestSearch(
 }
 
 /** Local Git status of a task directory (files, branch, upstream, ahead/behind). */
+function subscribeWindowFocus(notify: () => void) {
+  window.addEventListener("focus", notify);
+  window.addEventListener("blur", notify);
+  return () => {
+    window.removeEventListener("focus", notify);
+    window.removeEventListener("blur", notify);
+  };
+}
+
+/** Whether this window has focus. TanStack's focus state only tracks a hidden document. */
+function useWindowFocused(): boolean {
+  return useSyncExternalStore(
+    subscribeWindowFocus,
+    () => document.hasFocus(),
+    () => true,
+  );
+}
+
+/**
+ * A directory's working-tree status. `refetchInterval` polls only while this window has focus,
+ * since a visible window in the background still counts as focused to TanStack; coming back to
+ * the window reads at once when the last read is older than the interval.
+ */
 export function useGitStatus(
   directory: string | null,
   options: { profileID?: string | null; enabled?: boolean; refetchInterval?: number | false } = {},
 ) {
   const resolved = useFocusedProfileID(options.profileID);
   useSourceControlInvalidation();
-  return useQuery({
+  const focused = useWindowFocused();
+  const interval = options.refetchInterval ?? false;
+  const query = useQuery({
     queryKey: sourceControlKeys.git(resolved ?? "", directory ?? ""),
     queryFn: () => sourceControl.gitStatus({ profileID: resolved!, directory: directory! }),
     enabled: Boolean(resolved && directory) && (options.enabled ?? true),
     staleTime: 2_000,
-    refetchInterval: options.refetchInterval ?? false,
+    refetchInterval: focused ? interval : false,
   });
+  const catchUp = useEffectEvent(() => {
+    if (!interval || !query.isEnabled || query.isFetching) return;
+    if (Date.now() - query.dataUpdatedAt >= interval) void query.refetch({ cancelRefetch: false });
+  });
+  useEffect(() => {
+    if (focused) catchUp();
+  }, [focused]);
+  return query;
 }
 
 // ---------------------------------------------------------------------------------------------

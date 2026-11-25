@@ -5,10 +5,10 @@ Source locations for bundled runtime artifacts and historical external-runtime n
 ## SQLite WebAssembly (sql.js)
 
 The bundled `sql-wasm.wasm` is the unmodified `dist/sql-wasm.wasm` from the `sql.js`
-1.15.2 npm package, which compiles SQLite to WebAssembly with Emscripten. It is used
+1.16.0 npm package, which compiles SQLite to WebAssembly with Emscripten. It is used
 read-only to preview database files.
 
-- sql.js source: <https://github.com/sql-js/sql.js/tree/v1.15.2> (MIT, `sql.js.LICENSE.txt`)
+- sql.js source: <https://github.com/sql-js/sql.js/tree/v1.16.0> (MIT, `sql.js.LICENSE.txt`)
 - SQLite: public domain (`sqlite.PUBLIC-DOMAIN.txt`), <https://www.sqlite.org/copyright.html>
 
 ## Ghostty terminal WebAssembly

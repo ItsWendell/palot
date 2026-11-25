@@ -17,11 +17,16 @@ const NOTEBOOK = JSON.stringify({
   ],
 });
 
+function workspaceTree(page: Page) {
+  return page.getByRole("tree", { name: "Workspace files", exact: true });
+}
+
 async function openFromTree(page: Page, ...segments: string[]) {
   // Each opened file becomes the active tab; return to the Files tab first.
   await page.getByRole("tab", { name: "Files" }).click();
-  // Pierre's tree renders in a shadow root; the "Workspace files" label is on its host.
-  const tree = page.getByRole("tree").first();
+  // Pierre's tree renders in a shadow root; the app labels its inner tree "Workspace files".
+  // The task list is a tree too, and comes first in the DOM.
+  const tree = workspaceTree(page);
   for (const segment of segments)
     await tree.getByRole("treeitem", { name: segment, exact: true }).click();
 }
@@ -40,6 +45,10 @@ export const fileViewerScenario: Scenario = {
     await writeFile(join(projectDirectory, "data", "table.csv"), "name,value\nalpha,1\nbeta,2\n");
     await writeFile(join(projectDirectory, "data", "analysis.ipynb"), NOTEBOOK);
     await writeFile(join(projectDirectory, "diagram.mmd"), "graph TD\nA-->B\n");
+    await writeFile(
+      join(projectDirectory, "guide.md"),
+      "---\ntitle: Frontmatter fixture\nstatus: draft\n---\n# Guide body\n",
+    );
     await writeFile(join(projectDirectory, "blob.bin"), Buffer.from([0, 1, 2, 80, 65, 76, 0, 255]));
   },
   async assert(page, { projectDirectory, runRoot }) {
@@ -47,7 +56,7 @@ export const fileViewerScenario: Scenario = {
     await page.getByRole("button", { name: "Show changes" }).click();
     await page.getByRole("button", { name: "Open workbench surface" }).last().click();
     await page.getByRole("menuitem", { name: "Files", exact: true }).click();
-    await expect(page.getByRole("tree").first()).toBeVisible();
+    await expect(workspaceTree(page)).toBeVisible();
 
     // CSV: a table, with Source in the header opening the editor.
     await openFromTree(page, "data", "table.csv");
@@ -72,10 +81,15 @@ export const fileViewerScenario: Scenario = {
     // Text: edit and save with Mod+S.
     const notes = join(projectDirectory, "notes.txt");
     await openFromTree(page, "notes.txt");
-    const line = page.getByText("first line", { exact: true }).last();
-    await line.click();
+    // The file first renders read-only; keystrokes only count once the edit session holds
+    // the file, Pierre's editor has made the content an editable textbox, and it has focus.
+    const editor = page.getByRole("textbox", { name: "notes.txt", exact: true });
+    await expect(editor).toHaveAttribute("contenteditable", "true");
+    // Keys right after focus, before the editor has seen a selectionchange, must still land.
+    await editor.focus();
     await page.keyboard.press("End");
     await page.keyboard.type(" edited");
+    await expect(editor).toContainText("first line edited");
     await expect(page.getByRole("status", { name: "Unsaved changes" })).toBeVisible();
     await page.keyboard.press("Control+s");
     await expect.poll(() => readFile(notes, "utf8")).toBe("first line edited\n");
@@ -83,7 +97,8 @@ export const fileViewerScenario: Scenario = {
     await page.screenshot({ path: join(runRoot, "file-viewer-saved.png") });
 
     // A change on disk under unsaved edits is never overwritten silently.
-    await page.getByText("first line edited", { exact: true }).last().click();
+    await editor.getByText("first line edited", { exact: true }).click();
+    await expect(editor).toBeFocused();
     await page.keyboard.press("End");
     await page.keyboard.type(" again");
     await writeFile(notes, "agent rewrite\n");
@@ -95,5 +110,13 @@ export const fileViewerScenario: Scenario = {
     await page.getByRole("button", { name: "Overwrite", exact: true }).click();
     await expect.poll(() => readFile(notes, "utf8")).toBe("first line edited again\n");
     await expect(conflict).toHaveCount(0);
+
+    // YAML frontmatter previews as a property list, not as a rule and a heading of YAML.
+    await openFromTree(page, "guide.md");
+    const properties = page.getByRole("region", { name: "Properties" });
+    await expect(properties.getByRole("term")).toHaveText(["title", "status"]);
+    await expect(properties.getByRole("definition")).toHaveText(["Frontmatter fixture", "draft"]);
+    await expect(page.getByRole("heading", { name: "Guide body" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /title:/ })).toHaveCount(0);
   },
 };

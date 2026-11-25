@@ -3,14 +3,23 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PalotMessage } from "../../shared";
+import { composerActionRequestAtom } from "../atoms/command-requests";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { projectTranscriptTurns } from "../lib/turn-projection";
 import { palot } from "../services/palot";
 import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router";
 import { createRendererQueryClient } from "../lib/query-client";
-import { TimelineBoundary } from "./thread";
+import { TimelineBoundary } from "./transcript/timeline-parts";
 import { UsageLimitActions } from "./usage-limit-actions";
 import { toast } from "./ui/toast";
+
+const clipboard = vi.hoisted(() => ({ write: vi.fn() }));
+vi.mock("../lib/clipboard", () => ({
+  writeClipboardText: (...args: unknown[]) => {
+    clipboard.write(...args);
+    return Promise.resolve();
+  },
+}));
 
 function message(retryAfterMs: number | null = 3_600_000): PalotMessage {
   return {
@@ -200,6 +209,40 @@ describe("UsageLimitActions", () => {
       <UsageLimitActions message={{ ...message(), data: { error: { type: "provider.error" } } }} />,
     );
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("offers each limit's way on: switch model, Go's Extra Usage page, a request for the admin", async () => {
+    const failure = (error: Record<string, unknown>): PalotMessage => ({
+      ...message(null),
+      data: { error: { message: "Limit", ...error } },
+    });
+    const open = vi.spyOn(palot, "openExternalUrl").mockResolvedValue(true);
+    const value = store();
+    renderWithRouter(
+      <UsageLimitActions
+        message={failure({
+          type: "provider.go-limit",
+          response: { body: JSON.stringify({ metadata: { workspace: "wrk_go" } }) },
+        })}
+      />,
+      value,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Switch model" }));
+    expect(value.get(composerActionRequestAtom)).toMatchObject({
+      action: "model",
+      sessionID: "task-one",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Turn on Extra Usage ↗" }));
+    expect(open).toHaveBeenCalledWith("https://opencode.ai/console/wrk_go/go");
+    cleanup();
+
+    renderWithRouter(
+      <UsageLimitActions message={failure({ type: "provider.chatgpt-workspace-limit" })} />,
+      store(),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Copy request for admin" }));
+    expect(clipboard.write).toHaveBeenCalledWith(expect.stringContaining("admin.openai.com"));
+    expect(screen.queryByRole("button", { name: /↗/ })).toBeNull();
   });
 
   it("navigates to Usage even when the reset time is unknown", async () => {

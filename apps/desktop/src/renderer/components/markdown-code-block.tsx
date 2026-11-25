@@ -7,7 +7,10 @@ import { showErrorToast } from "../lib/toast-error";
 import { useClipboardCopy } from "../hooks/use-clipboard-copy";
 import { IconButton } from "./ui";
 import { HighlightedCode, type CodeAnimationRange } from "./highlighted-code";
-import { MermaidDiagram } from "./markdown-rich";
+import { MarkdownMath, MermaidDiagram } from "./markdown-rich";
+
+/** Fence languages shown as display math once the block has settled. */
+const MATH_LANGUAGES = new Set(["latex", "math", "tex"]);
 
 export function MarkdownCodeBlock({
   code,
@@ -30,6 +33,8 @@ export function MarkdownCodeBlock({
   const copied = copiedKey === "code";
   const [wrap, setWrap] = useAtom(markdownCodeWrapAtom);
   const [running, setRunning] = useState(false);
+  /** The code KaTeX couldn't parse; it shows as a code block instead. */
+  const [mathFailedFor, setMathFailedFor] = useState<string | null>(null);
   const actions = useContext(MarkdownActionsContext);
   const shell = ["sh", "bash", "zsh", "shell", "console", "fish", "powershell"].includes(
     language.toLowerCase(),
@@ -77,6 +82,8 @@ export function MarkdownCodeBlock({
       </div>
       {language.toLowerCase() === "mermaid" && !streaming ? (
         <MermaidDiagram code={code} />
+      ) : MATH_LANGUAGES.has(language.toLowerCase()) && !streaming && mathFailedFor !== code ? (
+        <MarkdownMath data-math={code} onError={() => setMathFailedFor(code)} />
       ) : (
         <HighlightedCode
           code={code}

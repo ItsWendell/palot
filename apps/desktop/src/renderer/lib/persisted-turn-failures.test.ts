@@ -70,9 +70,9 @@ describe("persisted turn failures", () => {
     expect(failureCards(projectTranscriptTurns(messages))).toEqual([]);
     const turns = projectTranscriptTurns(withPersistedTurnFailures(messages));
     expect(failureCards(turns)).toEqual([
-      { turn: "a1", name: "Response failed", text: "Rate limited" },
+      { turn: "u1", name: "Response failed", text: "Rate limited" },
     ]);
-    expect(turns.find((turn) => turn.id === "a1")?.status).toBe("failed");
+    expect(turns.find((turn) => turn.id === "u1")?.status).toBe("failed");
   });
 
   it("titles usage limits and says when they reset", () => {
@@ -82,12 +82,12 @@ describe("persisted turn failures", () => {
       idle("i1", 4, {
         type: "provider.free-limit",
         message: "Free usage limit reached.",
-        retryAfterMs: 8 * 86_400_000,
+        retryAfterMs: 60 * 86_400_000,
       }),
     ];
-    // An implausible wait shows the plain message.
+    // An implausible wait (over the 45-day cap that fits Go's monthly window) shows the plain message.
     expect(failureCards(projectTranscriptTurns(withPersistedTurnFailures(messages)))).toEqual([
-      { turn: "a1", name: "Free usage limit reached", text: "Free usage limit reached." },
+      { turn: "u1", name: "Free usage limit reached", text: "Free usage limit reached." },
     ]);
 
     const withReset = [
@@ -114,7 +114,7 @@ describe("persisted turn failures", () => {
       error: { type: "provider.quota", message: "Quota exceeded." },
     };
     expect(failureCards(projectTranscriptTurns([prompt, toolStep], execution))).toEqual([
-      { turn: "a1", name: "Usage limit reached", text: "Quota exceeded." },
+      { turn: "u1", name: "Usage limit reached", text: "Quota exceeded." },
     ]);
   });
 
@@ -137,7 +137,7 @@ describe("persisted turn failures", () => {
       execution,
     );
     expect(failureCards(reconciled)).toEqual([
-      { turn: "a1", name: "Response failed", text: "Rate limited" },
+      { turn: "u1", name: "Response failed", text: "Rate limited" },
     ]);
   });
 
@@ -149,12 +149,18 @@ describe("persisted turn failures", () => {
         message({ id: "i0", type: "idle", createdAt: 4, data: { outcome: "succeeded" } }),
         message({ id: "u2", type: "user", text: "Try again", createdAt: 5 }),
         idle("i1", 6, { message: "Invalid API key" }),
+        message({ id: "u3", type: "user", text: "Once more", createdAt: 7 }),
       ]),
     );
     expect(failureCards(turns)).toEqual([
-      { turn: "i1", name: "Response failed", text: "Invalid API key" },
+      { turn: "u2", name: "Response failed", text: "Invalid API key" },
     ]);
-    expect(turns.map((turn) => turn.id)).toEqual(["u1", "a1", "u2", "i1"]);
+    // The marker still ends the failed turn, so the next prompt starts its own.
+    expect(turns.map((turn) => [turn.id, turn.status, turn.completedAt])).toEqual([
+      ["u1", "completed", 4],
+      ["u2", "failed", 6],
+      ["u3", "completed", null],
+    ]);
   });
 
   it("leaves turns that already show their own failure or recorded none", () => {

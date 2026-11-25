@@ -1,9 +1,11 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
-import { useAtomValue } from "jotai";
+/**
+ * The query options `/`, `$`, `@`, the launcher and the command palette share, so the composer's
+ * idle prefetch and every reader hit one cache entry per location and query.
+ */
+
+import { queryOptions } from "@tanstack/react-query";
 import type { LocationRef } from "@opencode/client";
-import { runtimeAtom } from "../atoms/workspace";
 import { openCodeKeys } from "../lib/opencode-query";
-import { canFetchOpenCode } from "../lib/opencode-runtime-query";
 import { palot } from "../services/palot";
 
 export function composerCatalogQueryOptions(
@@ -22,17 +24,7 @@ export function composerCatalogQueryOptions(
   });
 }
 
-export function useComposerCatalog(location: LocationRef, enabled = true) {
-  const runtime = useAtomValue(runtimeAtom);
-  return useQuery(
-    composerCatalogQueryOptions(
-      runtime?.connectionID ?? "disconnected",
-      location,
-      enabled && canFetchOpenCode(runtime),
-    ),
-  );
-}
-
+/** Consuming `signal` lets React Query cancel a search once a newer query replaces it. */
 export function workspaceFileSearchQueryOptions(
   connectionID: string,
   location: LocationRef,
@@ -46,16 +38,4 @@ export function workspaceFileSearchQueryOptions(
     enabled: enabled && Boolean(location.directory),
     retry: false,
   });
-}
-
-export function useWorkspaceFileSearch(location: LocationRef, query: string, enabled = true) {
-  const runtime = useAtomValue(runtimeAtom);
-  return useQuery(
-    workspaceFileSearchQueryOptions(
-      runtime?.connectionID ?? "disconnected",
-      location,
-      query,
-      enabled && canFetchOpenCode(runtime),
-    ),
-  );
 }

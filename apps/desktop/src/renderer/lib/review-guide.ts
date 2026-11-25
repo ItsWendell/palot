@@ -14,6 +14,8 @@
  */
 
 import type { PullRequestDetail, PullRequestFile } from "../../shared/source-control-contract";
+import { classifyChangedFile, isSnapshotPath } from "./changed-file-kind";
+import { cutHead, truncateEnd } from "../../shared/text-cut";
 
 // ---------------------------------------------------------------------------------------------
 // Contract
@@ -249,9 +251,6 @@ export const DEFAULT_GUIDE_INPUT_LIMITS: GuideInputLimits = {
 
 const MIN_PATCH_CHARS = 200;
 
-const LOCKFILE =
-  /(^|\/)(bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|Gemfile\.lock|poetry\.lock|composer\.lock|go\.sum|uv\.lock|flake\.lock)$|\.snap$/;
-
 /**
  * A patch with both line numbers on every line, so the model can cite lines without counting:
  * `OLD NEW OP TEXT`, OLD blank for added lines and NEW blank for removed ones.
@@ -299,7 +298,7 @@ export function buildGuideInput(
       deletions: file.deletions,
     };
     if (!file.patch) return { ...base, patch: null, omitted: "binary", truncated: false };
-    if (LOCKFILE.test(file.path))
+    if (classifyChangedFile(file.path) === "lockfile" || isSnapshotPath(file.path))
       return { ...base, patch: null, omitted: "lockfile", truncated: false };
     // A few lines of a file mislead more than they show.
     if (remaining < MIN_PATCH_CHARS)
@@ -335,7 +334,7 @@ export function buildGuideInput(
 }
 
 function limitText(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}\n… (cut)` : text;
+  return text.length > max ? `${cutHead(text, max)}\n… (cut)` : text;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -488,7 +487,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function text(value: unknown, max = MAX_TEXT_CHARS): string {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
-  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
+  return truncateEnd(trimmed, max);
 }
 
 function lineNumber(value: unknown): number | null {

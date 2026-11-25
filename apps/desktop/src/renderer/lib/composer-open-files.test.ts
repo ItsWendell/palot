@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mentionFileSuggestions, openWorkbenchFiles } from "./composer-open-files";
+import { openWorkbenchFiles } from "./composer-open-files";
 import type { WorkbenchContextState, WorkbenchTab } from "./workbench-tabs";
 
 const location = { directory: "/repo" };
@@ -52,20 +52,5 @@ describe("openWorkbenchFiles", () => {
       "mine.ts",
     ]);
     expect(openWorkbenchFiles(context(tabs, "mine"), null, location)).toEqual([]);
-  });
-});
-
-describe("mentionFileSuggestions", () => {
-  it("lists matching open files before search results without repeating them", () => {
-    expect(
-      mentionFileSuggestions(
-        ["src/active.ts", "docs/readme.md"],
-        ["src/other.ts", "src/active.ts"],
-        "SRC",
-      ),
-    ).toEqual([
-      { path: "src/active.ts", open: true },
-      { path: "src/other.ts", open: false },
-    ]);
   });
 });

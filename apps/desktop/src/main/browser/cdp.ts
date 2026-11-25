@@ -1,5 +1,6 @@
 // Derived from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser/cdp.ts
+// See UPSTREAM.md.
 import type { WebContents } from "electron";
 import type { ProtocolMapping } from "devtools-protocol/types/protocol-mapping.js";
 import { protocolError } from "./errors";
@@ -10,6 +11,12 @@ export function createCdp(contents: WebContents) {
   const debuggerAPI = contents.debugger;
   const listeners = new Map<string, Set<(params: unknown, sessionID?: string) => void>>();
   const sessions = new Set([""]);
+  // Chromium emits events synchronously from inside DevTools dispatch, including
+  // Target.detachedFromTarget while it tears the session down. Calling sendCommand
+  // from that stack re-enters DevToolsSession and crashes the main process
+  // (Electron 45 SIGSEGV). Node drains microtasks before returning to Chromium,
+  // so commands sent by listeners wait for a macrotask instead.
+  let dispatching = 0;
   const receive = (_event: Electron.Event, name: string, params: unknown, sessionID?: string) => {
     if (!sessions.has(sessionID ?? "")) return;
     if (name === "Target.attachedToTarget") {
@@ -18,7 +25,12 @@ export function createCdp(contents: WebContents) {
     }
     if (name === "Target.detachedFromTarget")
       sessions.delete((params as ProtocolMapping.Events["Target.detachedFromTarget"][0]).sessionId);
-    listeners.get(name)?.forEach((callback) => callback(params, sessionID || undefined));
+    dispatching++;
+    try {
+      listeners.get(name)?.forEach((callback) => callback(params, sessionID || undefined));
+    } finally {
+      dispatching--;
+    }
   };
   debuggerAPI.on("message", receive);
   return {
@@ -27,6 +39,7 @@ export function createCdp(contents: WebContents) {
       params: object = {},
       sessionID?: string,
     ): Promise<ProtocolMapping.Commands[Method]["returnType"]> {
+      if (dispatching) await new Promise<void>((resolve) => setImmediate(resolve));
       if (contents.isDestroyed())
         throw new Error(
           "Browser tab was closed. Call browser.tabs.list({}) and choose an existing tabID, or browser.tabs.open({}) if no tabs remain.",

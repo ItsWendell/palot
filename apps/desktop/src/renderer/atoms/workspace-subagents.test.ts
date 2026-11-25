@@ -25,6 +25,30 @@ describe("subagentProgress", () => {
     expect(subagentProgress(states, "child-running", 100)).toEqual({ active: 1, total: 1 });
   });
 
+  it("counts an idle child still waiting on its background work as running", () => {
+    const states = new Map([
+      ["parent", state("succeeded", undefined, 100, 200)],
+      ["child-waiting", state("succeeded", "parent", 110, 150)],
+      ["child-done", state("succeeded", "parent", 120, 130)],
+    ]);
+    expect(subagentProgress(states, "parent", 100, new Set(["child-waiting"]))).toEqual({
+      active: 1,
+      total: 2,
+    });
+  });
+
+  it("counts an idle child as running while a subagent it started runs", () => {
+    // The grandchild waits for the user's answer; no report has said so.
+    const states = new Map([
+      ["parent", state("succeeded", undefined, 100, 200)],
+      ["coordinator", state("succeeded", "parent", 110, 150)],
+      ["collector", state("running", "coordinator", 140)],
+    ]);
+    expect(subagentProgress(states, "parent", 100)).toEqual({ active: 2, total: 2 });
+    states.set("collector", state("succeeded", "coordinator", 140, 300));
+    expect(subagentProgress(states, "parent", 100)).toEqual({ active: 0, total: 2 });
+  });
+
   it("does not loop on malformed parent relationships", () => {
     const states = new Map([
       ["child-a", state("running", "child-b")],

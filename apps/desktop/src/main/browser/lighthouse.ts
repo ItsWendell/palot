@@ -1,5 +1,6 @@
 // Derived from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser/lighthouse.ts
+// See UPSTREAM.md.
 import type { WebContents } from "electron";
 import { EventEmitter } from "node:events";
 import type { BrowserFiles } from "./files";

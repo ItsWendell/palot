@@ -1,6 +1,6 @@
 import { atom } from "jotai";
 import type { ModelRef } from "@opencode/client";
-import type { SidebarMode } from "../../shared";
+import { draftHasText, setComposerDraftPart } from "./composer-draft-presence";
 import type { BrowserSearchEngine } from "../lib/browser-address";
 import {
   emptyComposerDraft,
@@ -24,6 +24,7 @@ import {
   persistedStorageKey,
   removePersistedValue,
   removeScopedPersistedValue,
+  savePersistedValue,
   saveScopedPersistedValue,
   scheduledScopedPersistence,
   subscribeScopedPersistedValue,
@@ -39,18 +40,44 @@ const MAX_COMPOSER_DRAFT_LENGTH = 100_000;
 export type ComposerDelivery = "steer" | "queue";
 export type DefaultWorkspaceMode = "worktree" | "current";
 export type DefaultWorktreeBase = "repository-default" | "current";
-export type DefaultSidebarMode = "remember" | SidebarMode;
 export type InboxStateFilter = "attention" | "running" | "failed" | "unread";
 export interface InboxFilters {
   projectID: string | null;
   states: InboxStateFilter[];
+  /** The task list's server filter; the old sidebars ignore it. */
+  serverID?: string | null;
 }
 export interface InboxViewPreferences {
   ordering: InboxOrdering;
   unreadFirst: boolean;
   showSnoozed: boolean;
   showSettled: boolean;
+  /** The task list's View knobs and ordering (`components/task-list`); absent means default. */
+  grouping?: TaskListGrouping;
+  /**
+   * Where working tasks go. Supersedes `working`, which every build wrote explicitly while
+   * "after-inbox" was the default, so a stored "after-inbox" there is not a choice.
+   */
+  workingPlacement?: TaskListWorking;
+  /** The old field: read only for a deliberate "under-needs-you" or "list". */
+  working?: TaskListWorking;
+  rowDetail?: TaskListRowDetail;
+  taskOrdering?: TaskListOrdering;
 }
+export type TaskListGrouping = "inbox" | "project" | "server";
+export type TaskListWorking = "dock" | "under-needs-you" | "after-inbox" | "list";
+export type TaskListRowDetail = "compact" | "comfortable";
+export type TaskListOrdering = "activity" | "created";
+
+const TASK_LIST_WORKING: readonly TaskListWorking[] = [
+  "dock",
+  "under-needs-you",
+  "after-inbox",
+  "list",
+];
+
+const optionalOneOf = (value: unknown, allowed: readonly string[]) =>
+  value === undefined || (typeof value === "string" && allowed.includes(value));
 
 export const navigationOpenAtom = persistedAtom({
   key: "ui.navigation-open",
@@ -60,11 +87,6 @@ export const navigationOpenAtom = persistedAtom({
 });
 export const experimentalBrowserAtom = persistedAtom({
   key: "experimental.browser",
-  initialValue: false,
-  validate: (value): value is boolean => typeof value === "boolean",
-});
-export const richComposerAtom = persistedAtom({
-  key: "composer.rich-beta",
   initialValue: false,
   validate: (value): value is boolean => typeof value === "boolean",
 });
@@ -90,19 +112,14 @@ export const browserShowFullURLAtom = persistedAtom({
   initialValue: false,
   validate: (value): value is boolean => typeof value === "boolean",
 });
+/** Ship & watch: start the task's PR watch once the ship button or Create PR made the PR. */
+export const shipWatchPullRequestAtom = persistedAtom({
+  key: "ship.watch-pull-request",
+  initialValue: true,
+  validate: (value): value is boolean => typeof value === "boolean",
+});
 export const commandPaletteOpenAtom = atom(false);
 export const commandPaletteReturnFocusAtom = atom<HTMLElement | null>(null);
-export const sidebarModeAtom = persistedAtom({
-  key: "ui.sidebar-mode",
-  initialValue: "inbox" as SidebarMode,
-  validate: (value): value is SidebarMode => value === "project" || value === "inbox",
-});
-export const defaultSidebarModeAtom = persistedAtom({
-  key: "ui.default-sidebar-mode",
-  initialValue: "inbox" as DefaultSidebarMode,
-  validate: (value): value is DefaultSidebarMode =>
-    value === "remember" || value === "project" || value === "inbox",
-});
 export const inboxFiltersAtom = persistedAtom({
   key: "ui.inbox-filters",
   initialValue: { projectID: null, states: [] } as InboxFilters,
@@ -111,6 +128,9 @@ export const inboxFiltersAtom = persistedAtom({
     const filters = value as Partial<InboxFilters>;
     return (
       (filters.projectID === null || typeof filters.projectID === "string") &&
+      (filters.serverID === undefined ||
+        filters.serverID === null ||
+        typeof filters.serverID === "string") &&
       Array.isArray(filters.states) &&
       filters.states.every(
         (state) =>
@@ -119,26 +139,68 @@ export const inboxFiltersAtom = persistedAtom({
     );
   },
 });
+const DEFAULT_INBOX_VIEW_PREFERENCES: InboxViewPreferences = {
+  ordering: "newest",
+  unreadFirst: false,
+  showSnoozed: true,
+  showSettled: true,
+};
+const validInboxViewPreferences = (value: unknown): value is InboxViewPreferences => {
+  if (!value || typeof value !== "object") return false;
+  const preferences = value as Partial<InboxViewPreferences>;
+  return (
+    (preferences.ordering === "newest" ||
+      preferences.ordering === "oldest" ||
+      preferences.ordering === "attention") &&
+    typeof preferences.unreadFirst === "boolean" &&
+    typeof preferences.showSnoozed === "boolean" &&
+    typeof preferences.showSettled === "boolean" &&
+    optionalOneOf(preferences.grouping, ["inbox", "project", "server"]) &&
+    optionalOneOf(preferences.working, TASK_LIST_WORKING) &&
+    optionalOneOf(preferences.workingPlacement, TASK_LIST_WORKING) &&
+    optionalOneOf(preferences.rowDetail, ["compact", "comfortable"]) &&
+    optionalOneOf(preferences.taskOrdering, ["activity", "created"])
+  );
+};
+
+/**
+ * The Inbox and Projects views became one list. Someone who opened Palot in the Projects view
+ * (their default, or the last view when the default was "remember") gets Group by: Project,
+ * once; the old keys go away so it never runs again.
+ */
+export function migrateSidebarModeToGrouping(): void {
+  if (typeof window === "undefined") return;
+  const mode = (value: unknown): value is "project" | "inbox" =>
+    value === "project" || value === "inbox";
+  const last = loadPersistedValue<string | null>({
+    key: "ui.sidebar-mode",
+    initialValue: null,
+    validate: mode,
+  });
+  const preferred = loadPersistedValue<string | null>({
+    key: "ui.default-sidebar-mode",
+    initialValue: null,
+    validate: (value): value is string => value === "remember" || mode(value),
+  });
+  removePersistedValue("ui.sidebar-mode");
+  removePersistedValue("ui.default-sidebar-mode");
+  removePersistedValue("ui.sidebar-sections");
+  const opened = preferred === null || preferred === "remember" ? last : preferred;
+  if (opened !== "project") return;
+  const view = loadPersistedValue({
+    key: "ui.inbox-view-preferences",
+    initialValue: DEFAULT_INBOX_VIEW_PREFERENCES,
+    validate: validInboxViewPreferences,
+  });
+  if (view.grouping !== undefined) return;
+  savePersistedValue("ui.inbox-view-preferences", { ...view, grouping: "project" });
+}
+migrateSidebarModeToGrouping();
+
 export const inboxViewPreferencesAtom = persistedAtom({
   key: "ui.inbox-view-preferences",
-  initialValue: {
-    ordering: "newest",
-    unreadFirst: false,
-    showSnoozed: true,
-    showSettled: true,
-  } as InboxViewPreferences,
-  validate: (value): value is InboxViewPreferences => {
-    if (!value || typeof value !== "object") return false;
-    const preferences = value as Partial<InboxViewPreferences>;
-    return (
-      (preferences.ordering === "newest" ||
-        preferences.ordering === "oldest" ||
-        preferences.ordering === "attention") &&
-      typeof preferences.unreadFirst === "boolean" &&
-      typeof preferences.showSnoozed === "boolean" &&
-      typeof preferences.showSettled === "boolean"
-    );
-  },
+  initialValue: DEFAULT_INBOX_VIEW_PREFERENCES,
+  validate: validInboxViewPreferences,
 });
 export const AUTO_SETTLE_DAY_CHOICES = [1, 3, 7, 14] as const;
 export type AutoSettleAfterDays = (typeof AUTO_SETTLE_DAY_CHOICES)[number] | null;
@@ -156,24 +218,37 @@ export const chatAutoSettleAfterDaysAtom = persistedAtom({
   validate: (value): value is AutoSettleAfterDays =>
     value === null || AUTO_SETTLE_DAY_CHOICES.some((days) => days === value),
 });
+export interface InboxShelves {
+  pinned: boolean;
+  inbox: boolean;
+  snoozed: boolean;
+  settled: boolean;
+  /** The task list's Working section and its collapsed groups; the old sidebars ignore them. */
+  working?: boolean;
+  collapsedGroups?: string[];
+}
 export const inboxShelvesAtom = persistedAtom({
   key: "ui.inbox-shelves",
-  initialValue: { pinned: true, inbox: true, snoozed: false, settled: false },
-  validate: (
-    value,
-  ): value is { pinned: boolean; inbox: boolean; snoozed: boolean; settled: boolean } => {
+  initialValue: { pinned: true, inbox: true, snoozed: false, settled: false } as InboxShelves,
+  validate: (value): value is InboxShelves => {
     if (!value || typeof value !== "object") return false;
     const shelves = value as {
       pinned?: unknown;
       inbox?: unknown;
       snoozed?: unknown;
       settled?: unknown;
+      working?: unknown;
+      collapsedGroups?: unknown;
     };
     return (
       typeof shelves.pinned === "boolean" &&
       typeof shelves.inbox === "boolean" &&
       typeof shelves.snoozed === "boolean" &&
-      typeof shelves.settled === "boolean"
+      typeof shelves.settled === "boolean" &&
+      (shelves.working === undefined || typeof shelves.working === "boolean") &&
+      (shelves.collapsedGroups === undefined ||
+        (Array.isArray(shelves.collapsedGroups) &&
+          shelves.collapsedGroups.every((key) => typeof key === "string")))
     );
   },
   migrate: (value) => {
@@ -273,6 +348,12 @@ export const modelPickerPreferencesAtom = persistedAtom({
 });
 export const showTimelineCacheBustsAtom = persistedAtom({
   key: "timeline.show-likely-cache-busts",
+  initialValue: false,
+  validate: (value): value is boolean => typeof value === "boolean",
+});
+/** Switching tasks keeps the right workbench open (or closed) and on the same surface. */
+export const keepSidePanelAcrossTasksAtom = persistedAtom({
+  key: "workbench.keep-side-panel-across-tasks",
   initialValue: false,
   validate: (value): value is boolean => typeof value === "boolean",
 });
@@ -488,6 +569,7 @@ function createComposerDraftAtom(scopeKey: string) {
       const normalized = normalizeComposerDraft(next);
       set(valueAtom, normalized);
       persistComposerDraft(scopeKey, normalized);
+      setComposerDraftPart(get, set, scopeKey, "text", draftHasText(normalized));
     },
   );
 }

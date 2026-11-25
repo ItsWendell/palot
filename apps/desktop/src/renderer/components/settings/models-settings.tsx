@@ -33,6 +33,7 @@ import {
   reconcileModelPreference,
   type ModelPickerPreference,
 } from "../../lib/model-preferences";
+import { effortLabel } from "../../lib/model-picker";
 import {
   SettingsEmpty,
   SettingsFacts,
@@ -490,14 +491,14 @@ function ModelDefaults({
               >
                 <SelectTrigger className="w-full @lg/settings:w-64" aria-label="Default effort">
                   <SelectValue>
-                    {selected?.variant ? sentenceCase(selected.variant) : "Model default"}
+                    {selected?.variant ? effortLabel(selected.variant) : "Model default"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent align="end">
                   <SelectItem value="model-default">Model default</SelectItem>
                   {selectedModel.variants.map((variant) => (
                     <SelectItem key={variant} value={variant}>
-                      {sentenceCase(variant)}
+                      {effortLabel(variant)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -517,7 +518,7 @@ function ModelDefaults({
                 return {
                   label: agent.name,
                   value: model
-                    ? `${label(model)}${agent.model.variant ? ` · ${sentenceCase(agent.model.variant)}` : ""}`
+                    ? `${label(model)}${agent.model.variant ? ` · ${effortLabel(agent.model.variant)}` : ""}`
                     : `${agent.model.providerID}/${agent.model.id}`,
                 };
               })}
@@ -808,8 +809,4 @@ function sameModel(
 
 function modelRef(model: PalotModel, variant?: string): ModelRef {
   return { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) };
-}
-
-function sentenceCase(value: string): string {
-  return value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
 }

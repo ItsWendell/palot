@@ -1,7 +1,7 @@
 import type { WorktreeInfo } from "@opencode/client";
 import type { PalotProjectDirectory } from "../../shared";
 import { openCodeClient } from "./opencode-client";
-import { openCodeRequestSignal } from "./opencode-request";
+import { openCodeRequestSignal, WORKTREE_CREATE_TIMEOUT_MS } from "./opencode-request";
 
 export async function refreshWorktrees(
   projectID: string,
@@ -53,8 +53,7 @@ export async function createWorktree(
       ...(sourceDirectory ? { from: sourceDirectory } : {}),
       ...(branch ? { branch } : {}),
     },
-    // Creation runs the project's setup command before responding (often dependency installs).
-    { signal: openCodeRequestSignal(requestSignal, 10 * 60_000) },
+    { signal: openCodeRequestSignal(requestSignal, WORKTREE_CREATE_TIMEOUT_MS) },
   );
   await client.location.get(
     { location: { directory: worktree.directory } },

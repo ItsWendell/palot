@@ -12,6 +12,7 @@ import type {
   GitWorkingTreeStatus,
   SourceControlErrorCode,
 } from "../../shared/source-control-contract";
+import { cutTail } from "../../shared/text-cut";
 
 const READ_TIMEOUT_MS = 15_000;
 const WRITE_TIMEOUT_MS = 60_000;
@@ -127,6 +128,16 @@ export class GitRunner {
     private readonly paths: typeof path = path,
   ) {}
 
+  /**
+   * Repository roots by resolved task directory. A root rarely moves, and every window's ship
+   * button asks for it on each status poll; it is looked up again once Git says the root is no
+   * longer a repository.
+   */
+  readonly #roots = new Map<string, string>();
+  readonly #rootLookups = new Map<string, Promise<string>>();
+  /** One working-tree status read per root at a time, shared by every status caller. */
+  readonly #statusReads = new Map<string, Promise<GitWorkingTreeStatus>>();
+
   async root(directory: string): Promise<string> {
     if (!this.paths.isAbsolute(directory))
       throw new GitCommandError("invalid-input", "The directory must be an absolute path.");
@@ -137,6 +148,17 @@ export class GitRunner {
       if (error instanceof GitCommandError) throw error;
       throw new GitCommandError("not-a-repository", "The task directory does not exist.");
     }
+    const known = this.#roots.get(resolved);
+    if (known !== undefined) return known;
+    let lookup = this.#rootLookups.get(resolved);
+    if (!lookup) {
+      lookup = this.lookupRoot(resolved).finally(() => this.#rootLookups.delete(resolved));
+      this.#rootLookups.set(resolved, lookup);
+    }
+    return lookup;
+  }
+
+  private async lookupRoot(resolved: string): Promise<string> {
     const result = await this.exec(["rev-parse", "--show-toplevel"], {
       cwd: resolved,
       timeout: READ_TIMEOUT_MS,
@@ -148,12 +170,28 @@ export class GitRunner {
         "The task directory is not inside a Git repository.",
         trimDetail(result.stderr),
       );
-    return this.filesystem.realpath(top);
+    const root = await this.filesystem.realpath(top);
+    this.#roots.set(resolved, root);
+    return root;
   }
 
+  private forgetRoot(root: string): void {
+    for (const [directory, known] of this.#roots) if (known === root) this.#roots.delete(directory);
+  }
+
+  /**
+   * The working tree's status. Callers that ask while a read of the same root is running share
+   * it; a write's own status read (statusAt) always runs fresh and ends that sharing.
+   */
   async status(directory: string): Promise<GitWorkingTreeStatus> {
     const root = await this.root(directory);
-    return this.statusAt(root);
+    const pending = this.#statusReads.get(root);
+    if (pending) return pending;
+    const read = this.readStatus(root).finally(() => {
+      if (this.#statusReads.get(root) === read) this.#statusReads.delete(root);
+    });
+    this.#statusReads.set(root, read);
+    return read;
   }
 
   async branch(directory: string): Promise<GitBranchStatus> {
@@ -179,7 +217,7 @@ export class GitRunner {
   }
 
   async changeBranch(
-    input: Pick<GitBranchInput, "directory" | "action" | "name" | "base">,
+    input: Pick<GitBranchInput, "directory" | "action" | "name" | "base" | "carryChanges">,
   ): Promise<GitWorkingTreeStatus> {
     const root = await this.root(input.directory);
     const validate = async (name: string) => {
@@ -194,7 +232,9 @@ export class GitRunner {
     await validate(input.name);
     if (input.base) await validate(input.base);
     const status = await this.statusAt(root);
-    if (status.files.length || status.truncated)
+    // A new branch at HEAD leaves the working tree and index exactly as they are.
+    const carries = input.action === "create" && !input.base && input.carryChanges === true;
+    if ((status.files.length || status.truncated) && !carries)
       throw new GitCommandError(
         "dirty-worktree",
         "Commit or move your uncommitted changes before changing branches. Palot never discards or stashes them.",
@@ -508,7 +548,13 @@ export class GitRunner {
     return { remote: null, branch };
   }
 
-  private async statusAt(root: string): Promise<GitWorkingTreeStatus> {
+  private statusAt(root: string): Promise<GitWorkingTreeStatus> {
+    // Reads around a write must see it, so later status callers don't join an earlier read.
+    this.#statusReads.delete(root);
+    return this.readStatus(root);
+  }
+
+  private async readStatus(root: string): Promise<GitWorkingTreeStatus> {
     const result = await this.git(root, [
       "--no-optional-locks",
       "status",
@@ -591,6 +637,7 @@ export class GitRunner {
 
   private async git(root: string, args: string[], timeout = READ_TIMEOUT_MS): Promise<RunResult> {
     const result = await this.exec(args, { cwd: root, timeout });
+    if (result.exitCode !== 0 && /not a git repository/i.test(result.stderr)) this.forgetRoot(root);
     if (result.exitCode !== 0)
       throw new GitCommandError(
         "git-failed",
@@ -754,5 +801,5 @@ function code(value: string | undefined): GitStatusCode {
 function trimDetail(value: string): string | undefined {
   const text = value.trim();
   if (!text) return undefined;
-  return text.length > MAX_DETAIL ? `…${text.slice(-MAX_DETAIL)}` : text;
+  return text.length > MAX_DETAIL ? `…${cutTail(text, MAX_DETAIL)}` : text;
 }

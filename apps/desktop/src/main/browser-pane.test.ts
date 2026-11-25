@@ -1391,4 +1391,134 @@ describe("browser attachment", () => {
     expect(child.loadURL).not.toHaveBeenCalled();
     await pane.dispose();
   });
+
+  describe("while the task's location is still loading its plugins", () => {
+    const unavailable = { type: "rpc.unavailable", message: "RPC is unavailable: browser" };
+
+    /** A server whose attach fails with each queued error in turn, then accepts the attachment. */
+    function loadingServer(failures: unknown[]) {
+      const events = Effect.runSync(Queue.unbounded<unknown>());
+      const attach = vi.fn(() => {
+        const failure = failures.shift();
+        if (failure) return Effect.fail(failure);
+        return Effect.sync(() =>
+          Queue.offerUnsafe(events, {
+            type: "rpc.experimental.browser.control",
+            data: {
+              type: "attached",
+              connectionID: (
+                mocks.network.mock.lastCall![0] as { attachment: { connectionID: string } }
+              ).attachment.connectionID,
+              version: 4,
+            },
+          }),
+        ).pipe(Effect.andThen(Effect.never));
+      });
+      mocks.client.mockReturnValue(
+        Effect.succeed({
+          event: {
+            subscribe: () => {
+              Queue.offerUnsafe(events, { type: "server.connected" });
+              return Stream.fromQueue(events);
+            },
+          },
+          session: { get: () => Effect.succeed({ location: { directory: "/workspace" } }) },
+          rpc: () => ({ attach, state: () => Effect.void }),
+        }),
+      );
+      const pluginsUpdated = (directory: string) =>
+        Queue.offerUnsafe(events, { type: "plugin.updated", location: { directory }, data: {} });
+      const pane = createBrowserPane();
+      const win = window();
+      const registered = pane.register(
+        win as never,
+        { sessionID: "ses_test", profileID: "profile", connectionID: "connection" },
+        () => true,
+      );
+      // Read the outcome without leaving a rejection unhandled while timers advance.
+      const outcome = registered.then(
+        (binding) => ({ binding }),
+        (error: Error) => ({ error: error.message }),
+      );
+      const states = () =>
+        win.webContents.send.mock.calls
+          .map(([, event]) => event as { type: string; state?: unknown; error?: string })
+          .filter((event) => event.type === "state");
+      return { pane, win, attach, pluginsUpdated, outcome, states };
+    }
+
+    // vi.waitFor advances fake timers, so these tests settle real I/O turns instead.
+    const settle = async () => {
+      for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setImmediate(resolve));
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      return () => vi.useRealTimers();
+    });
+
+    it("attaches when the location reports its plugins changed", async () => {
+      const server = loadingServer([unavailable]);
+      await settle();
+      expect(server.attach).toHaveBeenCalledTimes(1);
+      server.pluginsUpdated("/elsewhere");
+      await settle();
+      expect(server.attach).toHaveBeenCalledTimes(1);
+      server.pluginsUpdated("/workspace");
+      await settle();
+      expect(server.attach).toHaveBeenCalledTimes(2);
+      expect(await server.outcome).toEqual({ binding: expect.any(String) });
+      expect(server.states().some((event) => event.error)).toBe(false);
+      await server.pane.dispose();
+    });
+
+    it("attaches on the backoff when no plugin event arrives", async () => {
+      const server = loadingServer([unavailable, unavailable]);
+      await settle();
+      expect(server.attach).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(server.attach).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(server.attach).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(server.attach).toHaveBeenCalledTimes(3);
+      expect(await server.outcome).toEqual({ binding: expect.any(String) });
+      expect(server.states().some((event) => event.error)).toBe(false);
+      await server.pane.dispose();
+    });
+
+    it("ends as unsupported, without an earlier error, when the plugin never registers", async () => {
+      const server = loadingServer(Array.from({ length: 10 }, () => unavailable));
+      await settle();
+      expect(server.attach).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(7_000);
+      expect(server.attach).toHaveBeenCalledTimes(5);
+      expect(server.states()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(server.attach).toHaveBeenCalledTimes(6);
+      expect(await server.outcome).toEqual({ error: "browser.pane.unsupported" });
+      expect(server.states()).toEqual([
+        expect.objectContaining({ state: null, error: "browser.pane.unsupported" }),
+      ]);
+      await server.pane.dispose();
+    });
+
+    it("does not retry a server that lacks the browser RPC method", async () => {
+      const server = loadingServer([{ type: "rpc.method_not_found", message: "Unknown method" }]);
+      expect(await server.outcome).toEqual({ error: "browser.pane.unsupported" });
+      expect(server.attach).toHaveBeenCalledTimes(1);
+      await server.pane.dispose();
+    });
+
+    it("stops retrying when the window closes", async () => {
+      const server = loadingServer(Array.from({ length: 10 }, () => unavailable));
+      await settle();
+      expect(server.attach).toHaveBeenCalledTimes(1);
+      server.win.emit("closed");
+      expect(await server.outcome).toEqual({ error: "browser.pane.registration.closed" });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(server.attach).toHaveBeenCalledTimes(1);
+      await server.pane.dispose();
+    });
+  });
 });

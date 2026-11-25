@@ -17,6 +17,17 @@ export {
   sessionRequestEventSessionID,
 } from "./session-request-reducer";
 
+/**
+ * A request event for the session arrived while its inbox was being read, so the read may
+ * predate it and was not applied. The read failed in effect; read again for a current list.
+ */
+export class StaleSessionInboxReadError extends Error {
+  constructor(sessionID: string) {
+    super(`The pending input read for ${sessionID} was overtaken by a live change`);
+    this.name = "StaleSessionInboxReadError";
+  }
+}
+
 export function sessionRequestsQueryOptions(
   queryClient: QueryClient,
   connectionID: string,
@@ -32,7 +43,8 @@ export function sessionRequestsQueryOptions(
         reconciler.requests(connectionID, sessionID) ?? EMPTY_SESSION_REQUEST_SNAPSHOT;
       const inbox = await palot.loadSessionInbox(sessionID, signal, connectionID);
       const value = { ...current, inbox };
-      reconciler.setRequests(connectionID, sessionID, value, token);
+      if (!reconciler.setRequests(connectionID, sessionID, value, token))
+        throw new StaleSessionInboxReadError(sessionID);
       return value;
     },
     enabled: enabled && Boolean(sessionID),

@@ -30,7 +30,7 @@ export const Route = createFileRoute("/_workspace/sessions/$sessionID")({
       if (!runtime?.connected) return;
     }
     // Initial navigation can precede workspace connection. Let the route mount:
-    // useSessionInfo will fetch once connect completes, without caching a failed
+    // useAcknowledgeSessionView will fetch once connect completes, without caching a failed
     // loader result that replaces the workspace with the router error boundary.
     if (!runtime?.connected && !palot.isPreview()) return;
     if (runtime) registerOpenCodeRuntime(runtime);
@@ -51,7 +51,7 @@ export const Route = createFileRoute("/_workspace/sessions/$sessionID")({
         );
       } catch (error) {
         // A disconnect or refresh cancelled the lookup. Mount like an unconnected start;
-        // useSessionInfo fetches again instead of the route showing an error screen.
+        // useAcknowledgeSessionView fetches again instead of the route showing an error screen.
         if (isCancelledError(error)) return;
         throw error;
       }
@@ -94,7 +94,7 @@ function FocusedSessionRoute({
   search: ReturnType<typeof Route.useSearch>;
 }) {
   const store = useStore();
-  useAcknowledgeSessionView(sessionID);
+  const openedView = useAcknowledgeSessionView(sessionID);
 
   useEffect(() => {
     store.set(selectedSessionIDAtom, sessionID);
@@ -119,7 +119,7 @@ function FocusedSessionRoute({
 
   return (
     <>
-      <Thread sessionID={sessionID} />
+      <Thread sessionID={sessionID} openedView={openedView} />
       <Outlet />
     </>
   );

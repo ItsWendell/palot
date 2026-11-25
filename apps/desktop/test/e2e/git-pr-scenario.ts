@@ -89,11 +89,14 @@ export const gitPrScenario: Scenario = {
     ).toHaveValue(BODY);
     await expect(dialog.getByLabel("Base branch", { exact: true })).toHaveValue("main");
     await dialog.getByRole("checkbox", { name: "Draft pull request", exact: true }).check();
+    // Watching is on by default, so creating the PR also watches it.
+    await expect(
+      dialog.getByRole("checkbox", { name: "Watch pull request", exact: true }),
+    ).toBeChecked();
     await page.screenshot({ path: join(runRoot, "git-pr-draft.png") });
     await dialog.getByRole("button", { name: "Create pull request", exact: true }).click();
     const linked = page.getByRole("dialog", { name: "Pull request #7 linked", exact: true });
     await expect(linked).toBeVisible();
-    await linked.getByRole("button", { name: "Watch pull request", exact: true }).click();
     await expect(linked.getByRole("button", { name: "Watching", exact: true })).toBeVisible();
     await page.screenshot({ path: join(runRoot, "git-pr-linked.png") });
     await linked.getByRole("button", { name: "Done", exact: true }).click();

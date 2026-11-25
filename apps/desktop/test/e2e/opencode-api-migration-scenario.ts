@@ -89,7 +89,7 @@ export const openCodeApiMigrationScenario: Scenario = {
     });
     expect(await client.session.form.list({ sessionID })).toHaveLength(0);
     await expect(panel).toBeHidden();
-    await expect(composer).toHaveValue(DRAFT);
+    await expect(composer).toHaveJSProperty("value", DRAFT);
     await expect(transcript.getByText(ANSWER, { exact: true })).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => location.hash.split("?")[0]))
@@ -106,14 +106,14 @@ export const openCodeApiMigrationScenario: Scenario = {
     await expect(panel.getByText("Form created after reload", { exact: true })).toBeVisible();
     await client.session.form.cancel({ sessionID, formID: recovered.id });
     await expect(panel).toBeHidden();
-    await expect(composer).toHaveValue(DRAFT);
+    await expect(composer).toHaveJSProperty("value", DRAFT);
 
     const exported = await client.experimental.session.export({ sessionID });
     expect(exported.info.title).toBe("API migration renamed");
     expect(exported.messages).toEqual(messages);
     await page.reload();
     await expect(transcript.getByText(ANSWER, { exact: true })).toBeVisible();
-    await expect(composer).toHaveValue(DRAFT);
+    await expect(composer).toHaveJSProperty("value", DRAFT);
     await expect(panel).toBeHidden();
     // Exercise Palot's explicit reload control as well as external reload events.
     await page.evaluate(() => {
@@ -127,11 +127,14 @@ export const openCodeApiMigrationScenario: Scenario = {
       location.hash = `#/sessions/${id}`;
     }, sessionID);
     await expect(transcript.getByText(ANSWER, { exact: true })).toBeVisible();
-    await expect(composer).toHaveValue(DRAFT);
+    await expect(composer).toHaveJSProperty("value", DRAFT);
     expect(llm.requests).toHaveLength(0);
   },
   async assert(page, { llm }) {
-    await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(DRAFT);
+    await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveJSProperty(
+      "value",
+      DRAFT,
+    );
     expect(llm.scriptedCalls()).toBe(0);
   },
 };

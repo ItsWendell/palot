@@ -8,7 +8,15 @@ import {
 } from "@pierre/diffs/react";
 import { QueryClientContext } from "@tanstack/react-query";
 import { useStore } from "jotai";
-import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { workbenchFileEditsAtom } from "../../atoms/workbench-file-edits";
 import { runtimeAtom } from "../../atoms/workspace";
 import { contentCacheKey } from "../../lib/file-diffs";
@@ -19,8 +27,19 @@ import { openCodeClient } from "../../services/opencode-client";
 import { pierreViewerStyle } from "../file-viewer-theme";
 import { FileEditSession } from "./file-save";
 
-const createEditor: EditorFactory<undefined, undefined> = (type, options) =>
-  new Editor(type, options);
+/**
+ * Pierre's editor learns the caret only from `selectionchange`, which Chromium queues behind
+ * pending input when the renderer is busy. Until it runs, the editor has focus but no selection
+ * and drops every keystroke. Reading the selection before a key reaches the editor closes that gap.
+ */
+function syncSelectionBeforeInput(editor: { current: Pick<Editor, "getViewState"> | null }) {
+  return (event: Event) => {
+    if (event.defaultPrevented || (event instanceof KeyboardEvent && event.isComposing)) return;
+    const current = editor.current;
+    if (!current || (current.getViewState().selections?.length ?? 0) > 0) return;
+    document.dispatchEvent(new Event("selectionchange"));
+  };
+}
 
 export function useFileEditing(
   tab: Extract<WorkbenchTab, { kind: "file" }>,
@@ -134,23 +153,46 @@ export function FileEditor({
     setSource(makeSource());
   const editorOptions = useMemo(() => ({}), []);
   const renderOptions = useMemo(() => ({ ...options, useTokenTransformer: true }), [options]);
+  const editor = useRef<Pick<Editor, "getViewState"> | null>(null);
+  const [createEditor] = useState(() => {
+    const factory: EditorFactory<undefined, undefined> = (type, options) => {
+      const created = new Editor(type, options);
+      editor.current = created;
+      return created;
+    };
+    return factory;
+  });
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!container) return;
+    const sync = syncSelectionBeforeInput(editor);
+    // Capture runs before the editor's own listeners inside the shadow root.
+    container.addEventListener("keydown", sync, true);
+    container.addEventListener("beforeinput", sync, true);
+    return () => {
+      container.removeEventListener("keydown", sync, true);
+      container.removeEventListener("beforeinput", sync, true);
+    };
+  }, [container]);
   return (
-    <EditProvider createEditor={createEditor}>
-      <File
-        file={source.file}
-        edit={editable}
-        editorOptions={editorOptions}
-        // Editable token offsets must be produced together with the main-thread editor,
-        // not by the app's read-only worker pool (which does not enable token transforms).
-        disableWorkerPool={editable}
-        onEditChange={({ file }) => onChange(file.contents)}
-        selectedLines={selectedLines}
-        options={renderOptions}
-        lineAnnotations={lineAnnotations}
-        renderAnnotation={renderAnnotation}
-        style={pierreViewerStyle}
-        className="min-w-full"
-      />
-    </EditProvider>
+    <div ref={setContainer} className="contents">
+      <EditProvider createEditor={createEditor}>
+        <File
+          file={source.file}
+          edit={editable}
+          editorOptions={editorOptions}
+          // Editable token offsets must be produced together with the main-thread editor,
+          // not by the app's read-only worker pool (which does not enable token transforms).
+          disableWorkerPool={editable}
+          onEditChange={({ file }) => onChange(file.contents)}
+          selectedLines={selectedLines}
+          options={renderOptions}
+          lineAnnotations={lineAnnotations}
+          renderAnnotation={renderAnnotation}
+          style={pierreViewerStyle}
+          className="min-w-full"
+        />
+      </EditProvider>
+    </div>
   );
 }

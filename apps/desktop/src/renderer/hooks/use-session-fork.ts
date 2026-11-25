@@ -10,11 +10,12 @@ import { browserCommentsFromMessage } from "../lib/browser-comments";
 import { reviewCommentsFromMessage } from "../lib/review-comments";
 import { palot } from "../services/palot";
 import { usePalotNavigation } from "./use-navigation";
-import { useCacheSession } from "./use-session-catalog";
+import { useCacheSession, useTaskTitleLookup } from "./use-session-catalog";
 
 export function useSessionFork(owner?: OpenCodeRuntimeStatus | null) {
   const store = useStore();
   const cacheSession = useCacheSession(owner);
+  const taskTitle = useTaskTitleLookup(owner);
   const { openSession } = usePalotNavigation();
 
   return useCallback(
@@ -27,7 +28,7 @@ export function useSessionFork(owner?: OpenCodeRuntimeStatus | null) {
       const connectionID = origin?.connectionID;
       const restored = input.restore
         ? {
-            draft: composerDraftFromMessage(input.restore),
+            draft: composerDraftFromMessage(input.restore, taskTitle),
             files: composerFilesFromMessage(input.restore).files,
             browserComments: browserCommentsFromMessage(input.restore),
             comments: reviewCommentsFromMessage(input.restore) ?? [],
@@ -64,6 +65,6 @@ export function useSessionFork(owner?: OpenCodeRuntimeStatus | null) {
       await openSession(forked.id, { profileID });
       return forked;
     },
-    [cacheSession, openSession, owner, store],
+    [cacheSession, openSession, owner, store, taskTitle],
   );
 }

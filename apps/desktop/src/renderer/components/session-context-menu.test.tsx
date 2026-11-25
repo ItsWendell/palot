@@ -5,12 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenCodeRuntimeStatus, PalotProject, PalotSession } from "../../shared";
 import { palot } from "../services/palot";
 import * as opencodeVcs from "../services/opencode-vcs";
+import * as clipboard from "../lib/clipboard";
 import { createRendererQueryClient } from "../lib/query-client";
 import { messagesAtom, runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { setTranscriptSnapshot } from "../hooks/use-session-transcript";
 import { mapMessage } from "../services/opencode-mappers";
 import { cacheSessions } from "../lib/session-catalog-query";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
+import * as opencodeCatalog from "../services/opencode-catalog";
+import { unreadMarksAtom } from "../hooks/use-task-unread";
+import { hasUnreadMark, unreadMarkKey } from "../lib/task-unread";
 
 const mocks = vi.hoisted(() => ({
   forkSession: vi.fn(),
@@ -96,6 +100,54 @@ afterEach(() => {
 });
 
 describe("SessionContextMenu", () => {
+  it("marks a read task unread, then offers to mark it read", async () => {
+    const view = vi.spyOn(opencodeCatalog, "viewSession").mockResolvedValue(undefined);
+    const store = createStore();
+    store.set(unreadMarksAtom, {});
+    const readSession = { ...session, idleAt: 5, viewedAt: 5 };
+    render(
+      <QueryClientProvider client={createRendererQueryClient()}>
+        <Provider store={store}>
+          <SessionContextMenu
+            owner={owner}
+            session={readSession}
+            trigger={<button type="button">Task</button>}
+          />
+        </Provider>
+      </QueryClientProvider>,
+    );
+    const key = unreadMarkKey(owner.profileID, session.id);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Task" }));
+    expect(screen.queryByRole("menuitem", { name: "Mark as read" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Mark as unread" }));
+    expect(hasUnreadMark(store.get(unreadMarksAtom), key)).toBe(true);
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Task" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Mark as read" }));
+    expect(hasUnreadMark(store.get(unreadMarksAtom), key)).toBe(false);
+    // OpenCode already has the task read, so nothing is sent.
+    expect(view).not.toHaveBeenCalled();
+  });
+
+  it("records the view when marking a task OpenCode has unread", async () => {
+    const view = vi.spyOn(opencodeCatalog, "viewSession").mockResolvedValue(undefined);
+    const store = createStore();
+    store.set(runtimeAtom, owner);
+    render(
+      <QueryClientProvider client={createRendererQueryClient()}>
+        <Provider store={store}>
+          <SessionExportMenu session={{ ...session, idleAt: 9, viewedAt: 5 }} />
+        </Provider>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Task actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Mark as unread" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Mark as read" }));
+    await waitFor(() =>
+      expect(view).toHaveBeenCalledWith(session.id, 9, undefined, owner.connectionID),
+    );
+  });
+
   it.each(["header", "sidebar"] as const)(
     "opens the selected task in a new window from the %s",
     async (surface) => {
@@ -123,7 +175,7 @@ describe("SessionContextMenu", () => {
   it.each([
     ["Previous user turn", "previousTurn"],
     ["Next user turn", "nextTurn"],
-    ["Prompt timeline", "openTimeline"],
+    ["Jump to message…", "openTimeline"],
     ["Fork from prompt…", "forkFromPrompt"],
   ] as const)("runs %s from task actions", async (label, action) => {
     const historyActions = {
@@ -415,6 +467,48 @@ describe("SessionContextMenu", () => {
     await waitFor(() => expect(copy).toHaveBeenCalledWith(session.id, undefined));
   });
 
+  it.each(["header", "sidebar"] as const)("copies the task ID from the %s", async (surface) => {
+    const writeClipboardText = vi.spyOn(clipboard, "writeClipboardText").mockResolvedValue();
+    render(
+      <QueryClientProvider client={createRendererQueryClient()}>
+        <Provider store={createStore()}>
+          {surface === "header" ? (
+            <SessionExportMenu session={session} />
+          ) : (
+            <SessionContextMenu session={session} trigger={<button type="button">Task</button>} />
+          )}
+        </Provider>
+      </QueryClientProvider>,
+    );
+    if (surface === "header") fireEvent.click(screen.getByRole("button", { name: "Task actions" }));
+    else fireEvent.contextMenu(screen.getByRole("button", { name: "Task" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy task ID" }));
+    await waitFor(() => expect(writeClipboardText).toHaveBeenCalledExactlyOnceWith(session.id));
+  });
+
+  it("copies a palot:// link that opens the task on its server, beside Copy task ID", async () => {
+    const writeClipboardText = vi.spyOn(clipboard, "writeClipboardText").mockResolvedValue();
+    const store = createStore();
+    store.set(runtimeAtom, { profileID: "local-default" } as OpenCodeRuntimeStatus);
+    const linked = { ...session, id: "ses_0123456789abcdefghijABCDEF" };
+    render(
+      <QueryClientProvider client={createRendererQueryClient()}>
+        <Provider store={store}>
+          <SessionContextMenu session={linked} trigger={<button type="button">Task</button>} />
+        </Provider>
+      </QueryClientProvider>,
+    );
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Task" }));
+    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+    expect(items.indexOf("Copy link")).toBe(items.indexOf("Copy task ID") + 1);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Copy link" }));
+    await waitFor(() =>
+      expect(writeClipboardText).toHaveBeenCalledExactlyOnceWith(
+        "palot://task/ses_0123456789abcdefghijABCDEF?profile=local-default",
+      ),
+    );
+  });
+
   it("offers nested snooze choices", async () => {
     const onSnooze = vi.fn();
     vi.spyOn(Date, "now").mockReturnValue(1_000);
@@ -480,6 +574,7 @@ describe("SessionContextMenu", () => {
 
   it.each([
     "Open in new window",
+    "Open in background",
     "Fork",
     "Schedule follow-up",
     "Export task",
@@ -518,6 +613,10 @@ describe("SessionContextMenu", () => {
     await waitFor(() => {
       if (label === "Open in new window")
         expect(openWindow).toHaveBeenCalledWith(session.id, owner.connectionID);
+      if (label === "Open in background")
+        expect(openWindow).toHaveBeenCalledWith(session.id, owner.connectionID, {
+          background: true,
+        });
       if (label === "Fork") {
         expect(mocks.forkOwner).toHaveBeenLastCalledWith(owner);
         expect(mocks.forkSession).toHaveBeenCalledWith({ sessionID: session.id });

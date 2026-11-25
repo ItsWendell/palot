@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PalotMessage } from "../../shared";
+import type { JsonValue, PalotMessage } from "../../shared";
 import {
   convergeMessageReceipt,
   mergeMessages,
@@ -27,6 +27,49 @@ describe("message reconciliation", () => {
   it("preserves the preferred message identity when no live-only metadata is missing", () => {
     const persisted = compaction("Persisted summary");
     expect(reconcileMessage(persisted, compaction("Live summary"), false)).toBe(persisted);
+  });
+
+  it("keeps a running tool's live progress, which OpenCode does not store, until it settles", () => {
+    const script = (status: string, metadata: Record<string, JsonValue>): PalotMessage => ({
+      ...compaction(""),
+      id: "assistant-1",
+      type: "assistant",
+      content: [
+        { type: "tool", id: "call-1", name: "execute", state: { status, input: {}, metadata } },
+      ],
+    });
+    const progress = {
+      toolCalls: [{ tool: "shell", status: "running", input: { command: "./slow.sh" } }],
+    };
+
+    const running = reconcileMessage(script("running", {}), script("running", progress), false);
+    expect(running?.content[0]?.state).toMatchObject({ metadata: progress });
+
+    const done = script("completed", { toolCalls: [] });
+    expect(reconcileMessage(done, script("running", progress), false)).toBe(done);
+  });
+
+  it("keeps the calls a script made once OpenCode moves it to the background and drops them", () => {
+    const script = (status: string, metadata: Record<string, JsonValue>): PalotMessage => ({
+      ...compaction(""),
+      id: "assistant-1",
+      type: "assistant",
+      content: [
+        { type: "tool", id: "call-1", name: "execute", state: { status, input: {}, metadata } },
+      ],
+    });
+    const toolCalls = [{ tool: "shell", status: "running", input: { command: "./slow.sh" } }];
+    const backgrounded = script("completed", { jobID: "cm_1" });
+
+    const kept = reconcileMessage(backgrounded, script("running", { toolCalls }), false);
+    expect(kept?.content[0]?.state).toMatchObject({
+      status: "completed",
+      metadata: { jobID: "cm_1", toolCalls },
+    });
+    // A later fetch has no calls again; the copy Palot kept still does.
+    expect(reconcileMessage(backgrounded, kept, false)?.content[0]?.state).toMatchObject({
+      metadata: { jobID: "cm_1", toolCalls },
+    });
   });
 
   it("replaces the live compaction with its hydrated persisted message", () => {

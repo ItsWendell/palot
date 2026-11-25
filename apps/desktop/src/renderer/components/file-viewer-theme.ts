@@ -15,6 +15,10 @@ const pierreBaseCSS = `
   --mix-light: 0%;
   --mix-dark: 0%;
 }
+/* Diffs draw no +/- indicators, so screen readers would hear changed lines as plain text. The
+   empty generated content draws nothing; its alternative text names the change. */
+[data-line][data-line-type="change-addition"]::before { content: "" / "Added"; }
+[data-line][data-line-type="change-deletion"]::before { content: "" / "Removed"; }
 /* Syntax colors are inline token styles, so changed words need !important to stay legible on their highlight. */
 [data-line-type="change-addition"] [data-diff-span],
 [data-line-type="change-addition"] [data-diff-span] * {

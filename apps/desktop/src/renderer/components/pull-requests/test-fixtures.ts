@@ -175,6 +175,10 @@ export function installSourceControl(overrides: Partial<PalotSourceControlApi> =
     }),
     pullRequestDetail: async (ref) => ({ ok: true, value: pullRequestDetail(ref.number) }),
     pullRequestTimeline: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+    pullRequestCheckLogs: async (input) => ({
+      ok: true,
+      value: input.checkRunIDs.map((checkRunID) => ({ checkRunID, step: null, excerpt: null })),
+    }),
     pullRequestFiles: async () => ({
       ok: true,
       value: { headOid: "abc1234def", files: [], truncated: false },
@@ -237,6 +241,7 @@ export function installSourceControl(overrides: Partial<PalotSourceControlApi> =
     searchPullRequests: vi.fn(source.searchPullRequests),
     pullRequestDetail: vi.fn(source.pullRequestDetail),
     pullRequestTimeline: vi.fn(source.pullRequestTimeline),
+    pullRequestCheckLogs: vi.fn(source.pullRequestCheckLogs),
     pullRequestFiles: vi.fn(source.pullRequestFiles),
     setPullRequestFileViewed: vi.fn(source.setPullRequestFileViewed),
     submitPullRequestReview: vi.fn(source.submitPullRequestReview),

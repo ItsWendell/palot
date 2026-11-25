@@ -1,5 +1,3 @@
-export type SidebarMode = "project" | "inbox";
-
 export type SessionDisposition = "inbox" | "settled";
 
 export interface ActivityWatermark {

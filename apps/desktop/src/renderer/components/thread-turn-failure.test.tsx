@@ -6,7 +6,7 @@ import type { SessionExecutionState } from "../atoms/workspace";
 import { projectTranscriptMessages } from "../hooks/use-session-transcript";
 import { withPersistedTurnFailures } from "../lib/persisted-turn-failures";
 import { createSessionTranscriptProjector } from "../lib/turn-projection";
-import { TurnActivity } from "./thread";
+import { TurnActivity } from "./transcript/activity-group";
 
 afterEach(cleanup);
 

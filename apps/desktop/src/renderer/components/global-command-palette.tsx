@@ -40,7 +40,7 @@ import { useConnectionOverview, type ConnectionOverview } from "../hooks/use-con
 import { useFluidHover, useRegisterFluidHoverItem } from "../hooks/use-fluid-hover";
 import { useGlobalCommands } from "../hooks/use-global-commands";
 import { requestTranscriptJump, useMessageSearch } from "../hooks/use-message-search";
-import { catalogSessionIsUnread } from "../hooks/use-session-info";
+import { useUnreadMarkLookup } from "../hooks/use-task-unread";
 import {
   adjacentPaletteTab,
   PALETTE_FILE_ENTER_LABEL,
@@ -51,6 +51,7 @@ import {
   rankGlobalCommands,
 } from "../lib/global-command-search";
 import { cn } from "../lib/cn";
+import { taskIsUnread } from "../lib/task-unread";
 import { groupGlobalCommands, type GlobalCommand } from "../lib/global-commands";
 import {
   formatShortcut,
@@ -142,14 +143,29 @@ const DIRECT_SHORTCUTS: readonly (readonly [KeyboardShortcutID, string])[] = [
 function overviewTaskStatus(
   item: ConnectionOverview["inbox"]["inbox"][number] | undefined,
   session: PalotSession,
+  marked: boolean,
 ): PaletteTaskStatus | undefined {
   if (item?.attention) return "attention";
+  // As in the task list: a failed turn shows until the task is settled.
+  if (item?.failed && item.section !== "settled") return "failed";
   if (item?.running) return "running";
-  return catalogSessionIsUnread(session) ? "unread" : undefined;
+  return taskIsUnread(session, { marked }) ? "unread" : undefined;
+}
+
+/** Tasks the task list shows as Failed: the last turn failed, and the task is not settled. */
+function failedTaskIDs(connection: ConnectionOverview | undefined): Set<string> {
+  const ids = new Set<string>();
+  if (!connection) return ids;
+  for (const section of ["pinned", "inbox", "snoozed"] as const)
+    for (const item of connection.inbox[section]) if (item.failed) ids.add(item.session.id);
+  return ids;
 }
 
 /** Root tasks from every scoped connection, labelled and owned by their server. */
-function overviewTasks(connections: readonly ConnectionOverview[]): PaletteTask[] {
+function overviewTasks(
+  connections: readonly ConnectionOverview[],
+  markedUnread: (sessionID: string, profileID: string) => boolean,
+): PaletteTask[] {
   return connections.flatMap((connection) => {
     const rows = new Map(
       (["pinned", "inbox", "snoozed", "settled"] as const).flatMap((section) =>
@@ -166,7 +182,11 @@ function overviewTasks(connections: readonly ConnectionOverview[]): PaletteTask[
         projectName: project ? projectName(project) : null,
         serverName: connection.profile.name,
         connected,
-        status: overviewTaskStatus(rows.get(session.id), session),
+        status: overviewTaskStatus(
+          rows.get(session.id),
+          session,
+          markedUnread(session.id, connection.profile.id),
+        ),
       };
     });
   });
@@ -222,11 +242,12 @@ export function GlobalCommandPalette() {
       overview.visibleProfileIDs,
     ],
   );
+  const markedUnread = useUnreadMarkLookup();
   const recentTasks = useMemo(
     () =>
       mergePaletteTasks(
         multiConnection
-          ? overviewTasks(scopedConnections)
+          ? overviewTasks(scopedConnections, markedUnread)
           : loadedSessions.map((session): PaletteTask => ({
               session,
               profileID: null,
@@ -235,7 +256,7 @@ export function GlobalCommandPalette() {
               connected: true,
             })),
       ),
-    [multiConnection, scopedConnections, loadedSessions, runtime?.connectionID],
+    [multiConnection, scopedConnections, loadedSessions, markedUnread, runtime?.connectionID],
   );
   const searchTargets = useMemo<SearchTarget[]>(
     () =>
@@ -344,9 +365,14 @@ export function GlobalCommandPalette() {
     setQuery("");
     setPage(nextPage);
   };
+  const focusedConnection = overview.connections.find(
+    (connection) => connection.profile.id === runtime?.profileID,
+  );
+  const failedSessionIDs = useMemo(() => failedTaskIDs(focusedConnection), [focusedConnection]);
   const { commands, projectCommands } = useGlobalCommands({
     tasks,
     recentTasks,
+    failedSessionIDs,
     onChooseProject: () => showPalette("projects"),
     onOpenFiles: () => {
       showPalette("root");
@@ -1254,6 +1280,7 @@ function PaletteFooter({
 
 const STATUS_LABELS: Record<PaletteTaskStatus, string> = {
   attention: "Needs attention",
+  failed: "Failed",
   unread: "Unread task activity",
   running: "Running",
 };
@@ -1271,9 +1298,11 @@ function TaskTrailing({ command }: { command: GlobalCommand }) {
             "size-2 shrink-0 rounded-full",
             command.status === "attention"
               ? "bg-warning"
-              : command.status === "unread"
-                ? "bg-info"
-                : "bg-success",
+              : command.status === "failed"
+                ? "bg-destructive"
+                : command.status === "unread"
+                  ? "bg-info"
+                  : "bg-success",
           )}
           aria-label={STATUS_LABELS[command.status]}
         />
@@ -1292,7 +1321,11 @@ function TaskTrailing({ command }: { command: GlobalCommand }) {
   );
 }
 
-const MESSAGE_AUTHOR_LABELS = { user: "You", assistant: "Assistant" } as const;
+const MESSAGE_AUTHOR_LABELS = {
+  user: "You",
+  automation: "Automation",
+  assistant: "Assistant",
+} as const;
 
 function messageHitText(hit: MessageSearchHit | undefined): string | undefined {
   return hit ? `${hit.excerpt.before}${hit.excerpt.match}${hit.excerpt.after}` : undefined;

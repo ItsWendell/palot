@@ -1,5 +1,6 @@
 // Derived from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser/files.ts
+// See UPSTREAM.md.
 import { Browser } from "@opencode/plugin-browser/rpc";
 import { mkdir, readFile, stat, writeFile, rm } from "node:fs/promises";
 import { mkdirSync } from "node:fs";

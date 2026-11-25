@@ -24,9 +24,9 @@
     {
       "id": "sql-js-wasm",
       "packageName": "sql.js",
-      "version": "1.15.2",
-      "sha256": ["0dfeecda2070b36da0cd4f6afa250af9453de528a983770f85b13d5d6b667572"],
-      "source": "https://github.com/sql-js/sql.js/tree/v1.15.2",
+      "version": "1.16.0",
+      "sha256": ["43bbcdd44287e5a2db3b6b5af34b1a3485a7a441285d247976c1ebe3c61f8dbf"],
+      "source": "https://github.com/sql-js/sql.js/tree/v1.16.0",
       "notices": ["sql-js", "sqlite", "sources"]
     },
     {
@@ -97,7 +97,7 @@
     },
     "sources": {
       "file": "upstream/RUNTIME_SOURCES.md",
-      "sha256": "5c64df0a2d256de4848c027ac23c889707991dd8d6a99a8425ee0926141cc39f"
+      "sha256": "3288b3462a97ca19177bfbfc1b443e1ba5029bd6936de05bb2527efbec2b74e8"
     },
     "sql-js": {
       "file": "upstream/sql.js.LICENSE.txt",

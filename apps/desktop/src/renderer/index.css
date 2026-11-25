@@ -416,15 +416,6 @@
   border-radius: var(--popover-radius);
 }
 
-:root[data-reduced-motion="true"] *,
-:root[data-reduced-motion="true"] *::before,
-:root[data-reduced-motion="true"] *::after {
-  scroll-behavior: auto !important;
-  transition-duration: 0.01ms !important;
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-}
-
 @layer components {
   .palot-chart {
     --ts-chart-tooltip-max-width: min(24rem, 80%);
@@ -466,8 +457,7 @@
   :is(
     [data-slot="dialog-content"],
     [data-slot="sheet-content"],
-    .palot-composer:not(.palot-composer-unified),
-    .palot-composer-frame
+    .palot-composer:not(.palot-composer-unified)
   ) {
   border-radius: var(--desktop-surface-radius);
 }
@@ -532,6 +522,8 @@
 .palot-overlay-scrollbar:active,
 [data-slot="scroll-area"]:focus-within .palot-overlay-scrollbar,
 [data-slot="message-scroller"]:focus-within .palot-overlay-scrollbar,
+[data-slot="task-list-scroll"]:hover .palot-overlay-scrollbar,
+[data-slot="task-list-scroll"]:has(:focus-visible) .palot-overlay-scrollbar,
 :root[data-scrollbars="always"] .palot-overlay-scrollbar {
   opacity: 1;
   transition-delay: 0ms;
@@ -668,8 +660,8 @@
   opacity: 1;
   transform: scale(1);
   transition:
-    opacity 180ms ease,
-    transform 180ms ease;
+    opacity 180ms ease-out,
+    transform 180ms ease-out;
 }
 
 :root:is([data-chrome-tier="liquid-glass"], [data-chrome-tier="vibrancy"]):not(
@@ -681,7 +673,7 @@
 
 .palot-onboarding-surface[data-leaving="true"] {
   opacity: 0;
-  transform: scale(0.995);
+  transform: scale(0.98);
 }
 
 .palot-scroll-fade {
@@ -880,13 +872,6 @@
   min-width: 0;
 }
 
-.palot-sidebar[data-slot="sidebar"] [data-slot="sidebar-menu-sub"] {
-  margin-inline: 0;
-  padding-inline: 0;
-  translate: 0;
-  border-inline-start: 0;
-}
-
 .palot-sidebar[data-slot="sidebar"]
   :is(
     [data-slot="sidebar-menu-button"],
@@ -900,38 +885,6 @@
 .palot-sidebar[data-slot="sidebar"]
   :is([data-slot="sidebar-menu-button"], [data-slot="sidebar-menu-sub-button"])[data-active] {
   background: var(--palot-sidebar-selected);
-}
-
-.palot-sidebar[data-slot="sidebar"] :is([data-palot-project-action], [data-palot-task-action]) {
-  pointer-events: none;
-  opacity: 0;
-  transition:
-    opacity 120ms ease,
-    background-color 120ms ease;
-}
-
-/* Project actions belong to the header row only, so hovering a task never reveals them. */
-.palot-sidebar[data-slot="sidebar"]
-  [data-palot-project-header]:is(:hover, :focus-within)
-  [data-palot-project-action],
-.palot-sidebar[data-slot="sidebar"]
-  [data-palot-task-row]:is(:hover, :focus-within)
-  [data-palot-task-action] {
-  pointer-events: auto;
-  opacity: 1;
-}
-
-.palot-sidebar[data-slot="sidebar"] [data-palot-task-row]:is(:hover, :focus-within) time {
-  opacity: 0;
-}
-
-.palot-sidebar[data-slot="sidebar"] [data-palot-task-action][aria-disabled="true"] {
-  cursor: not-allowed;
-  color: var(--muted-foreground);
-}
-
-.palot-composer-frame {
-  border-radius: var(--surface-radius);
 }
 
 .palot-composer {
@@ -1065,6 +1018,8 @@
   border-radius: 9999px;
   background: currentColor;
   content: "";
+  /* Centres the dot even when no keyframe applies; the keyframes repeat it with the scale. */
+  transform: translateY(-50%);
   animation: palot-thinking-pulse 1.6s ease-in-out infinite;
   animation-delay: inherit;
   will-change: opacity, transform;
@@ -1080,14 +1035,6 @@
   50% {
     opacity: 1;
     transform: translateY(-50%) scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .palot-thinking-shimmer::before {
-    animation: none;
-    opacity: 0.7;
-    transform: translateY(-50%);
   }
 }
 
@@ -1756,22 +1703,74 @@
   }
 }
 
+/* Reduced motion. The OS media query and Palot's own setting (data-reduced-motion,
+   mirrored by AppearanceSync) can disagree on Linux, so both selectors carry the
+   same rules; keep the two blocks identical. Colour and opacity keep their timing,
+   movement and size change at once, and one-shot animations finish immediately.
+   Progress indicators keep running: a frozen spinner reads as a hang. Streamed
+   words appear at once without the staggered fade. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-property:
+      color, background-color, border-color, outline-color, text-decoration-color, fill, stroke,
+      opacity, box-shadow !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .animate-pulse {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .palot-thinking-shimmer::before {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+
   .palot-markdown-stream-unit,
   [data-markdown-stream-marker]::marker {
     animation: none;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
+:root[data-reduced-motion="true"] *,
+:root[data-reduced-motion="true"] *::before,
+:root[data-reduced-motion="true"] *::after {
+  scroll-behavior: auto !important;
+  transition-property:
+    color, background-color, border-color, outline-color, text-decoration-color, fill, stroke,
+    opacity, box-shadow !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+:root[data-reduced-motion="true"] .animate-spin {
+  animation-duration: 1s !important;
+  animation-iteration-count: infinite !important;
+}
+
+:root[data-reduced-motion="true"] .animate-pulse {
+  animation-duration: 2s !important;
+  animation-iteration-count: infinite !important;
+}
+
+:root[data-reduced-motion="true"] .palot-thinking-shimmer::before {
+  animation-duration: 1.6s !important;
+  animation-iteration-count: infinite !important;
+}
+
+:root[data-reduced-motion="true"] .palot-markdown-stream-unit,
+:root[data-reduced-motion="true"] [data-markdown-stream-marker]::marker {
+  animation: none;
 }
 
 /* Highlights are matched on :root only and inherited, like ::selection above. */
@@ -1790,6 +1789,17 @@
   color: var(--primary-foreground);
 }
 
+/* Find in file previews (components/workbench-tabs/file-find.tsx). Code views style the same
+   highlights inside their shadow roots (file-viewer-theme.ts). */
+:root::highlight(palot-diff-find) {
+  background-color: color-mix(in oklch, var(--warning) 30%, transparent);
+}
+
+:root::highlight(palot-diff-find-active) {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
 @media (forced-colors: active) {
   :root::highlight(palot-response-quote) {
     background-color: Highlight;
@@ -1802,6 +1812,16 @@
   }
 
   :root::highlight(palot-transcript-find-active) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+
+  :root::highlight(palot-diff-find) {
+    background-color: Mark;
+    color: MarkText;
+  }
+
+  :root::highlight(palot-diff-find-active) {
     background-color: Highlight;
     color: HighlightText;
   }

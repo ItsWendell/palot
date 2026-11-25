@@ -24,6 +24,8 @@ import { cn } from "../lib/cn";
 import { writeClipboardText } from "../lib/clipboard";
 import {
   fileReferenceAbsolutePath,
+  fileReferenceMachine,
+  fileReferenceText,
   workspaceRelativePath,
   type FileReference,
 } from "../lib/file-reference";
@@ -321,6 +323,30 @@ function WebLinkMenuItems({ url, actions }: { url: string; actions: LinkActions 
   );
 }
 
+/** The address (or comma-separated addresses) of a `mailto:` link, without its query. */
+export function mailtoAddress(href: string | undefined): string | null {
+  if (!href || !/^mailto:/i.test(href)) return null;
+  const raw = href.slice("mailto:".length).split("?")[0] ?? "";
+  try {
+    return decodeURIComponent(raw).trim() || null;
+  } catch {
+    return raw.trim() || null;
+  }
+}
+
+/** Wraps an email link with Copy email address. */
+export function EmailLinkMenu({ address, children }: { address: string; children: ReactElement }) {
+  return useLinkMenuTrigger(children as ReactElement<LinkTriggerProps>, () => ({
+    label: `Link actions for ${address}`,
+    items: (
+      <DropdownMenuItem onClick={() => copy(address)}>
+        <Copy aria-hidden="true" />
+        Copy email address
+      </DropdownMenuItem>
+    ),
+  }));
+}
+
 /**
  * Wraps a file link with Open, Palot Browser, editor, file manager and copy actions.
  * `directory` resolves relative paths the way the link's own click does.
@@ -364,7 +390,11 @@ function FileLinkMenuItems({
   element: HTMLElement;
   actions: LinkActions;
 }) {
-  const absolute = fileReferenceAbsolutePath(reference.path, directory, actions.homeDirectory);
+  // A file on another OpenCode machine has no local path: no editor, reveal or browser for it.
+  const machine = fileReferenceMachine(reference);
+  const absolute = machine
+    ? null
+    : fileReferenceAbsolutePath(reference.path, directory, actions.homeDirectory);
   const local = actions.localPathActions && absolute !== null;
   const editor = usePreferredEditor(local, actions.connectionID, actions.sessionID);
   const relative =
@@ -436,7 +466,9 @@ function FileLinkMenuItems({
         </DropdownMenuItem>
       ) : null}
       {hasOpenActions ? <DropdownMenuSeparator /> : null}
-      <DropdownMenuItem onClick={() => copy(absolute ?? reference.path)}>
+      <DropdownMenuItem
+        onClick={() => copy(machine ? fileReferenceText(reference) : (absolute ?? reference.path))}
+      >
         <Copy aria-hidden="true" />
         Copy path
       </DropdownMenuItem>

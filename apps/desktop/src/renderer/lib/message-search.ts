@@ -9,7 +9,9 @@
  */
 import type { PalotMessage } from "../../shared";
 import type { PaletteTask } from "./palette-tasks";
+import { promptAutomation } from "./prompt-automation";
 import { normalizeTranscriptQuery, transcriptPartText } from "./transcript-search";
+import { cutHead, cutTail } from "../../shared/text-cut";
 
 /** Recent tasks per connection whose latest messages a bounded search fetches. */
 export const MESSAGE_SEARCH_TASK_LIMIT = 30;
@@ -28,7 +30,8 @@ export const MESSAGE_SEARCH_MIN_QUERY = 2;
 const EXCERPT_BEFORE = 36;
 const EXCERPT_AFTER = 120;
 
-export type MessageSearchAuthor = "user" | "assistant";
+/** "automation" is a user message an automation sent, not one you typed. */
+export type MessageSearchAuthor = "user" | "automation" | "assistant";
 
 /** One task's searchable messages, in chronological order. */
 export interface MessageSearchSource {
@@ -67,7 +70,7 @@ export function messageSearchTaskKey(task: PaletteTask): string {
 }
 
 function messageAuthor(message: PalotMessage): MessageSearchAuthor | null {
-  if (message.type === "user") return "user";
+  if (message.type === "user") return promptAutomation(message) ? "automation" : "user";
   if (message.type === "assistant") return "assistant";
   return null;
 }
@@ -102,9 +105,9 @@ export function messageExcerpt(text: string, index: number, length: number): Mes
   }
   const flat = (value: string) => value.replaceAll(/\s+/g, " ");
   return {
-    before: `${start > 0 ? "…" : ""}${flat(text.slice(start, index)).trimStart()}`,
+    before: `${start > 0 ? "…" : ""}${flat(cutTail(text.slice(0, index), index - start)).trimStart()}`,
     match: flat(text.slice(index, index + length)),
-    after: `${flat(text.slice(index + length, end)).trimEnd()}${end < text.length ? "…" : ""}`,
+    after: `${flat(cutHead(text.slice(index + length), end - index - length)).trimEnd()}${end < text.length ? "…" : ""}`,
   };
 }
 
@@ -150,7 +153,8 @@ export function searchMessages(
           id: `${messageSearchTaskKey(task)}\0${message.id}`,
           task,
           messageID: message.id,
-          anchorMessageID: author === "user" ? message.id : precedingUserMessageID(messages, index),
+          anchorMessageID:
+            author !== "assistant" ? message.id : precedingUserMessageID(messages, index),
           author,
           createdAt: message.createdAt,
           excerpt,

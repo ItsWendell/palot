@@ -3,6 +3,7 @@ import type { PalotBrowserComment } from "../../shared/browser-contract";
 import type { PalotMessage } from "../../shared";
 import { composerFilesFromMessage } from "./composer-restoration";
 import { attachmentPrompt } from "../services/opencode-attachment-delivery";
+import { mapMessage } from "../services/opencode-mappers";
 import {
   browserCommentsFromMessage,
   durableBrowserComment,
@@ -91,5 +92,84 @@ describe("browser comment context", () => {
       }).inlineFiles,
     ).toEqual([files[1]]);
     expect(restored[0]?.element.ref).toBeUndefined();
+  });
+
+  describe("sent with the preview as an attached file", () => {
+    const preview = "data:image/jpeg;base64,/9j/AA==";
+    const selected = { ...comment, preview };
+    const independent = { name: "independent.png", mime: "image/png", data: "iVBORw==" };
+
+    /** The user message as OpenCode returns it after the prompt round trip. */
+    function stored(data: (file: { name: string }) => Record<string, unknown>) {
+      const sent = attachmentPrompt("Look", {
+        browserComments: [selected],
+        modelInput: ["image"],
+      });
+      return mapMessage({
+        id: "sent",
+        type: "user",
+        time: { created: 1 },
+        text: sent.text,
+        metadata: sent.metadata,
+        files: [
+          ...sent.inlineFiles.map((file) => ({
+            name: file.name,
+            mime: file.mime,
+            source: { type: "inline" },
+            ...data(file),
+          })),
+          { ...independent, source: { type: "inline" } },
+        ],
+      } as never);
+    }
+
+    it("restores the preview from the attached file", () => {
+      const message = stored(() => ({ data: preview.split(",")[1] }));
+      expect(JSON.stringify(message.data)).not.toContain("data:image/jpeg");
+      expect(browserCommentsFromMessage(message)).toEqual([
+        durableBrowserComment({ ...selected, preview }),
+      ]);
+    });
+
+    it("restores a server-stored preview as its media reference", () => {
+      const ref = `media:${"a".repeat(64)}`;
+      const message = stored(() => ({ uri: ref }));
+      expect(browserCommentsFromMessage(message)[0]?.preview).toBe(ref);
+      const resent = attachmentPrompt("", {
+        files: retainedComposerFiles(message),
+        browserComments: browserCommentsFromMessage(message),
+        modelInput: ["image"],
+      });
+      expect(resent.inlineFiles.filter((file) => file.uri === ref)).toHaveLength(1);
+    });
+
+    it("re-sends a restored comment with its preview attached once", () => {
+      const message = stored(() => ({ data: preview.split(",")[1] }));
+      const files = retainedComposerFiles(message);
+      expect(files.map((file) => file.name)).toEqual([independent.name]);
+      expect(composerFilesFromMessage(message).files.map((file) => file.name)).toEqual([
+        independent.name,
+      ]);
+      const resent = attachmentPrompt("", {
+        files,
+        browserComments: browserCommentsFromMessage(message),
+        modelInput: ["image"],
+      });
+      expect(resent.inlineFiles.map((file) => file.name)).toEqual([
+        browserCommentPreviewName(comment),
+        independent.name,
+      ]);
+      expect(resent.inlineFiles[0]?.uri).toBe(preview);
+    });
+
+    it("restores no preview when the named file is missing", () => {
+      const message = stored(() => ({ data: preview.split(",")[1] }));
+      const restored = browserCommentsFromMessage({
+        ...message,
+        files: message.files?.filter((file) => file.name === independent.name),
+      });
+      expect(restored[0]?.preview).toBeUndefined();
+      expect(restored[0]?.comment).toBe(comment.comment);
+    });
   });
 });

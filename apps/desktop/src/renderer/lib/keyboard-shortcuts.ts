@@ -45,6 +45,20 @@ export type KeyboardShortcutID =
   | "task.recent"
   | "task.next"
   | "task.previous"
+  | "tasks.list.previous"
+  | "tasks.list.next"
+  | "tasks.needs-you.next"
+  | "task.settle"
+  | "tasks.list.jump"
+  | "task-list.move"
+  | "task-list.settle"
+  | "task-list.snooze"
+  | "task-list.pin"
+  | "task-list.unread"
+  | "task-list.quick-look"
+  | "task-list.allow"
+  | "task-list.deny"
+  | "task-list.rename"
   | "task.changes.toggle"
   | "task.terminal.toggle"
   | "task.voice.toggle"
@@ -54,10 +68,13 @@ export type KeyboardShortcutID =
   | "composer.send"
   | "composer.newline"
   | "composer.steer"
+  | "composer.steer-first"
+  | "composer.queue-first"
   | "composer.model"
   | "composer.reasoning.cycle"
   | "composer.agent.next"
   | "composer.agent.previous"
+  | "composer.launcher"
   | "composer.attach"
   | "composer.stash"
   | "composer.shell"
@@ -71,17 +88,21 @@ export type KeyboardShortcutID =
   | "new-task.workspace"
   | "new-task.branch"
   | "task.find"
+  | "task.ship"
   | "task.turn.previous"
   | "task.turn.next"
+  | "task.jump"
   | "navigation.back"
   | "navigation.forward"
+  | "focus.region.next"
+  | "focus.region.previous"
   | "changes.find";
 
 /**
  * Where a shortcut's handler listens. Bindings conflict when their scopes can receive the
  * same key press: `global` overlaps every scope, and the composer sits inside the task view.
  */
-export type KeyboardShortcutScope = "global" | "composer" | "task-view" | "changes";
+export type KeyboardShortcutScope = "global" | "composer" | "task-view" | "changes" | "task-list";
 
 export interface KeyboardShortcut {
   id: KeyboardShortcutID;
@@ -96,10 +117,15 @@ export interface KeyboardShortcut {
   locked?: string;
   /** The shortcut must keep a binding; it can be changed but not cleared. */
   required?: boolean;
+  /** Another locked shortcut on the same keys; the handler picks one by state, so they never conflict. */
+  sharesKeysWith?: KeyboardShortcutID;
 }
 
 const COMPOSER_TYPING = "Part of typing in the composer";
 const COMPOSER_PAGING = "The caret stays put; not while suggestions are open";
+const FOCUS_REGION_ORDER = "Task list, transcript, composer, then the workbench when it is open";
+const TASK_LIST_ROW = "On a focused row in the task list";
+const TASK_LIST_ROW_KEY = "A single key on the focused row";
 const WORKBENCH_TAB_CYCLING =
   "Switches workbench tabs instead while a workbench with several tabs has focus";
 
@@ -154,6 +180,122 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     label: "Previous recent task",
     keys: ["Control", "Shift", "Tab"],
     note: WORKBENCH_TAB_CYCLING,
+  },
+  {
+    id: "tasks.list.previous",
+    group: "tasks",
+    label: "Open the previous task in the list",
+    keys: ["Alt", "ArrowUp"],
+    note: "Not while typing in a field",
+  },
+  {
+    id: "tasks.list.next",
+    group: "tasks",
+    label: "Open the next task in the list",
+    keys: ["Alt", "ArrowDown"],
+    note: "Not while typing in a field",
+  },
+  {
+    id: "tasks.needs-you.next",
+    group: "tasks",
+    label: "Open the next task that needs you",
+    keys: ["Mod", "Alt", "A"],
+  },
+  {
+    id: "task.settle",
+    group: "tasks",
+    label: "Settle the open task",
+    keys: ["Mod", "Shift", "S"],
+    note: "Then opens the next task in the list, as settling its row does",
+  },
+  {
+    id: "tasks.list.jump",
+    group: "tasks",
+    label: "Open task 1–9 in the list",
+    keys: ["Mod", "1–9"],
+    note: "Hold the modifier to see the numbers",
+    locked: "Uses the number keys as a range",
+  },
+  {
+    id: "task-list.move",
+    group: "tasks",
+    label: "Move through the task list",
+    keys: ["J"],
+    note: "K moves up; the arrow keys work too",
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
+  },
+  {
+    id: "task-list.settle",
+    group: "tasks",
+    label: "Settle",
+    keys: ["E"],
+    note: TASK_LIST_ROW,
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
+  },
+  {
+    id: "task-list.snooze",
+    group: "tasks",
+    label: "Snooze",
+    keys: ["S"],
+    note: TASK_LIST_ROW,
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
+  },
+  {
+    id: "task-list.pin",
+    group: "tasks",
+    label: "Pin or unpin",
+    keys: ["P"],
+    note: TASK_LIST_ROW,
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
+  },
+  {
+    id: "task-list.unread",
+    group: "tasks",
+    label: "Mark as read or unread",
+    keys: ["U"],
+    note: TASK_LIST_ROW,
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
+  },
+  {
+    id: "task-list.quick-look",
+    group: "tasks",
+    label: "Quick look",
+    keys: ["Space"],
+    note: TASK_LIST_ROW,
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
+  },
+  {
+    id: "task-list.allow",
+    group: "tasks",
+    label: "Allow once",
+    keys: ["A"],
+    note: "On a focused row waiting for approval",
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
+  },
+  {
+    id: "task-list.deny",
+    group: "tasks",
+    label: "Deny",
+    keys: ["D"],
+    note: "On a focused row waiting for approval",
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
+  },
+  {
+    id: "task-list.rename",
+    group: "tasks",
+    label: "Rename",
+    keys: ["F2"],
+    note: "On a focused row; double-click works too",
+    scope: "task-list",
+    locked: TASK_LIST_ROW_KEY,
   },
   {
     id: "task.changes.toggle",
@@ -212,9 +354,26 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   {
     id: "composer.steer",
     group: "composer",
-    label: "Steer the current turn",
+    label: "Send the other way (steer or queue)",
     keys: ["Mod", "Enter"],
     note: "While a task is working",
+    locked: COMPOSER_TYPING,
+  },
+  {
+    id: "composer.steer-first",
+    group: "composer",
+    label: "Steer the first queued message",
+    keys: ["Mod", "Enter"],
+    note: "With an empty composer while a task is working",
+    locked: COMPOSER_TYPING,
+    sharesKeysWith: "composer.steer",
+  },
+  {
+    id: "composer.queue-first",
+    group: "composer",
+    label: "Queue the message first",
+    keys: ["Alt", "Enter"],
+    note: "While a task is working; ahead of the messages already queued",
     locked: COMPOSER_TYPING,
   },
   { id: "composer.model", group: "composer", label: "Choose model", keys: ["Mod", "'"] },
@@ -231,6 +390,12 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     group: "composer",
     label: "Cycle agent backwards",
     keys: ["Mod", "Shift", "."],
+  },
+  {
+    id: "composer.launcher",
+    group: "composer",
+    label: "Add to the message",
+    keys: ["Mod", "/"],
   },
   { id: "composer.attach", group: "composer", label: "Attach files", keys: ["Mod", "U"] },
   {
@@ -315,11 +480,18 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   },
   { id: "task.find", group: "task-view", label: "Find in task", keys: ["Mod", "F"] },
   {
+    id: "task.ship",
+    group: "task-view",
+    label: "Next shipping step (commit, push or pull request)",
+    keys: ["Mod", "Shift", "Enter"],
+    note: "Runs the task header's ship button; commits still ask for the message first",
+  },
+  {
     id: "changes.find",
     group: "panels",
     label: "Find in changes",
     keys: ["Mod", "F"],
-    note: "While the Changes tab is focused",
+    note: "While a Changes, diff or file tab is focused",
     scope: "changes",
   },
   {
@@ -334,8 +506,29 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     label: "Next user turn",
     keys: ["Mod", "Alt", "]"],
   },
+  {
+    id: "task.jump",
+    group: "task-view",
+    label: "Jump to message",
+    keys: ["Mod", "Alt", "G"],
+    note: "Search every prompt in the task, also ones not loaded yet",
+  },
   { id: "navigation.back", group: "general", label: "Go back", keys: ["Mod", "["] },
   { id: "navigation.forward", group: "general", label: "Go forward", keys: ["Mod", "]"] },
+  {
+    id: "focus.region.next",
+    group: "general",
+    label: "Move focus to the next area",
+    keys: ["F6"],
+    note: FOCUS_REGION_ORDER,
+  },
+  {
+    id: "focus.region.previous",
+    group: "general",
+    label: "Move focus to the previous area",
+    keys: ["Shift", "F6"],
+    note: FOCUS_REGION_ORDER,
+  },
 ];
 
 const SHORTCUTS_BY_ID = new Map(KEYBOARD_SHORTCUTS.map((shortcut) => [shortcut.id, shortcut]));
@@ -748,22 +941,32 @@ function sameShortcut(left: ShortcutKeys, right: ShortcutKeys): boolean {
   return signature !== null && signature === shortcutSignature(right);
 }
 
-const ALL_SCOPES: readonly KeyboardShortcutScope[] = ["global", "composer", "task-view", "changes"];
+const ALL_SCOPES: readonly KeyboardShortcutScope[] = [
+  "global",
+  "composer",
+  "task-view",
+  "changes",
+  "task-list",
+];
 const OVERLAPPING_SCOPES: Record<KeyboardShortcutScope, readonly KeyboardShortcutScope[]> = {
   global: ALL_SCOPES,
   composer: ["global", "composer", "task-view"],
   "task-view": ["global", "composer", "task-view"],
   changes: ["global", "changes"],
+  "task-list": ["global", "task-list"],
 };
 
 /** Other catalog entries whose effective binding would receive the same key press. */
 export function shortcutConflicts(id: KeyboardShortcutID, keys: ShortcutKeys): KeyboardShortcut[] {
   const signature = shortcutSignature(keys);
   if (!signature) return [];
-  const scopes = OVERLAPPING_SCOPES[shortcutScope(keyboardShortcut(id))];
+  const shortcut = keyboardShortcut(id);
+  const scopes = OVERLAPPING_SCOPES[shortcutScope(shortcut)];
   return KEYBOARD_SHORTCUTS.filter(
     (other) =>
       other.id !== id &&
+      other.sharesKeysWith !== id &&
+      shortcut.sharesKeysWith !== other.id &&
       scopes.includes(shortcutScope(other)) &&
       shortcutSignature(shortcutKeys(other.id)) === signature,
   );
@@ -783,6 +986,8 @@ const SYSTEM_SHORTCUTS: readonly { keys: ShortcutKeys; label: string; macOnly?: 
   { keys: ["Mod", "H"], label: "Hide Palot", macOnly: true },
 ];
 
+const FUNCTION_KEY = /^F([1-9]|1[0-9]|2[0-4])$/;
+
 /** Explains why a recorded binding can't be saved, or returns `null` when it can. */
 export function shortcutBindingProblem(
   id: KeyboardShortcutID,
@@ -794,7 +999,8 @@ export function shortcutBindingProblem(
   const mac = shortcutPlatform(platform) === "mac";
   const { modifiers, rest } = splitShortcut(keys);
   if (rest.length !== 1) return "Press one key together with modifiers.";
-  if (!modifiers.has("Mod") && !modifiers.has("Control")) {
+  // Function keys don't type text, so they work without a modifier.
+  if (!modifiers.has("Mod") && !modifiers.has("Control") && !FUNCTION_KEY.test(rest[0]!)) {
     return mac
       ? "Include ⌘ or ⌃ so typing isn't interrupted."
       : "Include Ctrl so typing isn't interrupted.";
@@ -810,5 +1016,9 @@ export function shortcutBindingProblem(
     (candidate) => (mac || !candidate.macOnly) && sameShortcut(candidate.keys, keys),
   );
   if (system) return `${formatShortcut(keys, platform)} is reserved for ${system.label}.`;
+  // A locked shortcut cannot give up its keys, so Replace would have nothing to clear.
+  const locked = shortcutConflicts(id, keys).find((other) => other.locked);
+  if (locked)
+    return `${formatShortcut(keys, platform)} is used by ${locked.label}, which can't be changed.`;
   return null;
 }

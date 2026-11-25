@@ -9,10 +9,13 @@ import { fileURLToPath } from "node:url";
 import { resolveBuildIdentity } from "../src/shared/build-identity";
 import { verifyExternalRuntimePackage } from "./packaged-opencode-policy";
 import { launchLinuxInstallation, stopLinuxInstallation } from "./linux-install-lifecycle";
+import { LINUX_TASK_LINK_MIME_TYPE, verifyBundledLinuxDesktopEntry } from "./linux-distribution";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const [action = "verify", channel = "nightly", ...flags] = process.argv.slice(2);
-if (flags.some((flag) => flag !== "--skip-build")) throw new Error("Unknown packaging option");
+// --no-launch installs without starting the app, e.g. into a temporary HOME/XDG_DATA_HOME.
+if (flags.some((flag) => flag !== "--skip-build" && flag !== "--no-launch"))
+  throw new Error("Unknown packaging option");
 if (process.platform !== "linux") throw new Error("This command requires Linux.");
 if (channel !== "nightly" && channel !== "stable") throw new Error("Choose stable or nightly.");
 if (!["build", "verify", "arch", "install"].includes(action))
@@ -35,6 +38,22 @@ function run(command: string, args: string[], cwd = root): Promise<void> {
   });
 }
 
+/** Best effort: a missing tool or a failure only warns, the install itself already succeeded. */
+async function registerDesktopEntry(applications: string) {
+  // xdg-mime writes mimeapps.list here but does not create the directory.
+  await mkdir(process.env.XDG_CONFIG_HOME ?? path.join(homedir(), ".config"), { recursive: true });
+  for (const [command, args] of [
+    ["update-desktop-database", [applications]],
+    ["xdg-mime", ["default", desktopName, LINUX_TASK_LINK_MIME_TYPE]],
+  ] as const) {
+    try {
+      await run(command, [...args]);
+    } catch (error) {
+      console.warn(`Could not run ${command}: ${(error as Error).message}`);
+    }
+  }
+}
+
 if (action !== "verify" && !flags.includes("--skip-build"))
   await run(process.execPath, [
     "run",
@@ -48,11 +67,7 @@ await verifyExternalRuntimePackage(path.join(output, "resources"));
 await access(path.join(output, executable));
 const desktopName = `${identity.appId}.desktop`;
 const desktop = await readFile(path.join(output, "resources", desktopName), "utf8");
-if (
-  !desktop.includes(`Exec=${executable} --show`) ||
-  !desktop.includes(`StartupWMClass=${identity.appId}`)
-)
-  throw new Error("Linux desktop identity does not match this channel.");
+verifyBundledLinuxDesktopEntry(desktop, channel);
 console.log(`Verified ${identity.displayName}: ${output}`);
 
 if (action === "arch") {
@@ -118,6 +133,7 @@ if (action === "install") {
         `Icon=${path.join(destination, "resources/icons", identity.iconVariant, "icon.png")}`,
       ),
   );
+  await registerDesktopEntry(applications);
   const bin = path.join(homedir(), ".local/bin");
   await mkdir(bin, { recursive: true });
   const shellPath = path.join(destination, executable).replaceAll("'", "'\\''");
@@ -126,9 +142,10 @@ if (action === "install") {
     `#!/bin/sh\nunset ELECTRON_RUN_AS_NODE\nexec '${shellPath}' "$@"\n`,
     { mode: 0o755 },
   );
-  await launchLinuxInstallation(
-    path.join(destination, executable),
-    path.join(data, "palot", `${channel}-launch.log`),
-  );
+  if (!flags.includes("--no-launch"))
+    await launchLinuxInstallation(
+      path.join(destination, executable),
+      path.join(data, "palot", `${channel}-launch.log`),
+    );
   console.log(`Installed ${identity.displayName} to ${destination}. Previous build: ${previous}`);
 }

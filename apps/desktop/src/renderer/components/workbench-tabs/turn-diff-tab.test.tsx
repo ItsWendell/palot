@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { useImperativeHandle, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, type ReactNode, type Ref } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { FileDiffInfo } from "@opencode/client";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   },
   arguments: [] as unknown[],
   scrollTo: vi.fn(),
+  openSearch: vi.fn(),
 }));
 vi.mock("../../hooks/use-turn-diffs", () => ({
   useTurnDiffs: (...args: unknown[]) => {
@@ -33,16 +34,42 @@ vi.mock("@pierre/diffs/react", () => ({
   CodeView: ({
     items,
     ref,
+    renderHeaderPrefix,
+    renderHeaderFilenameSuffix,
+    options,
   }: {
-    items: Array<{ id: string; type: string }>;
-    ref?: Ref<{ scrollTo: typeof mocks.scrollTo }>;
+    items: Array<{ id: string; type: string; collapsed?: boolean }>;
+    ref?: Ref<unknown>;
+    renderHeaderPrefix?(item: unknown): ReactNode;
+    renderHeaderFilenameSuffix?(item: unknown): ReactNode;
+    options?: { searchOptions?: { disableShortcuts?: boolean } };
   }) => {
-    useImperativeHandle(ref, () => ({ scrollTo: mocks.scrollTo }));
+    useImperativeHandle(ref, () => ({
+      scrollTo: mocks.scrollTo,
+      openSearch: mocks.openSearch,
+      getInstance: () => undefined,
+    }));
+    const root = useRef<HTMLDivElement>(null);
+    const disabled = options?.searchOptions?.disableShortcuts === true;
+    useEffect(() => {
+      // As @pierre/diffs does: CodeView binds Mod+F and Mod+Alt+F on its root, capturing.
+      const element = root.current;
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (disabled || !event.ctrlKey || event.key !== "f") return;
+        event.preventDefault();
+        event.stopPropagation();
+        mocks.openSearch();
+      };
+      element?.addEventListener("keydown", onKeyDown, true);
+      return () => element?.removeEventListener("keydown", onKeyDown, true);
+    }, [disabled]);
     return (
-      <div role="region" aria-label="Turn diff review" tabIndex={0}>
+      <div ref={root} role="region" aria-label="Turn diff review" tabIndex={0}>
         {items.map((item) => (
-          <span key={item.id}>
+          <span key={item.id} data-testid={`item:${item.id}`} data-collapsed={item.collapsed}>
+            {renderHeaderPrefix?.(item)}
             {item.id}: {item.type}
+            {renderHeaderFilenameSuffix?.(item)}
           </span>
         ))}
         <input aria-label="Comment" />
@@ -145,4 +172,86 @@ it("steps through changed files with buttons and pane keys, but not while typing
   fireEvent.keyDown(review, { key: "k" });
   expect(mocks.scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ id: "src/b.ts" }));
   expect(position()).toContain("2 of 3");
+});
+
+it("scrolls to the requested file once its diff loads, and again on a new request", () => {
+  mocks.query.data = ["src/a.ts", "src/b.ts"].map((file) => ({
+    file,
+    status: "modified" as const,
+    patch: "@@ -1 +1 @@\n-before\n+after",
+    additions: 1,
+    deletions: 1,
+  }));
+  const at = (request: number): typeof tab => ({
+    ...tab,
+    resource: { ...tab.resource, file: { path: "src/b.ts", request } },
+  });
+  const { rerender } = render(<TurnDiffTab tab={at(1)} />);
+  expect(mocks.scrollTo).not.toHaveBeenCalled();
+  mocks.query.isPending = false;
+  rerender(<TurnDiffTab tab={at(1)} />);
+  expect(mocks.scrollTo).toHaveBeenCalledOnce();
+  expect(mocks.scrollTo).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "item", id: "src/b.ts", align: "start" }),
+  );
+  expect(screen.getByRole("group", { name: "File navigation" }).textContent).toContain("2 of 2");
+
+  // A refetch with the same request leaves the reader where they are.
+  mocks.query.data = [...mocks.query.data];
+  rerender(<TurnDiffTab tab={at(1)} />);
+  expect(mocks.scrollTo).toHaveBeenCalledOnce();
+
+  rerender(<TurnDiffTab tab={at(2)} />);
+  expect(mocks.scrollTo).toHaveBeenCalledTimes(2);
+});
+
+it("starts lockfiles and generated files collapsed with a label, and counts them apart", () => {
+  Object.assign(mocks.query, { isPending: false });
+  mocks.query.data = [
+    ["src/a.ts", 4, 1],
+    ["bun.lock", 200, 50],
+    ["src/routeTree.gen.ts", 30, 30],
+  ].map(([file, additions, deletions]) => ({
+    file: file as string,
+    status: "modified" as const,
+    patch: "@@ -1 +1 @@\n-before\n+after",
+    additions: additions as number,
+    deletions: deletions as number,
+  }));
+  render(<TurnDiffTab tab={tab} />);
+  const item = (id: string) => screen.getByTestId(`item:${id}`);
+
+  expect(item("src/a.ts").dataset.collapsed).toBe("false");
+  expect(item("bun.lock").dataset.collapsed).toBe("true");
+  expect(item("bun.lock").textContent).toContain("Lockfile");
+  expect(item("src/routeTree.gen.ts").textContent).toContain("Generated");
+  expect(screen.getByTitle("1 lockfile, 1 generated: +230 −80").parentElement!.textContent).toMatch(
+    /1 file\+4-1/,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Expand bun.lock" }));
+  expect(item("bun.lock").dataset.collapsed).toBe("false");
+  expect(screen.getByRole("button", { name: "Collapse bun.lock" })).toBeTruthy();
+});
+
+it("opens Find in diff on Mod+F inside the diff, and CodeView's own search on Mod+Alt+F", () => {
+  Object.assign(mocks.query, { isPending: false });
+  mocks.query.data = [
+    {
+      file: "src/a.ts",
+      status: "modified",
+      patch: "@@ -1 +1 @@\n-before\n+after",
+      additions: 1,
+      deletions: 1,
+    },
+  ];
+  render(<TurnDiffTab tab={tab} />);
+  const review = screen.getByRole("region", { name: "Turn diff review" });
+  const findKey = { key: "f", code: "KeyF", ctrlKey: true };
+  fireEvent.keyDown(review, findKey);
+  // Focused in the commit that shows the bar, so the next key already lands in it.
+  expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Find in diff" }));
+  expect(mocks.openSearch).not.toHaveBeenCalled();
+  fireEvent.keyDown(review, { ...findKey, altKey: true });
+  expect(mocks.openSearch).toHaveBeenCalledOnce();
 });

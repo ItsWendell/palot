@@ -208,6 +208,7 @@ describe("PalotMarkdown", () => {
       tsv: "Name\nAlice Smith",
       csv: "Name\nAlice Smith",
       markdown: "| Name        |\n| ----------- |\n| Alice Smith |",
+      html: "<table><thead><tr><th>Name</th></tr></thead><tbody><tr><td>Alice Smith</td></tr></tbody></table>",
     });
     now.mockRestore();
   });

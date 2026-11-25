@@ -1,5 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { registerPreviewTable } from "../../lib/document-find";
 
 export interface PreviewColumn {
   label: string;
@@ -26,6 +27,22 @@ export function VirtualPreviewTable({
     overscan: 8,
     paddingStart: 32,
   });
+  // Find in file searches the rows' data, since only the rows on screen are mounted.
+  const latest = useRef({ rowCount, row, virtualizer });
+  useLayoutEffect(() => {
+    latest.current = { rowCount, row, virtualizer };
+  });
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    return registerPreviewTable(element, {
+      get rowCount() {
+        return latest.current.rowCount;
+      },
+      row: (index) => latest.current.row(index),
+      scrollToRow: (index) => latest.current.virtualizer.scrollToIndex(index, { align: "center" }),
+    });
+  }, []);
   const gridTemplateColumns = columns.map((column) => `${column.width}ch`).join(" ");
   return (
     <div

@@ -23,7 +23,19 @@ type RenderState = {
   message?: string;
 };
 
-export default function PdfPreview({ data, path }: { data: Uint8Array; path: string }) {
+export default function PdfPreview({
+  data,
+  path,
+  active = true,
+}: {
+  data: Uint8Array;
+  path: string;
+  /**
+   * A hidden tab stays mounted so its page, zoom and scroll survive a switch, but frees the
+   * page bitmap until it shows again.
+   */
+  active?: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [loaded, setLoaded] = useState<LoadedDocument | null>(null);
   const [documentError, setDocumentError] = useState<{ data: Uint8Array } | null>(null);
@@ -71,11 +83,17 @@ export default function PdfPreview({ data, path }: { data: Uint8Array; path: str
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!document || !canvas || !page) return;
+    if (!document || !canvas || !page || !active) return;
     let cancelled = false;
     let renderTask: ReturnType<Awaited<ReturnType<typeof document.getPage>>["render"]> | null =
       null;
-    setRenderState(null);
+    // Redrawing the same page after the tab shows again keeps its laid-out size, so the
+    // scroll position holds; only a new page or zoom shows the loading state.
+    setRenderState((current) =>
+      current?.document === document && current.page === page && current.zoom === zoom
+        ? current
+        : null,
+    );
 
     const render = async () => {
       let pdfPage: Awaited<ReturnType<typeof document.getPage>> | null = null;
@@ -138,7 +156,7 @@ export default function PdfPreview({ data, path }: { data: Uint8Array; path: str
       canvas.width = 0;
       canvas.height = 0;
     };
-  }, [document, page, zoom]);
+  }, [active, document, page, zoom]);
 
   if (documentError?.data === data) {
     return (

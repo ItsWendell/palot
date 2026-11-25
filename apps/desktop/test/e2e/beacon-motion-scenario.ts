@@ -42,14 +42,17 @@ export const beaconMotionScenario: Scenario = {
     await page.getByRole("button", { name: "Skip for now", exact: true }).click();
     const newTask = page.getByRole("main", { name: "New task", exact: true });
     await newTask.waitFor();
-    await page.getByRole("combobox", { name: `Project: ${projectName}`, exact: true }).waitFor();
+    await page
+      .getByRole("combobox", { name: "Task destination", exact: true })
+      .filter({ hasText: projectName! })
+      .waitFor();
     const composer = newTask.getByRole("textbox", { name: "Message Palot", exact: true });
     const newTaskBeacon = newTask.locator(BEACON);
     await expect(newTaskBeacon).toHaveAccessibleName("Say hello to Palot");
     const draft = "An unsent beacon focus check";
     await composer.fill(draft);
     const newTaskMotion = await exerciseBeacon(page, newTaskBeacon, composer);
-    await expect(composer).toHaveValue(draft);
+    await expect(composer).toHaveJSProperty("value", draft);
     await composer.fill("");
     await captureSurfaces(page, runRoot, "new-task", defaultSize);
     await writeFile(
@@ -62,7 +65,9 @@ export const beaconMotionScenario: Scenario = {
   async assert(page) {
     await expect(page.getByRole("main", { name: "New task", exact: true })).toBeVisible();
     await expect(page.locator(BEACON)).toHaveAttribute("data-gesture", "idle");
-    await expect(page.getByRole("textbox", { name: "Message Palot", exact: true })).toHaveValue("");
+    await expect(
+      page.getByRole("textbox", { name: "Message Palot", exact: true }),
+    ).toHaveJSProperty("value", "");
   },
 };
 

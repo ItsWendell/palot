@@ -2,6 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { rememberBranch } from "../lib/branch-memory";
 import {
+  changedFileQueryKeys,
+  forgetRemovedPath,
   locationIsLoadedBy,
   markShutdownLocationStale,
   openCodeInvalidationKeys,
@@ -134,6 +136,10 @@ export function useOpenCodeQueryEvents(): void {
             if (profileID) rememberBranch(profileID, event.location.directory, event.data.branch);
           }
           for (const queryKey of openCodeInvalidationKeys(batch.connectionID, event)) {
+            invalidate(queryKey);
+          }
+          forgetRemovedPath(queryClient, batch.connectionID, event);
+          for (const queryKey of changedFileQueryKeys(queryClient, batch.connectionID, event)) {
             invalidate(queryKey);
           }
         }

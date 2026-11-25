@@ -44,6 +44,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import { AutomationEditor } from "./automation-editor";
+import { OpenCodeAutomationsSection } from "./opencode-automations-section";
 
 type Filter = "all" | "active" | "paused";
 
@@ -580,6 +581,8 @@ function ScheduledProfilePage() {
                   : "No scheduled tasks in this view."}
               </p>
             ) : null}
+
+            <OpenCodeAutomationsSection filter={filter} query={query} />
 
             <section className="mt-8 border-t pt-4" aria-labelledby="suggestions-heading">
               <h2 id="suggestions-heading" className="mb-2 px-2 text-sm font-medium">

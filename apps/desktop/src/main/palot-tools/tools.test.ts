@@ -421,6 +421,68 @@ describe("Palot agent tools", () => {
     expect(harness.onTriageChanged).toHaveBeenCalledTimes(1);
   });
 
+  it("settles only once the task's background subagents and the run their report wakes end", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const harness = setup([session("ses_root"), session("ses_sub", { parentID: "ses_root" })]);
+      harness.active.ses_root = { type: "running" };
+      harness.active.ses_sub = { type: "running" };
+      await harness.call("settle_task", {});
+      const succeeded = (sessionID: string, created: number) =>
+        harness.emit({
+          id: `end-${created}`,
+          type: "session.execution.succeeded",
+          created,
+          data: { sessionID },
+        } as never);
+      // The task ends its launching turn while the subagent runs on.
+      succeeded("ses_root", NOW + 1_000);
+      succeeded("ses_sub", NOW + 2_000);
+      harness.emit({
+        type: "session.execution.started",
+        data: { sessionID: "ses_root" },
+      } as never);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(harness.triageDispatch).not.toHaveBeenCalled();
+      succeeded("ses_root", NOW + 5_000);
+      await vi.waitFor(() => expect(harness.triageDispatch).toHaveBeenCalledTimes(1));
+      expect(harness.triageDispatch.mock.calls[0]?.[0]).toMatchObject({
+        type: "settle",
+        through: { updatedAt: NOW + 5_000, sessionID: "ses_root" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits for another task's running subagents before reporting it finished", async () => {
+    const harness = setup([
+      session("ses_root"),
+      session("ses_other"),
+      session("ses_sub", { parentID: "ses_other" }),
+    ]);
+    harness.active.ses_sub = { type: "running" };
+    const waiting = harness.call("wait_tasks", { taskIds: ["ses_other"], timeoutSeconds: 600 });
+    await vi.waitFor(() => expect(harness.client.permission.list).toHaveBeenCalledTimes(2));
+    delete harness.active.ses_sub;
+    harness.emit({
+      type: "session.inbox.enqueued",
+      data: {
+        sessionID: "ses_other",
+        inboxID: "report",
+        item: { type: "synthetic", payload: { metadata: { source: "subagent" } } },
+      },
+    } as never);
+    harness.emit({ type: "session.execution.succeeded", data: { sessionID: "ses_sub" } } as never);
+    harness.emit({ type: "session.execution.started", data: { sessionID: "ses_other" } } as never);
+    harness.emit({
+      id: "other-end",
+      type: "session.execution.succeeded",
+      data: { sessionID: "ses_other" },
+    } as never);
+    expect((await waiting).value.changed).toEqual(["ses_other"]);
+  });
+
   it.each(["session.execution.failed", "session.execution.interrupted"])(
     "keeps a self-settling task in the Inbox after %s, and when moved back first",
     async (type) => {

@@ -1,25 +1,90 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
+import Store from "electron-store";
 
 const exec = promisify(execFile);
 export type GuestCommandRunner = (binary: string, args: string[]) => Promise<string>;
 const run: GuestCommandRunner = async (binary, args) =>
   (await exec(binary, args, { timeout: 90000, maxBuffer: 512000, encoding: "utf8" })).stdout;
 
+export interface GuestRoute {
+  transport: "tailscale" | "opentunnel";
+  target: string;
+  origin: string;
+  route?: string;
+}
+
+/** Survives restarts and crashes, so the next start can remove a route whose listener is gone. */
+export interface GuestRouteStore {
+  get(key: "route"): unknown;
+  set(key: "route", value: GuestRoute): void;
+  delete(key: "route"): void;
+}
+
+function persistedRoute(value: unknown): GuestRoute | null {
+  if (!value || typeof value !== "object") return null;
+  const { transport, target, origin, route } = value as Record<string, unknown>;
+  if (transport !== "tailscale" && transport !== "opentunnel") return null;
+  if (typeof target !== "string" || !/^http:\/\/127\.0\.0\.1:\d+$/.test(target)) return null;
+  if (typeof origin !== "string") return null;
+  if (route !== undefined && (typeof route !== "string" || !/^guest-[a-f0-9]+$/.test(route)))
+    return null;
+  if (transport === "opentunnel" && !route) return null;
+  return { transport, target, origin, ...(route ? { route } : {}) };
+}
+
 /** Separate from OpenCode web access. Never resets Serve or changes the default tunnel profile. */
 export class GuestPublisher {
   private tailscale: string | null = null;
   private opentunnel: string | null = null;
-  private owned: {
-    transport: "tailscale" | "opentunnel";
-    target: string;
-    origin: string;
-    route?: string;
-  } | null = null;
+  private owned: GuestRoute | null = null;
   private readonly profile = "palot-guests";
   private stopping?: Promise<void>;
-  constructor(private readonly command: GuestCommandRunner = run) {}
+  private recovering?: Promise<void>;
+  private routeStore?: GuestRouteStore;
+  constructor(
+    private readonly command: GuestCommandRunner = run,
+    private readonly store: () => GuestRouteStore = () =>
+      new Store<{ route?: GuestRoute }>({ name: "guest-link-route" }),
+  ) {}
+  private get persisted() {
+    this.routeStore ??= this.store();
+    return this.routeStore;
+  }
+  private remember(route: GuestRoute) {
+    this.owned = route;
+    this.persisted.set("route", route);
+  }
+  /**
+   * Removes a route recorded by an earlier process that exited without unpublishing it. A failure
+   * keeps the record so the next start tries again.
+   */
+  removeOrphanedRoute(isLive: (target: string) => boolean = () => false) {
+    const recovering = this.removeRecordedRoute(isLive);
+    this.recovering = recovering.catch(() => undefined);
+    return recovering;
+  }
+  private async removeRecordedRoute(isLive: (target: string) => boolean) {
+    await this.stopping;
+    if (this.owned) return;
+    const route = persistedRoute(this.persisted.get("route"));
+    if (!route) {
+      this.persisted.delete("route");
+      return;
+    }
+    if (isLive(route.target)) return;
+    await this.options();
+    if (!(route.transport === "tailscale" ? this.tailscale : this.opentunnel))
+      throw new Error(`The ${route.transport} CLI was not found; the guest route record was kept`);
+    this.owned = route;
+    try {
+      await this.stop();
+    } catch (error) {
+      this.owned = null;
+      throw error;
+    }
+  }
   async options() {
     const discover = async (candidates: string[], args: string[]) => {
       for (const candidate of candidates) {
@@ -50,6 +115,7 @@ export class GuestPublisher {
     return { tailscale: this.tailscale !== null, opentunnel: this.opentunnel !== null };
   }
   async publish(localUrl: string, transport: "tailscale" | "opentunnel") {
+    await this.recovering;
     await this.stopping;
     const url = new URL(localUrl);
     if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port)
@@ -81,9 +147,9 @@ export class GuestPublisher {
         Object.keys(config.Web ?? {}).some((key) => key.endsWith(":8443"))
       )
         throw new Error("Tailscale HTTPS port 8443 is already in use; Palot will not replace it");
-      this.owned = { transport, target: url.origin, origin: "" };
+      this.remember({ transport, target: url.origin, origin: "" });
       await this.command(this.tailscale, ["serve", "--bg", "--yes", "--https=8443", url.origin]);
-      this.owned.origin = `https://${dns}:8443`;
+      this.remember({ ...this.owned!, origin: `https://${dns}:8443` });
     } else {
       if (!this.opentunnel) throw new Error("OpenTunnel CLI was not found");
       const args = ["--profile", this.profile];
@@ -94,7 +160,7 @@ export class GuestPublisher {
           "The palot-guests OpenTunnel profile already has routes. Remove its old guest routes before publishing; Palot will not overwrite them",
         );
       const route = `guest-${randomBytes(10).toString("hex")}`;
-      this.owned = { transport, target: url.origin, origin: "", route };
+      this.remember({ transport, target: url.origin, origin: "", route });
       const output = await this.command(this.opentunnel, [
         ...args,
         "route",
@@ -108,9 +174,9 @@ export class GuestPublisher {
         throw new Error(
           "OpenTunnel did not return a route URL. Stop sharing to remove the guest route",
         );
-      this.owned.origin = origin;
+      this.remember({ ...this.owned!, origin });
     }
-    return this.owned.origin + url.pathname;
+    return this.owned!.origin + url.pathname;
   }
   async stop() {
     if (this.stopping) return this.stopping;
@@ -147,5 +213,6 @@ export class GuestPublisher {
       // Leave the dedicated profile's identity and service alone; never delete it.
     }
     this.owned = null;
+    this.persisted.delete("route");
   }
 }

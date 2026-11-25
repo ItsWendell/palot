@@ -74,6 +74,11 @@ it("pages an independent outline without hydrating the transcript or duplicating
     ]),
   );
   expect(view.result.current.prompts.at(-1)?.label).toBe("Live label");
+  // Jump to message searches the same prompts as whole messages.
+  expect(view.result.current.olderMessages.map((message) => message.text)).toEqual([
+    "oldest",
+    "older",
+  ]);
   expect(view.result.current.earlier.available).toBe(false);
   expect(loadPromptIndex).toHaveBeenLastCalledWith(
     "session",

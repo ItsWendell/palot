@@ -18,7 +18,13 @@ import { redactLogValue } from "./logging";
 const DATABASE_FILES = ["palot.sqlite", "palot.sqlite-wal", "palot.sqlite-shm"] as const;
 const RETAINED_DATABASE_BACKUPS = 5;
 const SUPPORT_LOG_BYTES = 256 * 1024;
-const RESET_PRESERVED_STORES = new Set(["opencode-connections.json", "opencode-credentials.json"]);
+// Route ownership records stay so a reset never orphans a live Tailscale or OpenTunnel route.
+const RESET_PRESERVED_STORES = new Set([
+  "opencode-connections.json",
+  "opencode-credentials.json",
+  "tailscale-web-access.json",
+  "guest-link-route.json",
+]);
 const RESET_MARKER = ".palot-reset";
 
 export interface PalotDataLocations {

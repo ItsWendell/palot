@@ -1,3 +1,5 @@
+> Historical plan from 2026-09-22; superseded. For current behaviour see [`docs/README.md`](README.md).
+
 # OpenCode 2 feature plan for Palot
 
 This plan compares Palot with the published OpenCode 2 desktop app, then builds the missing workflows in Palot's existing architecture. It does not treat a release-channel label as a feature set. On 2026-09-22, Palot targets Stable 2.0.14; the npm Beta (`0.0.0-beta-19507`) and the official Beta CLI feed (2.0.1) both lag it. Keep the client and service on the supported Stable release. Recheck the published versions and source before starting a later stage.

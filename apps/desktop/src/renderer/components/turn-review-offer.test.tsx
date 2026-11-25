@@ -4,12 +4,12 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PalotMessage } from "../../shared";
-import type { SessionExecutionState } from "../atoms/workspace";
+import type { OpenCodeRuntimeStatus, PalotMessage } from "../../shared";
+import { runtimeAtom, type SessionExecutionState } from "../atoms/workspace";
 import { createRendererQueryClient } from "../lib/query-client";
-import { createSessionTranscriptProjector } from "../lib/turn-projection";
+import { createSessionTranscriptProjector, type TranscriptTurn } from "../lib/turn-projection";
 import { ASK_FOR_REVIEW_PROMPT, reviewOfferUserMessageID } from "../lib/turn-review-offer";
-import { TurnReviewOffer } from "./turn-review-offer";
+import { TurnChangesCard, type TurnChangesScope } from "./thread";
 
 const mocks = vi.hoisted(() => ({
   listTurnDiffs: vi.fn(),
@@ -75,40 +75,99 @@ describe("review offer eligibility", () => {
   });
 });
 
-describe("TurnReviewOffer", () => {
-  beforeEach(() => vi.clearAllMocks());
-  afterEach(cleanup);
+describe("changed-files card", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.listTurnDiffs.mockReturnValue(new Promise(() => {}));
+    // Cards load their diff once near the viewport; here they always are.
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(private readonly callback: IntersectionObserverCallback) {}
+        observe() {
+          this.callback(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          );
+        }
+        disconnect() {}
+      },
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
-  function renderOffer(onReview = vi.fn(), onAsked = vi.fn()) {
-    const queryClient = createRendererQueryClient();
+  /** One prompt whose step changed `files`, settled unless `running`. */
+  function changedTurn(files: string[], running = false): TranscriptTurn {
+    return createSessionTranscriptProjector().project({
+      messages: [
+        message({ id: "u1", type: "user", text: "Fix it" }),
+        message({
+          id: "a1",
+          type: "assistant",
+          createdAt: 2,
+          completedAt: running ? null : 3,
+          finish: running ? null : "stop",
+          content: [{ type: "text", text: "Fixed" }],
+          data: { snapshot: { files } },
+        }),
+      ],
+      execution: running ? { status: "running", startedAt: 1, completedAt: null } : null,
+    }).rows[0]!.turn;
+  }
+
+  function renderCard(turn: TranscriptTurn, scope: Partial<TurnChangesScope> = {}) {
+    const store = createStore();
+    store.set(runtimeAtom, {
+      connected: true,
+      profileID: "profile",
+      connectionID: "origin",
+    } as OpenCodeRuntimeStatus);
+    const value: TurnChangesScope = {
+      profileID: "profile",
+      connectionID: "origin",
+      reviewUserMessageID: null,
+      open: vi.fn(),
+      onAsked: vi.fn(),
+      ...scope,
+    };
     render(
-      <QueryClientProvider client={queryClient}>
-        <Provider store={createStore()}>
-          <TurnReviewOffer
-            connectionID="origin"
-            sessionID="session"
-            userMessageID="u1"
-            available
-            onReview={onReview}
-            onAsked={onAsked}
-          />
+      <QueryClientProvider client={createRendererQueryClient()}>
+        <Provider store={store}>
+          <TurnChangesCard turn={turn} sessionID="session" scope={value} />
         </Provider>
       </QueryClientProvider>,
     );
-    return { onReview, onAsked };
+    return value;
   }
 
-  it("offers both review actions for a turn that changed files", async () => {
-    mocks.listTurnDiffs.mockResolvedValue([diff]);
-    mocks.sendComposerPrompt.mockResolvedValue({ id: "u2" });
-    const { onReview, onAsked } = renderOffer();
+  const card = () => screen.queryByRole("group", { name: "Files changed in this turn" });
 
-    const offer = await screen.findByRole("group", { name: "Review this turn's changes" });
-    expect(mocks.listTurnDiffs).toHaveBeenCalledWith("session", "u1", expect.anything(), "origin");
-    expect(offer.textContent).toContain("1 file changed");
+  it("sits under a finished turn that changed files, without review follow-ups", async () => {
+    const scope = renderCard(changedTurn(["src/app.ts"]));
 
+    expect(card()?.textContent).toContain("Changed app.ts");
+    expect(screen.queryByRole("button", { name: "Ask for review" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
-    expect(onReview).toHaveBeenCalledWith("u1");
+    expect(scope.open).toHaveBeenLastCalledWith("u1", undefined);
+    // A file row opens the same turn's diff at that file.
+    await userEvent.click(screen.getByRole("button", { name: /^src\/app\.ts/ }));
+    expect(scope.open).toHaveBeenLastCalledWith("u1", "src/app.ts");
+  });
+
+  it("is absent while the turn works and for a finished turn without changes", () => {
+    renderCard(changedTurn(["src/app.ts"], true));
+    expect(card()).toBeNull();
+    cleanup();
+    renderCard(changedTurn([]));
+    expect(card()).toBeNull();
+  });
+
+  it("offers Ask for review on the latest turn, and dismissing keeps the card", async () => {
+    mocks.sendComposerPrompt.mockResolvedValue({ id: "u2" });
+    const scope = renderCard(changedTurn(["src/app.ts"]), { reviewUserMessageID: "u1" });
 
     await userEvent.click(screen.getByRole("button", { name: "Ask for review" }));
     expect(mocks.sendComposerPrompt).toHaveBeenCalledWith({
@@ -116,22 +175,25 @@ describe("TurnReviewOffer", () => {
       text: ASK_FOR_REVIEW_PROMPT,
       delivery: "steer",
     });
-    await waitFor(() => expect(onAsked).toHaveBeenCalledOnce());
-    expect(screen.queryByRole("group", { name: "Review this turn's changes" })).toBeNull();
+    await waitFor(() => expect(scope.onAsked).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: "Ask for review" })).toBeNull();
+    expect(card()).toBeTruthy();
   });
 
-  it("stays hidden for a turn without changed files", async () => {
-    mocks.listTurnDiffs.mockResolvedValue([]);
-    renderOffer();
-    await waitFor(() => expect(mocks.listTurnDiffs).toHaveBeenCalled());
-    expect(screen.queryByRole("group", { name: "Review this turn's changes" })).toBeNull();
-  });
+  it("lets the latest turn's suggestion be dismissed", async () => {
+    renderCard(changedTurn(["src/app.ts"]), { reviewUserMessageID: "u1" });
 
-  it("can be dismissed", async () => {
-    mocks.listTurnDiffs.mockResolvedValue([diff]);
-    renderOffer();
-    await userEvent.click(await screen.findByRole("button", { name: "Dismiss review suggestion" }));
-    expect(screen.queryByRole("group", { name: "Review this turn's changes" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss review suggestion" }));
+    expect(screen.queryByRole("button", { name: "Ask for review" })).toBeNull();
+    expect(card()).toBeTruthy();
     expect(mocks.sendComposerPrompt).not.toHaveBeenCalled();
+  });
+
+  it("asks the diff for the files of a latest turn without snapshot data", async () => {
+    mocks.listTurnDiffs.mockResolvedValue([diff]);
+    renderCard(changedTurn([]), { reviewUserMessageID: "u1" });
+
+    expect(await screen.findByRole("button", { name: "src/app.ts, +3 −1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ask for review" })).toBeTruthy();
   });
 });

@@ -17,8 +17,13 @@ const mocks = vi.hoisted(() => ({
   onEvent: vi.fn(),
   runIDForSession: vi.fn<(sessionID: string) => string | null>(() => "run-1"),
   run: vi.fn(() => null),
+  load: vi.fn(() => ({ automations: [{ id: "automation-1" }], runs: [] })),
+  logError: vi.fn(),
 }));
 
+vi.mock("electron-log/main", () => ({
+  default: { error: mocks.logError, warn: vi.fn(), info: vi.fn() },
+}));
 vi.mock("electron", () => ({
   app: { getPath: () => "/unused-automation-test-state" },
   BrowserWindow: { getAllWindows: () => [] },
@@ -73,6 +78,7 @@ vi.mock("./repository", () => ({
   AutomationRepository: class {
     reconcileDefinitionFiles() {}
     run = mocks.run;
+    load = mocks.load;
     activeRuns = mocks.activeRuns;
     due = mocks.due;
   },
@@ -125,6 +131,39 @@ describe("automation event session routing", () => {
     expect(mocks.activeRuns).toHaveBeenCalledWith("a");
     expect(mocks.activeRuns).toHaveBeenCalledWith("b");
     expect(mocks.activeRuns).not.toHaveBeenCalledWith("unsupported");
+  });
+
+  it("loads automations until shutdown, then returns nothing without the database", async () => {
+    expect(service.load("a").automations).toHaveLength(1);
+    await service.shutdown();
+    mocks.load.mockClear();
+    expect(service.load("a")).toEqual({
+      profileID: "a",
+      automations: [],
+      runs: [],
+      webhookAddress: null,
+    });
+    expect(mocks.load).not.toHaveBeenCalled();
+  });
+
+  it("logs a failing interval scan and keeps scanning", async () => {
+    await service.shutdown();
+    vi.useFakeTimers();
+    try {
+      service = new AutomationService();
+      await service.start();
+      const failure = new Error("scan failed");
+      mocks.due.mockImplementationOnce(() => {
+        throw failure;
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mocks.logError).toHaveBeenCalledWith("Scheduled task scan failed", failure);
+      const scans = mocks.due.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mocks.due.mock.calls.length).toBeGreaterThan(scans);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps session event routing isolated and does not restart recovery on focus-only status", () => {

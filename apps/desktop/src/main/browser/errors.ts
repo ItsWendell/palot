@@ -1,5 +1,6 @@
 // Derived from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser/errors.ts
+// See UPSTREAM.md.
 import type { Browser } from "@opencode/plugin-browser/rpc";
 
 export function protocolError(method: string, error: unknown) {

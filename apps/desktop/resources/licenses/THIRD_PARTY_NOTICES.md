@@ -21,9 +21,9 @@ issues for these roots). Normal build-generated notices include these texts too.
 
 | Package               | Version | Copyright                             |
 | --------------------- | ------- | ------------------------------------- |
-| prosemirror-model     | 1.25.12 | 2015–2017 Marijn Haverbeke and others |
+| prosemirror-model     | 1.25.13 | 2015–2017 Marijn Haverbeke and others |
 | prosemirror-state     | 1.4.4   | 2015–2017 Marijn Haverbeke and others |
-| prosemirror-view      | 1.42.8  | 2015–2017 Marijn Haverbeke and others |
+| prosemirror-view      | 1.42.9  | 2015–2017 Marijn Haverbeke and others |
 | prosemirror-transform | 1.12.4  | 2015–2017 Marijn Haverbeke and others |
 | prosemirror-history   | 1.5.1   | 2015–2017 Marijn Haverbeke and others |
 | prosemirror-keymap    | 1.2.3   | 2015–2017 Marijn Haverbeke and others |

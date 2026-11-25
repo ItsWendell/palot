@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OpenCodeEvent } from "@opencode/client";
 import { DEFAULT_DESKTOP_NOTIFICATION_SETTINGS } from "../shared/opencode-contract";
-import {
-  attentionCandidate,
-  completionCandidate,
-  shouldShowCompletionNotification,
-} from "./notification-policy";
+import { attentionCandidate, shouldShowCompletionNotification } from "./notification-policy";
 
 const event = (type: OpenCodeEvent["type"], data: Record<string, unknown>) =>
   ({ id: `${type}-1`, created: 1, type, data }) as OpenCodeEvent;
@@ -38,23 +34,6 @@ describe("desktop notification policy", () => {
       attentionCandidate(
         event("form.created", {
           form: { id: "e1", sessionID: "global", metadata: { kind: "mcp-elicitation" } },
-        }),
-      ),
-    ).toBeNull();
-  });
-
-  it("extracts terminal execution outcomes and ignores user aborts", () => {
-    expect(completionCandidate(event("session.execution.succeeded", { sessionID: "s1" }))).toEqual({
-      eventID: "session.execution.succeeded-1",
-      sessionID: "s1",
-      outcome: "succeeded",
-      error: null,
-    });
-    expect(
-      completionCandidate(
-        event("session.execution.failed", {
-          sessionID: "s1",
-          error: { type: "MessageAbortedError", message: "Stopped" },
         }),
       ),
     ).toBeNull();

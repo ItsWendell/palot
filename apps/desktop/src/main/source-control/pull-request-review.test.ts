@@ -75,6 +75,7 @@ function service(github: ReturnType<typeof fakeGitHub>) {
 function context(name: string, extra: Record<string, unknown> = {}) {
   return {
     __typename: "CheckRun",
+    databaseId: 42,
     name,
     status: "COMPLETED",
     conclusion: "SUCCESS",
@@ -278,6 +279,7 @@ describe("pull request detail", () => {
         url: "https://ci/build",
         startedAt: Date.parse(at(1)),
         completedAt: Date.parse(at(2)),
+        checkRunID: 42,
       },
     ]);
   });

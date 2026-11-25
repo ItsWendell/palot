@@ -60,22 +60,28 @@ export function reviewCommentsFromMessage(message: PalotMessage): ReviewComment[
   if (typeof displayText !== "string" || !Array.isArray(comments)) return null;
   const restored = comments.map((entry, index) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-    const { path, comment, selection } = entry as Record<string, unknown>;
+    const { path, comment, selection, side } = entry as Record<string, unknown>;
     return {
       id: `restored-${message.id}-${index}`,
       path,
       comment,
       selection,
+      ...(side === undefined ? {} : { side }),
     };
   });
   return restored.every(isReviewComment) ? (restored as ReviewComment[]) : null;
 }
 
 export function formatReviewComment(
-  comment: Pick<ReviewComment, "path" | "selection" | "comment">,
+  comment: Pick<ReviewComment, "path" | "selection" | "comment" | "side">,
 ): string {
   const { startLine, endLine } = comment.selection;
-  const range =
-    startLine === endLine ? `line ${startLine}` : `lines ${startLine} through ${endLine}`;
-  return `The user made the following comment regarding ${range} of ${comment.path}: ${comment.comment}`;
+  const single = startLine === endLine;
+  const range = single ? `line ${startLine}` : `lines ${startLine} through ${endLine}`;
+  // Removed lines exist only in the version before the change, so their numbers are its numbers.
+  const version =
+    comment.side === "deletions"
+      ? ` (${single ? "removed line" : "removed lines"}, old version)`
+      : "";
+  return `The user made the following comment regarding ${range} of ${comment.path}${version}: ${comment.comment}`;
 }

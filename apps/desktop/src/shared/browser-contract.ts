@@ -28,6 +28,11 @@ export interface PalotBrowserComment extends PalotBrowserSelection {
   comment: string;
   /** A draft-only lease, never reusable after a renderer reload. */
   bindingID?: string;
+  /**
+   * In sent message metadata only: the name of the message's attached file that holds the
+   * preview, so the image is stored once, as that file, rather than again in the metadata.
+   */
+  previewFile?: string;
 }
 
 export type PalotBrowserEvent =

@@ -105,6 +105,11 @@ export const VOICE_IPC_CHANNELS = {
   overlayCommand: "palot:voice:overlay-command",
   /** Overlay renderer → main (invoke): the latest snapshot, for first paint. */
   overlayReady: "palot:voice:overlay-ready",
+  /**
+   * Overlay renderer → main (invoke), and main → overlay renderer (push) when it may have
+   * changed: the OS reduced-motion setting the workspace windows also follow.
+   */
+  overlayReducedMotion: "palot:voice:overlay-reduced-motion",
 } as const;
 
 /** Exposed on `window.palot.voice` in workspace windows. */
@@ -126,4 +131,6 @@ export interface PalotVoiceOverlayApi {
   command(command: VoiceOverlayCommand): Promise<void>;
   onState(listener: (snapshot: VoiceCallSnapshot) => void): () => void;
   onLevels(listener: (levels: VoiceAudioLevels) => void): () => void;
+  reducedMotion(): Promise<boolean>;
+  onReducedMotion(listener: (reduced: boolean) => void): () => void;
 }

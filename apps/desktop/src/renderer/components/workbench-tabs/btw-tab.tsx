@@ -1,10 +1,11 @@
 import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   btwFocusRequestAtom,
   btwPendingAtom,
   btwRequestKey,
   cancelBtw,
+  markBtwRead,
   retryBtw,
   submitBtwQuestion,
 } from "../../atoms/btw";
@@ -22,8 +23,13 @@ import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
 
-export function BtwTab({ tab }: { tab: BtwWorkbenchTab }) {
+export function BtwTab({ tab, active = true }: { tab: BtwWorkbenchTab; active?: boolean }) {
   const store = useStore();
+  const unread = tab.resource.unread === true;
+  // Before paint, so an answer that arrives in view never flashes the tab's dot.
+  useLayoutEffect(() => {
+    if (active && unread) markBtwRead(store, tab.resource, tab.id);
+  }, [active, store, tab.id, tab.resource, unread]);
   const pending = useAtomValue(btwPendingAtom).has(btwRequestKey(tab.resource, tab.id));
   const runtime = useAtomValue(runtimeAtom);
   const canAsk = runtime?.connected && runtime.profileID === tab.resource.profileID;

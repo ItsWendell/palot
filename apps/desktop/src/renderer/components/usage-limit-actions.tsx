@@ -1,31 +1,40 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useState } from "react";
 import type { AutomationDraft, PalotMessage } from "../../shared";
+import type { ProviderLimit } from "../../shared/provider-limit";
+import { composerActionRequestAtom } from "../atoms/command-requests";
 import { usageRangeAtom } from "../atoms/ui";
 import { runtimeAtom, selectedSessionIDAtom } from "../atoms/workspace";
 import { useAutomations } from "../hooks/use-automations";
 import { useSessionInbox } from "../hooks/use-session-inbox";
 import { useTriageDispatcher } from "../hooks/use-auto-settle";
-import { usageLimitFailure } from "../lib/usage-limits";
+import { writeClipboardText } from "../lib/clipboard";
+import { messageLimit } from "../lib/usage-limit-reset";
 import { showErrorToast } from "../lib/toast-error";
+import { palot } from "../services/palot";
 import { Button } from "./ui/button";
 import { toast } from "./ui/toast";
 
+/**
+ * How to go on after a turn failed on a provider limit: switch model, the page that raises the
+ * limit (Go's Extra Usage, ChatGPT usage) or a request for the workspace admin, and, when the
+ * limit lifts on its own, continuing or snoozing until it does.
+ */
 export function UsageLimitActions({ message }: { message: PalotMessage | undefined }) {
-  const failure = usageLimitFailure(message);
-  return failure ? (
-    <UsageLimitActionsContent messageID={message!.id} resetsAt={failure.resetsAt} />
-  ) : null;
+  const limit = messageLimit(message);
+  return limit ? <UsageLimitActionsContent messageID={message!.id} limit={limit} /> : null;
 }
 
 function UsageLimitActionsContent({
   messageID,
-  resetsAt,
+  limit,
 }: {
   messageID: string;
-  resetsAt: number | null;
+  limit: ProviderLimit;
 }) {
+  const resetsAt = limit.resets ? limit.resetsAt : null;
+  const requestComposerAction = useSetAtom(composerActionRequestAtom);
   const sessionID = useAtomValue(selectedSessionIDAtom);
   const runtime = useAtomValue(runtimeAtom);
   const days = useAtomValue(usageRangeAtom);
@@ -127,8 +136,58 @@ function UsageLimitActionsContent({
     }
   };
 
+  const copyAdminRequest = async (request: string) => {
+    try {
+      await writeClipboardText(request);
+      toast.add({
+        type: "success",
+        title: "Request copied",
+        description: "Send it to your workspace admin.",
+      });
+    } catch (error) {
+      showErrorToast("Could not copy the request", error);
+    }
+  };
+
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
+    <div className="mt-2 flex flex-wrap gap-1.5" data-palot-limit={limit.kind}>
+      {sessionID ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            requestComposerAction({
+              action: "model",
+              profileID: runtime?.profileID ?? null,
+              sessionID,
+              requestedAt: Date.now(),
+            })
+          }
+        >
+          Switch model
+        </Button>
+      ) : null}
+      {limit.link ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void palot.openExternalUrl(limit.link!.url)}
+        >
+          {limit.link.label} ↗
+        </Button>
+      ) : null}
+      {limit.adminRequest ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void copyAdminRequest(limit.adminRequest!)}
+        >
+          Copy request for admin
+        </Button>
+      ) : null}
       {canSchedule ? (
         <Button
           type="button"

@@ -108,6 +108,41 @@ describe("composer admission", () => {
     expect(dispatch).toHaveBeenCalledWith(session.id, expect.stringMatching(/^msg_/));
   });
 
+  it("hands the composer back while a slow command runs and still reports a late failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const { effects, order } = setup();
+      let fail!: (error: Error) => void;
+      const dispatch = vi.fn(
+        () =>
+          new Promise<undefined>((_resolve, reject) => {
+            fail = reject;
+          }),
+      );
+      const admission = admitComposerSubmission({
+        submission,
+        files: [],
+        delivery: "steer",
+        optimistic: false,
+        detachAfterMs: 3_000,
+        createTarget: vi.fn().mockResolvedValue(session),
+        dispatch,
+        effects,
+      });
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(order).toEqual(["sending:true"]);
+      await vi.advanceTimersByTimeAsync(1);
+      await admission;
+      expect(order).toEqual(["sending:true", "clear", "sending:false"]);
+
+      fail(new Error("command failed"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order).toEqual(["sending:true", "clear", "sending:false", "dispatch-error"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves local state intact and rolls back only its optimistic execution on dispatch failure", async () => {
     const { effects, order } = setup();
     await admitComposerSubmission({

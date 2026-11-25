@@ -8,6 +8,8 @@
 
 import type { ModelRef, SessionMessageInfo, TokenUsageInfo } from "@opencode/client";
 import type { PalotMessage, PalotModel } from "../../shared";
+import { stripSystemUpdates, systemUpdateBody } from "../../shared/system-update";
+import { truncateEnd } from "../../shared/text-cut";
 
 export interface ContextBreakdown {
   /** Prompt tokens served from the provider's cache. */
@@ -77,18 +79,6 @@ export function findContextModel(
       (model) =>
         model.providerID === ref.providerID && (model.id === ref.id || model.modelID === ref.id),
     ) ?? null
-  );
-}
-
-/** True only when the catalog prices every token at zero; missing pricing is not free. */
-export function isFreeModel(model: Pick<PalotModel, "cost"> | null): boolean {
-  const tiers = model?.cost;
-  return Boolean(
-    tiers?.length &&
-    tiers.every(
-      (tier) =>
-        tier.input === 0 && tier.output === 0 && tier.cacheRead === 0 && tier.cacheWrite === 0,
-    ),
   );
 }
 
@@ -331,12 +321,45 @@ function modelBefore(
   return null;
 }
 
+/** The switch kept the model and changed only its variant. */
+export function variantOnlySwitch(model: ModelRef, previous: ModelRef | null): boolean {
+  return previous !== null && previous.id === model.id && previous.providerID === model.providerID;
+}
+
+export interface ModelSwitchWording {
+  /** The new model's display name; its ID by default. */
+  modelName?: string;
+  /** What the surface calls a model variant. */
+  variantTerm?: string;
+  /** Joins the model name and its variant: "gpt-5 (high)" by default. */
+  joinVariant?(name: string, variant: string): string;
+}
+
+/** The transcript's wording, which matches the composer's "Reasoning effort" picker and the reply meta. */
+export const TRANSCRIPT_MODEL_SWITCH_WORDING = {
+  variantTerm: "reasoning effort",
+  joinVariant: (name: string, variant: string) => `${name} · ${variant}`,
+} satisfies ModelSwitchWording;
+
+/** Reasoning effort as the composer's picker says it: `xhigh` reads "Extra high". */
+function variantLabel(variant: string): string {
+  return variant.toLowerCase() === "xhigh" ? "Extra high" : variant;
+}
+
 /** "Switched to gpt-5 (high)", or "Switched variant to high" when only the variant changed. */
-export function describeModelSwitch(model: ModelRef, previous: ModelRef | null): string {
-  if (previous && previous.id === model.id && previous.providerID === model.providerID) {
-    return `Switched variant to ${model.variant ?? "Auto"}`;
+export function describeModelSwitch(
+  model: ModelRef,
+  previous: ModelRef | null,
+  wording: ModelSwitchWording = {},
+): string {
+  const variant = model.variant ? variantLabel(model.variant) : null;
+  if (variantOnlySwitch(model, previous)) {
+    return `Switched ${wording.variantTerm ?? "variant"} to ${variant ?? "Auto"}`;
   }
-  return `Switched to ${model.id}${model.variant ? ` (${model.variant})` : ""}`;
+  const name = wording.modelName ?? model.id;
+  if (!variant) return `Switched to ${name}`;
+  const join = wording.joinVariant ?? ((label: string, value: string) => `${label} (${value})`);
+  return `Switched to ${join(name, variant)}`;
 }
 
 /**
@@ -356,7 +379,7 @@ export function describeContextEntry(
       return {
         ...base,
         role: "User",
-        preview: preview(message.text) + suffix,
+        preview: preview(stripSystemUpdates(message.text)) + suffix,
         tokens: estimateTokens(message.text),
       };
     }
@@ -391,13 +414,24 @@ export function describeContextEntry(
       };
     }
     case "synthetic":
-    case "system":
+    case "system": {
+      // A Plan mode or goal reminder: label it, and show what it says rather than the tag.
+      const update = message.description ? null : systemUpdateBody(message.text);
+      if (update !== null) {
+        return {
+          ...base,
+          role: "Instruction update",
+          preview: preview(update),
+          tokens: estimateTokens(message.text),
+        };
+      }
       return {
         ...base,
         role: message.type === "system" ? "System" : "Palot",
         preview: preview(message.description || message.text),
         tokens: estimateTokens(message.text),
       };
+    }
     case "skill":
       return {
         ...base,
@@ -485,7 +519,7 @@ export function preview(text: string, max = 160): string {
       .split("\n")
       .map((value) => value.replace(/^#+\s*/, "").trim())
       .find(Boolean) ?? "";
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  return truncateEnd(line, max);
 }
 
 /** Body text without headings, collapsed to one line and capped. */
@@ -495,5 +529,5 @@ function proseExcerpt(text: string, max: number): string {
     .map((value) => value.trim())
     .filter((value) => value && !value.startsWith("#"))
     .join(" ");
-  return body.length > max ? `${body.slice(0, max - 1)}…` : body;
+  return truncateEnd(body, max);
 }

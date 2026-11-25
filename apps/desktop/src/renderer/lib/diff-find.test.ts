@@ -30,6 +30,21 @@ describe("findDiffMatches", () => {
     expect(findDiffMatches([{ id: "app.ts", fileDiff: app }], "   ").matches).toEqual([]);
   });
 
+  it("finds matches in a file's full text by line number", () => {
+    const result = findDiffMatches(
+      [{ id: "a.ts", text: "Widget\r\nnone\nwidget widget\n" }],
+      "widget",
+    );
+    expect(result.matches).toEqual([
+      { itemID: "a.ts", side: "additions", lineNumber: 1, occurrence: 0 },
+      { itemID: "a.ts", side: "additions", lineNumber: 3, occurrence: 0 },
+      { itemID: "a.ts", side: "additions", lineNumber: 3, occurrence: 1 },
+    ]);
+    const big = findDiffMatches([{ id: "big", text: "x\n".repeat(300) }], "x");
+    expect(big.matches).toHaveLength(250);
+    expect(big.truncated).toBe(true);
+  });
+
   it("caps matches and reports truncation", () => {
     const lines = Array.from({ length: 300 }, (_, index) => `+x${index}`);
     const big = resolveFileDiff({

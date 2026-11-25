@@ -23,11 +23,20 @@ import { isReviewComment, type ReviewComment } from "./review-comments";
 const FAMILY = "composer.recent-prompts";
 /** Profile × project scopes kept on disk; older scopes are evicted. */
 export const MAX_RECENT_PROMPT_SCOPES = 12;
-export const MAX_RECENT_PROMPTS = 25;
+export const MAX_RECENT_PROMPTS = 200;
+/** Only the newest prompts keep their attachments; older ones are kept as text (OpenCode #62313). */
+export const MAX_RECENT_PROMPTS_WITH_FILES = 100;
 /** Longer prompts stay recallable from their task transcript but are not copied here. */
 export const MAX_RECENT_PROMPT_TEXT = 4_000;
 /** Embedded attachment budget per scope, in data-URI characters. Older entries lose bytes first. */
 export const MAX_RECENT_PROMPT_EMBEDDED = 128 * 1024;
+/**
+ * Budget per scope for everything else (text, mentions, comments), in JSON characters. 200
+ * prompts of 4,000 characters would be 800K per scope and overrun the origin's localStorage
+ * quota across 12 scopes, which would also stop drafts and settings from saving. With this,
+ * the worst case stays near 12 × (128K + 128K) ≈ 3.1M characters; the oldest prompts go first.
+ */
+export const MAX_RECENT_PROMPT_CHARS = 128 * 1024;
 const MAX_COMMENTS = 50;
 
 export interface RecentPrompt {
@@ -92,7 +101,17 @@ export function recentPromptFromSubmission(input: {
   };
 }
 
-/** Newest first, one entry per text, bounded in count and embedded bytes. */
+/** Characters an entry takes in storage besides its embedded attachment bytes. */
+function storedChars(entry: RecentPrompt): number {
+  return JSON.stringify({ ...entry, files: entry.files.map((file) => ({ ...file, uri: "" })) })
+    .length;
+}
+
+/**
+ * Newest first, one entry per text, bounded in count, embedded bytes and stored characters.
+ * Entries past the newest {@link MAX_RECENT_PROMPTS_WITH_FILES} keep only their text, mentions
+ * and comments; their attachments are named as omitted so recall says what was not restored.
+ */
 export function rememberRecentPrompt(
   entries: readonly RecentPrompt[],
   entry: RecentPrompt,
@@ -102,13 +121,24 @@ export function rememberRecentPrompt(
     MAX_RECENT_PROMPTS,
   );
   let budget = MAX_RECENT_PROMPT_EMBEDDED;
-  return next.map((item) => {
-    const { files, omitted } = portableComposerFiles(item.files, budget);
+  let chars = MAX_RECENT_PROMPT_CHARS;
+  const kept: RecentPrompt[] = [];
+  for (const [index, item] of next.entries()) {
+    const { files, omitted } = portableComposerFiles(
+      item.files,
+      index < MAX_RECENT_PROMPTS_WITH_FILES ? budget : 0,
+    );
     budget -= files.reduce((total, file) => total + file.uri.length, 0);
-    return omitted.length === 0
-      ? item
-      : { ...item, files, omittedFiles: [...item.omittedFiles, ...omitted] };
-  });
+    const stored =
+      omitted.length === 0
+        ? item
+        : { ...item, files, omittedFiles: [...item.omittedFiles, ...omitted] };
+    chars -= storedChars(stored);
+    // The newest prompt is always kept; it already passed the per-prompt text limit.
+    if (chars < 0 && kept.length > 0) break;
+    kept.push(stored);
+  }
+  return kept;
 }
 
 function isMention(value: unknown): value is ComposerMention {

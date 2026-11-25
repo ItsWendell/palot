@@ -1,6 +1,7 @@
-import { OpenCode, type OpenCodeClient } from "@opencode/client";
+import { OpenCode, withMediaRefs, type OpenCodeClient } from "@opencode/client";
 import { errorDiagnostic, type OpenCodeRuntimeStatus, type PalotApi } from "../../shared";
-import { openCodeRequestSignal } from "./opencode-request";
+import { mediaRefsEnabled, supportsMediaRefs } from "../lib/media-refs";
+import { openCodeRequestSignal, openCodeTransportTimeoutMs } from "./opencode-request";
 import { createOpenCodeReadQueue } from "./opencode-request-queue";
 
 const CLIENT_BASE_URL = "https://opencode.invalid";
@@ -10,7 +11,19 @@ type Target = Readonly<Pick<OpenCodeRuntimeStatus, "connectionID" | "profileID">
 let testClient: OpenCodeClient | null = null;
 let focusedTarget: Target | null = null;
 const targets = new Map<string, Target>();
-const clients = new Map<string, OpenCodeClient>();
+const clients = new Map<string, { client: OpenCodeClient; mediaRefs: boolean }>();
+/** Connections whose server can return `media:` references from message and inbox reads. */
+const mediaRefConnections = new Map<string, boolean>();
+const retiredListeners = new Set<(connectionID: string) => void>();
+
+/**
+ * Called with a connection ID once its profile has connected again under a new ID, so caches
+ * keyed by the old connection can be released.
+ */
+export function onOpenCodeConnectionRetired(listener: (connectionID: string) => void): () => void {
+  retiredListeners.add(listener);
+  return () => retiredListeners.delete(listener);
+}
 const budgets = new Map<
   string,
   {
@@ -23,6 +36,14 @@ export function registerOpenCodeRuntime(runtime: OpenCodeRuntimeStatus): void {
   const existing = targets.get(runtime.connectionID);
   if (existing && existing.profileID !== runtime.profileID) {
     throw new Error("OpenCode connection owner cannot change");
+  }
+  if (runtime.version)
+    mediaRefConnections.set(runtime.connectionID, supportsMediaRefs(runtime.version));
+  if (!existing) {
+    for (const target of targets.values()) {
+      if (target.profileID !== runtime.profileID) continue;
+      for (const listener of retiredListeners) listener(target.connectionID);
+    }
   }
   targets.set(
     runtime.connectionID,
@@ -131,7 +152,10 @@ function targetedFetch(target: Target | null): typeof globalThis.fetch {
   return async (input, init) => {
     const budget = readBudget(target);
     const request = input instanceof Request ? input : new Request(input, init);
-    const signal = openCodeRequestSignal(request.signal);
+    const signal = openCodeRequestSignal(
+      request.signal,
+      openCodeTransportTimeoutMs(request.method, new URL(request.url).pathname),
+    );
     signal.throwIfAborted();
     const id = `request-${requestInstanceID}-${++requestSequence}`;
     const rendererStartedAt = Date.now();
@@ -267,12 +291,16 @@ export function openCodeClient(connectionID?: string): OpenCodeClient {
   const target = connectionID === undefined ? focusedTarget : targets.get(connectionID);
   if (target === undefined) throw new Error(`Unknown OpenCode connection: ${connectionID}`);
   const key = target?.connectionID ?? "";
-  let client = clients.get(key);
-  if (!client) {
-    client = OpenCode.make({ baseUrl: CLIENT_BASE_URL, fetch: targetedFetch(target) });
-    clients.set(key, client);
+  const mediaRefs = mediaRefsEnabled() && (mediaRefConnections.get(key) ?? supportsMediaRefs(null));
+  let cached = clients.get(key);
+  if (!cached || cached.mediaRefs !== mediaRefs) {
+    const client = OpenCode.make({ baseUrl: CLIENT_BASE_URL, fetch: targetedFetch(target) });
+    // Message and inbox reads return server-stored media as `media:<hash>` references, which
+    // `lib/media-refs.ts` resolves. Session export is not wrapped and keeps inline bytes.
+    cached = { client: mediaRefs ? withMediaRefs(client) : client, mediaRefs };
+    clients.set(key, cached);
   }
-  return client;
+  return cached.client;
 }
 
 export function resetOpenCodeClientForTest(): void {
@@ -280,6 +308,7 @@ export function resetOpenCodeClientForTest(): void {
   focusedTarget = null;
   targets.clear();
   clients.clear();
+  mediaRefConnections.clear();
   budgets.clear();
   missingLocations.clear();
   requestSequence = 0;

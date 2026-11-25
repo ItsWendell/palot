@@ -1,10 +1,11 @@
 /**
- * Find in diff: DOM highlighting with the CSS Custom Highlight API.
+ * Find in diff and file tabs: DOM highlighting with the CSS Custom Highlight API.
  *
  * `@pierre/diffs` renders each file into an open shadow root. Ranges inside shadow
  * trees can join the document's highlight registry; the matching `::highlight()`
  * rules live in the diff's injected CSS (`file-viewer-theme.ts`), because document
- * styles do not reach into shadow trees.
+ * styles do not reach into shadow trees. File previews outside a shadow tree use the
+ * same highlights through matching rules in `index.css`.
  */
 import {
   diffLineText,
@@ -51,6 +52,12 @@ function flushHighlights() {
   activeHighlight.priority = 1;
   CSS.highlights.set(DIFF_FIND_HIGHLIGHT, new Highlight(...hits));
   CSS.highlights.set(DIFF_FIND_ACTIVE_HIGHLIGHT, activeHighlight);
+}
+
+/** Sets this owner's ranges; other owners' ranges stay highlighted. */
+export function setFindHighlights(owner: object, hits: Range[], active: Range | null): void {
+  owners.set(owner, { hits, active });
+  flushHighlights();
 }
 
 export function clearDiffHighlights(owner: object): void {
@@ -125,6 +132,11 @@ export function applyDiffHighlights(
   items: readonly RenderedDiffItem[],
   needle: string,
   active: DiffFindMatch | null,
+  /**
+   * Lines to search, keyed by `diffLineKey`. Surfaces that render every line pass the
+   * matched lines so a large file is not walked line by line.
+   */
+  onlyLines?: ReadonlySet<string>,
 ): DiffHighlightResult {
   const result: DiffHighlightResult = { active: null, activeLine: null };
   if (!needle) {
@@ -134,6 +146,8 @@ export function applyDiffHighlights(
   const hits: Range[] = [];
   for (const item of items) {
     for (const line of renderedDiffLines(item)) {
+      if (onlyLines && !onlyLines.has(diffLineKey(item.id, Number(line.getAttribute("data-line")))))
+        continue;
       const ranges = diffLineRanges(line, needle);
       if (ranges.length === 0) continue;
       if (
@@ -151,9 +165,12 @@ export function applyDiffHighlights(
       hits.push(...ranges);
     }
   }
-  owners.set(owner, { hits, active: result.active });
-  flushHighlights();
+  setFindHighlights(owner, hits, result.active);
   return result;
+}
+
+export function diffLineKey(itemID: string, lineNumber: number): string {
+  return `${itemID}\n${lineNumber}`;
 }
 
 /**

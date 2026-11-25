@@ -31,6 +31,10 @@ const LOCAL_SERVICE_UNAVAILABLE =
 const RECONNECTING_ERROR =
   "OpenCode is reconnecting. Retry once the service is available, or start it explicitly.";
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
+// With no local service to connect to, look for one quietly: at login Palot can start before
+// the service does, and nothing else would retry. Discovery reads the service registration.
+const SERVICE_WATCH_INITIAL_MS = 1_000;
+const SERVICE_WATCH_MAX_MS = 10_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const STREAM_YIELD_MS = 8;
 // OpenCode 2.2.5 sends a `: heartbeat` comment every 15 seconds, including when no
@@ -124,6 +128,44 @@ function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+// `[::1]` is listed with brackets because Node's fetch compares NO_PROXY entries with the
+// URL hostname, which keeps them for IPv6.
+const LOOPBACK_NO_PROXY = ["127.0.0.1", "localhost", "::1", "[::1]"];
+
+/**
+ * Node's fetch and WebSocket ignore HTTP(S)_PROXY and ALL_PROXY unless the environment proxy is
+ * enabled at startup with NODE_USE_ENV_PROXY=1 or --use-env-proxy. When it is, they also send
+ * loopback requests to the proxy unless NO_PROXY lists the host, which breaks the local service
+ * connection and hands its traffic to the proxy. Both spellings get one merged list because
+ * lowercase `no_proxy` wins whenever it is set; `*` already exempts everything. Node re-reads
+ * NO_PROXY on each request, so this works after startup; it runs only when the proxy is on so
+ * child process environments stay unchanged otherwise.
+ */
+export function exemptLoopbackFromEnvironmentProxy(
+  env: NodeJS.ProcessEnv = process.env,
+  execArgv: readonly string[] = process.execArgv,
+): void {
+  const flags = [...execArgv, ...(env.NODE_OPTIONS?.split(/\s+/) ?? [])];
+  if (env.NODE_USE_ENV_PROXY !== "1" && !flags.includes("--use-env-proxy")) return;
+  const entries = [env.NO_PROXY, env.no_proxy, LOOPBACK_NO_PROXY.join(",")]
+    .flatMap((value) => value?.split(",") ?? [])
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const merged = entries.includes("*")
+    ? "*"
+    : entries
+        .filter((entry) => {
+          const key = entry.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .join(",");
+  env.NO_PROXY = merged;
+  env.no_proxy = merged;
+}
+
 export const openCodeRuntimeLifecycleAdapter: OpenCodeRuntimeLifecycleAdapter = {
   discoverService: () => Service.discover(),
   ensureService: (input) => Service.ensure(input),
@@ -157,6 +199,7 @@ export class OpenCodeRuntimeLifecycle {
   private streamLastActivity = 0;
   private streamConnectedAt: number | null = null;
   private reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
+  private serviceWatch: AbortController | null = null;
   private streamEpochValue = 0;
   private stopped = false;
   private statusValue: OpenCodeRuntimeStatus;
@@ -210,6 +253,9 @@ export class OpenCodeRuntimeLifecycle {
       throw new Error(this.statusValue.error ?? RECONNECTING_ERROR);
     }
     if (this.connectPromise) return this.connectPromise;
+    // Runs per connection rather than at import so the login shell environment is loaded first.
+    exemptLoopbackFromEnvironmentProxy();
+    this.stopServiceWatch();
     const reconnect = this.reconnectPromise;
     if (reconnect) {
       this.pendingReconnect = null;
@@ -236,12 +282,64 @@ export class OpenCodeRuntimeLifecycle {
         if (!this.stopped && this.statusValue.phase !== "error") {
           this.setStatus("error", { connected: false, error: errorMessage(error) });
         }
+        if (error instanceof Error && error.message === LOCAL_SERVICE_UNAVAILABLE) {
+          this.watchForLocalService();
+        }
         throw error;
       })
       .finally(() => {
         this.connectPromise = null;
       });
     return this.connectPromise;
+  }
+
+  /**
+   * After a connection found no local service, connect once one answers. The probe is silent
+   * (no status changes, no log lines) so a machine without OpenCode shows a steady error.
+   */
+  private watchForLocalService(): void {
+    if (this.serviceWatch || this.stopped) return;
+    if ((this.options.profile?.kind ?? "local") !== "local") return;
+    const controller = new AbortController();
+    this.serviceWatch = controller;
+    const signal = AbortSignal.any([controller.signal, this.connectionAbort.signal]);
+    void (async () => {
+      let delay = SERVICE_WATCH_INITIAL_MS;
+      while (!signal.aborted) {
+        await withAbort(this.adapter.wait(delay, signal), signal);
+        delay = Math.min(delay * 2, SERVICE_WATCH_MAX_MS);
+        const endpoint = await withAbort(this.adapter.discoverService(), signal).catch(
+          () => undefined,
+        );
+        if (!endpoint) continue;
+        // A stale registration must not flip the status on every probe.
+        const probeSignal = AbortSignal.any([
+          signal,
+          AbortSignal.timeout(RETAINED_ENDPOINT_TIMEOUT_MS),
+        ]);
+        const answers = await withAbort(
+          this.adapter
+            .makeClient(endpoint, this.options.headers, false)
+            .server.info({ signal: probeSignal }),
+          probeSignal,
+        ).then(
+          () => true,
+          () => false,
+        );
+        if (!answers || signal.aborted) continue;
+        openCodeLog.info("local service appeared; connecting", {
+          connectionID: this.connectionID,
+        });
+        // connect() ends this watch and starts a new one if the service is gone again.
+        void this.connect().catch(() => undefined);
+        return;
+      }
+    })().catch(() => undefined);
+  }
+
+  private stopServiceWatch(): void {
+    this.serviceWatch?.abort();
+    this.serviceWatch = null;
   }
 
   async client(): Promise<OpenCodeClient> {
@@ -309,6 +407,7 @@ export class OpenCodeRuntimeLifecycle {
     if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
     this.connectionAbort.abort(new Error("OpenCode connection stopped"));
+    this.stopServiceWatch();
     this.pendingReconnect = null;
     this.reconnectAbort?.abort();
     this.reconnectAbort = null;
@@ -327,6 +426,7 @@ export class OpenCodeRuntimeLifecycle {
   }
 
   private async restartLocalServiceNow(): Promise<OpenCodeRuntimeStatus> {
+    exemptLoopbackFromEnvironmentProxy();
     // Verify the selected executable before interrupting a working shared service.
     const binary = await this.discoverLocalBinary();
     this.connectionAbort.signal.throwIfAborted();

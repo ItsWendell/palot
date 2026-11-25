@@ -93,7 +93,8 @@ export function resolveFileSnippetDiff(
   const key = `snippet:${contentCacheKey(file, patch)}`;
   const cached = resolvedDiffs.get(key);
   if (cached !== undefined || resolvedDiffs.has(key)) return reuseCachedDiff(key, cached ?? null);
-  const resolved = parsePatchFiles(patch, contentCacheKey(file, patch))[0]?.files[0] ?? null;
+  const resolved =
+    parsePatchFiles(patch, { cacheKeyPrefix: contentCacheKey(file, patch) })[0]?.files[0] ?? null;
   cacheDiff(key, resolved);
   return resolved;
 }
@@ -134,7 +135,9 @@ function parsePatch(file: string, patch: string): FileDiffMetadata | null {
   try {
     const normalized = patch.replace(/\r\n?/g, "\n");
     const cacheKey = contentCacheKey(file, normalized);
-    const direct = parsePatchFiles(normalized, cacheKey).flatMap((value) => value.files)[0];
+    const direct = parsePatchFiles(normalized, { cacheKeyPrefix: cacheKey }).flatMap(
+      (value) => value.files,
+    )[0];
     if (direct) return direct;
     if (!/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m.test(normalized)) return null;
 
@@ -146,7 +149,10 @@ function parsePatch(file: string, patch: string): FileDiffMetadata | null {
       `+++ ${safeFile}\t`,
       normalized,
     ].join("\n");
-    return parsePatchFiles(wrapped, cacheKey).flatMap((value) => value.files)[0] ?? null;
+    return (
+      parsePatchFiles(wrapped, { cacheKeyPrefix: cacheKey }).flatMap((value) => value.files)[0] ??
+      null
+    );
   } catch {
     return null;
   }

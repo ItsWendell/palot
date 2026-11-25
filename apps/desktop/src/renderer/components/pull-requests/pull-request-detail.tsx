@@ -26,6 +26,7 @@ import type {
   PullRequestRef,
 } from "../../../shared/source-control-contract";
 import { pullRequestKey } from "../../../shared/source-control-contract";
+import { detailReadinessFacts, pullRequestReadiness } from "../../../shared/pull-request-readiness";
 import { useClipboardCopy } from "../../hooks/use-clipboard-copy";
 import { useThreadHeaderInsets } from "../../hooks/use-thread-header-insets";
 import { usePalotNavigation } from "../../hooks/use-navigation";
@@ -52,7 +53,12 @@ import {
 } from "../ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { useStartPullRequestTask } from "./pull-request-actions";
+import { refOf, useStartPullRequestTask } from "./pull-request-actions";
+import {
+  PullRequestRepairButtons,
+  usePrContextTarget,
+  usePullRequestRepair,
+} from "./pull-request-repair";
 import { PullRequestPersonLabel, PullRequestStatePill } from "./pull-request-person";
 import {
   formatPullRequestTime,
@@ -61,6 +67,7 @@ import {
 } from "./pull-request-presentation";
 import { PullRequestSummaryTab } from "./pull-request-summary-tab";
 import { PullRequestTimelineTab } from "./pull-request-timeline-tab";
+import { ReadinessLine } from "./readiness-line";
 import { useArmedConfirm } from "./use-armed-confirm";
 import { PullRequestEdit } from "./pull-request-edit";
 import { useReviewGuide, type ReviewGuideController } from "./guide/use-review-guide";
@@ -338,6 +345,8 @@ function DetailHeader({
   const link = useLinkPullRequest();
   const watch = useWatchPullRequest();
   const startTask = useStartPullRequestTask();
+  const repair = usePullRequestRepair(refOf(detail));
+  const repairTarget = usePrContextTarget();
   const { copy, copiedKey } = useClipboardCopy();
   const [error, setError] = useState<string | null>(null);
   const run = async (action: () => Promise<unknown>) => {
@@ -397,6 +406,10 @@ function DetailHeader({
           <span className="text-destructive">−{detail.deletions}</span>
         </span>
       </div>
+      <ReadinessLine
+        className="mt-2"
+        readiness={pullRequestReadiness(detailReadinessFacts(detail))}
+      />
       <div className="mt-3 flex flex-wrap items-center gap-1">
         <PullRequestEdit key={pullRequestKey(detail)} detail={detail} />
         <Button
@@ -417,6 +430,14 @@ function DetailHeader({
           <Plus data-icon="inline-start" aria-hidden="true" />
           Start task
         </Button>
+        <PullRequestRepairButtons
+          contexts={repair.contexts}
+          onChoose={async (context) =>
+            repairTarget(await repair.prepare(context), detail, linkedCurrent ?? links[0] ?? null, {
+              navigate: true,
+            })
+          }
+        />
         {canLinkCurrent ? (
           <Button
             type="button"

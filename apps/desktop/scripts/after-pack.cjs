@@ -20,11 +20,28 @@ async function writeNotices(context, resources) {
   if (stderr) console.error(stderr);
 }
 
+/**
+ * The desktop entry bundled in resources/, which the local install and the Arch recipe use.
+ * (deb/rpm write their own from linux.desktop.) %U passes a palot:// link after --show, and
+ * MimeType lets the desktop route the configured schemes to this channel.
+ */
+function linuxDesktopEntry({ productName, appId, executable, schemes }) {
+  const mimeTypes = schemes.map((scheme) => `x-scheme-handler/${scheme};`).join("");
+  return `[Desktop Entry]\nType=Application\nName=${productName}\nExec=${executable} --show %U\nIcon=${appId}\nTerminal=false\nCategories=Development;\nKeywords=AI;OpenCode;\nStartupWMClass=${appId}\n${mimeTypes ? `MimeType=${mimeTypes}\n` : ""}Actions=NewTask;\n\n[Desktop Action NewTask]\nName=New Task\nExec=${executable} --new-task\n`;
+}
+
 module.exports = async function afterPack(context) {
   if (context.electronPlatformName === "linux") {
     const info = context.packager.appInfo;
-    const executable = context.packager.executableName;
-    const desktop = `[Desktop Entry]\nType=Application\nName=${info.productName}\nExec=${executable} --show\nIcon=${info.id}\nTerminal=false\nCategories=Development;\nKeywords=AI;OpenCode;\nStartupWMClass=${info.id}\nActions=NewTask;\n\n[Desktop Action NewTask]\nName=New Task\nExec=${executable} --new-task\n`;
+    const protocols = context.packager.config.protocols ?? [];
+    const desktop = linuxDesktopEntry({
+      productName: info.productName,
+      appId: info.id,
+      executable: context.packager.executableName,
+      schemes: (Array.isArray(protocols) ? protocols : [protocols]).flatMap((protocol) =>
+        Array.isArray(protocol.schemes) ? protocol.schemes : [protocol.schemes],
+      ),
+    });
     await writeFile(path.join(context.appOutDir, "resources", `${info.id}.desktop`), desktop);
     await writeNotices(context, path.join(context.appOutDir, "resources"));
     return;
@@ -52,3 +69,4 @@ module.exports = async function afterPack(context) {
   }
   await writeNotices(context, path.join(context.appOutDir, appName, "Contents", "Resources"));
 };
+module.exports.linuxDesktopEntry = linuxDesktopEntry;

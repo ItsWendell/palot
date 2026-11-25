@@ -23,6 +23,8 @@ import type {
   PullRequestDetail,
   PullRequestDraftInput,
   PullRequestFileViewedInput,
+  PullRequestCheckLog,
+  PullRequestCheckLogsInput,
   PullRequestFiles,
   PullRequestLink,
   PullRequestMergeInput,
@@ -200,6 +202,18 @@ export class SourceControlService {
 
   pullRequestFiles(ref: PullRequestRef): Promise<SourceControlResult<PullRequestFiles>> {
     return sourceControlResult(() => this.reviewFor(ref).files(ref));
+  }
+
+  /** GitHub only; other hosts have no check logs Palot can read, so every log is unavailable. */
+  pullRequestCheckLogs(
+    input: PullRequestCheckLogsInput,
+  ): Promise<SourceControlResult<PullRequestCheckLog[]>> {
+    return sourceControlResult(() => {
+      const provider = this.options.providers?.get(input.host);
+      return !provider || provider.kind === "github"
+        ? this.options.review.checkLogs(input)
+        : input.checkRunIDs.map((checkRunID) => ({ checkRunID, step: null, excerpt: null }));
+    });
   }
 
   setPullRequestFileViewed(input: PullRequestFileViewedInput): Promise<SourceControlResult<null>> {

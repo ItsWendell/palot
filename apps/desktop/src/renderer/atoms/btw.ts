@@ -55,11 +55,19 @@ function createManager(store: Store) {
     requests.delete(key);
     publish();
   };
-  const write = (request: BtwRequest, result: { answer?: string; error?: string }) =>
+  /** `finished` marks the tab unread; an open tab clears that as soon as it shows. */
+  const write = (
+    request: BtwRequest,
+    result: { answer?: string; error?: string },
+    finished = false,
+  ) =>
     store.set(workbenchStateAtom, (state) =>
       updateBtwTab(state, request.scope, request.tabID, (current) => ({
         ...current,
-        resource: updateBtwExchange(current.resource, request.exchangeID, result),
+        resource: {
+          ...updateBtwExchange(current.resource, request.exchangeID, result),
+          ...(finished ? { unread: true } : {}),
+        },
       })),
     );
   return {
@@ -73,9 +81,9 @@ function createManager(store: Store) {
       const request: BtwRequest = { scope, tabID, exchangeID: exchange.id, controller };
       requests.set(key, request);
       publish();
-      const update = (result: { answer?: string; error?: string }) => {
+      const update = (result: { answer?: string; error?: string }, finished = false) => {
         if (controller.signal.aborted || requests.get(key) !== request) return;
-        write(request, result);
+        write(request, result, finished);
       };
       update({});
       try {
@@ -85,11 +93,12 @@ function createManager(store: Store) {
         );
         const answer = result.text.trim();
         if (!answer) throw new Error("No answer was returned. Try again.");
-        update({ answer });
+        update({ answer }, true);
       } catch (error) {
-        update({
-          error: error instanceof Error ? error.message : "Could not answer this question.",
-        });
+        update(
+          { error: error instanceof Error ? error.message : "Could not answer this question." },
+          true,
+        );
       } finally {
         finish(key, request);
       }
@@ -168,6 +177,18 @@ export function submitBtwQuestion(
     updateBtwTab(state, scope, tabID, (current) => ({ ...current, resource })),
   );
   void requests.generate(scope, tabID, connectionID);
+}
+
+/** Clears a side chat's unread mark once its tab is in view. */
+export function markBtwRead(store: Store, scope: WorkbenchScope, tabID: string): void {
+  store.set(workbenchStateAtom, (state) =>
+    findBtwTab(state, scope, tabID)?.resource.unread
+      ? updateBtwTab(state, scope, tabID, (current) => {
+          const { unread: _unread, ...resource } = current.resource;
+          return { ...current, resource };
+        })
+      : state,
+  );
 }
 
 /** Stops a pending side answer; the question stays and can be retried. */

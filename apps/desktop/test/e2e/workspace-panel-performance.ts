@@ -14,6 +14,7 @@ export const workspaceDragPerformanceScenario = workspacePerformanceScenario(tru
 function workspacePerformanceScenario(dragOnly: boolean): Scenario {
   return {
     ...workbenchResizeScenario,
+    requires: [{ flag: "profile" }],
     description: dragOnly
       ? "measure navigation and workbench drags over a settled long transcript"
       : "measure navigation and workbench toggles and drags over a settled long transcript",

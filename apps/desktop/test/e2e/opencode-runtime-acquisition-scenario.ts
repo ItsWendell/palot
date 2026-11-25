@@ -7,6 +7,7 @@ import type { Scenario } from "./scenarios.ts";
 
 export const openCodeRuntimeAcquisitionScenario: Scenario = {
   description: "opt-in official Stable fallback download in an external-runtime package",
+  requires: [{ env: "PALOT_E2E_ALLOW_RUNTIME_DOWNLOAD", value: "1" }, { flag: "executable" }],
   prompt: "",
   expectedModelCalls: 0,
   async prepare() {

@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { PullRequestDetail } from "../../../../shared/source-control-contract";
 import { PullRequestCodeTab } from "./pull-request-code-tab";
 import {
+  codeViewOpenSearch,
   installCodeTabApi,
   prFile,
   pullRequestDetail,
@@ -86,6 +87,23 @@ it("explains files GitHub sent no patch for and links to the PR's files on GitHu
   expect(within(section).getByRole("link", { name: "Open on GitHub" }).getAttribute("href")).toBe(
     "https://github.com/acme/web/pull/7/files",
   );
+});
+
+it("opens Find in diff on Mod+F inside the diff and keeps the diff's own search on Mod+Alt+F", async () => {
+  installCodeTabApi({ files: [prFile("src/a.ts")] });
+  renderTab();
+  const section = await screen.findByRole("region", { name: "Diff src/a.ts" });
+  const findKey = { key: "f", code: "KeyF", ctrlKey: true };
+
+  fireEvent.keyDown(section, findKey);
+  expect(screen.getByRole("search", { name: "Find in diff" })).toBeTruthy();
+  expect(codeViewOpenSearch).not.toHaveBeenCalled();
+
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Find in diff" }), { key: "Escape" });
+  expect(screen.queryByRole("search", { name: "Find in diff" })).toBeNull();
+  fireEvent.keyDown(section, { ...findKey, altKey: true });
+  expect(codeViewOpenSearch).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("search", { name: "Find in diff" })).toBeNull();
 });
 
 it("turns a selected line into a pending comment shown on its line and in the tray", async () => {

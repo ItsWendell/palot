@@ -1,6 +1,6 @@
 import type { UsageLimitsBudget, UsageLimitsGo } from "@opencode/client";
 import type { JsonValue, PalotMessage } from "../../shared";
-import { usageLimitResetAt, usageLimitTitle } from "./usage-limit-reset";
+import { resettingLimit, usageLimitResetAt } from "./usage-limit-reset";
 
 export type GoWindow = keyof UsageLimitsGo;
 
@@ -116,7 +116,8 @@ export function usageLimitFailure(
       : typeof error.name === "string"
         ? error.name
         : null;
-  if (!usageLimitTitle(type)) return null;
+  // An empty balance (HTTP 402) does not lift on its own; there is nothing to wait for.
+  if (!resettingLimit(type, typeof error.status === "number" ? error.status : null)) return null;
   return {
     resetsAt: usageLimitResetAt(
       message.completedAt ?? message.createdAt,

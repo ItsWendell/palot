@@ -310,6 +310,7 @@ export function WorkbenchPane({
     <section
       className="palot-workbench-surface @container/workbench flex size-full min-h-0 min-w-0 flex-col bg-background"
       aria-label={pane === "right" ? "Right workbench" : "Bottom workbench"}
+      data-focus-region="workbench"
       data-workbench-pane={pane}
       data-shell-surface={pane}
       ref={sectionRef}
@@ -626,6 +627,8 @@ function WorkbenchTabItem({
         : browserPage?.title || browserPage?.url || "New tab"
       : (label ?? workbenchTabTitle(tab));
   const tooltip = tab.kind === "browser" ? browserPage?.url || title : title;
+  // A side question answered out of view, until its tab is shown.
+  const unread = tab.kind === "btw" && tab.resource.unread === true;
   const tabRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -686,7 +689,9 @@ function WorkbenchTabItem({
               ? `${title}, microphone or camera permission needed`
               : editing
                 ? title
-                : undefined
+                : unread
+                  ? `${title}, new answer`
+                  : undefined
           }
           onFocus={() => tabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" })}
           onDoubleClick={
@@ -724,6 +729,14 @@ function WorkbenchTabItem({
           >
             {title}
           </span>
+          {unread ? (
+            <span
+              className="size-1.5 shrink-0 rounded-full bg-info"
+              title="New answer"
+              aria-hidden="true"
+              data-workbench-tab-unread=""
+            />
+          ) : null}
           {tab.kind === "changes" || tab.kind === "file-diff" ? (
             <span
               className="size-1.5 shrink-0 rounded-full bg-info"
@@ -855,7 +868,7 @@ function WorkbenchTabContent({
   scope: WorkbenchScope;
   active: boolean;
 }) {
-  if (tab.kind === "btw") return <BtwTab tab={tab} />;
+  if (tab.kind === "btw") return <BtwTab tab={tab} active={active} />;
   if (tab.kind === "html-preview") return active ? <HtmlPreviewTab tab={tab} /> : null;
   if (tab.kind === "new-tab")
     return (
@@ -886,7 +899,7 @@ function WorkbenchTabContent({
   if (tab.kind === "file-diff") return <FileDiffTab tab={tab} active={active} />;
   if (tab.kind === "turn-diff") return <TurnDiffTab tab={tab} active={active} />;
   if (tab.kind === "command") return <CommandTab tab={tab} active={active} />;
-  return <TerminalTab tab={tab} />;
+  return <TerminalTab tab={tab} pane={pane} scope={scope} />;
 }
 
 /**

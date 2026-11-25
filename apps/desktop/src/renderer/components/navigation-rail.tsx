@@ -2,9 +2,8 @@ import { FolderGit2, GitPullRequest } from "lucide-react";
 import { useAtom, useAtomValue } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
 import type { PointerEvent, ReactNode } from "react";
-import type { SidebarMode } from "../../shared";
 import { automationUnreadCountAtom } from "../atoms/automations";
-import { navigationOpenAtom, sidebarModeAtom } from "../atoms/ui";
+import { navigationOpenAtom } from "../atoms/ui";
 import { useConnectionOverview } from "../hooks/use-connection-overview";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionInbox } from "../hooks/use-session-inbox";
@@ -16,6 +15,7 @@ import { AppIcon } from "./ui/app-icon";
 import { formatShortcut, useShortcutKeys } from "../lib/keyboard-shortcuts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SidebarFluidList, sidebarFluidRowProps } from "./sidebar-fluid-list";
+import type { SidebarPeekView } from "./sidebar-peek";
 
 /** Routes that render outside the workspace shell and therefore have no task column. */
 function isWorkspaceRoute(pathname: string): boolean {
@@ -41,11 +41,10 @@ export function NavigationRail({
   /** Whether the task column is visible. Omit outside the workspace shell. */
   navigationOpen?: boolean;
   onNavigationOpenChange?(open: boolean): void;
-  /** The pointer rests on a column view button; the shell may peek that view. */
-  onViewHoverStart?(view: SidebarMode): void;
+  /** The pointer rests on the Tasks button; the shell may peek the column. */
+  onViewHoverStart?(view: SidebarPeekView): void;
   onViewHoverEnd?(): void;
 }) {
-  const [mode, setMode] = useAtom(sidebarModeAtom);
   const [storedNavigationOpen, setStoredNavigationOpen] = useAtom(navigationOpenAtom);
   const columnVisible = navigationOpen ?? storedNavigationOpen;
   const { closeSettings, openPullRequests, openScheduled, openSettings, openUsage, openWorktrees } =
@@ -61,24 +60,22 @@ export function NavigationRail({
   const settingsActive = pathname.startsWith("/settings");
   // Route destinations own the strong selected state; the column view stays pressed.
   const routeDestinationActive = isFullPageRoute(pathname);
-  const showMode = (next: typeof mode) => {
+  const showTasks = () => {
     if (!workspaceRoute) {
-      setMode(next);
       setStoredNavigationOpen(true);
       void closeSettings();
       return;
     }
-    // Like ChatGPT's rail: the active view toggles its column; another view opens it.
-    if (columnVisible && mode === next && !routeDestinationActive) {
+    // Like ChatGPT's rail: the active view toggles its column.
+    if (columnVisible && !routeDestinationActive) {
       onNavigationOpenChange?.(false);
       return;
     }
-    setMode(next);
     if (!columnVisible) onNavigationOpenChange?.(true);
   };
   const settingsShortcut = formatShortcut(useShortcutKeys("settings.open"));
   // Hover intent is a pointer affordance only; touch taps go straight to the click path.
-  const viewHoverProps = (view: SidebarMode) =>
+  const viewHoverProps = (view: SidebarPeekView) =>
     onViewHoverStart
       ? {
           onPointerEnter: (event: PointerEvent<HTMLButtonElement>) => {
@@ -107,28 +104,15 @@ export function NavigationRail({
       >
         <RailButton
           tooltipDisabled={peeking}
-          label={attentionCount > 0 ? `Show inbox, ${attentionCount} need attention` : "Show inbox"}
-          tooltip={attentionCount > 0 ? `Inbox · ${attentionCount} need attention` : "Inbox"}
-          pressed={workspaceRoute && columnVisible && mode === "inbox"}
-          selected={workspaceRoute && columnVisible && mode === "inbox" && !routeDestinationActive}
+          label={attentionCount > 0 ? `Show tasks, ${attentionCount} need you` : "Show tasks"}
+          tooltip={attentionCount > 0 ? `Tasks · ${attentionCount} need you` : "Tasks"}
+          pressed={workspaceRoute && columnVisible}
+          selected={workspaceRoute && columnVisible && !routeDestinationActive}
           indicator={attentionCount > 0}
-          onClick={() => showMode("inbox")}
-          hoverProps={viewHoverProps("inbox")}
+          onClick={showTasks}
+          hoverProps={viewHoverProps("tasks")}
         >
           <AppIcon name="inbox" aria-hidden="true" />
-        </RailButton>
-        <RailButton
-          tooltipDisabled={peeking}
-          label="Show projects"
-          tooltip="Projects"
-          pressed={workspaceRoute && columnVisible && mode === "project"}
-          selected={
-            workspaceRoute && columnVisible && mode === "project" && !routeDestinationActive
-          }
-          onClick={() => showMode("project")}
-          hoverProps={viewHoverProps("project")}
-        >
-          <AppIcon name="folder" aria-hidden="true" />
         </RailButton>
         <div className="h-1.5 shrink-0" aria-hidden="true" />
         <RailButton
@@ -257,7 +241,7 @@ function RailButton({
   );
 }
 
-/** Attention count for the Inbox destination, spanning every visible connection. */
+/** Tasks in "Needs you" (a request or a failure), on every enabled server. */
 function useInboxAttentionCount(): number {
   const inbox = useSessionInbox();
   const { connections, includedProfileIDs, visibleProfileIDs } = useConnectionOverview();

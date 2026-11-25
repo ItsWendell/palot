@@ -109,7 +109,7 @@ function SpellingLanguages({
             : "Chosen here instead of your system languages."
         }
         status={settings.enabled ? undefined : "Turn on Check spelling to change languages."}
-        align="start"
+        layout="stacked"
         actions={
           <Button
             type="button"
@@ -121,44 +121,45 @@ function SpellingLanguages({
             Use system languages
           </Button>
         }
-      >
-        <div className="space-y-2">
-          <Input
-            aria-label="Search spelling languages"
-            placeholder="Search languages…"
-            value={query}
-            disabled={!settings.enabled}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <CheckList
-            aria-label="Spelling languages"
-            className="max-h-72 overflow-y-auto"
-            disabled={!settings.enabled || pending}
-            value={settings.languages}
-            onValueChange={(next) => {
-              if (next.length > 0) onChange({ languages: next });
-            }}
-            options={options
-              .filter(
-                ({ tag, label }) =>
-                  !needle ||
-                  label.toLowerCase().includes(needle) ||
-                  tag.toLowerCase().includes(needle),
-              )
-              .map(({ tag, label }) => ({
-                value: tag,
-                label,
-                trailing: (
-                  <span className="font-mono text-code-compact text-muted-foreground">{tag}</span>
-                ),
-                disabled: tag === only,
-                ...(tag === only
-                  ? { disabledReason: "Turn off Check spelling to stop checking." }
-                  : {}),
-              }))}
-          />
-        </div>
-      </SettingsRow>
+        control={
+          <div className="space-y-2">
+            <Input
+              aria-label="Search spelling languages"
+              placeholder="Search languages…"
+              value={query}
+              disabled={!settings.enabled}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <CheckList
+              aria-label="Spelling languages"
+              className="max-h-72 overflow-y-auto"
+              disabled={!settings.enabled || pending}
+              value={settings.languages}
+              onValueChange={(next) => {
+                if (next.length > 0) onChange({ languages: next });
+              }}
+              options={options
+                .filter(
+                  ({ tag, label }) =>
+                    !needle ||
+                    label.toLowerCase().includes(needle) ||
+                    tag.toLowerCase().includes(needle),
+                )
+                .map(({ tag, label }) => ({
+                  value: tag,
+                  label,
+                  trailing: (
+                    <span className="font-mono text-code-compact text-muted-foreground">{tag}</span>
+                  ),
+                  disabled: tag === only,
+                  ...(tag === only
+                    ? { disabledReason: "Turn off Check spelling to stop checking." }
+                    : {}),
+                }))}
+            />
+          </div>
+        }
+      />
     </SettingsDisclosure>
   );
 }

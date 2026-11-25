@@ -60,6 +60,14 @@ export const sourceControlSchemas = {
     query: v.optional(v.pipe(v.string(), v.maxLength(4_096))),
   }),
   pullRequest: v.strictObject(ref),
+  checkLogs: v.strictObject({
+    ...ref,
+    checkRunIDs: v.pipe(
+      v.array(v.pipe(v.number(), v.integer(), v.minValue(1))),
+      v.minLength(1),
+      v.maxLength(50),
+    ),
+  }),
   timeline: v.strictObject({
     ...ref,
     cursor: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(4_096)))),
@@ -110,6 +118,7 @@ export const sourceControlSchemas = {
     action: v.picklist(["switch", "create", "rename"]),
     name: identifier,
     base: v.optional(identifier),
+    carryChanges: v.optional(v.boolean()),
   }),
   edit: v.strictObject({
     ...ref,
@@ -230,6 +239,9 @@ export function registerSourceControlIpc(
   );
   register(channels.pullRequestTimeline, (_event, input) =>
     service().pullRequestTimeline(v.parse(schemas.timeline, input)),
+  );
+  register(channels.pullRequestCheckLogs, (_event, input) =>
+    service().pullRequestCheckLogs(v.parse(schemas.checkLogs, input)),
   );
   register(channels.pullRequestFiles, (_event, input) =>
     service().pullRequestFiles(v.parse(schemas.pullRequest, input)),

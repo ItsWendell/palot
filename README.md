@@ -19,10 +19,12 @@ and managing local OpenCode connections.
 upgrade from Palot 0.11.x. “Palot v2” names the rebuild; the application follows
 the `0.x` SemVer release sequence. OpenCode has its own independent version.
 
-Palot 0.23.0 is open-source pre-release software under active development, with
+Palot 0.24.0 is open-source pre-release software under active development, with
 desktop packaging targets for Linux x64 and macOS Apple Silicon. Available
 packages are experimental, not supported stable releases. macOS downloads are
 ad-hoc signed, not Apple Developer ID signed or notarized. Updates are manual.
+An optional setting in Settings → About, off by default, tells you when a newer
+stable release is out; it never downloads or installs anything.
 See the installation guide's [platform matrix](docs/installation.md#platform-status)
 for tested systems and limits.
 
@@ -33,25 +35,26 @@ still pre-release and should not be the only protection for important work.
 The 0.12.0 release is source-only. Earlier 0.11.x downloads install the previous
 application, not Palot v2.
 
-### New in 0.23.0
+### New in 0.24.0
 
-0.22.0 was never published, so this release brings both sets of changes.
+- One task list replaces the Inbox and Projects sidebars, with **Needs you** at
+  the top, actions on each row and keyboard triage.
+- A composer built around one text field and a `+` launcher, and a transcript
+  that folds each prompt and its work into one turn.
+- A ship button that goes from commit to a watched pull request, says what a pull
+  request still needs before it can merge, and adds review comments, failing
+  checks or conflicts to the composer for the agent to fix.
+- OpenCode automations on the Scheduled page, a fuller Usage page, and named usage
+  limits with what's left on each model.
+- Find in file tabs and diffs, Viewed marks in Changes, and a guided way to bring
+  your setup over from another coding agent.
+- OpenCode 2.4.1 and Electron 45.3.
 
-- GitHub-flavored Markdown with the safe HTML subset GitHub allows, so pull
-  request descriptions and agent replies show details, kbd, tables and images.
-- A right-click menu on every file and web link, clickable URLs in questions and
-  errors, and `~/…` paths that open.
-- Guided Claude Agent setup, opt-in OpenCode artifacts, terminal renaming, and
-  sending a line comment on its own.
-- Edit text files in the workbench, browse a lazy-loading Files tree, and preview
-  CSV, notebooks, SQLite databases, archives and more.
-- Pull requests from Changes with a generated description, branch switching, an
-  "Open by others" list, GitLab merge requests, and Git actions on remote servers.
-- Scheduled tasks that run on events, OpenCode's `/goal` in a card above the
-  composer, custom themes, guest links (beta) and spelling suggestions.
-- Much less load on the OpenCode service: Palot no longer reloads idle projects
-  and worktrees, and polls running work only when you look at it.
-- OpenCode 2.2.5 and Electron 45.1.
+### Added in 0.23.0
+
+- GitHub-flavored Markdown with the safe HTML subset GitHub allows, a right-click
+  menu on every file and web link, guided Claude Agent setup and opt-in OpenCode
+  artifacts.
 
 ### Added in 0.21.0
 
@@ -145,7 +148,7 @@ bun run dev:focus
 
 Source builds require Bun `1.4.4`, Node.js `24` or later, and Vite+. Stable OpenCode
 **2.x starting at 2.0.7** is supported as an external service; the client and
-release-smoke runtime are pinned to **2.2.5**. V2 betas require explicit consent.
+release-smoke runtime are pinned to **2.4.1**. V2 betas require explicit consent.
 See [runtime compatibility](docs/opencode-runtime.md#compatibility) before upgrading.
 `bun run dev` starts hidden; `bun run dev:visible` shows the window without taking
 focus. Windows is not a qualified installation target.

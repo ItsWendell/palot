@@ -2,6 +2,11 @@ import type { PalotFileAttachment, PalotMessage } from "../../shared";
 import { normalizeComposerDraft, type ComposerDraft } from "./composer-draft";
 import { reviewCommentsFromMessage } from "./review-comments";
 import { isBrowserCommentPreview } from "./browser-comments";
+import { mediaRef } from "./media-refs";
+import { taskMentions } from "./task-mentions";
+
+/** A task's title by session ID, from the session catalog; undefined when it is not loaded. */
+export type TaskTitleLookup = (sessionID: string) => string | undefined;
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -46,7 +51,17 @@ export function composerFilesFromMessage(message: PalotMessage): {
       /^[\w.+-]+\/[\w.+-]+$/.test(mime)
         ? `data:${mime};base64,${file.data}`
         : uri;
-    if (
+    // A stored attachment's reference can be sent back as is: the server re-reads its bytes.
+    const stored = mediaRef(file.uri);
+    if (stored) {
+      files.push({
+        uri: stored,
+        name,
+        mime,
+        ...(mime.startsWith("image/") ? { previewMedia: stored } : {}),
+        size: typeof file.bytes === "number" ? file.bytes : null,
+      });
+    } else if (
       typeof embedded === "string" &&
       embedded.length <= 28_000_000 &&
       /^data:[\w.+-]+\/[\w.+-]+;base64,[A-Za-z0-9+/]+={0,2}$/.test(embedded)
@@ -121,10 +136,36 @@ function agentMentions(message: PalotMessage): RestoredMention[] {
   });
 }
 
-export function composerDraftFromMessage(message: PalotMessage): ComposerDraft {
+/**
+ * Task mentions are plain `@session:<id>` prompt text on the wire, with no part or title of
+ * their own, so they are found in the text again. Bare session IDs stay text, as typed.
+ */
+function taskMentionsIn(text: string, taskTitle: TaskTitleLookup | undefined): RestoredMention[] {
+  return taskMentions(text).flatMap((mention, index) => {
+    if (!mention.text.startsWith("@session:")) return [];
+    const title = taskTitle?.(mention.id)?.trim();
+    return [
+      {
+        localID: `restore-task-${index}`,
+        kind: "task" as const,
+        value: mention.id,
+        text: mention.text,
+        start: mention.start,
+        end: mention.end,
+        ...(title ? { title } : {}),
+      },
+    ];
+  });
+}
+
+export function composerDraftFromMessage(
+  message: PalotMessage,
+  taskTitle?: TaskTitleLookup,
+): ComposerDraft {
   const { omitted } = composerFilesFromMessage(message);
+  const presented = presentationText(message);
   const text =
-    presentationText(message) +
+    presented +
     (omitted.length
       ? `\n\nAttachments not restored (reattach before sending):\n${omitted.map((name) => `- ${name}`).join("\n")}`
       : "");
@@ -140,7 +181,26 @@ export function composerDraftFromMessage(message: PalotMessage): ComposerDraft {
         ...reference.mention,
         ...(reference.text ? { attachmentText: reference.text } : {}),
       })),
+      ...taskMentionsIn(presented, taskTitle),
     ],
     command: null,
   });
+}
+
+/** The text and mentions of a message put back in the composer; its files are restored apart. */
+export function composerDraftWithRetainedFiles(
+  message: PalotMessage,
+  taskTitle?: TaskTitleLookup,
+): ComposerDraft {
+  // Undo and pending edits restore files separately. Don't add the fork-only omission notice.
+  const data = message.data;
+  return composerDraftFromMessage(
+    {
+      ...message,
+      files: [],
+      data:
+        data && typeof data === "object" && !Array.isArray(data) ? { ...data, files: [] } : null,
+    },
+    taskTitle,
+  );
 }

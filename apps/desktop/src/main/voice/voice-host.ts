@@ -10,6 +10,7 @@ import {
   app,
   BrowserWindow,
   globalShortcut,
+  nativeTheme,
   powerMonitor,
   powerSaveBlocker,
   screen,
@@ -43,6 +44,7 @@ import {
   parseVoiceSnapshot,
   shouldShowOverlay,
 } from "./voice-policy";
+import { presentWhenReady } from "../window-startup";
 
 export interface VoiceHostOptions {
   /** Whether `window` is a trusted Palot workspace window. */
@@ -103,6 +105,14 @@ export class VoiceHost {
     registerTrustedIpcHandler(VOICE_IPC_CHANNELS.overlayCommand, overlayTrust, (_event, input) =>
       this.overlayCommand(parseVoiceOverlayCommand(input)),
     );
+    // The overlay is not an appearance window, so it reads the same OS setting here and is
+    // told again whenever the appearance service would re-send it to workspace windows.
+    const reducedMotion = () => systemPreferences.getAnimationSettings().prefersReducedMotion;
+    registerTrustedIpcHandler(VOICE_IPC_CHANNELS.overlayReducedMotion, overlayTrust, reducedMotion);
+    const onThemeUpdated = () =>
+      this.sendOverlay(VOICE_IPC_CHANNELS.overlayReducedMotion, reducedMotion());
+    nativeTheme.on("updated", onThemeUpdated);
+    this.cleanups.push(() => nativeTheme.removeListener("updated", onThemeUpdated));
   }
 
   claim(window: BrowserWindow): VoiceClaimResult {
@@ -307,7 +317,7 @@ export class VoiceHost {
     });
     this.overlay = overlay;
     this.overlayPainted = false;
-    overlay.once("ready-to-show", () => {
+    presentWhenReady(overlay, () => {
       if (this.overlay !== overlay) return;
       this.overlayPainted = true;
       this.updateOverlay();

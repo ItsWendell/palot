@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import type { PalotFileAttachment } from "../../shared";
 import { normalizeComposerDraft, type ComposerDraft } from "../lib/composer-draft";
+import { contentsHaveItems, setComposerDraftPart } from "./composer-draft-presence";
 import { loadScopedPersistedValue, scheduledScopedPersistence } from "./persisted";
 import { isComposerDraft, type ComposerDelivery } from "./ui";
 import { isReviewComment, type ReviewComment } from "../lib/review-comments";
@@ -23,7 +24,7 @@ interface ComposerContents {
   edit: PendingInputEdit | null;
 }
 
-interface ComposerState extends ComposerContents {
+export interface ComposerState extends ComposerContents {
   sending: boolean;
   cancelingID: string | null;
 }
@@ -120,6 +121,7 @@ function createComposerStateAtom(scope: string) {
         current.edit === next.edit
       )
         return;
+      setComposerDraftPart(get, set, scope, "contents", contentsHaveItems(next));
       // Request flags survive navigation, but are not replayed after an app restart.
       if (
         !next.files.length &&
@@ -168,6 +170,24 @@ export function composerDirectSendAtomFamily(scope: string) {
   if (!sender) {
     sender = atom<DirectCommentSender | null>(null);
     directSenders.set(scope, sender);
+  }
+  return sender;
+}
+
+/** Sends one browser element comment as its own message, leaving the composer's draft untouched. */
+export type DirectBrowserCommentSender = (comment: PalotBrowserComment) => Promise<boolean>;
+
+const directBrowserSenders = new Map<
+  string,
+  ReturnType<typeof atom<DirectBrowserCommentSender | null>>
+>();
+
+/** Registered by the composer for its scope while it is mounted, like the review sender. */
+export function composerDirectBrowserSendAtomFamily(scope: string) {
+  let sender = directBrowserSenders.get(scope);
+  if (!sender) {
+    sender = atom<DirectBrowserCommentSender | null>(null);
+    directBrowserSenders.set(scope, sender);
   }
   return sender;
 }

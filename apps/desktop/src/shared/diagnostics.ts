@@ -2,6 +2,10 @@ export interface ErrorDiagnostic {
   name: string;
   message: string;
   code?: string;
+  /** The error tag OpenCode declared for a failed request (`UnknownError`, `SessionBusyError`). */
+  tag?: string;
+  /** OpenCode's reference for an unexpected failure, which finds it in the server log. */
+  ref?: string;
   cause?: ErrorDiagnostic;
 }
 
@@ -9,6 +13,13 @@ function errorCode(value: object): string | undefined {
   if (!("code" in value)) return undefined;
   const code = value.code;
   return typeof code === "string" || typeof code === "number" ? String(code) : undefined;
+}
+
+/** OpenCode's declared tag and log reference; the promise client merges them into the thrown `Error`. */
+function openCodeFields(value: object): { tag?: string; ref?: string } {
+  const tag = "_tag" in value && typeof value._tag === "string" ? value._tag.trim() : "";
+  const ref = "ref" in value && typeof value.ref === "string" ? value.ref.trim() : "";
+  return { ...(tag ? { tag } : {}), ...(ref ? { ref } : {}) };
 }
 
 function objectMessage(value: object): string {
@@ -25,6 +36,7 @@ export function errorDiagnostic(error: unknown, depth = 0): ErrorDiagnostic {
       name: error.name || "Error",
       message: error.message || "Unknown error",
       ...(code ? { code } : {}),
+      ...openCodeFields(error),
       ...(error.cause !== undefined ? { cause: errorDiagnostic(error.cause, depth + 1) } : {}),
     };
   }
@@ -35,10 +47,24 @@ export function errorDiagnostic(error: unknown, depth = 0): ErrorDiagnostic {
       name: typeof value.name === "string" ? value.name : "Error",
       message: objectMessage(error),
       ...(code ? { code } : {}),
+      ...openCodeFields(error),
       ...(value.cause !== undefined ? { cause: errorDiagnostic(value.cause, depth + 1) } : {}),
     };
   }
   return { name: "Error", message: typeof error === "string" ? error : String(error) };
+}
+
+/**
+ * "UnknownError · ref 01J…": the declared tag and log reference of the first error in the cause
+ * chain that carries an OpenCode reference, or null when none does. Shown beside an error's
+ * message so it can be found in OpenCode's server log; a tag alone stays in the logged diagnostic.
+ */
+export function openCodeErrorReference(error: unknown): string | null {
+  for (let current: ErrorDiagnostic | undefined = errorDiagnostic(error); current;) {
+    if (current.ref) return [current.tag, `ref ${current.ref}`].filter(Boolean).join(" · ");
+    current = current.cause;
+  }
+  return null;
 }
 
 export function actionableErrorMessage(error: unknown, fallback: string): string {

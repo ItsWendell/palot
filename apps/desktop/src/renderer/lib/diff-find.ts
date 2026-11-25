@@ -12,10 +12,10 @@ export const MAX_DIFF_FIND_MATCHES = 250;
 
 export type DiffFindSide = "additions" | "deletions";
 
-export interface DiffFindSource {
-  id: string;
-  fileDiff: FileDiffMetadata | null;
-}
+/** A parsed diff, or the full text of a file shown without a diff (its lines are new-side). */
+export type DiffFindSource =
+  | { id: string; fileDiff: FileDiffMetadata | null }
+  | { id: string; text: string };
 
 export interface DiffFindMatch {
   itemID: string;
@@ -71,6 +71,21 @@ export function findDiffMatches(
     return true;
   };
   for (const source of sources) {
+    if ("text" in source) {
+      const { text } = source;
+      let lineNumber = 1;
+      for (let start = 0; start <= text.length; lineNumber += 1) {
+        const end = text.indexOf("\n", start);
+        const line = text.slice(start, end === -1 ? text.length : end);
+        // A trailing newline ends the last line; it does not start another.
+        if (end === -1 && !line && lineNumber > 1) break;
+        if (!push(source.id, "additions", lineNumber, diffLineText(line)))
+          return { matches, truncated: true };
+        if (end === -1) break;
+        start = end + 1;
+      }
+      continue;
+    }
     const diff = source.fileDiff;
     if (!diff) continue;
     for (const hunk of diff.hunks) {

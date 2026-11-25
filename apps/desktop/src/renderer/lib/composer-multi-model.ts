@@ -1,4 +1,5 @@
 import type { PalotModel, PalotSession } from "../../shared";
+import { cutHead } from "../../shared/text-cut";
 
 export interface ModelTaskResult {
   model: PalotModel;
@@ -17,7 +18,7 @@ export async function sendToSeveralModels(input: {
   const keys = new Set(input.models.map((model) => JSON.stringify([model.providerID, model.id])));
   if (keys.size !== input.models.length || keys.size < 2 || keys.size > 4)
     throw new Error("Choose two to four different models.");
-  const prefix = `Compare ${crypto.randomUUID().slice(0, 6)} · ${input.text.trim().replace(/\s+/g, " ").slice(0, 60) || "Attached context"}`;
+  const prefix = `Compare ${crypto.randomUUID().slice(0, 6)} · ${cutHead(input.text.trim().replace(/\s+/g, " "), 60) || "Attached context"}`;
   const results: ModelTaskResult[] = [];
   // Serial creation bounds worktree provisioning and makes partial failures inspectable.
   for (const model of input.models) {

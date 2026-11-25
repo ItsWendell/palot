@@ -23,6 +23,7 @@ export const SOURCE_CONTROL_IPC_CHANNELS = {
   pullRequestDetail: "palot:source-control:pull-request-detail",
   pullRequestTimeline: "palot:source-control:pull-request-timeline",
   pullRequestFiles: "palot:source-control:pull-request-files",
+  pullRequestCheckLogs: "palot:source-control:pull-request-check-logs",
   pullRequestFileViewed: "palot:source-control:pull-request-file-viewed",
   pullRequestReview: "palot:source-control:pull-request-review",
   pullRequestComment: "palot:source-control:pull-request-comment",
@@ -180,6 +181,13 @@ export interface PullRequestSnapshot {
   updatedAt: number;
   mergedAt: number | null;
   closedAt: number | null;
+  /** GitHub's merge state; absent for hosts that don't report one. */
+  mergeState?: PullRequestMergeState;
+  /**
+   * Review threads nobody resolved, for linked GitHub PRs. Null when there were more threads
+   * than one read covers and none of those read were open; absent when not read.
+   */
+  unresolvedThreads?: number | null;
 }
 
 /** Stable identity of one pull request: `host/owner/name#number`, lowercase. */
@@ -325,6 +333,11 @@ export interface GitBranchInput extends GitTarget {
   name: string;
   /** A local or remote branch ref; omitted to create from HEAD. */
   base?: string;
+  /**
+   * Create from HEAD with uncommitted changes, which stay in the working tree and index as they
+   * are. Only for `create` without `base`; Git never touches the files then.
+   */
+  carryChanges?: boolean;
 }
 
 /** Porcelain v2 status letters: `.` unmodified, M, T, A, D, R, C, U. */
@@ -437,6 +450,22 @@ export interface PullRequestCheck {
   url: string | null;
   startedAt: number | null;
   completedAt: number | null;
+  /** GitHub's check run ID, for reading its log; absent for commit statuses and other hosts. */
+  checkRunID?: number | null;
+}
+
+export interface PullRequestCheckLogsInput extends PullRequestRef {
+  /** GitHub check run IDs (`PullRequestCheck.checkRunID`) of the failing checks. */
+  checkRunIDs: number[];
+}
+
+/** What a failing check printed: the failing step's last log lines, or the app's summary. */
+export interface PullRequestCheckLog {
+  checkRunID: number;
+  /** The failing step's name, for GitHub Actions. */
+  step: string | null;
+  /** Null when the log could not be read (permissions, expired logs, rate limit). */
+  excerpt: string | null;
 }
 
 export type PullRequestReviewerState =
@@ -745,6 +774,9 @@ export interface PalotSourceControlApi {
     input: PullRequestTimelineInput,
   ): Promise<SourceControlResult<PullRequestTimelinePage>>;
   pullRequestFiles(ref: PullRequestRef): Promise<SourceControlResult<PullRequestFiles>>;
+  pullRequestCheckLogs(
+    input: PullRequestCheckLogsInput,
+  ): Promise<SourceControlResult<PullRequestCheckLog[]>>;
   setPullRequestFileViewed(input: PullRequestFileViewedInput): Promise<SourceControlResult<null>>;
   submitPullRequestReview(input: PullRequestReviewInput): Promise<SourceControlResult<null>>;
   addPullRequestComment(input: PullRequestCommentInput): Promise<SourceControlResult<null>>;

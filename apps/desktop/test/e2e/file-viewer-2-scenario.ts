@@ -7,6 +7,7 @@ import initSqlJs from "sql.js";
 import { gzipSync, strToU8, zipSync } from "fflate";
 import type { Scenario } from "./scenarios.ts";
 
+const PROMPT = "msg_file_viewer_two_user";
 const RESPONSE = "msg_file_viewer_two_assistant";
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jLfoAAAAASUVORK5CYII=",
@@ -104,7 +105,7 @@ export const fileViewer2Scenario: Scenario = {
     const created = Date.now() - 10_000;
     const messages: SessionMessageInfo[] = [
       {
-        id: "msg_file_viewer_two_user",
+        id: PROMPT,
         type: "user",
         time: { created },
         text: "Preview these files.",
@@ -134,7 +135,8 @@ export const fileViewer2Scenario: Scenario = {
     }, sessionID);
   },
   async assert(page, { runRoot }) {
-    const response = page.locator(`[data-message-id="${RESPONSE}"]`);
+    // A turn row is identified by its prompt and holds the reply's links.
+    const response = page.locator(`[data-message-id="${PROMPT}"]`);
     const open = async (path: string) => {
       await response.getByRole("link", { name: `Open ${path}`, exact: true }).click();
       return page
@@ -187,7 +189,7 @@ export const fileViewer2Scenario: Scenario = {
     const editor = text.getByRole("form", { name: "Comment on notes.txt" });
     await editor.getByRole("textbox", { name: "Line comment" }).fill("Please clarify this line.");
     await editor.getByRole("button", { name: "Add comment" }).click();
-    await expect(page.getByRole("region", { name: "Pending line comments" })).toContainText(
+    await expect(page.getByRole("group", { name: "Pending line comments" })).toContainText(
       "Please clarify this line.",
     );
     await expect(text.getByLabel("Pending comments on line 2")).toContainText(

@@ -1,13 +1,16 @@
 import type { ModelRef } from "@opencode/client";
+import { useAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
 import type {
   PullRequestLink,
   PullRequestPreparation,
 } from "../../../shared/source-control-contract";
+import { shipWatchPullRequestAtom } from "../../atoms/ui";
 import {
   sourceControl,
   SourceControlError,
   useCreatePullRequest,
+  useSessionPullRequests,
   useWatchPullRequest,
 } from "../../hooks/use-source-control";
 import { openCodeClient } from "../../services/opencode-client";
@@ -54,23 +57,55 @@ export function parsePullRequestDraft(text: string): { title: string; body: stri
   return { title: value.title.trim().slice(0, 256), body: value.body.slice(0, 65_536) };
 }
 
-/** Drafting is task-free generation; host writes happen only after the Create press. */
-export function CreatePullRequestControl({
-  profileID,
-  sessionID,
-  model,
-  connectionID,
-  pushing,
-  push,
-}: {
+interface CreatePullRequestProps {
   profileID: string;
   sessionID: string;
-  model: ModelRef | null;
+  /** The model that drafts the title and description; see `useTextGenerationModel`. */
+  resolveModel(): Promise<ModelRef | null>;
   connectionID?: string;
   pushing: boolean;
   push(onSuccess: () => void, onError: (error: unknown) => void): void;
-}) {
+}
+
+/** Drafting is task-free generation; host writes happen only after the Create press. */
+export function CreatePullRequestControl(props: CreatePullRequestProps) {
   const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button type="button" size="xs" variant="ghost" onClick={() => setOpen(true)}>
+        Create pull request
+      </Button>
+      <CreatePullRequestDialog {...props} open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
+/**
+ * The Create pull request dialog. Opening it prepares the branch context and drafts a title and
+ * description; nothing reaches the code host before Create is pressed.
+ */
+export function CreatePullRequestDialog({
+  profileID,
+  sessionID,
+  resolveModel,
+  connectionID,
+  pushing,
+  push,
+  open,
+  onOpenChange,
+  onCreated,
+  startWatch = true,
+}: CreatePullRequestProps & {
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  /** Called once the pull request is created and linked to the task. */
+  onCreated?(link: PullRequestLink): void;
+  /**
+   * Start the watch after creating when "Watch pull request" is ticked. The ship button runs its
+   * own watch stage instead, reading the same remembered choice.
+   */
+  startWatch?: boolean;
+}) {
   const [context, setContext] = useState<PullRequestPreparation | null>(null);
   const [base, setBase] = useState("");
   const [title, setTitle] = useState("");
@@ -85,6 +120,12 @@ export function CreatePullRequestControl({
   useEffect(() => () => generation.current?.abort(), []);
   const create = useCreatePullRequest();
   const watch = useWatchPullRequest();
+  const [watchAfterCreate, setWatchAfterCreate] = useAtom(shipWatchPullRequestAtom);
+  // The live link, so a watch started elsewhere (the ship button's watch stage) shows here.
+  const links = useSessionPullRequests(sessionID, profileID);
+  const current = linked
+    ? (links.data?.find((candidate) => candidate.key === linked.key) ?? linked)
+    : null;
 
   const generate = async (selectedBase?: string) => {
     generation.current?.abort();
@@ -125,7 +166,7 @@ export function CreatePullRequestControl({
       ].join("\n\n");
       const result = parsePullRequestDraft(
         await generateOpenCodeText(
-          { model, prompt: pullRequestPrompt(prepared, taskContext) },
+          { model: await resolveModel(), prompt: pullRequestPrompt(prepared, taskContext) },
           connectionID,
           controller.signal,
         ),
@@ -141,13 +182,20 @@ export function CreatePullRequestControl({
     }
   };
   const changeOpen = (value: boolean) => {
-    setOpen(value);
-    if (!value) {
-      generation.current?.abort();
+    onOpenChange(value);
+    if (!value) generation.current?.abort();
+  };
+  // Opening drafts once; a dialog opened from outside (the ship button) starts the same way.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      opened.current = false;
       return;
     }
+    if (opened.current) return;
+    opened.current = true;
     if (!context && !linked) void generate();
-  };
+  });
   const createNow = () =>
     create.mutate(
       { profileID, sessionID, base, title, body, draft },
@@ -155,6 +203,16 @@ export function CreatePullRequestControl({
         onSuccess: (link) => {
           setLinked(link);
           setError(null);
+          onCreated?.(link);
+          // A failed watch keeps the pull request; the Watch button below can retry.
+          if (startWatch && watchAfterCreate && !link.watch)
+            watch.mutate(
+              { profileID, sessionID, key: link.key, watching: true },
+              {
+                onSuccess: setLinked,
+                onError: (failure) => setError(`Created, but watching failed: ${failure.message}`),
+              },
+            );
         },
         onError: (failure) => {
           setError(failure.message);
@@ -164,159 +222,164 @@ export function CreatePullRequestControl({
       },
     );
   return (
-    <>
-      <Button type="button" size="xs" variant="ghost" onClick={() => changeOpen(true)}>
-        Create pull request
-      </Button>
-      <Dialog open={open} onOpenChange={changeOpen}>
-        <DialogContent className="max-h-[90dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {linked ? `Pull request #${linked.pullRequest.number} linked` : "Create pull request"}
-            </DialogTitle>
-            <DialogDescription>
-              {linked
-                ? "This task is linked to the pull request. Watch it to wake the agent on updates."
-                : "Drafted from committed branch changes and this task's context. Review before publishing to your code host."}
-            </DialogDescription>
-          </DialogHeader>
-          {linked ? (
-            <CopyField value={linked.pullRequest.url} valueName="Pull request URL" />
-          ) : (
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor={`pr-base-${sessionID}`}>Base branch</FieldLabel>
-                <Input
-                  id={`pr-base-${sessionID}`}
-                  aria-label="Base branch"
-                  value={base}
-                  list={`pr-bases-${sessionID}`}
-                  onChange={(event) => setBase(event.target.value)}
-                />
-                <datalist id={`pr-bases-${sessionID}`}>
-                  {context?.branches.map((branch) => (
-                    <option key={branch} value={branch} />
-                  ))}
-                </datalist>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`pr-title-${sessionID}`}>Title</FieldLabel>
-                <Input
-                  id={`pr-title-${sessionID}`}
-                  aria-label="Pull request title"
-                  maxLength={256}
-                  value={title}
-                  onChange={(event) => {
-                    dirty.current.title = true;
-                    setTitle(event.target.value);
-                  }}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`pr-body-${sessionID}`}>Description</FieldLabel>
-                <Textarea
-                  id={`pr-body-${sessionID}`}
-                  aria-label="Pull request description"
-                  rows={8}
-                  maxLength={65536}
-                  value={body}
-                  onChange={(event) => {
-                    dirty.current.body = true;
-                    setBody(event.target.value);
-                  }}
-                />
-              </Field>
-              <Field orientation="horizontal">
-                <Checkbox
-                  id={`pr-draft-${sessionID}`}
-                  disabled={context?.draftSupported === false}
-                  title={
-                    context?.draftSupported === false
-                      ? "Draft requests are not supported for this host in Palot yet."
-                      : undefined
-                  }
-                  checked={draft}
-                  onCheckedChange={(value) => setDraft(Boolean(value))}
-                />
-                <FieldLabel htmlFor={`pr-draft-${sessionID}`}>Draft pull request</FieldLabel>
-                {context?.draftSupported === false ? (
-                  <p className="text-meta text-muted-foreground">
-                    Draft requests are not supported for this host in Palot yet.
-                  </p>
-                ) : null}
-              </Field>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={generating}
-                onClick={() => {
-                  dirty.current = { title: false, body: false };
-                  void generate(base);
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            {linked ? `Pull request #${linked.pullRequest.number} linked` : "Create pull request"}
+          </DialogTitle>
+          <DialogDescription>
+            {linked
+              ? current?.watch
+                ? "This task is linked to the pull request. Palot wakes the agent on checks, reviews and conflicts, and tells you when it is ready to merge."
+                : "This task is linked to the pull request. Watch it to wake the agent on updates."
+              : "Drafted from committed branch changes and this task's context. Review before publishing to your code host."}
+          </DialogDescription>
+        </DialogHeader>
+        {linked ? (
+          <CopyField value={linked.pullRequest.url} valueName="Pull request URL" />
+        ) : (
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor={`pr-base-${sessionID}`}>Base branch</FieldLabel>
+              <Input
+                id={`pr-base-${sessionID}`}
+                aria-label="Base branch"
+                value={base}
+                list={`pr-bases-${sessionID}`}
+                onChange={(event) => setBase(event.target.value)}
+              />
+              <datalist id={`pr-bases-${sessionID}`}>
+                {context?.branches.map((branch) => (
+                  <option key={branch} value={branch} />
+                ))}
+              </datalist>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`pr-title-${sessionID}`}>Title</FieldLabel>
+              <Input
+                id={`pr-title-${sessionID}`}
+                aria-label="Pull request title"
+                maxLength={256}
+                value={title}
+                onChange={(event) => {
+                  dirty.current.title = true;
+                  setTitle(event.target.value);
                 }}
-              >
-                {generating ? <Spinner aria-hidden="true" /> : null}
-                {generating ? "Generating draft…" : "Generate draft"}
-              </Button>
-              {needsPush ? (
-                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                  <span>Push this branch before creating the pull request.</span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={pushing}
-                    onClick={() =>
-                      push(
-                        () => {
-                          setNeedsPush(false);
-                          setError(null);
-                        },
-                        (failure) =>
-                          setError(failure instanceof Error ? failure.message : String(failure)),
-                      )
-                    }
-                  >
-                    {pushing ? "Pushing…" : "Push branch"}
-                  </Button>
-                </div>
-              ) : null}
-            </FieldGroup>
-          )}
-          {error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
-              {linked ? "Done" : "Cancel"}
-            </Button>
-            {linked ? (
-              <Button
-                type="button"
-                disabled={watch.isPending || Boolean(linked.watch)}
-                onClick={() =>
-                  watch.mutate(
-                    { profileID, sessionID, key: linked.key, watching: true },
-                    { onSuccess: setLinked, onError: (failure) => setError(failure.message) },
-                  )
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`pr-body-${sessionID}`}>Description</FieldLabel>
+              <Textarea
+                id={`pr-body-${sessionID}`}
+                aria-label="Pull request description"
+                rows={8}
+                maxLength={65536}
+                value={body}
+                onChange={(event) => {
+                  dirty.current.body = true;
+                  setBody(event.target.value);
+                }}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <Checkbox
+                id={`pr-draft-${sessionID}`}
+                disabled={context?.draftSupported === false}
+                title={
+                  context?.draftSupported === false
+                    ? "Draft requests are not supported for this host in Palot yet."
+                    : undefined
                 }
-              >
-                {linked.watch ? "Watching" : "Watch pull request"}
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                disabled={generating || create.isPending || !base.trim() || !title.trim()}
-                onClick={createNow}
-              >
-                {create.isPending ? <Spinner aria-hidden="true" /> : null}Create pull request
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+                checked={draft}
+                onCheckedChange={(value) => setDraft(Boolean(value))}
+              />
+              <FieldLabel htmlFor={`pr-draft-${sessionID}`}>Draft pull request</FieldLabel>
+              {context?.draftSupported === false ? (
+                <p className="text-meta text-muted-foreground">
+                  Draft requests are not supported for this host in Palot yet.
+                </p>
+              ) : null}
+            </Field>
+            <Field orientation="horizontal">
+              <Checkbox
+                id={`pr-watch-${sessionID}`}
+                checked={watchAfterCreate}
+                onCheckedChange={(value) => setWatchAfterCreate(value === true)}
+              />
+              <FieldLabel htmlFor={`pr-watch-${sessionID}`}>Watch pull request</FieldLabel>
+            </Field>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={generating}
+              onClick={() => {
+                dirty.current = { title: false, body: false };
+                void generate(base);
+              }}
+            >
+              {generating ? <Spinner aria-hidden="true" /> : null}
+              {generating ? "Generating draft…" : "Generate draft"}
+            </Button>
+            {needsPush ? (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span>Push this branch before creating the pull request.</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={pushing}
+                  onClick={() =>
+                    push(
+                      () => {
+                        setNeedsPush(false);
+                        setError(null);
+                      },
+                      (failure) =>
+                        setError(failure instanceof Error ? failure.message : String(failure)),
+                    )
+                  }
+                >
+                  {pushing ? "Pushing…" : "Push branch"}
+                </Button>
+              </div>
+            ) : null}
+          </FieldGroup>
+        )}
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
+            {linked ? "Done" : "Cancel"}
+          </Button>
+          {current ? (
+            <Button
+              type="button"
+              disabled={watch.isPending || Boolean(current.watch)}
+              onClick={() =>
+                watch.mutate(
+                  { profileID, sessionID, key: current.key, watching: true },
+                  { onSuccess: setLinked, onError: (failure) => setError(failure.message) },
+                )
+              }
+            >
+              {current.watch ? "Watching" : "Watch pull request"}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              disabled={generating || create.isPending || !base.trim() || !title.trim()}
+              onClick={createNow}
+            >
+              {create.isPending ? <Spinner aria-hidden="true" /> : null}Create pull request
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

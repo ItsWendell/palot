@@ -20,9 +20,9 @@ explicitly signed with a local certificate.
 
 ## Compatibility
 
-Palot 0.23.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
+Palot 0.24.0 supports stable OpenCode **2.x starting at 2.0.7**, without a
 patch-version override. The client, protocol, schema, browser plugin and isolated
-release-smoke runtime are pinned to **2.2.5** for repeatable checks. Stable
+release-smoke runtime are pinned to **2.4.1** for repeatable checks. Stable
 releases before 2.0.7 use incompatible API contracts and are refused. The previously
 tested beta `0.0.0-beta-19507` is no longer accepted automatically. Recognized V2 beta
 versions require explicit consent; V1, unknown majors and malformed versions are
@@ -175,8 +175,8 @@ event was removed; Palot used neither.
 The 2.1.0 contract adds `permission.saved.update` and restores session archiving:
 `session.update` accepts `archived`, `session.list` accepts an `archived` filter, and
 the durable `session.archived` and `session.unarchived` events set and clear
-`time.archived`. Palot projects those events onto cached sessions, but does not yet
-archive sessions or edit saved permissions. Plugins gain `session.list`, which the
+`time.archived`. Palot projects those events onto cached sessions, archives sessions and
+edits saved permissions in Settings. Plugins gain `session.list`, which the
 voice coordinator does not use yet.
 
 The 2.1.1 and 2.1.2 packages keep the operation and event inventory unchanged. Session
@@ -189,7 +189,7 @@ The 2.1.3 packages add two experimental voice operations: `voice.models` lists t
 voice models, their transports and whether the server can start each one (including
 models a connected OpenCode Console hosts), and `voice.instructions` replaces a hosted
 session's instructions. Agent configuration ignores unsupported colors instead of
-dropping the agent. Palot does not use the new voice operations yet.
+dropping the agent. Palot reads `voice.models` to decide whether voice chat can start and with which model; it does not use the other new voice operations yet.
 
 The 2.1.4 packages add `debug.heapDump`, which Palot's heap snapshot capture uses, and the
 experimental client-hosted MCP endpoint (`mcp.client`, `mcp.clientToken` and the
@@ -210,18 +210,33 @@ Palot never used, and adds `usage.limits`, `fs.watch`/`fs.unwatch`, `media.get` 
 server-stored attachments), image and decision generation, and `plugin.gui` for OpenCode
 Desktop's Solid GUI plugins, which Palot does not host. `experimental.background_compaction`
 is a config option only; OpenCode's config API writes just the shell, so Palot cannot set it.
+2.3.1 removes the flag and compacts in the background by default (`compaction.background`).
 
 The 2.2.1 client nests every route under `/api/experimental` in `client.experimental` (for
 example `client.experimental.session.wait`, `client.experimental.file.write`,
 `client.experimental.mcp.add`). The old locations remain as deprecated aliases until the next
 minor release; Palot uses only the new ones. Request paths are unchanged, so these calls still
 work against older servers. 2.2.1 also adds opt-in scheduled prompts
-(`client.experimental.schedule.*`, behind `experimental.schedules`), which Palot does not use
-yet, and the opt-in `image_generate` tool, which starts a background job: Palot titles that call
+(`client.experimental.schedule.*`, behind `experimental.schedules`). 2.3.1 turns them into
+automations (`client.experimental.automation.*`, behind `experimental.automations`) and removes
+the schedule operations. 2.4.0 turns automations on by default under a top-level `automations`
+setting and rejects `experimental.schedules` and `experimental.automations` as removed. Palot
+lists OpenCode's automations read-only on the Scheduled page (with pause, resume and delete);
+its own automations use neither API. 2.2.1 also adds the opt-in `image_generate` tool, which starts a background job: Palot titles that call
 "Started image generation", since the image arrives in a later notice. 2.2.2 renamed it to
 `experimental_image_generate` and enables it whenever a connected provider has an image model;
 Palot recognizes both names. 2.2.3's packages depend on `effect` 4.0.6, which Palot matches so
 the client, protocol and schema share one Effect instance.
+
+2.4.0 renames the image tool to `generate_image` and turns on `generate_video` whenever a
+provider has a video model; both finish in a later notice. Background shell, Code Mode,
+subagent, image and video results now arrive as `<background-result kind="…">` instead of
+`<shell>`, `<codemode>` and `<subagent>`; the message metadata is unchanged and Palot reads
+both forms. It adds `experimental.job.cancel`, the `experimental.job.updated` event and
+`experimental.machine.*` (remote machines, which Palot doesn't use). Voice models report an
+`engine` (`openai-live` for GPT-Live) and come from models.dev; Palot picks by engine and
+falls back to the model name on older servers. The model, provider and voice lists no longer
+wait for plugins at startup, so they can be partial right after the service starts.
 
 `/goal` is a built-in server command in 2.2.1 (no opt-in). Palot reads a task's goal through
 the plugin's RPC (`rpc.call` with `opencode.goal`/`get` in the session's location) and follows
@@ -242,7 +257,8 @@ not make OpenCode ask, it adds the ask rules and has the model retry.
 
 Agents organize tasks with `settle_task`, `snooze_task`, `pin_task` and `archive_task`,
 named after the verbs because Code Mode's `search` ranks tool paths far above descriptions;
-renaming uses OpenCode's own `session_rename`. Settling records the task's latest activity,
+renaming uses OpenCode's own session rename tool (`session_rename`; in Code Mode
+`opencode.session.rename` from 2.4.0, earlier `opencode.session_rename`). Settling records the task's latest activity,
 and a running turn's end is newer activity, so a task settling itself mid-turn would return
 at once. Like T3 Code, `settle_task` on the caller's own running task waits for
 `session.execution.succeeded` and then settles through the later of the family's activity
@@ -286,9 +302,8 @@ OpenCode resolves a folder to the nearest enclosing `.git` or `.hg`, so a chat f
 inside a repository would join that repository's project. Palot therefore refuses
 to start chats when the default folder is inside a repository or is one (its
 `location.get` project is rooted elsewhere, or that project has a VCS), as T3
-Code does for its scratch folders. Desktop E2E runs live inside the checkout, so
-the `project-free-chat` scenario sets `homeOutsideCheckout`, which links the
-isolated home to a temporary folder outside it.
+Code does for its scratch folders. Desktop E2E runs keep the isolated home in a
+temporary folder outside the checkout.
 
 Palot recognizes chats by that path alone. It shows their sessions as chats and
 removes their directory projects from project lists and pickers, and the tray labels them "Chat".
@@ -380,3 +395,18 @@ Continuing with an unreviewed service records approval for the connection profil
 Palot's client baseline and detected service version, not a blanket opt-in to
 all future betas. Known API errors remain errors; compatibility never means
 silently substituting another server or answering permission requests.
+
+## Proxies
+
+Palot's main process reaches OpenCode with Node's `fetch` and `WebSocket` (the
+client, its event stream, the request proxy, PTY sockets, the agent-tool MCP
+socket, and the local end of an SSH tunnel). Node ignores `HTTP_PROXY`,
+`HTTPS_PROXY` and `ALL_PROXY` unless its environment proxy is switched on at
+startup with `NODE_USE_ENV_PROXY=1` or `--use-env-proxy`. When it is on, Node
+would also send loopback requests to the proxy, so each connection first adds
+`127.0.0.1`, `localhost`, `::1` and `[::1]` to `NO_PROXY` and `no_proxy`, keeping
+the user's entries and a `*` wildcard. Otherwise Palot leaves the environment,
+and so its child processes, unchanged. Remote services follow the user's proxy
+settings either way, as do release downloads. The embedded browser is separate:
+its partition sends all traffic, loopback included, through the connected
+server's browser proxy (see [Experimental browser](#experimental-browser)).

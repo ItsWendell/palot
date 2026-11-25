@@ -1,13 +1,13 @@
 import { Outlet, createRootRouteWithContext, useRouterState } from "@tanstack/react-router";
-import type { QueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useAtomValue, useSetAtom, useStore, type createStore } from "jotai";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PalotOpenTarget } from "../../shared";
 import { attentionTargetAtom, markAttentionSeenAtom } from "../atoms/attention";
-import { defaultSidebarModeAtom, sidebarModeAtom } from "../atoms/ui";
 import { BrowserSessionManager } from "../components/browser-session-manager";
 import { TaskActivityAnnouncer } from "../components/task-activity-announcer";
 import { GlobalCommandPalette } from "../components/global-command-palette";
+import { MoveToFolderRequestHost } from "../components/move-to-folder-dialog";
 import { OnboardingController } from "../components/onboarding-controller";
 import { ProjectScriptNotices } from "../components/project-script-notices";
 import { SshPrompts } from "../components/ssh-prompts";
@@ -15,6 +15,7 @@ import { usePalotNavigation } from "../hooks/use-navigation";
 import { useWorkspaceController } from "../hooks/use-workspace";
 import { useAutoSettle } from "../hooks/use-auto-settle";
 import { useInboxController } from "../hooks/use-inbox-controller";
+import { useAttentionNotifications } from "../hooks/use-attention-notifications";
 import { palot } from "../services/palot";
 import { showErrorToast } from "../lib/toast-error";
 import { composerStateAtomFamily } from "../atoms/composer-state";
@@ -23,6 +24,8 @@ import { runtimeAtom } from "../atoms/workspace";
 import { validateConnectionSearch } from "../lib/route-search";
 import { focusConnection } from "../lib/connection-focus";
 import { useConnectionOverviewController } from "../hooks/use-connection-overview";
+import { connectionOverview } from "../lib/connection-overview";
+import { resolveTaskLinkProfile } from "../lib/task-link-profile";
 
 export interface RouterContext {
   queryClient: QueryClient;
@@ -46,14 +49,12 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 function RuntimeLayout() {
   const store = useStore();
+  const queryClient = useQueryClient();
   const runtime = useAtomValue(runtimeAtom);
   useConnectionOverviewController();
-  const defaultSidebarMode = useAtomValue(defaultSidebarModeAtom);
-  const setSidebarMode = useSetAtom(sidebarModeAtom);
   const markAttentionSeen = useSetAtom(markAttentionSeenAtom);
   const setAttentionTarget = useSetAtom(attentionTargetAtom);
   const { openNewTask, openSession, openSettings } = usePalotNavigation();
-  const sidebarModeInitialized = useRef(false);
   const automaticOnboardingBlocked = useRef(false);
   const [initialTarget, setInitialTarget] = useState({ handled: false, allowAutomatic: false });
   const sessionID = useRouterState({
@@ -65,11 +66,6 @@ function RuntimeLayout() {
     },
   });
   const routeProfileID = useRouterState({ select: (state) => state.location.search.profileID });
-  useEffect(() => {
-    if (sidebarModeInitialized.current) return;
-    sidebarModeInitialized.current = true;
-    if (defaultSidebarMode !== "remember") setSidebarMode(defaultSidebarMode);
-  }, [defaultSidebarMode, setSidebarMode]);
   const openTarget = useCallback(
     (target: PalotOpenTarget) => {
       if (target.type === "open") return;
@@ -116,9 +112,23 @@ function RuntimeLayout() {
         });
         return;
       }
-      void openSession(target.sessionID, { profileID: target.profileID });
+      // Links and `--task` may name no profile, or one from another machine: find the task's.
+      const profileID = resolveTaskLinkProfile(
+        connectionOverview(queryClient).getSnapshot(),
+        target.sessionID,
+        target.profileID,
+      );
+      void openSession(target.sessionID, profileID ? { profileID } : {});
     },
-    [markAttentionSeen, openNewTask, openSession, openSettings, setAttentionTarget, store],
+    [
+      markAttentionSeen,
+      openNewTask,
+      openSession,
+      openSettings,
+      queryClient,
+      setAttentionTarget,
+      store,
+    ],
   );
   useEffect(() => {
     let active = true;
@@ -171,6 +181,7 @@ function RuntimeLayout() {
         />
       ) : null}
       <InboxController />
+      <AttentionNotifications />
       <TaskActivityAnnouncer
         sessionID={routeProfileID && routeProfileID !== runtime?.profileID ? null : sessionID}
       />
@@ -181,6 +192,7 @@ function RuntimeLayout() {
       />
       <Outlet />
       <GlobalCommandPalette />
+      <MoveToFolderRequestHost />
       <SshPrompts />
     </>
   );
@@ -194,5 +206,11 @@ function WorkspaceController({ sessionID }: { sessionID: string | null }) {
 function InboxController() {
   useInboxController();
   useAutoSettle();
+  return null;
+}
+
+/** Separate from the inbox's controller: it re-renders on every request change. */
+function AttentionNotifications() {
+  useAttentionNotifications();
   return null;
 }

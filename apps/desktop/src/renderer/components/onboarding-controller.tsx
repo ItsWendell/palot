@@ -1,7 +1,11 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useRef } from "react";
-import { onboardingComplete, onboardingCompletedVersionAtom } from "../atoms/onboarding";
+import {
+  onboardingComplete,
+  onboardingCompletedVersionAtom,
+  onboardingSkippedAtom,
+} from "../atoms/onboarding";
 import { phaseAtom, runtimeAtom } from "../atoms/workspace";
 import { useProjectCatalogState } from "../hooks/use-session-catalog";
 import { palot } from "../services/palot";
@@ -23,17 +27,33 @@ export function OnboardingController({
   const completed = useAtomValue(onboardingCompletedVersionAtom);
   const projects = useProjectCatalogState();
   const decided = useRef(false);
+  const setSkipped = useSetAtom(onboardingSkippedAtom);
+
+  // The startup load can drop its project list when the workspace reloads mid-load (a cancelled
+  // or "focus changed" fetch), and nothing refetches it; the launch then gives up waiting.
+  const needsProjects =
+    !decided.current &&
+    phase === "ready" &&
+    runtime?.connected === true &&
+    !projects.ready &&
+    !projects.fetching;
+  const { refetch: refetchProjects } = projects;
+  useEffect(() => {
+    if (needsProjects) void refetchProjects();
+  }, [needsProjects, refetchProjects]);
 
   useEffect(() => {
     if (decided.current) return;
     // Leaving the launch surface is user intent, even while startup is still pending.
     if (pathname !== "/" && pathname !== "/new") {
       decided.current = true;
+      setSkipped(true);
       return;
     }
     if (!initialTargetHandled) return;
     if (!allowAutomatic || palot.isPreview() || onboardingComplete(completed)) {
       decided.current = true;
+      setSkipped(true);
       return;
     }
     if (phase !== "ready" || !runtime?.connected || !projects.ready || !routerIdle) return;
@@ -49,6 +69,7 @@ export function OnboardingController({
     projects.ready,
     routerIdle,
     runtime,
+    setSkipped,
   ]);
 
   return null;

@@ -75,6 +75,13 @@ export function sentenceCase(value: string): string {
   return value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
 }
 
+const EFFORT_LABELS: Record<string, string> = { xhigh: "Extra high" };
+
+/** A reasoning effort (model variant) as people read it: "High", "Extra high". */
+export function effortLabel(variant: string): string {
+  return EFFORT_LABELS[variant.toLowerCase()] ?? sentenceCase(variant);
+}
+
 const INPUT_LABELS: Record<string, string> = { pdf: "PDF" };
 export function formatModalities(values: readonly string[]): string {
   return values.length > 0

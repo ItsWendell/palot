@@ -2,18 +2,25 @@ import { describe, expect, it } from "vitest";
 import type { OpenCodeWebAccessInfo } from "../../shared";
 import {
   pairingInfoForAddress,
+  pairingCopyPayload,
   pairingQRCodePayload,
   suggestedPairingAddress,
 } from "./pairing-address";
 
 const payload = { urls: ["http://127.0.0.1:4096"], username: "opencode", password: "test-only" };
-const info = { mode: "credentials" as const, ...payload, payload: JSON.stringify(payload) };
+const info = {
+  mode: "credentials" as const,
+  ...payload,
+  payload: JSON.stringify(payload),
+  name: null,
+};
 const linkInfo = {
   mode: "link" as const,
   urls: ["http://127.0.0.1:4096", "https://second.example"],
   code: "abcdefghijklmnop",
   expiresIn: 300,
   payload: "http://127.0.0.1:4096/auth/connect/abcdefghijklmnop",
+  name: null,
 };
 
 describe("pairing address", () => {
@@ -112,5 +119,27 @@ describe("pairing address", () => {
   ])("rejects an insecure or unsupported proxy address: %s", (address) => {
     expect(() => pairingInfoForAddress(info, address)).toThrow();
     expect(() => pairingInfoForAddress(linkInfo, address)).toThrow();
+  });
+
+  it("names the server in the QR and copied details only when a usable name is given", () => {
+    const reachable = { ...linkInfo, urls: ["https://device.example"] };
+    expect(JSON.parse(pairingQRCodePayload(reachable, "  Studio   Mac ")!)).toEqual({
+      code: linkInfo.code,
+      urls: ["https://device.example"],
+      name: "Studio Mac",
+    });
+    expect(JSON.parse(pairingQRCodePayload(reachable, "")!)).not.toHaveProperty("name");
+    expect(JSON.parse(pairingQRCodePayload(reachable, "evil\u202Ename")!)).not.toHaveProperty(
+      "name",
+    );
+    expect(JSON.parse(pairingQRCodePayload(info, "Box")!)).toEqual({ ...payload, name: "Box" });
+    // Only loopback: no QR, but the copied details still work through a forwarded port.
+    const local = { ...linkInfo, urls: ["http://127.0.0.1:4096"] };
+    expect(pairingQRCodePayload(local, "Box")).toBeNull();
+    expect(JSON.parse(pairingCopyPayload(local, "Box"))).toEqual({
+      code: linkInfo.code,
+      urls: ["http://127.0.0.1:4096"],
+      name: "Box",
+    });
   });
 });

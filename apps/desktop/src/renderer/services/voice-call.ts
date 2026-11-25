@@ -4,10 +4,13 @@ import {
   type VoiceCallSnapshot,
   type VoiceHostCommand,
 } from "../../shared";
-import { DEFAULT_VOICE_PREFERENCES, VOICE_MODEL, voicePreferencesAtom } from "../atoms/voice";
+import { DEFAULT_VOICE_PREFERENCES, voicePreferencesAtom } from "../atoms/voice";
+import { runtimeAtom } from "../atoms/workspace";
 import { toast } from "../components/ui/toast";
 import { readOpenCodeErrorDetail } from "../lib/opencode-error-detail";
+import { rendererQueryClient } from "../lib/query-client";
 import { VoiceConnection, VoiceConnectionError } from "../lib/voice/voice-connection";
+import { resolveVoiceModel } from "../lib/voice/voice-models";
 import {
   formatVoiceDelegationPrompt,
   voiceGreetingInstruction,
@@ -80,7 +83,19 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** The server lists no voice model Palot can start. */
+class VoiceModelUnavailableError extends Error {
+  constructor(
+    readonly kind: "needs-key" | "unsupported",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 function startError(error: unknown): { kind: VoiceCallErrorKind; message: string } {
+  if (error instanceof VoiceModelUnavailableError)
+    return { kind: error.kind, message: error.message };
   if (error instanceof VoiceConnectionError) {
     if (error.code === "microphone-denied") {
       return {
@@ -118,9 +133,8 @@ function reportStartError(error: { kind: VoiceCallErrorKind; message: string }):
   if (error.kind === "needs-key") {
     toast.add({
       type: "error",
-      title: "Voice chat needs an OpenAI API key",
-      description:
-        "Add an OpenAI API key in Settings → Providers. ChatGPT sign-in can't start voice sessions.",
+      title: "Voice chat needs an API key",
+      description: error.message,
       actionProps: {
         children: "Open Providers",
         onClick: () => void router.navigate({ to: "/settings/providers" }),
@@ -344,6 +358,15 @@ class VoiceCallController {
     this.startLevelLoop();
 
     try {
+      const runtime = rendererStore.get(runtimeAtom);
+      const choice = await resolveVoiceModel(
+        rendererQueryClient,
+        target.connectionID,
+        runtime?.connectionID === target.connectionID ? runtime.version : null,
+      );
+      if (choice.status === "unavailable") {
+        throw new VoiceModelUnavailableError(choice.kind, choice.reason);
+      }
       const access = await window.palot?.voice
         ?.requestMicrophoneAccess()
         .catch(() => "unknown" as const);
@@ -363,7 +386,7 @@ class VoiceCallController {
         createSession: async (sdp, signal) => {
           const result = await openCodeClient(target.connectionID).experimental.voice.session(
             {
-              model: VOICE_MODEL,
+              model: choice.model,
               session: {
                 instructions,
                 delegation: { type: "client" },

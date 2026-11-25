@@ -13,6 +13,7 @@ import {
   Sparkles,
   Wrench,
   Mic,
+  Network,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -29,6 +30,7 @@ export type SettingsCategory =
   | "models"
   | "providers"
   | "tools"
+  | "machines"
   | "agents"
   | "permissions"
   | "config"
@@ -148,6 +150,15 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
     group: "OpenCode",
   },
   {
+    id: "machines",
+    label: "Machines",
+    description: "Other computers a server's tasks can work on",
+    icon: Network,
+    keywords:
+      "machine machines remote worker devbox join string pair link computer experimental ssh",
+    group: "OpenCode",
+  },
+  {
     id: "agents",
     label: "Agents",
     description: "Available primary and subagents",
@@ -203,6 +214,7 @@ export const SETTINGS_CATEGORIES = [
   "models",
   "providers",
   "tools",
+  "machines",
   "agents",
   "permissions",
   "config",

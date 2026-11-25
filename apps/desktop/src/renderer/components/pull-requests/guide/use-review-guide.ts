@@ -9,10 +9,13 @@ import {
   type PullRequestKey,
   type PullRequestRef,
 } from "../../../../shared/source-control-contract";
+import { defaultModelsAtom } from "../../../atoms/ui";
 import { newTaskDestinationAtom, runtimeAtom } from "../../../atoms/workspace";
 import { useModelCatalog } from "../../../hooks/use-model-catalog";
 import { useProjectCatalog } from "../../../hooks/use-session-catalog";
 import { sourceControl, sourceControlKeys } from "../../../hooks/use-source-control";
+import { modelProjectPreferenceKey } from "../../../lib/model-preferences";
+import { modelMatchesRef, textGenerationModel } from "../../../lib/model-selection";
 import { canFetchOpenCode } from "../../../lib/opencode-runtime-query";
 import {
   buildGuideInput,
@@ -134,8 +137,8 @@ export function cancelReviewGuide(key: PullRequestKey): void {
 }
 
 /**
- * The model a guide is written with: OpenCode's default for the project that matches the
- * repository (the one Start task would use). Read only while `enabled`, since the catalog is a
+ * The model a guide is written with: the default a new task in the project that matches the
+ * repository would use (Palot's project default, then OpenCode's). Read only while `enabled`, since the catalog is a
  * server round trip; until then OpenCode picks its default itself.
  */
 export function useGuideModel(
@@ -155,10 +158,14 @@ export function useGuideModel(
     enabled && Boolean(project),
   );
   const data = catalog.data;
-  const model = data?.defaultModel ?? null;
+  const projectDefault =
+    useAtomValue(defaultModelsAtom)[
+      modelProjectPreferenceKey(runtime?.profileID ?? "disconnected", project?.id ?? "")
+    ];
+  const ref = textGenerationModel({ sessionModel: null, projectDefault, catalog: data });
   return {
-    ref: model ? { id: model.id, providerID: model.providerID } : null,
-    label: model?.name ?? null,
+    ref,
+    label: data?.models.find((model) => modelMatchesRef(model, ref))?.name ?? null,
     unavailable:
       data && !data.defaultModel && data.models.length === 0
         ? "No model is available. Connect a provider in Settings."

@@ -1,10 +1,27 @@
+// Audit against OpenCode PR #61785 (timelines drifting from the server on flaky connections).
+// Gap 2, a one-shot catch-up: Palot had it. After the stream reconnected, the open task's
+// transcript was read once and a failure only showed a toast, so a delivery the stream lost
+// stayed lost. The catch-up now retries with a bounded backoff; see "reconnect catch-up".
+// An inbox read overtaken by a live request change is not applied, so it counts as failed.
+// A batch gap or a message the stream never introduced also lost events; the open task's
+// recovery read retries the same way ("retries a failed recovery read after ...").
+// Gap 1 on this path: the catch-up read keeps what the stream applied while it was in flight
+// ("keeps a reply streamed while the catch-up read was in flight").
+// Gap 4, rejoining a dead stream: Palot does not have it. The main process owns one
+// subscription per connection and aborts it before reconnecting; see "recovers a half-open
+// stream once at 45s plus the existing 1s backoff" in main/opencode-runtime-lifecycle.test.ts.
 import type { OpenCodeClient, SessionMessageInfo } from "@opencode/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Provider, createStore } from "jotai";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OpenCodeRuntimeStatus, PalotMessage, PalotSession } from "../../shared";
+import type {
+  OpenCodeRuntimeStatus,
+  PalotEventBatch,
+  PalotMessage,
+  PalotSession,
+} from "../../shared";
 import {
   activeShellsAtom,
   errorAtom,
@@ -16,10 +33,10 @@ import {
   shellsForProfileAtom,
 } from "../atoms/workspace";
 import { palot } from "../services/palot";
+import { toast } from "../components/ui/toast";
 import * as openCodeCatalog from "../services/opencode-catalog";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { attentionSyncStateAtom, sessionCatalogReadyAtom } from "../atoms/inbox";
-import { sidebarModeAtom } from "../atoms/ui";
 import { discoveredProfileIDsAtom, includedProfileIDsAtom } from "../atoms/connections";
 import { createRendererQueryClient } from "../lib/query-client";
 import { openCodeReconciler } from "../lib/open-code-reconciler";
@@ -290,7 +307,6 @@ describe("useWorkspaceController", () => {
     "scopes inbox root reads and suppresses late triage after %s",
     async (change) => {
       const { runtime, store, queryClient, hook } = await profileWorkspace();
-      store.set(sidebarModeAtom, "inbox");
       const result = Promise.withResolvers<PalotSession | null>();
       const child = { ...session("child"), parentID: "parent" };
       const getSession = vi
@@ -333,6 +349,31 @@ describe("useWorkspaceController", () => {
       ).not.toContain("parent");
     },
   );
+
+  it("streams text without reading the session catalog", async () => {
+    const { root, runtime, queryClient } = await profileWorkspace();
+    const reconciler = openCodeReconciler(queryClient);
+    const catalogReads = vi.spyOn(reconciler, "sessions");
+    act(() => {
+      reconciler.applyBatch({
+        connectionID: runtime.connectionID,
+        contractVersion: runtime.contractVersion,
+        streamEpoch: 1,
+        batchSequence: 1,
+        receivedAt: 10,
+        sentAt: 10,
+        events: [10, 11].map((sequence) => ({
+          id: `delta-${sequence}`,
+          type: "session.text.delta",
+          created: sequence,
+          createdAt: sequence,
+          receiveSequence: sequence,
+          data: { sessionID: root.id, assistantMessageID: "reply", ordinal: 0, delta: "token" },
+        })) as PalotEventBatch["events"],
+      });
+    });
+    expect(catalogReads).not.toHaveBeenCalled();
+  });
 
   it("never applies a background connection's runtime or duplicate-session deletion to focused state", async () => {
     const { root, runtime, store, queryClient, messages, shells } = await profileWorkspace();
@@ -391,7 +432,7 @@ describe("useWorkspaceController", () => {
         await profileWorkspace();
       const result = Promise.withResolvers<Awaited<ReturnType<typeof palot.loadSession>>>();
       const load = vi.spyOn(palot, "loadSession").mockReturnValue(result.promise);
-      let pending!: Promise<void>;
+      let pending!: Promise<boolean>;
       act(() => {
         pending = hook.result.current.loadSession(root);
       });
@@ -985,5 +1026,417 @@ describe("useWorkspaceController", () => {
         "connection",
       ),
     );
+  });
+});
+
+describe("reconnect catch-up", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  const connectionID = "connection";
+  const pendingPrompt = {
+    id: "prompt",
+    sessionID: "session-reconnect",
+    time: { created: 5 },
+    type: "user" as const,
+    payload: { text: "Queued prompt" },
+    delivery: "queue" as const,
+  };
+  const delivered = {
+    messages: {
+      data: [
+        rawMessage("user", "user", "Start"),
+        rawMessage("prompt", "user", "Queued prompt"),
+        rawMessage("reply", "assistant", "Done"),
+      ],
+      cursor: { previous: null, next: null },
+    },
+    requests: null,
+    diffs: null,
+  };
+
+  function streamBatch(
+    streamEpoch: number,
+    events: PalotEventBatch["events"],
+    batchSequence = 1,
+  ): PalotEventBatch {
+    return {
+      connectionID,
+      contractVersion: "0.0.0-beta-19425",
+      streamEpoch,
+      batchSequence,
+      receivedAt: 10,
+      sentAt: 10,
+      events,
+    };
+  }
+
+  async function reconnectingWorkspace() {
+    const task = session("session-reconnect");
+    const runtime = { ...profileRuntime("test-profile"), connectionID };
+    const store = createStore();
+    store.set(selectedSessionIDAtom, task.id);
+    const queryClient = createRendererQueryClient();
+    const reconciler = openCodeReconciler(queryClient);
+    setTranscriptSnapshot(
+      queryClient,
+      connectionID,
+      task.id,
+      { data: [rawMessage("user", "user", "Start")], cursor: { previous: null, next: null } },
+      "rooted",
+    );
+    // The server accepted this prompt; its delivery is published while the stream is down.
+    reconciler.applyBatch(
+      streamBatch(1, [
+        {
+          id: "enqueued",
+          type: "session.inbox.enqueued",
+          created: 5,
+          createdAt: 5,
+          receiveSequence: 1,
+          durable: { aggregateID: task.id, seq: 1, version: 1 },
+          data: {
+            sessionID: task.id,
+            inboxID: pendingPrompt.id,
+            item: { type: "user", payload: pendingPrompt.payload, delivery: "queue" },
+          },
+        },
+      ]),
+    );
+    vi.spyOn(palot, "hydratePreview").mockResolvedValue({
+      runtime,
+      projects: [project],
+      sessions: { data: [task], cursor: { previous: null, next: null } },
+      activeSessions: [],
+    });
+    vi.spyOn(palot, "loadAttentionSnapshot").mockResolvedValue({
+      sessions: [],
+      requests: [],
+      complete: true,
+    });
+    vi.spyOn(palot, "subscribe").mockReturnValue(() => undefined);
+    const loadSession = vi.spyOn(palot, "loadSession").mockResolvedValue({
+      messages: {
+        data: [rawMessage("user", "user", "Start")],
+        cursor: { previous: null, next: null },
+      },
+      requests: null,
+      diffs: null,
+    });
+    const loadInbox = vi.spyOn(palot, "loadSessionInbox").mockResolvedValue([pendingPrompt]);
+    const hook = renderHook(({ selected }) => useWorkspaceController(selected), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          <Provider store={store}>{children}</Provider>
+        </QueryClientProvider>
+      ),
+      initialProps: { selected: task.id as string | null },
+    });
+    await waitFor(() => expect(store.get(sessionCatalogReadyAtom)).toBe(true));
+    hook.rerender({ selected: task.id });
+    await waitFor(() => expect(loadSession).toHaveBeenCalled());
+    loadSession.mockClear();
+    loadInbox.mockClear();
+    const pending = () =>
+      pendingRequestViews(
+        reconciler.requests(connectionID, task.id) ?? EMPTY_SESSION_REQUEST_SNAPSHOT,
+      )
+        .filter((request) => request.type === "input")
+        .map((request) => request.id);
+    const reconnect = () =>
+      act(() => {
+        reconciler.applyBatch(
+          streamBatch(2, [
+            {
+              id: "connected",
+              type: "server.connected",
+              created: 20,
+              createdAt: 20,
+              receiveSequence: 1,
+              data: {},
+            } as PalotEventBatch["events"][number],
+          ]),
+        );
+      });
+    return {
+      task,
+      runtime,
+      store,
+      queryClient,
+      reconciler,
+      hook,
+      loadSession,
+      loadInbox,
+      pending,
+      reconnect,
+    };
+  }
+
+  it("retries a failed catch-up until the transcript and pending input are read", async () => {
+    const workspace = await reconnectingWorkspace();
+    expect(workspace.pending()).toEqual([pendingPrompt.id]);
+    workspace.loadSession
+      .mockRejectedValueOnce(new Error("Network flake"))
+      .mockResolvedValue(delivered);
+    workspace.loadInbox.mockRejectedValueOnce(new Error("Network flake")).mockResolvedValue([]);
+
+    workspace.reconnect();
+
+    await waitFor(
+      () => {
+        expect(workspace.pending()).toEqual([]);
+        expect(
+          getTranscriptMessages(workspace.queryClient, connectionID, workspace.task.id)
+            .map((message) => message.id)
+            .toSorted(),
+        ).toEqual(["prompt", "reply", "user"]);
+      },
+      { timeout: 3_000 },
+    );
+    expect(workspace.loadSession).toHaveBeenCalledTimes(2);
+  });
+
+  function enqueued(inboxID: string, sequence: number): PalotEventBatch["events"][number] {
+    return {
+      id: `enqueued-${inboxID}`,
+      type: "session.inbox.enqueued",
+      created: 20 + sequence,
+      createdAt: 20 + sequence,
+      receiveSequence: sequence,
+      durable: { aggregateID: "session-reconnect", seq: sequence, version: 1 },
+      data: {
+        sessionID: "session-reconnect",
+        inboxID,
+        item: { type: "user", payload: { text: inboxID }, delivery: "queue" },
+      },
+    };
+  }
+
+  it("reads the inbox again when a live request change overtakes the catch-up read", async () => {
+    const workspace = await reconnectingWorkspace();
+    const second = { ...pendingPrompt, id: "second", payload: { text: "second" } };
+    workspace.loadSession.mockResolvedValue(delivered);
+    const firstRead = Promise.withResolvers<(typeof pendingPrompt)[]>();
+    workspace.loadInbox.mockReturnValueOnce(firstRead.promise).mockResolvedValue([second]);
+
+    workspace.reconnect();
+    await waitFor(() => expect(workspace.loadInbox).toHaveBeenCalledOnce());
+    // Another client queues a prompt while the read is on its way, so the read predates it.
+    act(() => {
+      workspace.reconciler.applyBatch(streamBatch(2, [enqueued("second", 2)], 2));
+    });
+    await act(async () => firstRead.resolve([]));
+
+    await waitFor(() => expect(workspace.pending()).toEqual(["second"]), { timeout: 3_000 });
+    expect(workspace.loadInbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops reading the inbox after the bounded attempts when every read is overtaken", async () => {
+    const workspace = await reconnectingWorkspace();
+    workspace.loadSession.mockResolvedValue(delivered);
+    let sequence = 1;
+    workspace.loadInbox.mockImplementation(async () => {
+      sequence += 1;
+      workspace.reconciler.applyBatch(
+        streamBatch(2, [enqueued(`live-${sequence}`, sequence)], sequence),
+      );
+      return [];
+    });
+    vi.useFakeTimers();
+
+    workspace.reconnect();
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+
+    expect(workspace.loadInbox).toHaveBeenCalledTimes(5);
+  });
+
+  const lostEvents = {
+    // Batch 2 of this stream never arrived.
+    "a batch gap": streamBatch(
+      1,
+      [
+        {
+          id: "renamed",
+          type: "session.renamed",
+          created: 30,
+          createdAt: 30,
+          receiveSequence: 3,
+          durable: { aggregateID: "session-reconnect", seq: 3, version: 1 },
+          data: { sessionID: "session-reconnect", title: "Renamed" },
+        },
+      ],
+      3,
+    ),
+    // The event that started this reply never arrived.
+    "a message the stream never introduced": streamBatch(
+      1,
+      [
+        {
+          id: "orphan-delta",
+          type: "session.text.delta",
+          created: 30,
+          createdAt: 30,
+          receiveSequence: 2,
+          data: {
+            sessionID: "session-reconnect",
+            assistantMessageID: "reply",
+            ordinal: 0,
+            delta: "Do",
+          },
+        },
+      ],
+      2,
+    ),
+  } satisfies Record<string, PalotEventBatch>;
+
+  it.each(Object.keys(lostEvents) as (keyof typeof lostEvents)[])(
+    "retries a failed recovery read after %s until it applies",
+    async (loss) => {
+      const workspace = await reconnectingWorkspace();
+      workspace.loadSession
+        .mockRejectedValueOnce(new Error("Network flake"))
+        .mockResolvedValue(delivered);
+      workspace.loadInbox.mockResolvedValue([]);
+
+      act(() => {
+        workspace.reconciler.applyBatch(lostEvents[loss]);
+      });
+
+      await waitFor(
+        () => {
+          expect(workspace.pending()).toEqual([]);
+          expect(
+            getTranscriptMessages(workspace.queryClient, connectionID, workspace.task.id).find(
+              (message) => message.id === "reply",
+            )?.content[0]?.text,
+          ).toBe("Done");
+        },
+        { timeout: 3_000 },
+      );
+      expect(workspace.loadSession).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("stops retrying a recovery read once the task is closed", async () => {
+    const workspace = await reconnectingWorkspace();
+    workspace.loadSession.mockRejectedValue(new Error("Network flake"));
+    workspace.loadInbox.mockRejectedValue(new Error("Network flake"));
+
+    act(() => {
+      workspace.reconciler.applyBatch(lostEvents["a batch gap"]);
+    });
+    await waitFor(() => expect(workspace.loadSession).toHaveBeenCalledOnce());
+    act(() => {
+      workspace.store.set(selectedSessionIDAtom, null);
+      workspace.hook.rerender({ selected: null });
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 1_200)));
+
+    expect(workspace.loadSession).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a reply streamed while the catch-up read was in flight", async () => {
+    const workspace = await reconnectingWorkspace();
+    const response = Promise.withResolvers<typeof delivered>();
+    workspace.loadSession.mockReturnValue(response.promise);
+    workspace.loadInbox.mockResolvedValue([]);
+
+    workspace.reconnect();
+    await waitFor(() => expect(workspace.loadSession).toHaveBeenCalled());
+    act(() => {
+      workspace.reconciler.applyBatch(
+        streamBatch(
+          2,
+          [
+            {
+              id: "step",
+              type: "session.step.started",
+              created: 30,
+              createdAt: 30,
+              receiveSequence: 2,
+              data: { sessionID: workspace.task.id, assistantMessageID: "live", agent: "build" },
+            },
+            {
+              id: "delta",
+              type: "session.text.delta",
+              created: 31,
+              createdAt: 31,
+              receiveSequence: 3,
+              data: {
+                sessionID: workspace.task.id,
+                assistantMessageID: "live",
+                ordinal: 0,
+                delta: "Streaming on",
+              },
+            },
+          ] as PalotEventBatch["events"],
+          2,
+        ),
+      );
+    });
+    await act(async () => response.resolve(delivered));
+
+    await waitFor(() =>
+      expect(
+        getTranscriptMessages(workspace.queryClient, connectionID, workspace.task.id)
+          .map((message) => message.id)
+          .toSorted(),
+      ).toEqual(["live", "prompt", "reply", "user"]),
+    );
+    expect(
+      getTranscriptMessages(workspace.queryClient, connectionID, workspace.task.id).find(
+        (message) => message.id === "live",
+      )?.content[0]?.text,
+    ).toBe("Streaming on");
+  });
+
+  it.each([
+    [
+      "the task is closed",
+      (workspace: Awaited<ReturnType<typeof reconnectingWorkspace>>) => {
+        workspace.store.set(selectedSessionIDAtom, null);
+        workspace.hook.rerender({ selected: null });
+      },
+    ],
+    [
+      "the connection drops",
+      (workspace: Awaited<ReturnType<typeof reconnectingWorkspace>>) => {
+        workspace.store.set(runtimeAtom, {
+          ...workspace.runtime,
+          connected: false,
+          phase: "reconnecting",
+        });
+      },
+    ],
+  ])("stops retrying the catch-up once %s", async (_, leave) => {
+    const workspace = await reconnectingWorkspace();
+    workspace.loadSession.mockRejectedValue(new Error("Network flake"));
+    workspace.loadInbox.mockRejectedValue(new Error("Network flake"));
+
+    workspace.reconnect();
+    await waitFor(() => expect(workspace.loadSession).toHaveBeenCalledOnce());
+    act(() => leave(workspace));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 1_200)));
+
+    expect(workspace.loadSession).toHaveBeenCalledOnce();
+  });
+
+  it("gives up on the catch-up after a bounded number of attempts", async () => {
+    const workspace = await reconnectingWorkspace();
+    workspace.loadSession.mockRejectedValue(new Error("Network flake"));
+    workspace.loadInbox.mockRejectedValue(new Error("Network flake"));
+    const reported = vi.spyOn(toast, "add");
+    vi.useFakeTimers();
+
+    workspace.reconnect();
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+
+    expect(workspace.loadSession).toHaveBeenCalledTimes(5);
+    expect(workspace.loadInbox).toHaveBeenCalledTimes(5);
+    // Only the last attempt reports the failure.
+    expect(reported).toHaveBeenCalledOnce();
   });
 });

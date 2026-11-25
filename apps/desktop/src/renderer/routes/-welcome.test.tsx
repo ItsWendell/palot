@@ -143,7 +143,7 @@ describe("welcome project creation ownership", () => {
       expect(openCodeReconciler(queryClient).session("other", session.id)).toBeNull();
       if (change !== "unmount") {
         expect(
-          screen.getByLabelText(change === "unchanged" ? "Step 3 of 3" : "Step 2 of 3"),
+          screen.getByLabelText(change === "unchanged" ? "Step 3 of 4" : "Step 2 of 4"),
         ).toBeTruthy();
       }
     },

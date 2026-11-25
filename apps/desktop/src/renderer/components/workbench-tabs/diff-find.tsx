@@ -1,5 +1,5 @@
+import type { CodeViewSearchOptions } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -23,32 +23,63 @@ import {
 import {
   applyDiffHighlights,
   clearDiffHighlights,
+  diffLineKey,
   revealRangeHorizontally,
   type RenderedDiffItem,
 } from "../../lib/diff-find-dom";
-import { formatShortcut, matchesShortcut, shortcutKeys } from "../../lib/keyboard-shortcuts";
-import { IconButton } from "../ui";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
-import { SurfaceBackdrop } from "../ui/surface-backdrop";
+import {
+  formatShortcut,
+  matchesShortcut,
+  shortcutKeys,
+  type ShortcutKeys,
+} from "../../lib/keyboard-shortcuts";
+import { deepActiveElement, FindBar, findStatus } from "../find-bar";
 
 const EMPTY_RESULT: DiffFindResult = { matches: [], truncated: false };
+
+/**
+ * Pass as a `CodeView`'s `searchOptions`. CodeView binds Mod+F (and Mod+Alt+F) on its own root in
+ * the capture phase, so without this its search panel takes Mod+F from Find in diff and its
+ * matches never reach the change rail. Its panel (match case, whole word, regex) stays on
+ * Mod+Alt+F through `onKeyDown`, as in a file tab's editor.
+ */
+export const DIFF_FIND_CODE_VIEW_SEARCH = {
+  disableShortcuts: true,
+} as const satisfies CodeViewSearchOptions;
+const CODE_VIEW_SEARCH_KEYS: ShortcutKeys = ["Mod", "Alt", "F"];
 const REVEAL_MAX_FRAMES = 45;
 const RESCROLL_FRAME = 8;
+
+/**
+ * A surface that renders every line of its files without `CodeView`, such as a file
+ * tab's source view.
+ */
+export interface DiffFindView {
+  renderedItems(): RenderedDiffItem[];
+  /** Brings a match's line on screen before the match itself is centered. */
+  scrollToLine?(match: DiffFindMatch): void;
+  /** Calls `refresh` when rendered lines change; returns its cleanup. */
+  observe?(refresh: () => void): () => void;
+}
 
 export interface DiffFindInput {
   /** Diffs in display order; matches come from this text, not the virtualized DOM. */
   sources: readonly DiffFindSource[];
-  codeView: RefObject<CodeViewHandle<undefined, undefined> | null>;
-  /** CodeView's scroll container. */
+  codeView?: RefObject<CodeViewHandle<undefined, undefined> | null>;
+  /** Used instead of `codeView` by surfaces that render every line. */
+  view?: DiffFindView;
+  /** The scroll container. */
   container: HTMLElement | null;
   /** Makes a collapsed file visible before its match is revealed. */
   onRevealItem?(id: string): void;
+  /** False dismisses an open search without moving focus, e.g. when the surface hides. */
+  enabled?: boolean;
 }
 
 /**
- * Find in diff for a `CodeView` surface. Mod+F (the Find in task binding) opens it
- * while focus is inside the surface; the transcript's handler already ignores
- * workbench panes, so the two never compete for the same key press.
+ * Find in diff for a `CodeView` surface, or a file's source view. Mod+F (the Find in
+ * changes binding) opens it while focus is inside the surface; the transcript's handler
+ * already ignores workbench panes, so the two never compete for the same key press.
  */
 export function useDiffFind(input: DiffFindInput) {
   const [owner] = useState(() => ({}));
@@ -113,9 +144,24 @@ export function useDiffFind(input: DiffFindInput) {
   );
 
   const renderedItems = useCallback((): RenderedDiffItem[] => {
-    const rendered = latest.current.codeView.current?.getInstance()?.getRenderedItems() ?? [];
+    const { view, codeView } = latest.current;
+    if (view) return view.renderedItems();
+    const rendered = codeView?.current?.getInstance()?.getRenderedItems() ?? [];
     return rendered.map((item) => ({ id: item.id, element: item.element }));
   }, []);
+
+  // A view renders every line, so only lines with matches are searched in the DOM.
+  const matchedLines = useMemo(
+    () =>
+      input.view
+        ? new Set(result.matches.map((match) => diffLineKey(match.itemID, match.lineNumber)))
+        : undefined,
+    [input.view, result],
+  );
+  const matchedLinesRef = useRef(matchedLines);
+  useLayoutEffect(() => {
+    matchedLinesRef.current = matchedLines;
+  });
 
   const highlight = useCallback(() => {
     if (!openRef.current) return null;
@@ -124,6 +170,7 @@ export function useDiffFind(input: DiffFindInput) {
       renderedItems(),
       normalizeDiffFindQuery(queryRef.current),
       activeMatchRef.current,
+      matchedLinesRef.current,
     );
   }, [owner, renderedItems]);
 
@@ -145,12 +192,16 @@ export function useDiffFind(input: DiffFindInput) {
     refresh();
   }, [activeIndex, deferredQuery, input.sources, open, owner, refresh]);
 
+  // Virtualized lines mount on scroll; a view reports its own re-renders.
+  const view = input.view;
   useEffect(() => {
     const container = input.container;
-    if (!open || !container) return;
+    if (!open) return;
+    if (view) return view.observe?.(refresh);
+    if (!container) return;
     container.addEventListener("scroll", refresh, { passive: true });
     return () => container.removeEventListener("scroll", refresh);
-  }, [input.container, open, refresh]);
+  }, [input.container, open, refresh, view]);
 
   useEffect(
     () => () => {
@@ -161,27 +212,44 @@ export function useDiffFind(input: DiffFindInput) {
   );
 
   const openFind = useCallback(() => {
-    const active = document.activeElement;
-    if (!inputRef.current || active !== inputRef.current) {
-      returnFocusRef.current =
-        active instanceof HTMLElement && active !== document.body ? active : null;
-    }
+    const active = deepActiveElement();
+    if (!inputRef.current || active !== inputRef.current) returnFocusRef.current = active;
     setOpen(true);
     setFocusRequest((current) => current + 1);
   }, []);
 
-  const closeFind = useCallback(() => {
+  const dismiss = useCallback(() => {
     setOpen(false);
     searchedQueryRef.current = null;
     activeMatchRef.current = null;
     activeIndexRef.current = -1;
     setActiveIndex(-1);
     clearDiffHighlights(owner);
+  }, [owner]);
+
+  const closeFind = useCallback(() => {
+    dismiss();
     const target = returnFocusRef.current;
     returnFocusRef.current = null;
     if (target?.isConnected) target.focus({ preventScroll: true });
     else latest.current.container?.focus({ preventScroll: true });
-  }, [owner]);
+  }, [dismiss]);
+
+  const enabled = input.enabled ?? true;
+  useEffect(() => {
+    if (!enabled && openRef.current) {
+      returnFocusRef.current = null;
+      dismiss();
+    }
+  }, [dismiss, enabled]);
+
+  // Focus moves in the same commit that shows the bar, not a frame later: a key pressed
+  // right after Mod+F (Escape, the first letter) belongs to the bar.
+  useLayoutEffect(() => {
+    if (!open || focusRequest === 0) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusRequest, open]);
 
   useEffect(() => {
     if (!open || focusRequest === 0) return;
@@ -189,7 +257,6 @@ export function useDiffFind(input: DiffFindInput) {
       inputRef.current?.focus();
       inputRef.current?.select();
     };
-    const frame = requestAnimationFrame(focusInput);
     // A closing menu restores focus to its trigger after the find bar opened from it.
     const timer = window.setTimeout(() => {
       const active = document.activeElement;
@@ -200,10 +267,7 @@ export function useDiffFind(input: DiffFindInput) {
       )
         focusInput();
     }, 200);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
+    return () => window.clearTimeout(timer);
   }, [focusRequest, open]);
 
   // Scroll CodeView to the active match's line, then keep it in view while the line
@@ -213,14 +277,17 @@ export function useDiffFind(input: DiffFindInput) {
     const match = activeMatchRef.current;
     if (!match) return;
     latest.current.onRevealItem?.(match.itemID);
-    const scrollToMatch = () =>
-      latest.current.codeView.current?.scrollTo({
+    const scrollToMatch = () => {
+      const { view, codeView } = latest.current;
+      if (view) return view.scrollToLine?.(match);
+      codeView?.current?.scrollTo({
         type: "line",
         id: match.itemID,
         lineNumber: match.lineNumber,
         side: match.side,
         align: "center",
       });
+    };
     let frame = 0;
     let frames = 0;
     let stableFrames = 0;
@@ -254,13 +321,22 @@ export function useDiffFind(input: DiffFindInput) {
     return () => cancelAnimationFrame(frame);
   }, [highlight, revealRequest]);
 
-  /** Attach to the surface root: Mod+F inside it opens Find in diff. */
+  /**
+   * Attach to the surface root: Mod+F inside it opens Find in diff, and Mod+Alt+F opens a
+   * `CodeView`'s own search panel (see `DIFF_FIND_CODE_VIEW_SEARCH`).
+   */
   const onKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (!matchesShortcut(event.nativeEvent, shortcutKeys("changes.find"))) return;
+      if (matchesShortcut(event.nativeEvent, shortcutKeys("changes.find"))) {
+        event.preventDefault();
+        openFind();
+        return;
+      }
+      const codeView = latest.current.codeView?.current;
+      if (!codeView || !matchesShortcut(event.nativeEvent, CODE_VIEW_SEARCH_KEYS)) return;
       event.preventDefault();
-      openFind();
+      codeView.openSearch();
     },
     [openFind],
   );
@@ -270,6 +346,8 @@ export function useDiffFind(input: DiffFindInput) {
     query,
     setQuery,
     activeIndex,
+    /** Every match in display order; empty while Find is closed. */
+    matches: result.matches,
     matchCount: result.matches.length,
     truncated: result.truncated,
     pending: query !== deferredQuery,
@@ -284,79 +362,32 @@ export function useDiffFind(input: DiffFindInput) {
 
 export type DiffFindController = ReturnType<typeof useDiffFind>;
 
-export function DiffFindBar({ controller }: { controller: DiffFindController }) {
+export function DiffFindBar({
+  controller,
+  label = "Find in diff",
+}: {
+  controller: DiffFindController;
+  label?: string;
+}) {
   if (!controller.open) return null;
-  const { query, activeIndex, matchCount, truncated } = controller;
-  const searching = normalizeDiffFindQuery(query) !== "";
-  const total = truncated ? `${matchCount}+` : String(matchCount);
-  const status = !searching
-    ? ""
-    : matchCount === 0
-      ? controller.pending
-        ? ""
-        : "No results"
-      : `${activeIndex + 1} of ${total}`;
+  const status = findStatus({
+    searching: normalizeDiffFindQuery(controller.query) !== "",
+    matchCount: controller.matchCount,
+    activeIndex: controller.activeIndex,
+    truncated: controller.truncated,
+    pending: controller.pending,
+  });
   return (
-    <div
-      role="search"
-      aria-label="Find in diff"
-      className="palot-translucent-popover absolute top-2 right-4 z-30 isolate flex w-80 max-w-[calc(100%-2rem)] flex-col rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10"
-    >
-      <SurfaceBackdrop />
-      <div className="flex items-center gap-0.5 p-1">
-        <InputGroup className="min-w-0 flex-1">
-          <InputGroupAddon aria-hidden="true">
-            <Search />
-          </InputGroupAddon>
-          <InputGroupInput
-            ref={controller.inputRef}
-            type="text"
-            value={query}
-            placeholder="Find in diff"
-            aria-label="Find in diff"
-            aria-keyshortcuts={formatShortcut(shortcutKeys("changes.find"))}
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(event) => controller.setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
-              if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
-                controller.closeFind();
-                return;
-              }
-              if (event.key === "Enter" && !event.altKey && !event.metaKey && !event.ctrlKey) {
-                event.preventDefault();
-                controller.step(event.shiftKey ? "previous" : "next");
-              }
-            }}
-          />
-          {status ? (
-            <InputGroupAddon align="inline-end" className="tabular-nums" aria-hidden="true">
-              {status}
-            </InputGroupAddon>
-          ) : null}
-        </InputGroup>
-        <IconButton
-          label="Previous match"
-          icon={ChevronUp}
-          size="icon-sm"
-          disabled={matchCount === 0}
-          onClick={() => controller.step("previous")}
-        />
-        <IconButton
-          label="Next match"
-          icon={ChevronDown}
-          size="icon-sm"
-          disabled={matchCount === 0}
-          onClick={() => controller.step("next")}
-        />
-        <IconButton label="Close find" icon={X} size="icon-sm" onClick={controller.closeFind} />
-      </div>
-      <span className="sr-only" role="status" aria-live="polite">
-        {status}
-      </span>
-    </div>
+    <FindBar
+      label={label}
+      shortcut={formatShortcut(shortcutKeys("changes.find"))}
+      query={controller.query}
+      status={status}
+      matchCount={controller.matchCount}
+      inputRef={controller.inputRef}
+      onQueryChange={controller.setQuery}
+      onStep={controller.step}
+      onClose={controller.closeFind}
+    />
   );
 }

@@ -85,7 +85,8 @@ export const markdownRichScenario: Scenario = {
     }, sessionID);
   },
   async assert(page, { runRoot, llm }) {
-    const response = page.locator(`[data-message-id="${RESPONSE_ID}"]`);
+    // A turn row is identified by its prompt and holds the reply.
+    const response = page.locator('[data-message-id="msg_markdown_rich_user"]');
     const previews = response.locator("button.markdown-mermaid");
     const flowchart = previews.nth(0).locator("svg");
     const sequence = previews.nth(1).locator("svg");

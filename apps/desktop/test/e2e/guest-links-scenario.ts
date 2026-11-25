@@ -73,7 +73,8 @@ export const guestLinksScenario: Scenario = {
       await guest.getByLabel("Message for the owner", { exact: true }).fill(SUGGESTION);
       await guest.getByRole("button", { name: "Ask the owner to send", exact: true }).click();
       await expect(guest.getByText("Waiting for owner approval", { exact: true })).toBeVisible();
-      const pending = page.getByRole("region", { name: "Pending guest messages", exact: true });
+      // A guest message answers in the composer's request panel, like any request.
+      const pending = page.getByRole("region", { name: "Pending request", exact: true });
       await expect(pending).toContainText("Guest message from Jamie");
       await expect(pending).toContainText(SUGGESTION);
       const before = await client.message.list({ sessionID: session.id, limit: 100 });
@@ -81,14 +82,16 @@ export const guestLinksScenario: Scenario = {
       expect(llm.scriptedCalls()).toBe(1);
       await page.screenshot({ path: join(runRoot, "guest-message-pending.png") });
       await page.setViewportSize({ width: 920, height: 640 });
-      await expect(pending.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
+      await expect(
+        pending.getByRole("button", { name: "Send to the agent", exact: true }),
+      ).toBeInViewport();
       await page.screenshot({ path: join(runRoot, "guest-message-pending-minimum.png") });
       await page.setViewportSize({ width: 1440, height: 920 });
       await guest.screenshot({ path: join(runRoot, "guest-page.png"), fullPage: true });
       await guest.setViewportSize({ width: 390, height: 844 });
       await guest.emulateMedia({ colorScheme: "dark" });
       await guest.screenshot({ path: join(runRoot, "guest-page-mobile-dark.png"), fullPage: true });
-      await pending.getByRole("button", { name: "Send", exact: true }).click();
+      await pending.getByRole("button", { name: "Send to the agent", exact: true }).click();
       await expect(guest.getByLabel("Task transcript")).toContainText(APPROVED);
       await expect(guest.getByText("Sent by the owner", { exact: true })).toBeVisible({
         timeout: 15000,

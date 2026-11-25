@@ -332,6 +332,31 @@ describe("GlobalCommandPalette", () => {
     expect(option.textContent).toContain(formatRelativeTime(value.updatedAt));
   });
 
+  it("shows a failed task as Failed, as the task list does, until it is settled", async () => {
+    const failed = session({ id: "failed-task", title: "Failed task", updatedAt: 9 });
+    const settled = session({ id: "settled-task", title: "Settled failure", updatedAt: 8 });
+    const work = connection("work", "Work", [failed, settled]);
+    const row = (value: PalotSession, section: "inbox" | "settled") =>
+      ({ session: value, section, attention: false, running: false, failed: true }) as never;
+    work.inbox = {
+      ...work.inbox,
+      inbox: [row(failed, "inbox")],
+      settled: [row(settled, "settled")],
+    };
+    mocks.overview = {
+      connections: [work, connection("home", "Home", [])],
+      includedProfileIDs: ["work", "home"],
+      visibleProfileIDs: null,
+    };
+    const { store } = setup();
+    store.set(commandPaletteOpenAtom, true);
+
+    const option = await screen.findByRole("option", { name: /Failed task/ });
+    expect(within(option).getByLabelText("Failed")).toBeTruthy();
+    const quiet = screen.getByRole("option", { name: /Settled failure/ });
+    expect(within(quiet).queryByLabelText("Failed")).toBeNull();
+  });
+
   it("merges remote task search results into the ranked list", async () => {
     const remote = session({ id: "session-remote", title: "Archived command palette" });
     mocks.listRootSessionInfo.mockResolvedValue({

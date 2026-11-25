@@ -240,6 +240,8 @@ function snapshotColumns(snapshot: PullRequestSnapshot) {
     pullRequestUpdatedAt: snapshot.updatedAt,
     mergedAt: snapshot.mergedAt,
     closedAt: snapshot.closedAt,
+    mergeState: snapshot.mergeState ?? null,
+    unresolvedThreads: snapshot.unresolvedThreads ?? null,
   };
 }
 
@@ -265,6 +267,10 @@ function fromRow(row: Row): StoredPullRequestLink {
       updatedAt: row.pullRequestUpdatedAt,
       mergedAt: row.mergedAt,
       closedAt: row.closedAt,
+      // Same keys as `toSnapshot`, so an unchanged read compares equal.
+      ...(row.mergeState !== null
+        ? { mergeState: row.mergeState, unresolvedThreads: row.unresolvedThreads }
+        : {}),
     },
     linkedAt: row.linkedAt,
     syncedAt: row.syncedAt,

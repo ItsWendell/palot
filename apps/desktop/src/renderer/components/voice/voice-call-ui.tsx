@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight, Mic, MicOff, PhoneOff, Volume2, VolumeX } from "lucide-react";
 import type { PalotSession, VoiceActivity } from "../../../shared";
 import { useVoiceCall, useVoiceLevels } from "../../hooks/use-voice-call";
+import { useVoiceModel } from "../../hooks/use-voice-model";
 import { formatShortcut, useShortcutKeys } from "../../lib/keyboard-shortcuts";
 import { cn } from "../../lib/cn";
 import { spring } from "../../lib/springs";
@@ -109,50 +110,6 @@ function CallControls({ compact = false }: { compact?: boolean }) {
   );
 }
 
-/** Sits above the composer while this task is in a voice chat. */
-export function VoiceStage({ sessionID }: { sessionID: string }) {
-  const { snapshot } = useVoiceCall();
-  const visible = snapshot.phase !== "idle" && snapshot.sessionID === sessionID;
-  const detail =
-    snapshot.phase === "starting"
-      ? "Starting voice chat"
-      : snapshot.phase === "stopping"
-        ? "Ending voice chat…"
-        : snapshot.outputMuted && snapshot.caption
-          ? snapshot.caption
-          : (snapshot.status ?? ACTIVITY_LABELS[snapshot.activity]);
-  return (
-    <AnimatePresence initial={false}>
-      {visible ? (
-        <motion.section
-          key="voice-stage"
-          aria-label="Voice chat"
-          className="pointer-events-auto mx-auto mb-2 flex w-full max-w-md flex-col items-center gap-2 rounded-xl border border-border bg-card/95 px-4 py-3 shadow-sm backdrop-blur-sm"
-          initial={{ opacity: 0, y: 8, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 8, scale: 0.98 }}
-          transition={spring.moderate}
-          data-palot-voice-stage
-        >
-          <VoiceOrb size={64} activity={snapshot.activity} />
-          <p
-            className={cn(
-              "max-w-full text-center text-meta text-muted-foreground",
-              snapshot.outputMuted && snapshot.caption
-                ? "line-clamp-3 text-foreground"
-                : "truncate",
-            )}
-            aria-live="polite"
-          >
-            {detail}
-          </p>
-          <CallControls />
-        </motion.section>
-      ) : null}
-    </AnimatePresence>
-  );
-}
-
 /** Composer action: start a voice chat in this task, or end the one running here. */
 export function VoiceCallButton({
   session,
@@ -167,9 +124,16 @@ export function VoiceCallButton({
 }) {
   const { snapshot } = useVoiceCall();
   const shortcut = useShortcutKeys("task.voice.toggle");
+  const model = useVoiceModel();
   if (!supported || !connectionID) return null;
   const here = snapshot.sessionID === session.id;
   const busyElsewhere = snapshot.phase !== "idle" && !here;
+  const unavailableReason =
+    snapshot.phase === "idle" && model.status === "unavailable"
+      ? model.kind === "needs-key"
+        ? `${model.reason} Add one in Settings → Providers.`
+        : model.reason
+      : null;
   const label =
     snapshot.phase === "idle"
       ? "Start voice chat"
@@ -195,7 +159,14 @@ export function VoiceCallButton({
             aria-label={label}
             aria-pressed={here && snapshot.phase !== "idle"}
             aria-keyshortcuts={shortcut.join("+")}
-            className={cn(here && snapshot.phase !== "idle" && "text-destructive")}
+            // Focusable, so the tooltip can say why voice chat can't start.
+            disabled={unavailableReason !== null}
+            focusableWhenDisabled
+            aria-description={unavailableReason ?? undefined}
+            className={cn(
+              "aria-disabled:opacity-50",
+              here && snapshot.phase !== "idle" && "text-destructive",
+            )}
             onClick={() => {
               if (busyElsewhere) voiceCall.openSession();
               else if (snapshot.phase === "idle") void voiceCall.start(target);
@@ -213,8 +184,9 @@ export function VoiceCallButton({
           <Mic aria-hidden="true" />
         )}
       </TooltipTrigger>
-      <TooltipContent>
-        {busyElsewhere ? `${label} · Open it` : `${label} · ${formatShortcut(shortcut)}`}
+      <TooltipContent className={cn(unavailableReason && "leading-snug")}>
+        {unavailableReason ??
+          (busyElsewhere ? `${label} · Open it` : `${label} · ${formatShortcut(shortcut)}`)}
       </TooltipContent>
     </Tooltip>
   );
@@ -232,7 +204,7 @@ export function VoiceCallPill({ currentSessionID }: { currentSessionID: string |
           className="fixed right-4 bottom-4 z-50 flex max-w-sm items-center gap-2 rounded-full border border-border bg-popover py-1 pr-1.5 pl-1.5 text-popover-foreground shadow-md"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 8 }}
+          exit={{ opacity: 0, y: 8, transition: spring.moderate.exit }}
           transition={spring.moderate}
           role="region"
           aria-label="Voice chat"

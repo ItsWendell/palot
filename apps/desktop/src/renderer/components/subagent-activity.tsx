@@ -5,16 +5,19 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  CornerDownRight,
   CircleHelp,
   LoaderCircle,
-  SendToBack,
   Square,
 } from "lucide-react";
 import { useAtomValue } from "jotai";
-import { memo, useMemo, useState } from "react";
+import { createContext, memo, useContext, useMemo, useState } from "react";
 import type { PalotMessage, PalotRunningShell, PalotSession } from "../../shared";
-import { belongsToSession, runtimeAtom, type SessionExecutionState } from "../atoms/workspace";
+import {
+  belongsToSession,
+  runtimeAtom,
+  sessionsWithRunningDescendants,
+  type SessionExecutionState,
+} from "../atoms/workspace";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import { useSessionActivity } from "../hooks/use-session-activity";
 import { useChildSessions, useSessionCatalog } from "../hooks/use-session-catalog";
@@ -22,9 +25,11 @@ import { useSessionFamilyRequestViews } from "../hooks/use-session-requests";
 import { cn } from "../lib/cn";
 import { writeClipboardText } from "../lib/clipboard";
 import { canFetchOpenCode } from "../lib/opencode-runtime-query";
+import { subagentShowsBackgroundChip } from "../lib/subagent-background";
 import { projectToolExecution, type SubagentExecution } from "../lib/tool-executions";
 import {
   type TranscriptBackgroundFacts,
+  type TranscriptBackgroundResponseSource,
   type TranscriptBackgroundToolSource,
   type TurnActivityGroup,
 } from "../lib/turn-projection";
@@ -72,10 +77,88 @@ export function sessionPresentation(session: PalotSession | undefined) {
   };
 }
 
-function statusPresentation(
+/** One `<subagent>` report a child sent its parent. */
+export interface SubagentReport {
+  id: string;
+  childID: string;
+  agent: string | null;
+  description: string | null;
+  text: string;
+  status: "running" | "completed" | "failed" | "interrupted";
+  /** It went idle with background work of its own still running, so it is not finished. */
+  backgroundWork: boolean;
+  /** That work is only its own subagents. */
+  waitingOnSubagents: boolean;
+  createdAt: number;
+}
+
+/**
+ * A child's reports in the order they arrived. OpenCode 2.2.7 reports a background child once;
+ * later releases report every time the child goes idle, so one child can have several.
+ */
+export function subagentReportsByChild(
+  sources: readonly TranscriptBackgroundResponseSource[],
+): Map<string, SubagentReport[]> {
+  const reports = new Map<string, SubagentReport[]>();
+  for (const { part, messageCreatedAt } of sources) {
+    const data = record(part.data);
+    const childID = string(data.childID);
+    if (!childID) continue;
+    const list = reports.get(childID) ?? [];
+    list.push({
+      id: part.id ?? `${childID}:${messageCreatedAt}`,
+      childID,
+      agent: string(data.agent),
+      description: part.name ?? null,
+      text: part.text?.trim() ?? "",
+      status: part.status ?? "completed",
+      backgroundWork: data.backgroundWork === true,
+      waitingOnSubagents: data.waitingOnSubagents === true,
+      createdAt: messageCreatedAt,
+    });
+    reports.set(childID, list);
+  }
+  for (const list of reports.values()) list.sort((left, right) => left.createdAt - right.createdAt);
+  return reports;
+}
+
+const NO_REPORTS: ReadonlyMap<string, SubagentReport[]> = new Map();
+const NO_SESSIONS: PalotSession[] = [];
+
+/** Every report in the loaded transcript, by child, so a launch row can show its child's result. */
+export const SubagentReportsContext =
+  createContext<ReadonlyMap<string, SubagentReport[]>>(NO_REPORTS);
+
+type Fallback = SubagentExecution["status"] | TurnActivityGroup["status"];
+
+const WAITING_FOR_SUBAGENT = {
+  label: "Waiting for subagent",
+  running: true,
+  failed: false,
+} as const;
+const WAITING_FOR_BACKGROUND_WORK = {
+  label: "Waiting for background work",
+  running: true,
+  failed: false,
+} as const;
+const WAITING_LABELS: ReadonlySet<string> = new Set([
+  WAITING_FOR_SUBAGENT.label,
+  WAITING_FOR_BACKGROUND_WORK.label,
+]);
+
+/**
+ * A subagent's state: the child session's own execution state first, then its own work, then
+ * its latest report, then the call's status. An idle subagent is waiting, not finished, while
+ * a subagent it started runs (`runningDescendant`, which includes one waiting for the user's
+ * answer) or while its latest report lists background work still running: that work wakes it,
+ * and it reports again.
+ */
+export function statusPresentation(
   state: SessionExecutionState | undefined,
-  fallback: SubagentExecution["status"] | TurnActivityGroup["status"],
-) {
+  fallback: Fallback,
+  report: SubagentReport | null = null,
+  runningDescendant = false,
+): { label: string; running: boolean; failed: boolean } {
   if (state?.status === "running") {
     return { label: "Running", running: true, failed: false };
   }
@@ -85,16 +168,19 @@ function statusPresentation(
   if (state?.status === "interrupted") {
     return { label: "Stopped", running: false, failed: false };
   }
+  if (runningDescendant || report?.waitingOnSubagents) return WAITING_FOR_SUBAGENT;
+  if (report?.backgroundWork) return WAITING_FOR_BACKGROUND_WORK;
   if (state?.status === "succeeded" || state?.status === "inactive") {
     return { label: "Finished", running: false, failed: false };
   }
-  if (fallback === "running" || fallback === "pending") {
+  const status = report?.status ?? fallback;
+  if (status === "running" || status === "pending") {
     return { label: "Running", running: true, failed: false };
   }
-  if (fallback === "failed" || fallback === "error") {
+  if (status === "failed" || status === "error") {
     return { label: "Failed", running: false, failed: true };
   }
-  if (fallback === "interrupted") return { label: "Stopped", running: false, failed: false };
+  if (status === "interrupted") return { label: "Stopped", running: false, failed: false };
   return { label: "Finished", running: false, failed: false };
 }
 
@@ -133,25 +219,111 @@ export function SubagentLaunch({
   group: TurnActivityGroup;
   parentSessionID: string;
 }) {
-  const { openSession } = usePalotNavigation();
   const sessions = useSessionCatalog();
-  const states = useSessionActivity().data?.execution ?? new Map();
   const view = useMemo(() => subagentExecution(group), [group]);
   const session = view ? resolveSubagentSession(view, sessions, parentSessionID) : undefined;
-  const childID = view?.sessionID ?? session?.id ?? null;
-  const needsInput = useSessionFamilyRequestViews(childID).length > 0;
+  const runtime = useAtomValue(runtimeAtom);
+  if (!view) return null;
   const presentation = sessionPresentation(session);
+  return (
+    <SubagentRow
+      childID={view.sessionID ?? session?.id ?? null}
+      rowID={group.id}
+      agent={titleCase(view.agent || presentation.agent)}
+      description={view.description || presentation.description}
+      startedAt={view.startedAt}
+      // A background call returns before its child ends, so its own duration says nothing.
+      callDurationMs={view.background ? null : view.durationMs}
+      fallback={view.background ? "completed" : view.status}
+      background={subagentShowsBackgroundChip(view, runtime?.version)}
+    />
+  );
+}
+
+/**
+ * How deep nested subagents show under a row. OpenCode's `experimental.subagent_depth` bounds
+ * real families; this bounds the rows even if the data had a cycle or a deeper chain.
+ */
+export const MAX_NESTED_SUBAGENT_DEPTH = 4;
+
+function outcomeFallback(session: PalotSession): Fallback {
+  if (session.outcome === "failed") return "failed";
+  if (session.outcome === "interrupted") return "interrupted";
+  return "completed";
+}
+
+/** A subagent's own subagent, shown under its parent's row with the same row. */
+function NestedSubagentRow({ session, depth }: { session: PalotSession; depth: number }) {
+  const presentation = sessionPresentation(session);
+  return (
+    <SubagentRow
+      childID={session.id}
+      rowID={session.id}
+      agent={presentation.agent}
+      description={presentation.description}
+      startedAt={session.createdAt}
+      callDurationMs={null}
+      fallback={outcomeFallback(session)}
+      background={false}
+      depth={depth}
+    />
+  );
+}
+
+/**
+ * One subagent: what it is, its live state, Stop while it runs, and its latest report on
+ * expand, with earlier reports below it. Subagents it started show indented under it, open
+ * while it runs and folded behind a count once it has finished.
+ */
+function SubagentRow({
+  childID,
+  rowID,
+  agent,
+  description,
+  startedAt,
+  callDurationMs,
+  fallback,
+  background,
+  depth = 0,
+}: {
+  childID: string | null;
+  rowID: string;
+  agent: string;
+  description: string;
+  startedAt: number | null;
+  callDurationMs: number | null;
+  fallback: Fallback;
+  background: boolean;
+  depth?: number;
+}) {
+  const { openSession } = usePalotNavigation();
+  const states = useSessionActivity().data?.execution ?? new Map();
+  const reports = useContext(SubagentReportsContext);
+  const childReports = (childID ? reports.get(childID) : undefined) ?? [];
+  const latest = childReports.at(-1) ?? null;
+  const needsInput = useSessionFamilyRequestViews(childID).length > 0;
   const state = childID ? states.get(childID) : undefined;
-  const status = statusPresentation(state, view?.status ?? group.status);
+  const runningDescendant = useMemo(
+    () => (childID ? sessionsWithRunningDescendants(states).has(childID) : false),
+    [childID, states],
+  );
+  const status = statusPresentation(state, fallback, latest, runningDescendant);
   const runtime = useAtomValue(runtimeAtom);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
-  if (!view) return null;
-  const agent = titleCase(view.agent || presentation.agent);
-  const description = view.description || presentation.description;
+  const [open, setOpen] = useState(false);
+  const nestedParent = depth + 1 < MAX_NESTED_SUBAGENT_DEPTH ? childID : null;
+  const children = useChildSessions(nestedParent);
+  // `useChildSessions(null)` lists root sessions; a row without a child has no subagents.
+  const nested = nestedParent ? children : NO_SESSIONS;
+  const [nestedChoice, setNestedOpen] = useState<boolean | null>(null);
+  const nestedOpen = nestedChoice ?? status.running;
+  const nestedLabel = `${nested.length} ${nested.length === 1 ? "subagent" : "subagents"}`;
   const statusLabel = needsInput ? "needs input" : status.label.toLowerCase();
-  const visibleStatus = needsInput || status.failed || status.label === "Stopped";
+  const visibleStatus =
+    needsInput || status.failed || status.label === "Stopped" || WAITING_LABELS.has(status.label);
   const connectionID = runtime && canFetchOpenCode(runtime) ? runtime.connectionID : null;
+  const completedAt = state?.completedAt ?? (status.running ? null : (latest?.createdAt ?? null));
   const stop = async () => {
     if (!childID || !connectionID || stopping) return;
     setStopping(true);
@@ -166,81 +338,129 @@ export function SubagentLaunch({
   };
 
   return (
-    <div className="my-1 min-w-0">
-      <div className="flex min-w-0 items-center rounded-md border border-border/60 bg-muted/15 transition-colors hover:bg-muted/30">
-        <button
-          type="button"
-          disabled={!childID}
-          onClick={() => {
-            if (childID) void openSession(childID);
-          }}
-          className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md pr-2 pl-2.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-80"
-          aria-label={`${agent} subagent ${statusLabel}: ${description}`}
-          data-palot-subagent-launch={childID ?? group.id}
-        >
-          <BrainCircuit
-            className={cn(
-              "size-3.5 shrink-0",
-              status.failed ? "text-destructive" : "text-muted-foreground",
-            )}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1 truncate">
-            <span
-              className={cn(
-                "font-medium",
-                needsInput
-                  ? "text-warning"
-                  : status.failed
-                    ? "text-destructive"
-                    : "text-foreground/85",
-              )}
-            >
-              {agent}
-              {visibleStatus ? ` ${statusLabel}` : null}
-            </span>
-            <span className="text-muted-foreground"> · {description}</span>
-          </span>
-          {view.background ? (
-            <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-micro leading-none text-muted-foreground">
-              background
-            </span>
-          ) : null}
-          <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-muted-foreground/70">
-            {needsInput ? (
-              <CircleHelp className="size-3.5 text-warning" aria-hidden="true" />
-            ) : status.running ? (
-              <PulseDot className="size-1.5" aria-hidden="true" />
-            ) : null}
-            <ElapsedTime
-              startedAt={state?.startedAt ?? view.startedAt}
-              completedAt={state?.completedAt ?? null}
-              running={status.running}
-              fallbackDurationMs={view.background ? null : view.durationMs}
-              titlePrefix={status.running ? "Running for" : "Ran for"}
-            />
-            {childID ? <ChevronRight className="size-3.5" aria-hidden="true" /> : null}
-          </span>
-        </button>
-        {status.running && childID ? (
-          <Button
+    <Collapsible open={open} onOpenChange={setOpen} className="my-1 min-w-0">
+      <div
+        className={cn(
+          "min-w-0 rounded-md border border-border/60 bg-muted/15",
+          open && "bg-muted/20",
+        )}
+      >
+        <div className="flex min-w-0 items-center rounded-md transition-colors hover:bg-muted/30">
+          <button
             type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="mr-1 shrink-0"
-            aria-label={`Stop ${agent} subagent`}
-            disabled={!connectionID || stopping}
-            onClick={() => void stop()}
+            disabled={!childID}
+            onClick={() => {
+              if (childID) void openSession(childID);
+            }}
+            className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md pr-2 pl-2.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-80"
+            aria-label={`${agent} subagent ${statusLabel}: ${description}`}
+            data-palot-subagent-launch={childID ?? rowID}
+            data-palot-subagent-state={status.running ? "running" : status.label.toLowerCase()}
           >
-            {stopping ? (
-              <LoaderCircle
-                className="animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
+            <BrainCircuit
+              className={cn(
+                "size-3.5 shrink-0",
+                status.failed ? "text-destructive" : "text-muted-foreground",
+              )}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1 truncate">
+              <span
+                className={cn(
+                  "font-medium",
+                  needsInput
+                    ? "text-warning"
+                    : status.failed
+                      ? "text-destructive"
+                      : "text-foreground/85",
+                )}
+              >
+                {agent}
+                {visibleStatus ? ` ${statusLabel}` : null}
+              </span>
+              <span className="text-muted-foreground"> · {description}</span>
+            </span>
+            {background ? (
+              <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-micro leading-none text-muted-foreground">
+                background
+              </span>
+            ) : null}
+            <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-muted-foreground/70">
+              {needsInput ? (
+                <CircleHelp className="size-3.5 text-warning" aria-hidden="true" />
+              ) : status.running ? (
+                <PulseDot className="size-1.5" aria-hidden="true" />
+              ) : null}
+              <ElapsedTime
+                startedAt={state?.startedAt ?? startedAt}
+                completedAt={completedAt}
+                running={status.running}
+                fallbackDurationMs={callDurationMs}
+                titlePrefix={status.running ? "Running for" : "Ran for"}
               />
-            ) : (
-              <Square aria-hidden="true" />
-            )}
-          </Button>
+              {childID ? <ChevronRight className="size-3.5" aria-hidden="true" /> : null}
+            </span>
+          </button>
+          {status.running && childID ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="mr-1 shrink-0"
+              aria-label={`Stop ${agent} subagent`}
+              disabled={!connectionID || stopping}
+              onClick={() => void stop()}
+            >
+              {stopping ? (
+                <LoaderCircle className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Square aria-hidden="true" />
+              )}
+            </Button>
+          ) : null}
+          {nested.length > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="mr-1 shrink-0 text-muted-foreground"
+              aria-expanded={nestedOpen}
+              aria-label={`${nestedOpen ? "Hide" : "Show"} ${nestedLabel} under ${agent}`}
+              onClick={() => setNestedOpen(!nestedOpen)}
+            >
+              {nestedLabel}
+              {nestedOpen ? (
+                <ChevronDown data-icon="inline-end" aria-hidden="true" />
+              ) : (
+                <ChevronRight data-icon="inline-end" aria-hidden="true" />
+              )}
+            </Button>
+          ) : null}
+          {latest ? (
+            <CollapsibleTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="mr-1 shrink-0"
+                  aria-label={`${open ? "Hide" : "Show"} ${agent} result`}
+                />
+              }
+            >
+              {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+            </CollapsibleTrigger>
+          ) : null}
+        </div>
+        {latest ? (
+          <CollapsibleContent className="border-t border-border/50 px-3 py-3">
+            <SubagentReportBody
+              agent={agent}
+              childID={childID}
+              report={latest}
+              earlier={childReports.slice(0, -1)}
+            />
+          </CollapsibleContent>
         ) : null}
       </div>
       {stopError ? (
@@ -248,121 +468,122 @@ export function SubagentLaunch({
           {stopError}
         </p>
       ) : null}
-    </div>
-  );
-}
-
-export function SubagentResponse({ group }: { group: TurnActivityGroup }) {
-  const { openSession } = usePalotNavigation();
-  const sessions = useSessionCatalog();
-  const states = useSessionActivity().data?.execution ?? new Map();
-  const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const part = group.entries[0]?.part;
-  const data = record(part?.data);
-  const childID = string(data.childID);
-  const session = childID ? sessions.find((candidate) => candidate.id === childID) : undefined;
-  const presentation = sessionPresentation(session);
-  const agent = titleCase(string(data.agent) ?? presentation.agent);
-  const description = part?.name ?? presentation.description ?? group.title;
-  const response = part?.text?.trim() ?? "";
-  const state = childID ? states.get(childID) : undefined;
-  const status = statusPresentation(state, group.status);
-  if (!part) return null;
-  const returnedAt = group.entries[0]?.message.createdAt ?? null;
-  const sessionDuration =
-    session && returnedAt !== null ? Math.max(0, returnedAt - session.createdAt) : null;
-
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="my-1 min-w-0 rounded-md border border-border/60 bg-muted/15"
-      data-palot-subagent-response={childID ?? "unknown"}
-    >
-      {/* One quiet line, paired with the launch row; the task link lives in the expanded body. */}
-      <CollapsibleTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`${agent} ${status.failed ? "failed" : "returned"}: ${description}`}
-            className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md pr-2 pl-2.5 text-left text-xs outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          />
-        }
-      >
-        <CornerDownRight
-          className={cn(
-            "size-3.5 shrink-0",
-            status.failed ? "text-destructive" : "text-muted-foreground",
-          )}
-          aria-hidden="true"
-        />
-        <span className="min-w-0 flex-1 truncate">
-          <span
-            className={cn("font-medium", status.failed ? "text-destructive" : "text-foreground/85")}
-          >
-            {agent} {status.failed ? "failed" : "returned"}
-          </span>
-          <span className="text-muted-foreground"> · {description}</span>
-        </span>
-        <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-muted-foreground/70">
-          <ElapsedTime
-            startedAt={state?.startedAt ?? null}
-            completedAt={state?.completedAt ?? null}
-            running={status.running}
-            fallbackDurationMs={sessionDuration}
-            titlePrefix="Returned after"
-          />
-          {open ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          )}
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="border-t border-border/50 px-3 py-3">
-        {response ? (
-          <BoundedScroll label={`${agent} response`} viewportClassName="max-h-[32rem]">
-            <MarkdownContent value={response} className="pr-3 text-xs/relaxed text-foreground/80" />
-          </BoundedScroll>
-        ) : (
-          <p className="m-0 text-xs text-muted-foreground">No response content was provided.</p>
-        )}
-        {response || childID ? (
-          <div className="mt-3 flex items-center gap-1 border-t border-border/40 pt-2.5">
-            {childID ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                aria-label={`Open ${agent} subagent task`}
-                onClick={() => void openSession(childID)}
-              >
-                <ArrowRight data-icon="inline-start" aria-hidden="true" />
-                Open task
-              </Button>
-            ) : null}
-            {response ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => {
-                  void writeClipboardText(response);
-                  setCopied(true);
-                }}
-              >
-                <Copy data-icon="inline-start" aria-hidden="true" />
-                {copied ? "Copied" : "Copy response"}
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-      </CollapsibleContent>
+      {nested.length > 0 && nestedOpen ? (
+        <div
+          role="group"
+          aria-label={`Subagents of ${agent}`}
+          className="ml-3 border-l border-border/60 pl-2"
+          data-palot-nested-subagents={childID ?? rowID}
+        >
+          {nested.map((session) => (
+            <NestedSubagentRow key={session.id} session={session} depth={depth + 1} />
+          ))}
+        </div>
+      ) : null}
     </Collapsible>
   );
 }
 
+function reportTime(createdAt: number): string {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(
+    createdAt,
+  );
+}
+
+function reportOutcome(report: SubagentReport): string {
+  if (report.status === "failed") return "Failed";
+  if (report.status === "interrupted") return "Stopped";
+  return "Reported";
+}
+
+/** The latest report as the result; earlier reports from the same child fold under it. */
+function SubagentReportBody({
+  agent,
+  childID,
+  report,
+  earlier,
+}: {
+  agent: string;
+  childID: string | null;
+  report: SubagentReport;
+  earlier: SubagentReport[];
+}) {
+  const { openSession } = usePalotNavigation();
+  const [copied, setCopied] = useState(false);
+  return (
+    <div data-palot-subagent-result={childID ?? report.id}>
+      <ReportText agent={agent} report={report} />
+      <div className="mt-3 flex items-center gap-1 border-t border-border/40 pt-2.5">
+        {childID ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            aria-label={`Open ${agent} subagent task`}
+            onClick={() => void openSession(childID)}
+          >
+            <ArrowRight data-icon="inline-start" aria-hidden="true" />
+            Open task
+          </Button>
+        ) : null}
+        {report.text ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              void writeClipboardText(report.text);
+              setCopied(true);
+            }}
+          >
+            <Copy data-icon="inline-start" aria-hidden="true" />
+            {copied ? "Copied" : "Copy response"}
+          </Button>
+        ) : null}
+      </div>
+      {earlier.length > 0 ? (
+        <Collapsible className="mt-2 border-t border-border/40 pt-2">
+          <CollapsibleTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground aria-expanded:bg-transparent"
+              />
+            }
+          >
+            <ChevronRight data-icon="inline-start" aria-hidden="true" />
+            {earlier.length} earlier {earlier.length === 1 ? "report" : "reports"}
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <ol className="m-0 flex list-none flex-col gap-3 p-0 pt-2">
+              {earlier.toReversed().map((item) => (
+                <li key={item.id} className="min-w-0">
+                  <p className="m-0 mb-1 text-micro text-muted-foreground">
+                    {reportOutcome(item)} at {reportTime(item.createdAt)}
+                  </p>
+                  <ReportText agent={agent} report={item} />
+                </li>
+              ))}
+            </ol>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
+    </div>
+  );
+}
+
+function ReportText({ agent, report }: { agent: string; report: SubagentReport }) {
+  if (!report.text) {
+    return <p className="m-0 text-xs text-muted-foreground">No response content was provided.</p>;
+  }
+  return (
+    <BoundedScroll label={`${agent} response`} viewportClassName="max-h-[32rem]">
+      <MarkdownContent value={report.text} className="pr-3 text-xs/relaxed text-foreground/80" />
+    </BoundedScroll>
+  );
+}
 export interface SubagentWorkItem {
   kind: "subagent";
   id: string;
@@ -370,7 +591,14 @@ export interface SubagentWorkItem {
   description: string;
   startedAt: number;
   fallbackStatus: SubagentExecution["status"] | TurnActivityGroup["status"];
+  /** The parent does not wait for it, so it never blocks a steer. */
   background: boolean;
+  /** For the "Background" label; see `subagentShowsBackgroundChip`. */
+  requestedBackground?: boolean;
+  launchOnly?: boolean;
+  /** A subagent's subagent: how many levels below the task's own subagents. */
+  depth?: number;
+  parentID?: string;
 }
 
 export interface ShellWorkItem {
@@ -401,6 +629,8 @@ function menuItems(
       startedAt: source.part.time?.created ?? source.messageCreatedAt,
       fallbackStatus: view.status,
       background: view.background,
+      requestedBackground: view.requestedBackground,
+      launchOnly: view.launchOnly,
     });
   }
   for (const source of background.subagentResponses) {
@@ -420,7 +650,10 @@ function menuItems(
         part.status === "running" || part.status === "failed" || part.status === "interrupted"
           ? part.status
           : "completed",
-      background: false,
+      // Only a child the parent did not wait for reports back, so its later runs never block.
+      background: true,
+      requestedBackground: existing?.requestedBackground ?? false,
+      launchOnly: existing?.launchOnly ?? false,
     });
   }
   for (const session of sessions) {
@@ -433,6 +666,8 @@ function menuItems(
       startedAt: session.createdAt,
       fallbackStatus: "completed",
       background: false,
+      requestedBackground: false,
+      launchOnly: false,
     });
   }
   return [...items.values()].toSorted((left, right) => left.startedAt - right.startedAt);
@@ -520,16 +755,77 @@ export function projectBackgroundWork(input: {
     input.sessionID,
     input.states,
   );
-  return [
-    ...shells.map((item) => ({ ...item, kind: "shell" as const })),
-    ...subagents
-      .filter((item) => input.states.get(item.id)?.status === "running")
-      .map((item) => ({
-        ...item,
-        kind: "subagent" as const,
-        startedAt: input.states.get(item.id)?.startedAt ?? item.startedAt,
-      })),
-  ].toSorted((left, right) => left.startedAt - right.startedAt);
+  const running = subagents
+    .filter((item) => input.states.get(item.id)?.status === "running")
+    .map((item) => ({
+      ...item,
+      kind: "subagent" as const,
+      startedAt: input.states.get(item.id)?.startedAt ?? item.startedAt,
+    }));
+  const top = [...shells.map((item) => ({ ...item, kind: "shell" as const })), ...running];
+  return withNestedSubagents(
+    top.toSorted((left, right) => left.startedAt - right.startedAt),
+    input,
+  );
+}
+
+/**
+ * Running subagents of subagents, each right after the row it belongs to and one level deeper.
+ * A nested subagent whose parent is not listed (the parent is idle) is listed at the top level.
+ */
+function withNestedSubagents(
+  items: BackgroundWorkItem[],
+  input: {
+    sessionID: string;
+    sessions: PalotSession[];
+    states: Map<string, SessionExecutionState>;
+  },
+): BackgroundWorkItem[] {
+  const listed = new Set(items.map((item) => item.id));
+  const nested = new Map<string, SubagentWorkItem[]>();
+  const orphans: SubagentWorkItem[] = [];
+  for (const [id, state] of input.states) {
+    if (state.status !== "running" || listed.has(id) || id === input.sessionID) continue;
+    if (!state.parentID || state.parentID === input.sessionID) continue;
+    if (!belongsToSession(input.states, id, input.sessionID)) continue;
+    const session = input.sessions.find((candidate) => candidate.id === id);
+    const presentation = sessionPresentation(session);
+    const item: SubagentWorkItem = {
+      kind: "subagent",
+      id,
+      agent: presentation.agent,
+      description: presentation.description,
+      startedAt: state.startedAt ?? session?.createdAt ?? 0,
+      fallbackStatus: "running",
+      // The task's own steer never waits behind a subagent's subagent.
+      background: true,
+      parentID: state.parentID,
+    };
+    const siblings = nested.get(state.parentID) ?? [];
+    siblings.push(item);
+    nested.set(state.parentID, siblings);
+  }
+  const placed = new Set<string>();
+  const result: BackgroundWorkItem[] = [];
+  const place = (item: BackgroundWorkItem, depth: number) => {
+    if (placed.has(item.id)) return;
+    placed.add(item.id);
+    result.push(item.kind === "subagent" && depth > 0 ? { ...item, depth } : item);
+    if (depth + 1 >= MAX_NESTED_SUBAGENT_DEPTH) return;
+    for (const child of (nested.get(item.id) ?? []).toSorted(
+      (left, right) => left.startedAt - right.startedAt,
+    )) {
+      place(child, depth + 1);
+    }
+  };
+  for (const item of items) place(item, 0);
+  for (const siblings of nested.values()) {
+    for (const item of siblings) if (!placed.has(item.id)) orphans.push(item);
+  }
+  for (const item of orphans.toSorted((left, right) => left.startedAt - right.startedAt)) {
+    place(item, 0);
+  }
+  return result;
 }
 
 export const SubagentFooterControl = memo(function SubagentFooterControl({
@@ -586,11 +882,18 @@ function SubagentWorkList({
   onClose(): void;
 }) {
   const states = useSessionActivity().data?.execution ?? new Map();
+  const parentsOfRunning = sessionsWithRunningDescendants(states);
 
   return (
     <div className="flex max-h-72 flex-col overflow-y-auto">
       {subagents.map((item) => (
-        <SubagentWorkRow key={item.id} item={item} state={states.get(item.id)} onClose={onClose} />
+        <SubagentWorkRow
+          key={item.id}
+          item={item}
+          state={states.get(item.id)}
+          runningDescendant={parentsOfRunning.has(item.id)}
+          onClose={onClose}
+        />
       ))}
     </div>
   );
@@ -599,19 +902,27 @@ function SubagentWorkList({
 function SubagentWorkRow({
   item,
   state,
+  runningDescendant,
   onClose,
 }: {
   item: SubagentWorkItem;
   state: SessionExecutionState | undefined;
+  runningDescendant: boolean;
   onClose(): void;
 }) {
   const { openSession } = usePalotNavigation();
+  const runtime = useAtomValue(runtimeAtom);
   const needsInput = useSessionFamilyRequestViews(item.id).length > 0;
-  const status = statusPresentation(state, item.fallbackStatus);
+  const status = statusPresentation(state, item.fallbackStatus, null, runningDescendant);
+  const background = subagentShowsBackgroundChip(item, runtime?.version);
   return (
     <button
       type="button"
-      className="flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+      className={cn(
+        "flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring",
+        item.depth && "rounded-l-none border-l border-border/60",
+      )}
+      style={item.depth ? { marginInlineStart: `${item.depth * 0.75}rem` } : undefined}
       onClick={() => {
         onClose();
         void openSession(item.id);
@@ -626,8 +937,7 @@ function SubagentWorkRow({
             needsInput ? "text-warning" : "text-muted-foreground",
           )}
         >
-          {item.agent} ·{" "}
-          {needsInput ? "Needs input" : item.background ? "Background" : status.label}
+          {item.agent} · {needsInput ? "Needs input" : background ? "Background" : status.label}
         </span>
       </span>
       <span className="flex shrink-0 items-center gap-1 tabular-nums text-muted-foreground/70">
@@ -646,73 +956,6 @@ function SubagentWorkRow({
     </button>
   );
 }
-
-function describeBackgroundableWork(items: BackgroundWorkItem[]): string {
-  const shells = items.filter((item) => item.kind === "shell").length;
-  const subagents = items.length - shells;
-  return [
-    shells > 0 ? `${shells} ${shells === 1 ? "shell command" : "shell commands"}` : null,
-    subagents > 0 ? `${subagents} ${subagents === 1 ? "subagent" : "subagents"}` : null,
-  ]
-    .filter((label): label is string => label !== null)
-    .join(" and ");
-}
-
-export const BackgroundWorkPrompt = memo(function BackgroundWorkPrompt({
-  items,
-  backgrounding,
-  retry,
-  error,
-  onBackground,
-}: {
-  items: BackgroundWorkItem[];
-  backgrounding: boolean;
-  retry: boolean;
-  error: string | null;
-  onBackground(): void;
-}) {
-  if (items.length === 0) return null;
-  const singleItem = items.length === 1 ? items[0] : null;
-  const blocker = singleItem
-    ? singleItem.kind === "shell"
-      ? singleItem.command === "Shell command"
-        ? "The shell command is"
-        : `The shell command '${singleItem.command}' is`
-      : `The subagent '${singleItem.description}' is`
-    : `${describeBackgroundableWork(items)} are`;
-
-  return (
-    <div
-      className="relative z-10 mb-2 flex min-h-9 min-w-0 items-center gap-2 rounded-xl border border-border/70 bg-card/96 px-2.5 py-1.5 shadow-lg backdrop-blur-sm"
-      data-palot-background-work-prompt
-    >
-      <span className="min-w-0 flex-1 text-xs font-medium text-foreground/85">
-        {blocker} blocking your message from steering this turn.
-        {error ? <span className="ml-1 text-destructive">{error}</span> : null}
-      </span>
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        className="shrink-0"
-        aria-label={
-          retry
-            ? "Retry sending blocking work to background"
-            : "Send blocking work to background so the message can steer this turn"
-        }
-        disabled={backgrounding}
-        onClick={onBackground}
-      >
-        {backgrounding ? (
-          <LoaderCircle data-icon="inline-start" className="animate-spin" aria-hidden="true" />
-        ) : (
-          <SendToBack data-icon="inline-start" aria-hidden="true" />
-        )}
-        {retry ? "Try again" : "Send to background"}
-      </Button>
-    </div>
-  );
-});
 
 /** "Running 1m 20s", "Done in 3m", "Failed after 40s": the subagent's state at a glance. */
 function SubagentDockState({
@@ -757,6 +1000,24 @@ function modelName(model: PalotSession["model"]): string | null {
   return model.variant ? `${model.id} ${model.variant}` : model.id;
 }
 
+/**
+ * The composer's context bar in a subagent task. OpenCode runs a message sent here in the
+ * subagent, then reports the round back to the main task and wakes it.
+ */
+export function SubagentComposerNote() {
+  return (
+    <div
+      className="flex h-6 min-w-0 items-center gap-1 px-1.5 text-meta leading-none text-muted-foreground"
+      data-palot-subagent-composer-note=""
+    >
+      <BrainCircuit className="size-3 shrink-0" aria-hidden="true" />
+      <span className="truncate">
+        Messages go to this subagent; it reports back to the main task
+      </span>
+    </div>
+  );
+}
+
 export function SubagentSessionDock({ session }: { session: PalotSession }) {
   const { openSession } = usePalotNavigation();
   const parentID = session.parentID;
@@ -784,9 +1045,7 @@ export function SubagentSessionDock({ session }: { session: PalotSession }) {
           <span className="flex min-w-0 items-center gap-1 text-micro text-muted-foreground">
             <SubagentDockState session={session} execution={execution} />
             <span className="min-w-0 truncate">
-              {[presentation.description, modelName(session.model), "Read-only session"]
-                .filter(Boolean)
-                .join(" · ")}
+              {[presentation.description, modelName(session.model)].filter(Boolean).join(" · ")}
             </span>
           </span>
         </span>

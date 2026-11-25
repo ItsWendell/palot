@@ -1,11 +1,16 @@
 import type {
   PullRequestChecksSummary,
   PullRequestMergeable,
+  PullRequestMergeState,
   PullRequestReviewDecision,
   PullRequestSearchList,
   PullRequestSnapshot,
   PullRequestState,
 } from "../../shared/source-control-contract";
+import {
+  snapshotReadinessFacts,
+  type PullRequestReadinessFacts,
+} from "../../shared/pull-request-readiness";
 import { SourceControlError } from "./errors";
 
 export interface GitHubRepositoryRef {
@@ -69,10 +74,17 @@ export function parsePullRequestUrl(input: string): GitHubPullRequestRef | null 
 
 const SNAPSHOT_FIELDS = `
   number title url state isDraft mergedAt closedAt updatedAt
-  headRefName baseRefName headRefOid mergeable reviewDecision
+  headRefName baseRefName headRefOid mergeable mergeStateStatus reviewDecision
   author { login }
   repository { nameWithOwner }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
+
+/**
+ * Whether review threads are resolved, for the readiness verdict of linked PRs. One page; a PR
+ * with more threads reports an unknown count unless an open one was seen.
+ */
+export const THREAD_FIELDS =
+  "reviewThreads(first: 100) { pageInfo { hasNextPage } nodes { isResolved } }";
 
 function contextFields(number: number): string {
   return `__typename
@@ -144,7 +156,7 @@ export function pullRequestBatchQuery(targets: PullRequestQueryTarget[]): {
       ? `watch: pullRequest(number: ${target.ref.number}) { ${watchFields(target.ref.number)} }`
       : "";
     return `pr${index}: repository(owner: $o${index}, name: $n${index}) {
-      pullRequest(number: ${target.ref.number}) { ${SNAPSHOT_FIELDS} }
+      pullRequest(number: ${target.ref.number}) { ${SNAPSHOT_FIELDS} ${THREAD_FIELDS} }
       ${watch}
     }`;
   });
@@ -174,7 +186,9 @@ export interface RawSnapshot {
   baseRefName?: string;
   headRefOid?: string | null;
   mergeable?: string | null;
+  mergeStateStatus?: string | null;
   reviewDecision?: string | null;
+  reviewThreads?: RawConnection<{ isResolved?: boolean | null }> | null;
   author?: RawActor | null;
   repository?: { nameWithOwner?: string } | null;
   commits?: {
@@ -284,6 +298,8 @@ export interface PullRequestWatchDetail {
   remarks: PullRequestRemark[];
   /** False when remarks since the watch's watermark may be missing; they wait for a later read. */
   remarksComplete: boolean;
+  /** What the readiness verdict reads. Absent when the host gave too little to judge. */
+  readiness?: PullRequestReadinessFacts;
 }
 
 export interface PullRequestBatchEntry {
@@ -343,7 +359,31 @@ export function toSnapshot(
     updatedAt: time(raw.updatedAt) ?? 0,
     mergedAt: time(raw.mergedAt),
     closedAt: time(raw.closedAt),
+    ...(raw.mergeStateStatus !== undefined
+      ? { mergeState: GITHUB_MERGE_STATES[raw.mergeStateStatus ?? ""] ?? "unknown" }
+      : {}),
+    ...(raw.reviewThreads !== undefined
+      ? { unresolvedThreads: unresolvedThreads(raw.reviewThreads) }
+      : {}),
   };
+}
+
+export const GITHUB_MERGE_STATES: Record<string, PullRequestMergeState> = {
+  CLEAN: "clean",
+  BLOCKED: "blocked",
+  BEHIND: "behind",
+  DIRTY: "dirty",
+  UNSTABLE: "unstable",
+  HAS_HOOKS: "has-hooks",
+  DRAFT: "draft",
+};
+
+function unresolvedThreads(
+  connection: RawConnection<{ isResolved?: boolean | null }> | null,
+): number | null {
+  if (!connection) return null;
+  const open = present(connection.nodes).filter((thread) => thread.isResolved !== true).length;
+  return open === 0 && connection.pageInfo?.hasNextPage ? null : open;
 }
 
 function toWatchPage(raw: RawWatch): PullRequestWatchPage {
@@ -428,6 +468,21 @@ export function buildWatchDetail(
     baseBranch: snapshot.baseBranch,
     remarks: [...unique.values()].sort((left, right) => left.activeAt - right.activeAt),
     remarksComplete: complete.remarks,
+    readiness: {
+      ...snapshotReadinessFacts(snapshot),
+      // The watch reads which checks are required, so it judges the same gate as "passed".
+      ...(checks.size > 0
+        ? {
+            checks: {
+              list: [...checks.values()].map((check) => ({
+                outcome: check.status,
+                required: check.required,
+              })),
+              complete: complete.checks,
+            },
+          }
+        : {}),
+    },
   };
 }
 

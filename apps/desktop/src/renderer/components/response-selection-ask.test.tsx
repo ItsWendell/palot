@@ -40,7 +40,7 @@ function message(input: Pick<PalotMessage, "id" | "type" | "createdAt"> & Partia
 }
 const reply = (id: string, createdAt: number, text: string) =>
   message({ id, type: "assistant", createdAt, content: [{ type: "text", text }] });
-// Chronological projection: every prompt and reply is its own row.
+// Prompt-level projection: each reply shares its row with the prompt it answered.
 const rows = createSessionTranscriptProjector().project({
   messages: [
     message({ id: "msg_u1", type: "user", createdAt: 10, text: "Log design?" }),
@@ -118,8 +118,10 @@ afterEach(() => {
 });
 
 describe("response sources in a chronological projection", () => {
-  it("finds a reply in its own row and the prompt it answered across tool rows", () => {
-    expect(rows.find((row) => row.turn.final?.message.id === "msg_a")?.turn.user).toBeNull();
+  it("finds a reply's row and the prompt it answered across tool steps", () => {
+    expect(rows.find((row) => row.turn.final?.message.id === "msg_b")?.turn.user?.id).toBe(
+      "msg_u2",
+    );
     expect(responseRowIndex(rows, "msg_a")).toBeGreaterThan(-1);
     expect(responsePromptID(rows, "msg_a")).toBe("msg_u1");
     expect(responsePromptID(rows, "msg_b")).toBe("msg_u2");

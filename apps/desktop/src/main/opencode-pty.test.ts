@@ -381,6 +381,29 @@ describe("PtyTransport", () => {
     });
   });
 
+  it("sends a long write as bounded frames in order, without splitting characters", async () => {
+    const socket = fakeSocket();
+    const transport = new PtyTransport(
+      async () => ({ url: "ws://127.0.0.1/terminal", expiresAt: Date.now() + 10_000 }),
+      () => socket,
+    );
+    const sender = fakeSender();
+    const connectionID = await transport.connect(sender, {
+      ...input(),
+      ptyID: "pty_persistent_long",
+      transport: "persistent",
+    });
+    transport.start(sender, connectionID);
+    Object.assign(socket, { readyState: WebSocket.OPEN });
+    const data = "😀".repeat(20_000) + "end";
+    transport.write(sender, connectionID, data, { cols: 80, rows: 24 });
+    const frames = vi.mocked(socket.send).mock.calls.map(([frame]) => frame as Uint8Array);
+    expect(frames.length).toBeGreaterThan(1);
+    for (const frame of frames) expect(frame.byteLength).toBeLessThanOrEqual(64 * 1024);
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    expect(frames.map((frame) => decoder.decode(frame.subarray(5))).join("")).toBe(data);
+  });
+
   it("translates persistent PTY replay frames into terminal output and cursor metadata", async () => {
     const socket = fakeSocket();
     const transport = new PtyTransport(

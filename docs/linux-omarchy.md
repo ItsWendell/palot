@@ -62,6 +62,13 @@ Actions reuse the channel's running instance. Project actions create a task in
 that directory; attachments enter its composer without being submitted.
 `--attach` is repeatable and requires `--project`.
 
+Installed builds also register the `palot://` scheme, so `xdg-open
+'palot://task/<session-id>'` opens that task (Copy link in a task's menu writes one).
+Stable and Nightly both claim the scheme: installing a channel makes it the handler
+(`xdg-mime default`), and after that the most recently started channel receives links. Links name the server profile they
+were copied from; when that profile isn't on this machine Palot opens the task on the
+server that lists it.
+
 ## Optional Omarchy integration
 
 The optional widget is in `apps/desktop/resources/omarchy/palot.tasks`. Copy it to

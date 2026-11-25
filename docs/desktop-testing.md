@@ -105,6 +105,45 @@ bun run test:e2e -- browser-native --keep
 
 Use `--keep` to retain a successful run's artifacts.
 
+### Several scenarios, tiers and retries
+
+```sh
+bun run test:e2e -- smoke onboarding usage
+bun run test:e2e:core                  # bun run test:e2e -- --tier core
+bun run test:e2e -- --tier core --retries 0
+bun run test:e2e:prune -- --dry-run
+```
+
+Several scenario names, or `--tier <name>`, build Palot once and then run the
+scenarios one after another, each in its own runner process and run directory.
+`bun run test:e2e:list` shows each scenario's tier. The `core` tier covers the
+main flows with scenarios that have been stable; CI runs it on Linux. Mark a
+scenario with `tier: "core"` only after it has passed repeatedly.
+
+`--retries <n>` reruns a failed scenario up to `n` more times. It defaults to 1
+for several scenarios and 0 for one. A scenario that passes on a retry is
+reported as `flaky`, not `passed`, and its failed attempt's directory is kept.
+At the end the batch prints one line per scenario (`passed`, `flaky`, or
+`failed` with its kept run directory) and a totals line, and writes the same
+summary to `.local/desktop-e2e/last-run.json` in the primary checkout. It exits
+nonzero only when a scenario failed; Ctrl-C lets the current scenario clean up
+and skips the rest. `--inspect`, `--inspect-on-failure`, `--video`, `--keep`,
+`--visible`, `--profile` and the other tracing and profiling flags work with one
+scenario only.
+
+Each run's isolated home lives in a temporary folder outside the checkout
+(`palot-e2e-home-*` in the system temporary directory), linked from the run
+directory as `home`, and `instance.json` records its path as `home`. Inside the
+checkout, OpenCode would register the checkout as a project as soon as something
+asks about the home folder, and move commit-less tasks into it mid-run. A
+scenario that needs the home inside the run directory sets `homeInsideCheckout`.
+Successful runs remove both; failed runs keep both.
+
+`bun run test:e2e:prune` deletes run directories under the primary checkout's
+`.local/desktop-e2e/` that haven't changed for 14 days (`--days <n>`), along with
+the homes failed runs kept, and prints how many and how much space. `--dry-run`
+only lists them.
+
 ### Preview, review and workbench scenarios
 
 The scenarios below exercise isolated native behavior. Their definitions
@@ -143,7 +182,7 @@ bun run test:e2e -- usage --keep
 ### Browser scenarios
 
 `browser-native` enables Experimental Browser in an isolated Palot profile, attaches the real
-OpenCode 2.2.5 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
+OpenCode 2.4.1 browser plugin, and asks the scripted agent to inspect a loopback HTML fixture.
 It checks the returned snapshot, Lighthouse category scores and JSON/HTML reports, the session
 workbench address bar, rejection of an out-of-root `file://` URL, and tab-URL restoration after
 detach/reattach when the setting changes. Use `--executable` to exercise the packaged Lighthouse
@@ -310,6 +349,14 @@ for the ownership boundary and upstream limitation.
 Performance runs show an inactive, non-focusable window because Chromium throttles hidden or occluded renderers. The report records document visibility and Electron's `BrowserWindow.isFocused()` state, and refuses frame measurement when the document is hidden. Chromium's `document.hasFocus()` is retained separately and must not be read as proof that macOS activated the test app.
 
 Performance measurement also refuses to start while the in-app diagnostics collector, overlay, or React Scan is active. Use those tools to find candidates, then turn them off before retaining a benchmark.
+
+### Performance profiles
+
+Decide whether a change is faster or slower with strobe
+([`apps/desktop/perf/README.md`](../apps/desktop/perf/README.md)). The `perf:*` E2E
+profiles below and `perf:compare` remain for diagnosis and for what strobe does
+not cover: four sessions streaming at once, scroll-anchor and bottom-follow
+geometry, selector statistics, and React Scan attribution.
 
 ### Input responsiveness under streaming
 
@@ -484,7 +531,9 @@ TMPDIR=/tmp/opencode PALOT_TEST_LINUX_ELECTRON=1 bun run --cwd apps/desktop test
 It does not replace or stop installed Palot. Without the opt-in variable, the
 native test is skipped; the process-classification regression tests still run.
 
-Scenarios live in `apps/desktop/test/e2e/scenarios.ts`. Prefer an existing scenario. Add one when a new protocol or UI state cannot be represented by the current set.
+Scenarios live in `apps/desktop/test/e2e/*-scenario.ts` files and are registered
+in `apps/desktop/test/e2e/scenarios.ts`, where some older ones are still defined
+inline. Prefer an existing scenario. Add one when a new protocol or UI state cannot be represented by the current set.
 
 Each scenario declares:
 

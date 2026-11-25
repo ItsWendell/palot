@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import {
   linuxArtifactFormat,
   linuxDistributionIdentity,
   linuxInstallSmokePlan,
+  verifyBundledLinuxDesktopEntry,
   verifyInstalledLinuxDesktopEntry,
   verifyLinuxArtifact,
   verifyLinuxPackageMetadata,
@@ -71,6 +73,7 @@ describe("installed desktop entry validation", () => {
 Name=${identity.productName}
 Exec="${identity.installDirectory}/${identity.executable}" %U
 StartupWMClass=${identity.appId}
+MimeType=x-scheme-handler/palot;
 Actions=NewTask;
 
 [Desktop Action NewTask]
@@ -126,10 +129,54 @@ Exec=${identity.executable} --new-task
     );
   });
 
+  it("rejects an entry that cannot receive palot:// links", () => {
+    expect(() =>
+      verifyInstalledLinuxDesktopEntry(
+        desktop("nightly").replace("MimeType=x-scheme-handler/palot;\n", ""),
+        "nightly",
+      ),
+    ).toThrow("MimeType=x-scheme-handler/palot");
+    expect(() =>
+      verifyInstalledLinuxDesktopEntry(desktop("nightly").replace(" %U", ""), "nightly"),
+    ).toThrow("%U");
+  });
+
   it("rejects a sandbox bypass", () => {
     const entry = desktop("nightly").replace(" %U", " --no-sandbox %U");
     expect(() => verifyInstalledLinuxDesktopEntry(entry, "nightly")).toThrow(
       "disables Chromium sandboxing",
+    );
+  });
+});
+
+describe("bundled desktop entry", () => {
+  const { linuxDesktopEntry } = createRequire(import.meta.url)("./after-pack.cjs") as {
+    linuxDesktopEntry: (entry: {
+      productName: string;
+      appId: string;
+      executable: string;
+      schemes: string[];
+    }) => string;
+  };
+  const entry = (channel: "stable" | "nightly", schemes = ["palot"]) => {
+    const identity = linuxDistributionIdentity(channel);
+    return linuxDesktopEntry({ ...identity, executable: identity.executable, schemes });
+  };
+
+  it.each(["stable", "nightly"] as const)("opens palot:// links in %s", (channel) => {
+    const desktop = entry(channel);
+    const { executable } = linuxDistributionIdentity(channel);
+    expect(desktop).toContain(`\nExec=${executable} --show %U\n`);
+    expect(desktop).toContain("\nMimeType=x-scheme-handler/palot;\n");
+    expect(() => verifyBundledLinuxDesktopEntry(desktop, channel)).not.toThrow();
+  });
+
+  it("rejects the other channel's entry and one without the scheme", () => {
+    expect(() => verifyBundledLinuxDesktopEntry(entry("stable"), "nightly")).toThrow(
+      "wrong channel identity",
+    );
+    expect(() => verifyBundledLinuxDesktopEntry(entry("nightly", []), "nightly")).toThrow(
+      "MimeType",
     );
   });
 });

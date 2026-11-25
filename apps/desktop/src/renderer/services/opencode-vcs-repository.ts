@@ -1,6 +1,6 @@
 import type { LocationRef } from "@opencode/client";
 import { openCodeClient } from "./opencode-client";
-import { openCodeRequestSignal } from "./opencode-request";
+import { openCodeRequestSignal, VCS_INIT_TIMEOUT_MS } from "./opencode-request";
 
 function vcsLocation(location: LocationRef) {
   return {
@@ -29,6 +29,6 @@ export async function initializeOpenCodeGit(
 ): Promise<void> {
   await openCodeClient(connectionID).vcs.init(
     { location: vcsLocation(location), provider: "git" },
-    { signal: openCodeRequestSignal(undefined, 60_000) },
+    { signal: openCodeRequestSignal(undefined, VCS_INIT_TIMEOUT_MS) },
   );
 }

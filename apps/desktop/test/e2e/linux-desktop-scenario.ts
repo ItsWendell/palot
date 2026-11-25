@@ -129,6 +129,16 @@ export const linuxDesktopScenario: Scenario = {
     await theme.click();
     await page.getByRole("option", { name: "macOS", exact: true }).click();
     await expect(theme).toContainText("macOS");
+    // Chromium once kept these sections in the DOM, displayed, but without layout boxes.
+    await expect
+      .poll(() =>
+        page
+          .locator('[data-slot="settings-section"]')
+          .evaluateAll((sections) =>
+            sections.every((section) => section.getBoundingClientRect().height > 0),
+          ),
+      )
+      .toBe(true);
     await expect(page.getByRole("heading", { name: "Color mode", exact: true })).toBeVisible();
     await theme.click();
     await page.getByRole("option", { name: "System", exact: true }).click();

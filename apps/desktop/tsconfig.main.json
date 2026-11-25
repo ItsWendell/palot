@@ -4,5 +4,11 @@
     "lib": ["ES2024"],
     "types": ["node", "electron"]
   },
-  "include": ["src/main/**/*.ts", "src/shared/**/*.ts", "test/tool-eval/**/*.ts"]
+  "include": [
+    "src/main/**/*.ts",
+    "src/shared/**/*.ts",
+    "test/tool-eval/**/*.ts",
+    "test/native-menu-smoke.ts",
+    "test/spellcheck-menu-smoke.ts"
+  ]
 }

@@ -5,3 +5,4 @@
 - Use Vite+ with the pinned Bun toolchain: `vp install/add/remove` for dependencies and existing `bun run` or `vp run` scripts for validation.
 - OpenCode auto-formats matching files after native edits. Finish the planned file edits, then batch validation across all touched files rather than checking after each edit: `vp check --no-fmt <files>` for lint, or `vp check --fix <files>` when lint autofixes are needed. Format shell/CLI edits explicitly; keep final formatting checks, typechecks, and relevant tests as described below.
 - For worktree setup, choosing verification, or attaching debug tools, read [docs/agent-development.md](docs/agent-development.md).
+- Before claiming a performance change (faster, slower or no worse), benchmark it against `main` with strobe: `strobe bench apps/desktop/perf/<area>.bench.ts --base main --head .` (setup in `apps/desktop/perf/README.md`).

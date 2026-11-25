@@ -140,7 +140,7 @@ function CopyGlyph({ copied }: { copied: boolean }) {
   const arrive = reduceMotion
     ? { duration: 0 }
     : { duration: spring.fast.duration, ease: "easeOut" as const };
-  const leave = reduceMotion ? { duration: 0 } : { ...spring.fast.exit, ease: "easeIn" as const };
+  const leave = reduceMotion ? { duration: 0 } : { ...spring.fast.exit, ease: "easeOut" as const };
   return (
     <span className="grid place-items-center *:col-start-1 *:row-start-1">
       <motion.span

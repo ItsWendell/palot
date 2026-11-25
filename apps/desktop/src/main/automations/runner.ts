@@ -15,6 +15,7 @@ import type {
 } from "../../shared";
 import { sessionTriageStore } from "../session-triage-store";
 import { AutomationRepository } from "./repository";
+import { cutHead } from "../../shared/text-cut";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const SETTLE_DELAY_MS = 350;
@@ -744,7 +745,12 @@ export class AutomationRunner {
         )
       ).filter(({ sessionID, inbox }) =>
         sessionID === rootSessionID
-          ? inbox.some((item) => "id" in item && item.id === run?.inboxID)
+          ? inbox.some(
+              (item) =>
+                ("id" in item && item.id === run?.inboxID) ||
+                // A subagent's report waiting to wake the task is part of this run's work.
+                (item.type === "synthetic" && item.time.created >= startedAt),
+            )
           : inbox.some((item) => item.time.created >= startedAt),
       );
       if (activeSessions.length) {
@@ -949,7 +955,7 @@ export class AutomationRunner {
       .join("\n")
       .trim();
     if (!text) return "Scheduled run completed.";
-    return text.length > SUMMARY_LIMIT ? `${text.slice(0, SUMMARY_LIMIT - 1).trimEnd()}…` : text;
+    return text.length > SUMMARY_LIMIT ? `${cutHead(text, SUMMARY_LIMIT - 1).trimEnd()}…` : text;
   }
 
   private finish(

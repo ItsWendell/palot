@@ -7,6 +7,7 @@ import { useSessionTranscript } from "../hooks/use-session-transcript";
 import { createRendererQueryClient } from "../lib/query-client";
 import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router";
 import { Thread } from "./thread";
+import type { ComposerEditorElement } from "../lib/composer-editor-element";
 
 vi.mock("../hooks/use-session-transcript", async (original) => ({
   ...(await original<typeof import("../hooks/use-session-transcript")>()),
@@ -71,7 +72,7 @@ async function renderLoadedThread() {
   });
   const scrollTo = vi.fn();
   viewport.scrollTo = scrollTo as typeof viewport.scrollTo;
-  const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+  const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
   return { viewport, scrollTo, input };
 }
 

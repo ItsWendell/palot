@@ -1,5 +1,6 @@
 import { Play, Volume2 } from "lucide-react";
 import { useAtom, useAtomValue } from "jotai";
+import { settingReset } from "../lib/setting-reset";
 import type { DesktopNotificationDeliveryStatus } from "../../shared";
 import {
   desktopNotificationSettingsAtom,
@@ -61,6 +62,11 @@ export function NotificationSoundSettings({
               key={event.id}
               title={event.label}
               description={event.description}
+              reset={settingReset(
+                choice,
+                notificationSoundPreferencesAtom.defaultValue[event.id],
+                (value) => setPreferences((current) => ({ ...current, [event.id]: value })),
+              )}
               control={
                 <>
                   <Select

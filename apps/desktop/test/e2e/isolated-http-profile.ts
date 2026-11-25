@@ -14,10 +14,15 @@ export async function useIsolatedHttpProfile(page: Page) {
     const before = new Set(profiles.profiles.map((profile) => profile.id));
     const created =
       pairing.mode === "link"
-        ? await api.importOpenCodePairing({
-            link: `${loopback}/auth/connect/${pairing.code}`,
-            allowPlainHttp: true,
-          })
+        ? await api
+            .importOpenCodePairing({
+              link: `${loopback}/auth/connect/${pairing.code}`,
+              allowPlainHttp: true,
+            })
+            .then((result) => {
+              if (!result.ok) throw new Error(result.problem.title);
+              return result.snapshot;
+            })
         : await api.createOpenCodeProfile({
             kind: "remote",
             name: "Browser HTTP fixture",

@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -171,7 +171,11 @@ describe("E2E CLI", () => {
 
   it.each([
     { args: ["--typo"], error: "Unknown option" },
-    { args: ["smoke", "diagnostics"], error: "only one E2E scenario" },
+    { args: ["smoke", "diagnostics", "--keep"], error: "--keep works with one scenario only" },
+    { args: ["--tier", "core", "--inspect"], error: "--inspect works with one scenario only" },
+    { args: ["--tier", "nightly"], error: "Unknown E2E tier" },
+    { args: ["smoke", "--retries", "once"], error: "whole number" },
+    { args: ["smoke", "--retries", "1", "--inspect"], error: "cannot be combined with --retries" },
     { args: ["toString"], error: "Unknown E2E scenario" },
     { args: ["--trace", "--app-trace"], error: "cannot run together" },
   ])("rejects $args before accessing binaries or building", ({ args, error }) => {
@@ -181,6 +185,68 @@ describe("E2E CLI", () => {
     expect(result.stderr).toContain("Use --help");
     expect(result.stderr).not.toContain("FORBIDDEN:");
     expect(result.stdout).toBe("");
+  });
+
+  it("lists each scenario's tier", () => {
+    const result = runCli(["--list"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^smoke: .+ \[core\]$/m);
+  });
+
+  it("builds a batch once and records every scenario as failed when that build fails", async () => {
+    const result = runCli(["smoke", "onboarding", "--display=desktop"], {
+      version: `opencode2 v${version}`,
+      buildFailure: true,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("FORBIDDEN:");
+    expect(result.stdout.match(/fixture build stdout/g)).toHaveLength(1);
+    expect(result.stdout).toMatch(/failed\s+smoke\s+build failed/);
+    const artifacts = path.join(result.checkout, ".local/desktop-e2e");
+    expect(await readdir(artifacts)).toEqual(["last-run.json"]);
+    const summary = JSON.parse(await readFile(path.join(artifacts, "last-run.json"), "utf8"));
+    expect(summary).toMatchObject({
+      retries: 1,
+      interrupted: null,
+      totals: { passed: 0, flaky: 0, failed: 2 },
+      scenarios: [
+        { name: "smoke", status: "failed" },
+        { name: "onboarding", status: "failed" },
+      ],
+    });
+  });
+
+  it("skips opt-in scenarios in a batch and counts them separately", async () => {
+    const result = runCli(["smoke", "workspace-panel-performance", "--display=desktop"], {
+      version: `opencode2 v${version}`,
+      buildFailure: true,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("FORBIDDEN:");
+    expect(result.stdout).toContain(
+      "Palot E2E batch: skipped workspace-panel-performance: needs --profile",
+    );
+    expect(result.stdout).toMatch(/skipped\s+workspace-panel-performance\s+needs --profile/);
+    expect(result.stdout).toContain("2 scenarios: 0 passed, 0 flaky, 1 failed, 1 skipped");
+    const summary = JSON.parse(
+      await readFile(path.join(result.checkout, ".local/desktop-e2e/last-run.json"), "utf8"),
+    );
+    expect(summary).toMatchObject({
+      totals: { failed: 1, skipped: 1 },
+      scenarios: [
+        { name: "smoke", status: "failed" },
+        { name: "workspace-panel-performance", status: "skipped", reason: "needs --profile" },
+      ],
+    });
+  });
+
+  it("stops a single opt-in scenario before build when its requirement is missing", () => {
+    const result = runCli(["opencode-runtime-acquisition", "--display=desktop"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("FORBIDDEN:");
+    expect(result.stderr).toContain(
+      "opencode-runtime-acquisition needs PALOT_E2E_ALLOW_RUNTIME_DOWNLOAD=1, --executable",
+    );
   });
 
   it("rejects a version prefix match before Electron or build", () => {
@@ -293,5 +359,9 @@ describe("E2E CLI", () => {
     const errorLog = path.join(root, "service-startup-error.log");
     expect(await readFile(errorLog, "utf8")).toContain("fixture stderr detail");
     expect((await stat(errorLog)).mode & 0o777).toBe(0o600);
+    // The kept home lives outside the checkout; the manifest says where.
+    expect(manifest.home).not.toContain(result.checkout);
+    expect(await realpath(path.join(root, "home"))).toBe(await realpath(manifest.home));
+    await rm(manifest.home, { recursive: true, force: true });
   });
 });

@@ -1,6 +1,6 @@
 import { useAtomValue } from "jotai";
 import { Maximize2, Minus, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import "katex/dist/katex.min.css";
 import { resolvedAppearanceAtom } from "../atoms/appearance";
 import { Button } from "./ui/button";
@@ -20,19 +20,37 @@ function loadMermaid() {
   return mermaidModule;
 }
 
-export function MarkdownMath({ "data-math": expression }: { "data-math"?: string }) {
+/**
+ * Display math. Without `onError`, KaTeX shows parse errors inline; with it, an expression KaTeX
+ * can't parse calls `onError` instead, so the caller can show the source another way.
+ */
+export function MarkdownMath({
+  "data-math": expression,
+  onError,
+}: {
+  "data-math"?: string;
+  onError?: () => void;
+}) {
   const [html, setHtml] = useState<string | null>(null);
+  const strict = Boolean(onError);
+  const reportError = useEffectEvent(() => onError?.());
 
   useEffect(() => {
     let active = true;
     void import("katex").then(({ default: katex }) => {
       if (!active) return;
-      setHtml(katex.renderToString(expression ?? "", { throwOnError: false, displayMode: true }));
+      try {
+        setHtml(
+          katex.renderToString(expression ?? "", { throwOnError: strict, displayMode: true }),
+        );
+      } catch {
+        reportError();
+      }
     });
     return () => {
       active = false;
     };
-  }, [expression]);
+  }, [expression, strict]);
 
   if (!html) return <div className="markdown-math-fallback">$$ {expression} $$</div>;
   return <div className="markdown-math" dangerouslySetInnerHTML={{ __html: html }} />;

@@ -1,9 +1,10 @@
 import type { Terminal as GhosttyTerminal } from "ghostty-web";
 import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url&no-inline";
 import { useAtomValue, useStore } from "jotai";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { resolvedAppearanceAtom } from "../../atoms/appearance";
 import { runtimeAtom, selectedSessionIDAtom } from "../../atoms/workspace";
+import { prefersReducedMotion } from "../../hooks/use-reduced-motion";
 import { prepareCodeFont } from "../../lib/font-loading";
 import { openCodeKeys } from "../../lib/opencode-query";
 import { rendererQueryClient } from "../../lib/query-client";
@@ -13,8 +14,26 @@ import {
   shortcutAriaKeys,
   useShortcutKeys,
 } from "../../lib/keyboard-shortcuts";
-import type { WorkbenchTab } from "../../lib/workbench-tabs";
+import type {
+  OpenWorkbenchTabInput,
+  WorkbenchPaneID,
+  WorkbenchScope,
+  WorkbenchTab,
+} from "../../lib/workbench-tabs";
+import { useWorkbenchCommands } from "../../atoms/workbench";
+import { serverHomeDirectory, type FileReference } from "../../lib/file-reference";
+import { findTerminalFileLinks } from "../../lib/terminal-file-links";
+import {
+  armTerminalFileLink,
+  claimTerminalFileLink,
+  resolveTerminalFileLink,
+  terminalServerHostname,
+} from "../../lib/terminal-file-link-route";
+import { useFileReferenceOpener } from "../file-reference-opener";
 import { palot } from "../../services/palot";
+import { openCodeClient } from "../../services/opencode-client";
+import { createTerminalInputWriter, throttledReporter } from "../../lib/terminal-input-writer";
+import { showErrorToast } from "../../lib/toast-error";
 import { ptyNotFound } from "../../services/opencode-pty";
 import {
   recoverWorkbenchTerminal,
@@ -51,9 +70,69 @@ function loadGhostty() {
   return ghosttyModule;
 }
 
-export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
+const NO_MESSAGES = () => [];
+
+export function TerminalTab({
+  tab,
+  pane,
+  scope,
+}: {
+  tab: TerminalTabDescriptor;
+  pane?: WorkbenchPaneID;
+  scope?: WorkbenchScope;
+}) {
   const appearance = useAtomValue(resolvedAppearanceAtom);
   const runtime = useAtomValue(runtimeAtom);
+  // Ctrl/Cmd-click a file path in the output to open it, like the terminal's own URL links.
+  const workbench = useWorkbenchCommands(scope ?? null);
+  const sameProfile = runtime?.profileID === tab.resource.profileID;
+  const localPathActions = sameProfile && runtime?.capabilities?.localPathActions === true;
+  const openFileTab = useCallback(
+    (input: OpenWorkbenchTabInput) => workbench.openTab(input, pane ? { pane } : undefined),
+    [pane, workbench],
+  );
+  const fileOpener = useFileReferenceOpener({
+    sessionID: tab.resource.sessionID ?? scope?.sessionID ?? "",
+    location: tab.resource.location,
+    connectionID: sameProfile ? runtime.connectionID : undefined,
+    localPathActions,
+    homeDirectory: serverHomeDirectory({
+      sameMachine: localPathActions,
+      localHome: window.palot?.homeDirectory,
+      directories: [tab.resource.location.directory],
+    }),
+    getMessages: NO_MESSAGES,
+    openTab: openFileTab,
+  });
+  const openFileRef = useRef<((reference: FileReference) => void) | null>(null);
+  const linkHomeRef = useRef(localPathActions);
+  openFileRef.current = (reference) => void fileOpener.open(reference);
+  linkHomeRef.current = localPathActions;
+  const tabIDRef = useRef(tab.id);
+  tabIDRef.current = tab.id;
+  // The connection whose file opener this terminal uses, for the hostname its links may carry.
+  const linkConnectionRef = useRef<string | undefined>(undefined);
+  linkConnectionRef.current = sameProfile ? runtime.connectionID : undefined;
+  useEffect(
+    () =>
+      window.palot?.onTerminalFileLink?.((link) => {
+        if (!claimTerminalFileLink(tabIDRef.current)) return;
+        const connectionID = linkConnectionRef.current;
+        void resolveTerminalFileLink(link, async () =>
+          connectionID
+            ? terminalServerHostname(connectionID, async () => {
+                const info = await openCodeClient(connectionID).server.info();
+                return info.hostname;
+              })
+            : null,
+        ).then((reference) => {
+          // The terminal may have moved to another connection while the hostname loaded.
+          if (reference && linkConnectionRef.current === connectionID)
+            openFileRef.current?.(reference);
+        });
+      }),
+    [],
+  );
   const store = useStore();
   const pendingPaste = useAtomValue(terminalPasteAtom).get(tab.id);
   const selectedSessionID = useAtomValue(selectedSessionIDAtom);
@@ -161,14 +240,34 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
       fitRef.current = fit;
       term.loadAddon(fit);
       term.open(container);
+      // The terminal opens OSC 8 links (`ls --hyperlink`, `rg --hyperlink-format`) with
+      // `window.open`; main hands `file:` ones back, and this press says they are ours.
+      const armFileLink = (event: PointerEvent) => {
+        if (event.ctrlKey || event.metaKey) armTerminalFileLink(tabIDRef.current);
+      };
+      container.addEventListener("pointerdown", armFileLink, true);
+      cleanups.push(() => container.removeEventListener("pointerdown", armFileLink, true));
+      term.registerLinkProvider({
+        provideLinks(y, callback) {
+          const line = term.buffer.active.getLine(y);
+          if (!line) return callback(undefined);
+          const links = findTerminalFileLinks(line.translateToString(), {
+            allowHome: linkHomeRef.current,
+          }).map((link) => ({
+            text: link.text,
+            range: { start: { x: link.start, y }, end: { x: link.end, y } },
+            activate(event: MouseEvent) {
+              if (event.ctrlKey || event.metaKey) openFileRef.current?.(link.reference);
+            },
+          }));
+          callback(links.length > 0 ? links : undefined);
+        },
+      });
       setSelection("");
       const selectionSubscription = term.onSelectionChange(() => setSelection(term.getSelection()));
       cleanups.push(() => selectionSubscription.dispose());
       const updateCursorVisibility = () =>
-        term.setOption(
-          "cursorBlink",
-          !document.hidden && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-        );
+        term.setOption("cursorBlink", !document.hidden && !prefersReducedMotion());
       updateCursorVisibility();
       document.addEventListener("visibilitychange", updateCursorVisibility);
       cleanups.push(() => document.removeEventListener("visibilitychange", updateCursorVisibility));
@@ -176,13 +275,19 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
       scheduleFit(fit);
       fit.observeResize();
       cleanups.push(() => fit.dispose());
+      // Large pastes go in ordered pieces that fit the IPC limit; a failed write says so.
+      const writeInput = createTerminalInputWriter<string>(
+        async (data, connectionID) => {
+          if (readOnlyRef.current || disposed) return;
+          await palot.writePty({ connectionID, data, cols: term.cols, rows: term.rows });
+        },
+        throttledReporter((error) => {
+          if (!disposed) showErrorToast("Could not send input to the terminal", error);
+        }),
+      );
       const dataSubscription = term.onData((data) => {
         const connectionID = recoveryRef.current?.connectionID();
-        if (!readOnlyRef.current && !disposed && connectionID) {
-          void palot
-            .writePty({ connectionID, data, cols: term.cols, rows: term.rows })
-            .catch(() => undefined);
-        }
+        if (!readOnlyRef.current && !disposed && connectionID) void writeInput(data, connectionID);
       });
       cleanups.push(() => dataSubscription.dispose());
       const resizeSubscription = term.onResize(({ cols, rows }) => {
@@ -407,6 +512,7 @@ export function TerminalTab({ tab }: { tab: TerminalTabDescriptor }) {
         }
       }}
     >
+      {fileOpener.picker}
       <div className="flex items-center justify-between gap-2 border-b px-3 py-1 font-sans">
         <span className="text-micro text-muted-foreground">
           {readOnly ? "Read-only terminal" : "Terminal"}

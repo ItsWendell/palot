@@ -11,6 +11,13 @@ if (typeof window !== "undefined" && window.navigator.userAgent.includes("HappyD
     void this.finished.catch(() => {});
     return cancelAnimation.call(this);
   };
+
+  // Motion 14.7+ runs transform animations on WAAPI animations it starts by assigning
+  // startTime, which Happy DOM 21 never advances, so exits that move x/y never finish
+  // and AnimatePresence keeps the element. Without linear() easing Motion keeps
+  // transforms on its JS frame loop, as before 14.7. Motion reads this flag for tests.
+  const { supportsFlags } = await import("motion");
+  supportsFlags.linearEasing = false;
 }
 
 // The full desktop suite runs hundreds of files in parallel; under that load an async UI update

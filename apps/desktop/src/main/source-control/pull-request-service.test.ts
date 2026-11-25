@@ -161,6 +161,7 @@ function fakeGitHub() {
     graphql: graphql as GitHubGateway["graphql"],
     graphqlPartial: partial as GitHubGateway["graphqlPartial"],
     rest: rest as GitHubGateway["rest"],
+    download: async () => "",
     credential: async () => ({ source: "env", fingerprint: "github.com:fake" }),
     pausedUntil: () => null,
   };
@@ -191,13 +192,16 @@ async function setup(env: Record<string, string | undefined> = {}) {
     lastUserMessageAt: (T0 - 60_000) as number | null,
     complete: true,
     createdAt: T0 - 120_000,
+    archivedAt: null as number | null,
   };
   const prompts: Array<{ sessionID: string; text: string; metadata: Record<string, unknown> }> = [];
+  const promptFailure: { error: Error | null } = { error: null };
   const sessions: SourceControlSessions = {
     connected: (profileID) => connected.has(profileID),
     directory: async () => "/work/repo",
     activity: async () => ({ ...activity, updatedAt: now - 1_000 }),
     prompt: async (_profileID, sessionID, text, metadata) => {
+      if (promptFailure.error) throw promptFailure.error;
       prompts.push({ sessionID, text, metadata });
     },
   };
@@ -231,7 +235,7 @@ async function setup(env: Record<string, string | undefined> = {}) {
       pushed: true,
     })),
   };
-  const service = new PullRequestService({
+  const serviceOptions = {
     repository,
     github: github.gateway,
     sessions,
@@ -239,11 +243,14 @@ async function setup(env: Record<string, string | undefined> = {}) {
     isLocalProfile,
     repositoryOf,
     git,
-    emit: (event) => events.push(event),
+    emit: (event: SourceControlChangedEvent) => events.push(event),
     now: () => now,
     env: () => env,
-  });
+  };
+  const service = new PullRequestService(serviceOptions);
   return {
+    /** A new service over the same database, as after an app restart. */
+    restart: () => new PullRequestService(serviceOptions),
     database,
     repository,
     github,
@@ -257,7 +264,7 @@ async function setup(env: Record<string, string | undefined> = {}) {
       emit: (event) => events.push(event),
       env: () => env,
     }),
-    sessions: { connected, activity, prompts },
+    sessions: { connected, activity, prompts, promptFailure },
     triageRecords,
     settles,
     events,
@@ -673,7 +680,9 @@ describe("pull request watch", () => {
         },
       ],
     });
-    expect(context.sessions.prompts[0]?.text).toContain('reviewer: "Please rename this"');
+    expect(context.sessions.prompts[0]?.text).toContain(
+      "author: «reviewer», comment: «Please rename this»",
+    );
   });
 
   it("wakes when the branch starts to conflict", async () => {
@@ -728,13 +737,91 @@ describe("pull request watch", () => {
     expect(context.service.list()[0]?.watchEnded?.reason).toBe("comment-limit");
   });
 
-  it("stops watching when the PR merges or the task is settled", async () => {
+  it("wakes the task once when its watched PR merges, and leaves settling to the agent", async () => {
     await watched();
     await next({ state: "MERGED", mergedAt: new Date(T0).toISOString() });
+    expect(context.sessions.prompts).toEqual([
+      {
+        sessionID: "s1",
+        text: expect.stringContaining(
+          "Pull request #1 (PR 1) was merged into main: https://github.com/acme/web/pull/1.",
+        ),
+        metadata: {
+          "palot.sourceControl": expect.objectContaining({ changes: ["merged"] }),
+        },
+      },
+    ]);
+    expect(context.sessions.prompts[0]?.text).toContain("then settle this task");
     expect(context.service.list()[0]?.watchEnded?.reason).toBe("merged");
+    expect(context.settles).toEqual([]);
 
-    context.database.$client.close();
-    context = await setup();
+    context.advance(PULL_REQUEST_SWEEP_INTERVAL_MS);
+    await context.service.sweep();
+    context.service = context.restart();
+    await context.service.sweep();
+    expect(context.sessions.prompts).toHaveLength(1);
+    expect(context.settles).toEqual([]);
+  });
+
+  it("says a closed PR was closed without merging", async () => {
+    await watched();
+    await next({ state: "CLOSED", closedAt: new Date(T0).toISOString() });
+    expect(context.sessions.prompts).toHaveLength(1);
+    expect(context.sessions.prompts[0]?.text).toContain(
+      "Pull request #1 (PR 1) was closed without merging",
+    );
+    expect(context.service.list()[0]?.watchEnded?.reason).toBe("closed");
+    expect(context.settles).toEqual([]);
+  });
+
+  it("wakes after a restart between the merge and its detection", async () => {
+    await watched();
+    // Palot is closed while the PR merges; the restarted service reads it first.
+    context.github.pulls.set("acme/web#1", {
+      ...context.github.pulls.get("acme/web#1")!,
+      state: "MERGED",
+      mergedAt: new Date(T0).toISOString(),
+    });
+    context.advance(PULL_REQUEST_SWEEP_INTERVAL_MS);
+    context.service = context.restart();
+    await context.service.sweep();
+    expect(context.sessions.prompts).toHaveLength(1);
+    expect(context.service.list()[0]?.watchEnded?.reason).toBe("merged");
+  });
+
+  it("sends the merge wake once it can, after an offline task or a failed prompt", async () => {
+    await watched();
+    context.sessions.connected.clear();
+    await next({ state: "MERGED", mergedAt: new Date(T0).toISOString() });
+    expect(context.sessions.prompts).toEqual([]);
+    expect(context.service.list()[0]?.watch).not.toBeNull();
+
+    // Merged PRs are not read again; the stored watch still owes the wake.
+    context.sessions.connected.add(PROFILE);
+    context.sessions.promptFailure.error = new Error("offline");
+    context.service = context.restart();
+    context.advance(PULL_REQUEST_SWEEP_INTERVAL_MS);
+    await context.service.sweep();
+    expect(context.service.list()[0]?.watch).not.toBeNull();
+    expect(context.settles).toEqual([]);
+
+    context.sessions.promptFailure.error = null;
+    context.advance(PULL_REQUEST_SWEEP_INTERVAL_MS);
+    await context.service.sweep();
+    await context.service.sweep();
+    expect(context.sessions.prompts).toHaveLength(1);
+    expect(context.service.list()[0]?.watchEnded?.reason).toBe("merged");
+  });
+
+  it("does not wake an archived task when its PR merges", async () => {
+    await watched();
+    context.sessions.activity.archivedAt = T0;
+    await next({ state: "MERGED", mergedAt: new Date(T0).toISOString() });
+    expect(context.sessions.prompts).toEqual([]);
+    expect(context.service.list()[0]?.watchEnded?.reason).toBe("merged");
+  });
+
+  it("stops watching without a wake when the task is settled", async () => {
     await watched();
     context.triageRecords.set("s1", { disposition: "settled", pinnedAt: null });
     await next({ mergeable: "CONFLICTING" });

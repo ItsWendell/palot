@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PalotApi } from "../../shared";
 import { resetOpenCodeClientForTest } from "../services/opencode-client";
-import { PendingRequests } from "./thread";
+import { PendingRequests } from "./transcript/pending-requests";
 
 afterEach(() => {
   cleanup();

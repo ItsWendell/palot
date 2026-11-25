@@ -11,6 +11,11 @@ import type { Virtualizer } from "@tanstack/react-virtual";
 import type { TranscriptProjectionRow } from "../lib/turn-projection";
 import type { TranscriptPrompt, TranscriptPromptAnchor } from "../lib/transcript-outline";
 import { adjacentPromptID } from "../lib/session-history";
+import type { TranscriptPrependRelease } from "./use-transcript-prepend-anchor";
+
+function promptElement(root: HTMLElement, messageID: string): HTMLElement | null {
+  return root.querySelector<HTMLElement>(`[data-palot-prompt-id="${CSS.escape(messageID)}"]`);
+}
 
 export function useTranscriptNavigation(input: {
   scopeID: string;
@@ -23,7 +28,8 @@ export function useTranscriptNavigation(input: {
   bottomInset: number;
   pin(id: string | null): void;
   unlock(): void;
-  clearAnchor(): void;
+  /** Stops holding the reading position while older history loads. */
+  clearAnchor(reason: TranscriptPrependRelease): void;
   hasMore: boolean;
   loading: boolean;
   historyStartID: string | null;
@@ -63,9 +69,20 @@ export function useTranscriptNavigation(input: {
       if (activeTracking.current) activeUpdate.current();
     });
   }, []);
+  const observed = useRef<{ element: HTMLDivElement; observer: ResizeObserver } | null>(null);
+  // The viewport mounts later than this hook (after a cold transcript load), so
+  // follow the element itself instead of props that may settle before it exists.
   useLayoutEffect(() => {
     const viewport = input.viewport.current;
-    if (!viewport) return;
+    if (observed.current?.element === viewport) return;
+    observed.current?.observer.disconnect();
+    observed.current = null;
+    if (!viewport) {
+      setSize((current) =>
+        current.width === 0 && current.height === 0 ? current : { width: 0, height: 0 },
+      );
+      return;
+    }
     const measure = () => {
       const width = viewport.clientWidth;
       const height = viewport.clientHeight;
@@ -76,8 +93,15 @@ export function useTranscriptNavigation(input: {
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(viewport);
-    return () => observer.disconnect();
-  }, [input.scopeID, input.viewport, input.bottomInset]);
+    observed.current = { element: viewport, observer };
+  });
+  useLayoutEffect(
+    () => () => {
+      observed.current?.observer.disconnect();
+      observed.current = null;
+    },
+    [],
+  );
   const updateActive = useCallback(() => {
     const viewport = input.viewport.current;
     if (!viewport) return;
@@ -106,7 +130,20 @@ export function useTranscriptNavigation(input: {
       if (input.prompts[middle]!.rowIndex <= row.index) low = middle + 1;
       else high = middle;
     }
-    const id = input.prompts[Math.max(0, low - 1)]?.messageID ?? null;
+    let index = Math.max(0, low - 1);
+    // A turn with steers has several prompts; the active one is the last that reached the line.
+    const rowIndex = input.prompts[index]?.rowIndex;
+    let first = index;
+    while (first > 0 && input.prompts[first - 1]!.rowIndex === rowIndex) first -= 1;
+    if (first < index) {
+      const line = viewport.getBoundingClientRect().top + 16;
+      while (index > first) {
+        const element = promptElement(viewport, input.prompts[index]!.messageID);
+        if (element && element.getBoundingClientRect().top <= line) break;
+        index -= 1;
+      }
+    }
+    const id = input.prompts[index]?.messageID ?? null;
     currentID.current = id;
     setActiveMessageID((current) => (current === id ? current : id));
   }, [input.bottomInset, input.prompts, input.viewport, input.virtualizer]);
@@ -147,7 +184,8 @@ export function useTranscriptNavigation(input: {
     serial.current += 1;
     setTarget(null);
     setEarlierThan(null);
-    input.clearAnchor();
+    // The reader took over: a page still loading keeps their new place instead.
+    input.clearAnchor("user");
   }
   useLayoutEffect(() => {
     serial.current += 1;
@@ -163,7 +201,8 @@ export function useTranscriptNavigation(input: {
     serial.current += 1;
     setTarget(null);
     setEarlierThan(null);
-    input.clearAnchor();
+    // A jump lands on its target, even when it pages back to find it.
+    input.clearAnchor("cancel");
     input.unlock();
     currentID.current = messageID;
     if (!input.rows.some((row) => row.turn.users.some((user) => user.id === messageID))) {
@@ -218,9 +257,12 @@ export function useTranscriptNavigation(input: {
     const align = () => {
       if (serial.current !== target.serial) return;
       const viewport = input.viewport.current;
-      const element = viewport?.querySelector<HTMLElement>(
+      const row = viewport?.querySelector<HTMLElement>(
         `[data-turn-row-id="${CSS.escape(targetTurnID)}"]`,
       );
+      // A steer sits inside its turn; land on the steer once the turn has rendered it.
+      const opener = input.rows[targetIndex]?.turn.user?.id === target.messageID;
+      const element = (!opener && row ? promptElement(row, target.messageID) : null) ?? row;
       if (viewport && element) {
         const correction =
           element.getBoundingClientRect().top - viewport.getBoundingClientRect().top;

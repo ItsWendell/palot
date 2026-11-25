@@ -1,5 +1,6 @@
 // Adapted from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser/restore.ts
+// See UPSTREAM.md.
 import { Browser } from "@opencode/plugin-browser/rpc";
 import Store from "electron-store";
 import { Option, Schema } from "effect";

@@ -29,3 +29,33 @@ it("releases debugger listeners after native WebContents destruction", async () 
   await expect(cdp.send("Page.enable")).rejects.toThrow("Browser tab was closed");
   expect(debuggerAPI.sendCommand).not.toHaveBeenCalled();
 });
+
+it("never calls sendCommand from inside native event dispatch", async () => {
+  // Re-entering DevTools while Chromium emits Target.detachedFromTarget crashes Electron.
+  let inDispatch = false;
+  const calledInDispatch: boolean[] = [];
+  const debuggerAPI = Object.assign(new EventEmitter(), {
+    isAttached: () => true,
+    sendCommand: vi.fn(async () => {
+      calledInDispatch.push(inDispatch);
+      return {};
+    }),
+  });
+  const contents = { isDestroyed: () => false, debugger: debuggerAPI } as unknown as WebContents;
+  const cdp = createCdp(contents);
+  let sent: Promise<unknown> | undefined;
+  cdp.on("Target.detachedFromTarget", () => {
+    sent = cdp.send("Overlay.setInspectMode", { mode: "none" }, "child");
+  });
+  inDispatch = true;
+  debuggerAPI.emit("message", {}, "Target.detachedFromTarget", { sessionId: "child" });
+  // Node drains microtasks before control returns to Chromium.
+  await Promise.resolve();
+  await Promise.resolve();
+  inDispatch = false;
+  await sent;
+  expect(calledInDispatch).toEqual([false]);
+  // Commands outside dispatch stay synchronous.
+  void cdp.send("Page.enable");
+  expect(debuggerAPI.sendCommand).toHaveBeenCalledTimes(2);
+});

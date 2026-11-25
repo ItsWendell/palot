@@ -8,6 +8,7 @@ import {
   btwFocusRequestAtom,
   btwPendingAtom,
   cancelBtw,
+  markBtwRead,
   retryBtw,
   submitBtwQuestion,
 } from "./btw";
@@ -201,10 +202,15 @@ describe("Ask about selection", () => {
       question: "Why?",
       error: "Stopped before an answer arrived.",
     });
+    // Stopping is your own doing, not news.
+    expect(sideChat(store, tabID).unread).toBeUndefined();
     first.resolve({ text: "Too late" });
     await first.promise;
     retryBtw(store, owner, tabID, owner.connectionID);
     await vi.waitFor(() => expect(sideChat(store, tabID).answer).toBe("Recovered"));
+    expect(sideChat(store, tabID).unread).toBe(true);
+    markBtwRead(store, owner, tabID);
+    expect(sideChat(store, tabID).unread).toBeUndefined();
   });
 
   it("rejects empty quotes and reports the workbench tab limit", () => {

@@ -547,7 +547,6 @@ export function NewTask({
                   message: error instanceof Error ? error.message : "Could not create this task.",
                 })
               }
-              contextBarMode="compact"
               contextBar={
                 chat ? (
                   creationError ? (

@@ -7,6 +7,14 @@ import packageJson from "../../package.json" with { type: "json" };
 import type { PalotApi } from "../../src/shared/opencode-contract";
 import type { Scenario } from "./scenarios";
 import { startLoopbackServiceProxy } from "./loopback-service-proxy.ts";
+import {
+  chooseProjectsMenuItem,
+  openTaskSection,
+  openViewMenu,
+  showTaskColumn,
+  taskColumn,
+  taskRow,
+} from "./task-list.ts";
 
 const localTitle = "Overview local collision";
 const remoteTitle = "Overview remote collision";
@@ -154,11 +162,12 @@ async function checkWarmNavigation(
     await (remote ? remoteRow : localRow).click();
     await assertOwner(page, sessionID, profileID);
     if (remote && !remoteDraftCreated) {
-      await expect(composer).toHaveValue("");
+      await expect(composer).toHaveJSProperty("value", "");
       await composer.fill("Remote draft survives server navigation");
       remoteDraftCreated = true;
     } else {
-      await expect(composer).toHaveValue(
+      await expect(composer).toHaveJSProperty(
+        "value",
         remote
           ? "Remote draft survives server navigation"
           : "Local draft survives server navigation",
@@ -257,46 +266,8 @@ async function assertOwner(page: Page, sessionID: string, profileID: string) {
   await expect(page.getByRole("textbox", { name: "Message Palot", exact: true })).toBeVisible();
 }
 
-async function assertInboxEdgeAlignment(page: Page, title: string) {
-  const row = page.getByRole("button", { name: new RegExp(`^${title} ·`) });
-  const status = page
-    .locator("[data-inbox-card]")
-    .filter({ has: row })
-    .locator("[data-inbox-status]");
-  const toggle = page.getByRole("button", { name: /^Inbox\s+\d+$/ });
-  const chevron = toggle.locator("svg").first().locator("path, polyline").first();
-  let timestampEdge = 0;
-  await expect
-    .poll(
-      async () => {
-        const [timeBounds, iconBounds] = await Promise.all([
-          status.boundingBox(),
-          chevron.boundingBox(),
-        ]);
-        if (timeBounds) timestampEdge = timeBounds.x + timeBounds.width;
-        return timeBounds && iconBounds
-          ? Math.abs(timeBounds.x + timeBounds.width - iconBounds.x - iconBounds.width)
-          : Infinity;
-      },
-      { message: "Visible Inbox chevron drawing aligns with the timestamp edge" },
-    )
-    .toBeLessThanOrEqual(1);
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect
-    .poll(
-      async () => {
-        const bounds = await chevron.boundingBox();
-        return bounds ? Math.abs(bounds.x + bounds.width - timestampEdge) : Infinity;
-      },
-      { message: "Collapsed chevron drawing retains the same optical edge" },
-    )
-    .toBeLessThanOrEqual(1);
-  await toggle.click();
-  await expect(status).toBeVisible();
-}
-
-async function captureOverview(page: Page, runRoot: string) {
+/** Group by inbox, project and server, light and dark: both servers' tasks stay listed. */
+async function captureOverview(page: Page, runRoot: string, localRow: Locator, remoteRow: Locator) {
   const viewport = page.viewportSize();
   const appearance = await page.evaluate(() => {
     const api = (globalThis as unknown as { palot: PalotApi }).palot;
@@ -321,191 +292,45 @@ async function captureOverview(page: Page, runRoot: string) {
         { preferences: appearance.preferences, scheme },
       );
       await expect(page.locator("html")).toHaveAttribute("data-resolved-theme", scheme);
-      for (const mode of ["inbox", "projects"] as const) {
-        await showColumnView(page, mode === "inbox" ? /^Show inbox/ : "Show projects");
-        await expect(
-          page.getByRole("button", { name: new RegExp(`^${remoteTitle} · ${remoteName}`) }),
-        ).toBeVisible();
-        await expect(
-          page.getByRole("button", { name: new RegExp(`^${localTitle} ·`) }),
-        ).toBeVisible();
-        for (const title of [localTitle, remoteTitle]) {
-          const row = page.getByRole("button", { name: new RegExp(`^${title} ·`) });
-          await expect
-            .poll(
-              () =>
-                row.evaluate((button, remote) => {
-                  const surface = button.closest("[data-inbox-card]") ?? button;
-                  const bounds = surface.getBoundingClientRect();
-                  const badge = surface.querySelector('[role="img"]')?.getBoundingClientRect();
-                  if (!remote) return !badge;
-                  return Boolean(
-                    badge &&
-                    badge.top >= bounds.top &&
-                    badge.bottom <= bounds.bottom &&
-                    badge.left >= bounds.left &&
-                    badge.right <= bounds.right,
-                  );
-                }, title === remoteTitle),
-              { message: `Connection badge stays inside its ${mode} task row` },
-            )
-            .toBe(true);
-          if (mode === "inbox") {
-            if (title === remoteTitle) {
-              const card = page.locator("[data-inbox-card]").filter({ has: row });
-              const cloud = card.getByRole("img", { name: new RegExp(`^${remoteName} ·`) });
-              await expect(card.getByText(remoteName, { exact: true })).toHaveCount(0);
-              expect(
-                await cloud.evaluate((icon) => {
-                  const project = icon.nextElementSibling;
-                  if (!project) return false;
-                  const a = icon.getBoundingClientRect();
-                  const b = project.getBoundingClientRect();
-                  return (
-                    a.right <= b.left &&
-                    Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2) <= 2
-                  );
-                }),
-              ).toBe(true);
-              await cloud.hover();
-              const details = page
-                .locator('[data-slot="tooltip-content"]')
-                .filter({ hasText: remoteName });
-              await expect(details).toBeVisible();
-              await expect(details).toContainText("Connected");
-              await page.screenshot({
-                path: join(runRoot, `overview-server-tooltip-${scheme}.png`),
-                animations: "disabled",
-              });
-              await cloud.focus();
-              await page.mouse.move(0, 0);
-              await expect(cloud).toBeFocused();
-              await expect(details).toBeVisible();
-              await page.keyboard.press("Escape");
-              await row.focus();
-            }
-            await expect
-              .poll(
-                () =>
-                  row.evaluate((button) => {
-                    const card = button.closest("[data-inbox-card]");
-                    return card ? card.getBoundingClientRect().height : 0;
-                  }),
-                { message: "Inbox keeps its larger multi-line cards, not compact project rows" },
-              )
-              .toBeGreaterThan(45);
-            await assertInboxEdgeAlignment(page, title);
-          }
-        }
-        if (mode === "projects") {
-          const localRow = page.getByRole("button", { name: new RegExp(`^${localTitle} ·`) });
-          const remoteRow = page.getByRole("button", {
-            name: new RegExp(`^${remoteTitle} · ${remoteName}`),
-          });
-          const section = page.locator("[data-project-section]").filter({ has: localRow });
-          const profileID = await section.getAttribute("data-profile-id");
-          const projectID = await section.getAttribute("data-project-id");
-          const ownerSection = page.locator(
-            `[data-project-section][data-profile-id=${JSON.stringify(profileID)}][data-project-id=${JSON.stringify(projectID)}]`,
-          );
-          const toggle = ownerSection.locator("button[aria-expanded]").first();
-          await expect
-            .poll(
-              () =>
-                ownerSection.evaluate((section) => {
-                  const trigger = section.querySelector<HTMLButtonElement>("button[aria-expanded]");
-                  const title = trigger?.querySelector("span");
-                  const chevron = trigger
-                    ?.querySelectorAll("svg")
-                    .item(trigger.querySelectorAll("svg").length - 1);
-                  const action = section.querySelector<HTMLButtonElement>(
-                    'button[aria-label^="New task in"]',
-                  );
-                  if (!trigger || !title || !chevron || !action) return false;
-                  const sectionBounds = section.getBoundingClientRect();
-                  const triggerBounds = trigger.getBoundingClientRect();
-                  const titleBounds = title.getBoundingClientRect();
-                  const actionBounds = action.getBoundingClientRect();
-                  const chevronBounds = chevron.getBoundingClientRect();
-                  const padding = parseFloat(getComputedStyle(trigger).paddingLeft);
-                  return (
-                    Math.abs(triggerBounds.left - sectionBounds.left) <= 1 &&
-                    Math.abs(triggerBounds.right - sectionBounds.right) <= 1 &&
-                    Math.abs(titleBounds.left - triggerBounds.left - padding) <= 1 &&
-                    titleBounds.right <= actionBounds.left + 1 &&
-                    actionBounds.right <= chevronBounds.left + 1
-                  );
-                }),
-              {
-                message:
-                  "Project title stays left-aligned, with the add action before the right chevron",
-              },
-            )
-            .toBe(true);
-          await toggle.click();
-          await expect(localRow).toBeHidden();
-          await expect(remoteRow).toBeVisible();
-          await page.getByRole("button", { name: /^Show inbox/ }).click();
-          await expect(localRow).toBeVisible();
-          await page.getByRole("button", { name: "Show projects", exact: true }).click();
-          await expect(localRow).toBeHidden();
-          await toggle.click();
-          await expect(localRow).toBeVisible();
-          await expect(remoteRow).toBeVisible();
-        }
+      for (const grouping of ["Inbox", "Project", "Server"] as const) {
+        await setGrouping(page, grouping);
+        await expect(localRow).toBeVisible();
+        await expect(remoteRow).toBeVisible();
+        if (grouping === "Server")
+          await expect(
+            taskColumn(page).getByRole("treeitem", { name: new RegExp(`^${remoteName}`) }),
+          ).toBeVisible();
         await expect
           .poll(() =>
             page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
           )
           .toBe(true);
         await page.screenshot({
-          path: join(runRoot, `overview-${mode}-${scheme}-920x640.png`),
+          path: join(runRoot, `overview-${grouping.toLowerCase()}-${scheme}-920x640.png`),
           animations: "disabled",
         });
-        if (mode === "inbox") {
-          await page.getByRole("button", { name: /^Filter tasks/ }).click();
-          await page.getByRole("menuitem", { name: /^Servers/ }).hover();
-          await expect(
-            page.getByRole("menuitemcheckbox", { name: new RegExp(`^${remoteName}`) }),
-          ).toBeVisible();
-          await page.screenshot({
-            path: join(runRoot, `overview-server-filters-${scheme}-920x640.png`),
-            animations: "disabled",
-          });
-          await page.keyboard.press("Escape");
-          await page.keyboard.press("Escape");
-        }
       }
     }
-    await page.getByRole("button", { name: /^Show inbox/ }).click();
-    await page.evaluate(async (preferences) => {
-      await (globalThis as unknown as { palot: PalotApi }).palot.updateAppearance({
-        preferences: { ...preferences, mode: "dark", uiFontSize: 19 },
-        resolvedScheme: "dark",
-      });
-    }, appearance.preferences);
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          getComputedStyle(document.documentElement)
-            .getPropertyValue("--theme-ui-font-size")
-            .trim(),
-        ),
-      )
-      .toBe("19px");
-    await assertInboxEdgeAlignment(page, localTitle);
-    await assertInboxEdgeAlignment(page, remoteTitle);
-    await page.screenshot({
-      path: join(runRoot, "overview-inbox-large-type-920x640.png"),
-      animations: "disabled",
-    });
   } finally {
+    await setGrouping(page, "Inbox");
     await page.evaluate(async (appearance) => {
       await (globalThis as unknown as { palot: PalotApi }).palot.updateAppearance(appearance);
     }, appearance);
     if (viewport) await page.setViewportSize(viewport);
-    await page.getByRole("button", { name: /^Show inbox/ }).click();
   }
+}
+
+async function setGrouping(page: Page, grouping: "Inbox" | "Project" | "Server") {
+  const menu = await openViewMenu(taskColumn(page), page);
+  await menu.getByRole("menuitemradio", { name: grouping, exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+}
+
+/** Opens a row's menu and chooses an entry; the list's own entries end with their key. */
+async function rowMenu(page: Page, row: Locator, name: string) {
+  await row.click({ button: "right" });
+  await page.getByRole("menuitem", { name: new RegExp(`^${name}(\\s*[A-Z])?$`) }).click();
 }
 
 export const multiConnectionScenario: Scenario = {
@@ -594,56 +419,37 @@ export const multiConnectionScenario: Scenario = {
         { url: proxy.url, name: remoteName },
       );
 
-      const showInbox = page.getByRole("button", { name: /^Show inbox/ });
-      if (!(await showInbox.isVisible())) {
-        await page.getByRole("button", { name: "Show navigation", exact: true }).click();
-      }
-      await showColumnView(page, /^Show inbox/);
-      const options = page.getByRole("button", { name: "Inbox options", exact: true });
-      await expect(page.getByRole("button", { name: "Connection scope", exact: true })).toHaveCount(
-        0,
-      );
-      await expect(
-        page.getByRole("button", { name: "Inbox view settings", exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "Add project folder", exact: true }),
-      ).toBeVisible();
-      await options.click();
-      await page.getByRole("menuitem", { name: "Enabled servers", exact: true }).hover();
-      const monitor = page.getByRole("menuitemcheckbox", {
-        name: new RegExp(`^Enable ${remoteName}`),
-      });
+      await showTaskColumn(page);
+      await page.getByRole("button", { name: "Open Palot menu", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Servers", exact: true }).hover();
+      const monitor = page.getByRole("menuitemcheckbox", { name: new RegExp(`^${remoteName} `) });
       await expect(monitor).toBeVisible();
       if ((await monitor.getAttribute("aria-checked")) !== "true") await monitor.click();
       await page.keyboard.press("Escape");
       await page.keyboard.press("Escape");
 
-      const localRow = page.getByRole("button", { name: new RegExp(`^${localTitle} ·`) });
-      const remoteRow = page.getByRole("button", {
-        name: new RegExp(`^${remoteTitle} · ${remoteName}`),
-      });
+      const column = taskColumn(page);
+      const localRow = taskRow(column, localTitle);
+      const remoteRow = taskRow(column, remoteTitle);
       await expect(localRow).toBeVisible({ timeout: 30_000 });
       await expect(remoteRow).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByRole("button", { name: "Pinned 0", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("button", { name: "Snoozed 0", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("button", { name: /^Refresh / })).toHaveCount(0);
-      await expect
-        .poll(
-          () =>
-            page.getByRole("button", { name: /^Inbox\s+\d+$/ }).evaluate((trigger) => {
-              const label = trigger.querySelector("span")?.getBoundingClientRect();
-              const chevron = trigger.querySelector("svg")?.getBoundingClientRect();
-              return Boolean(label && chevron && chevron.left > label.right);
-            }),
-          { message: "Inbox retains the original right-aligned collapse control" },
-        )
-        .toBe(true);
+      // Colliding session ids stay two rows, one per server.
+      await expect(column.locator(`[data-session-id="${session.id}"]`)).toHaveCount(2);
 
       // Filtering hides rows without stopping the monitored connection.
-      await page.getByRole("button", { name: /^Filter tasks/ }).click();
-      await page.getByRole("menuitem", { name: /^Servers/ }).hover();
-      await page.getByRole("menuitemcheckbox", { name: new RegExp(`^${remoteName}`) }).click();
+      const view = await openViewMenu(column, page);
+      // Keys, not the pointer: a pointer path across the menu opens the submenus it passes.
+      await view.getByRole("menuitem", { name: /^Filter/ }).focus();
+      await page.keyboard.press("ArrowRight");
+      await page.getByRole("menuitem", { name: "Server", exact: true }).focus();
+      await page.keyboard.press("ArrowRight");
+      await page
+        .getByRole("menuitemradio", {
+          name: original.profiles.find((profile) => profile.id === original.activeProfileID)!.name,
+          exact: true,
+        })
+        .click();
+      await page.keyboard.press("Escape");
       await page.keyboard.press("Escape");
       await page.keyboard.press("Escape");
       await expect(remoteRow).toBeHidden();
@@ -657,42 +463,24 @@ export const multiConnectionScenario: Scenario = {
           profileID,
         ),
       ).toBe(true);
-      await page.getByRole("button", { name: /^Filter tasks/ }).click();
-      await page.getByRole("menuitem", { name: "Clear filters", exact: true }).click();
+      await column.getByRole("button", { name: /^Remove / }).click();
       await expect(remoteRow).toBeVisible();
 
-      await options.click();
-      await page.getByRole("menuitem", { name: "Collapse all sections", exact: true }).click();
-      await expect(localRow).toBeHidden();
-      await expect(remoteRow).toBeHidden();
-      await options.click();
-      await page.getByRole("menuitem", { name: "Expand all sections", exact: true }).click();
-      await expect(localRow).toBeVisible();
-      await expect(remoteRow).toBeVisible();
       // Native visual capture requires a mapped window. Hidden Electron windows
       // on Linux can service DOM commands but stall Chromium's screenshot request.
-      if (visible) await captureOverview(page, runRoot);
-      // The capture ends on the Projects view; the inbox actions below need Inbox.
-      await showColumnView(page, /^Show inbox/);
-      await page
-        .getByRole("button", { name: new RegExp(`^Actions for ${remoteTitle} on ${remoteName}`) })
-        .click();
-      await page.getByRole("menuitem", { name: "Settle", exact: true }).click();
-      await expect(
-        page.locator("[data-inbox-compact-row]").filter({ has: remoteRow }),
-      ).toBeVisible();
-      await expect(page.locator("[data-inbox-card]").filter({ has: remoteRow })).toHaveCount(0);
-      await expect(page.locator("[data-inbox-card]").filter({ has: localRow })).toBeVisible();
+      if (visible) await captureOverview(page, runRoot, localRow, remoteRow);
+      // Settle and move back act on the remote owner, not the focused server's same id.
+      await rowMenu(page, remoteRow, "Settle");
+      await openTaskSection(column, "Settled");
+      await expect(remoteRow).toHaveAttribute("data-placement", "settled");
+      await expect(localRow).not.toHaveAttribute("data-placement", "settled");
       await assertSessionMenu(page, remoteRow);
       await page.keyboard.press("Escape");
       await expect(
         page.getByRole("menuitem", { name: "Open in new window", exact: true }),
       ).toBeHidden();
-      await page
-        .getByRole("button", { name: new RegExp(`^Actions for ${remoteTitle} on ${remoteName}`) })
-        .click();
-      await page.getByRole("menuitem", { name: "Move to inbox", exact: true }).click();
-      await expect(page.locator("[data-inbox-card]").filter({ has: remoteRow })).toBeVisible();
+      await rowMenu(page, remoteRow, "Move back");
+      await expect(remoteRow).not.toHaveAttribute("data-placement", "settled");
       // Onboarding is app-wide, never repeated when selecting another server.
       await remoteRow.click();
       await assertOwner(page, session.id, profileID);
@@ -744,7 +532,7 @@ export const multiConnectionScenario: Scenario = {
       expect(page.url()).toBe(sourceURL);
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(sourceOrigin);
 
-      await page.getByRole("button", { name: "Show projects", exact: true }).click();
+      await setGrouping(page, "Project");
       await assertSessionMenu(page, remoteRow);
       await page.keyboard.press("Escape");
       await expect(
@@ -778,7 +566,7 @@ export const multiConnectionScenario: Scenario = {
       await assertOwner(page, session.id, original.activeProfileID);
       expect(page.url()).toBe(sourceURL);
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(sourceOrigin);
-      await page.getByRole("button", { name: /^Show inbox/ }).click();
+      await setGrouping(page, "Inbox");
       await expect(page.locator('[aria-label^="Execution connection:"]')).toHaveCount(0);
       await expect(page.getByText("Run on", { exact: true })).toHaveCount(0);
       const timeOrigin = await page.evaluate(() => performance.timeOrigin);
@@ -832,30 +620,28 @@ export const multiConnectionScenario: Scenario = {
 
       // Rename the background owner while local is selected, then check both
       // databases. A UI-only title update is not sufficient evidence.
-      await page
-        .getByRole("button", { name: new RegExp(`^Actions for ${remoteTitle} on ${remoteName}`) })
-        .click();
-      await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
+      await rowMenu(page, remoteRow, "Rename");
       const renamed = "Overview remote renamed only";
-      const dialog = page.getByRole("dialog", { name: "Rename task", exact: true });
-      await dialog.getByRole("textbox", { name: "Task title", exact: true }).fill(renamed);
-      await dialog.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(dialog).toHaveCount(0);
+      const field = column.getByRole("textbox", { name: "Task title", exact: true });
+      await field.fill(renamed);
+      await field.press("Enter");
+      await expect(field).toHaveCount(0);
+      await expect
+        .poll(async () => (await remote.session.get({ sessionID: session.id })).title)
+        .toBe(renamed);
       expect((await remote.session.get({ sessionID: session.id })).title).toBe(renamed);
       expect((await client.session.get({ sessionID: session.id })).title).toBe(localTitle);
       await assertOwner(page, session.id, original.activeProfileID);
 
       const backgroundTitle = "Overview background event received";
       await remote.session.update({ sessionID: session.id, title: backgroundTitle });
-      const backgroundRow = page.getByRole("button", {
-        name: new RegExp(`^${backgroundTitle} · ${remoteName}`),
-      });
+      const backgroundRow = taskRow(column, backgroundTitle);
       await expect(backgroundRow).toBeVisible({ timeout: 30_000 });
       await expect(localRow).toBeVisible();
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
 
       const taskURL = page.url();
-      await page.getByRole("button", { name: "Add project folder", exact: true }).click();
+      await chooseProjectsMenuItem(column, page, "Add project folder…");
       const folderDialog = page.getByRole("dialog", { name: "Add project folder", exact: true });
       await folderDialog.getByRole("combobox", { name: "Server", exact: true }).click();
       await page.getByRole("option", { name: remoteName, exact: true }).click();
@@ -927,7 +713,7 @@ export const multiConnectionScenario: Scenario = {
         ],
         location: { directory: projectDirectory },
       });
-      const copyRow = page.getByRole("button", { name: /^Copy across isolated servers ·/ });
+      const copyRow = taskRow(column, "Copy across isolated servers");
       await expect(copyRow).toBeVisible({ timeout: 30_000 });
       await copyRow.click();
       await assertOwner(page, copySource.id, original.activeProfileID);
@@ -960,18 +746,11 @@ export const multiConnectionScenario: Scenario = {
       await Service.stop({ file });
       started = false;
       await expect(backgroundRow).toBeVisible();
-      await expect(
-        page
-          .locator("[data-inbox-card]")
-          .filter({ has: backgroundRow })
-          .getByRole("img", { name: /Disconnected$/ }),
-      ).toBeVisible({ timeout: 30_000 });
+      await expect(column.getByText(`${remoteName} offline`, { exact: true })).toBeVisible({
+        timeout: 30_000,
+      });
       await assertOwner(page, session.id, original.activeProfileID);
-      await page
-        .getByRole("button", {
-          name: new RegExp(`^Actions for ${backgroundTitle} on ${remoteName}`),
-        })
-        .click();
+      await backgroundRow.click({ button: "right" });
       await expect(page.getByRole("menuitem", { name: "Rename", exact: true })).toBeDisabled();
       await page.keyboard.press("Escape");
       await backgroundRow.click();
@@ -1017,9 +796,3 @@ export const multiConnectionScenario: Scenario = {
     }
   },
 };
-
-/** Opens a rail column view. Pressing the active view hides the column, so press only when needed. */
-async function showColumnView(page: Page, name: string | RegExp) {
-  const button = page.getByRole("button", { name, exact: typeof name === "string" });
-  if ((await button.getAttribute("aria-pressed")) !== "true") await button.click();
-}

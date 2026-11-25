@@ -33,6 +33,12 @@ import { matchesPickerSearch } from "@/lib/picker-search";
 import { showErrorToast } from "@/lib/toast-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  ComposerPill,
+  ComposerPillChevron,
+  ComposerPillDetail,
+  ComposerPillLabel,
+} from "@/components/ui/composer";
 import { ComboboxGroup, ComboboxItem, ComboboxLabel, ComboboxList } from "@/components/ui/combobox";
 import { popupMotionClassName } from "@/components/ui/fluid-list";
 import { InputGroupButton } from "@/components/ui/input-group";
@@ -40,9 +46,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { SurfaceBackdrop } from "@/components/ui/surface-backdrop";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-export type ComposerPickerTone = "default" | "warning";
+type ComposerPickerTone = "default" | "warning";
 
-export type ComposerPickerDataAttributes = {
+type ComposerPickerDataAttributes = {
   [key: `data-${string}`]: string | number | boolean | undefined;
 };
 
@@ -83,7 +89,7 @@ export interface ComposerPickerSection<T> {
   hideWhenSearching?: boolean;
 }
 
-export interface ComposerPickerSearch {
+interface ComposerPickerSearch {
   /** Accessible name of the search field, for example "Choose model". */
   label: string;
   placeholder?: string;
@@ -94,14 +100,14 @@ export interface ComposerPickerSearch {
   filter?: boolean;
 }
 
-export interface ComposerPickerAction {
+interface ComposerPickerAction {
   key: string;
   label: string;
   icon?: ReactNode;
   onSelect(): void;
 }
 
-export interface ComposerPickerActionOptions {
+interface ComposerPickerActionOptions {
   /** Toast title for a failed selection. */
   errorTitle: string;
   /** Runs after a successful selection, for example to close the popup. */
@@ -154,7 +160,10 @@ export interface ComposerPickerProps<T> {
   /** Warning-colored status after the label, such as "Offline". */
   status?: ReactNode;
   tone?: ComposerPickerTone;
-  size?: "composer" | "context";
+  /** `pill` is the composer row's trigger (`ComposerPill`); `context` sits under the card. */
+  size?: "composer" | "context" | "pill";
+  /** For `pill`: what stays when the row drops labels. */
+  compact?: "label" | "icon";
   /** Destination-style triggers announce themselves as comboboxes. */
   triggerRole?: "button" | "combobox";
   triggerClassName?: string;
@@ -170,6 +179,10 @@ export interface ComposerPickerProps<T> {
 
   open?: boolean;
   onOpenChange?(open: boolean): void;
+  /** Where focus goes when the popup opens; the search field (or the list) by default. */
+  initialFocus?: PopoverPrimitive.Popup.Props["initialFocus"];
+  /** Where focus goes when the popup closes; the trigger by default. */
+  finalFocus?: PopoverPrimitive.Popup.Props["finalFocus"];
   side?: "top" | "bottom";
   align?: "start" | "center" | "end";
   popupClassName?: string;
@@ -188,6 +201,8 @@ export interface ComposerPickerProps<T> {
   emptyLabel?: string;
   /** Detail pane for the highlighted (or current) row, beside the list when space allows. */
   renderDetail?(option: ComposerPickerOption<T> | null): ReactNode;
+  /** `column` always keeps the pane beside the list, for panes the choice depends on. */
+  detailPlacement?: "auto" | "column";
   /** Quiet text under the list. */
   footer?: ReactNode;
   /** Where `actions` sit: a quiet footer bar, or beside the title in the header. */
@@ -202,6 +217,12 @@ export interface ComposerPickerProps<T> {
    * confirmation. The popup closes without calling `onSelect`.
    */
   confirm?(option: ComposerPickerOption<T>): boolean;
+  /**
+   * Runs once a choice succeeds, or the current row is chosen again. Return false to keep the
+   * popup open, for example to go on to a choice in the detail pane; `onSelectionComplete` then
+   * waits for that choice.
+   */
+  afterSelect?(option: ComposerPickerOption<T>): boolean | void;
   /** After a successful choice; the composer uses it to take focus back. */
   onSelectionComplete?(): void;
   onToggleFavorite?(option: ComposerPickerOption<T>): void;
@@ -227,6 +248,7 @@ export function ComposerPicker<T>({
   status,
   tone = "default",
   size = "composer",
+  compact = "label",
   triggerRole = "button",
   triggerClassName,
   triggerProps,
@@ -238,6 +260,8 @@ export function ComposerPicker<T>({
   disabled = false,
   open: openProp,
   onOpenChange,
+  initialFocus,
+  finalFocus,
   side = "top",
   align = "start",
   popupClassName,
@@ -253,12 +277,14 @@ export function ComposerPicker<T>({
   error = null,
   emptyLabel = "No matches",
   renderDetail,
+  detailPlacement = "auto",
   footer,
   actionsPlacement = "footer",
   actions,
   onSelect,
   errorTitle,
   confirm,
+  afterSelect,
   onSelectionComplete,
   onToggleFavorite,
 }: ComposerPickerProps<T>) {
@@ -297,7 +323,7 @@ export function ComposerPicker<T>({
     close();
     onSelectionComplete?.();
   }, [close, onSelectionComplete]);
-  const { busy, run } = useComposerPickerAction({ errorTitle, onSuccess: completeSelection });
+  const { busy, run } = useComposerPickerAction({ errorTitle });
 
   const searching = Boolean(search) && query.trim() !== "";
   const filter = search?.filter !== false;
@@ -331,7 +357,7 @@ export function ComposerPicker<T>({
   function choose(option: ComposerPickerOption<T>) {
     if (busy || disabled || option.disabled) return;
     if (option.key === selectedKey) {
-      completeSelection();
+      if (afterSelect?.(option) !== false) completeSelection();
       return;
     }
     if (confirm?.(option)) {
@@ -339,7 +365,11 @@ export function ComposerPicker<T>({
       return;
     }
     setPendingKey(option.key);
-    void run(() => onSelect(option)).finally(() => setPendingKey(null));
+    void run(() => onSelect(option))
+      .then((done) => {
+        if (done && afterSelect?.(option) !== false) completeSelection();
+      })
+      .finally(() => setPendingKey(null));
   }
 
   function handleOpenChange(next: boolean) {
@@ -368,36 +398,61 @@ export function ComposerPicker<T>({
     className: cn(
       "min-w-0",
       size === "composer" && "gap-1.5 px-2",
-      tone === "warning" && "text-warning",
+      tone === "warning" && size !== "pill" && "text-warning",
       triggerClassName,
     ),
     ...triggerProps,
   };
   const triggerButton =
-    size === "composer" ? (
+    size === "pill" ? (
+      <ComposerPill
+        tone={tone === "warning" ? "unavailable" : "default"}
+        compact={compact}
+        {...triggerElementProps}
+      />
+    ) : size === "composer" ? (
       <InputGroupButton size="composer" {...triggerElementProps} />
     ) : (
       <Button variant="ghost" size="context" {...triggerElementProps} />
     );
-  const triggerContent = (
-    <>
-      {icon}
-      <span className={cn("min-w-0 truncate", labelClassName)} {...labelAttributes}>
-        {label}
-      </span>
-      {secondary ? (
-        <span className="max-w-32 shrink-0 truncate text-muted-foreground" {...secondaryAttributes}>
-          {secondary}
+  const triggerContent =
+    size === "pill" ? (
+      <>
+        {icon}
+        <ComposerPillLabel className={labelClassName} {...labelAttributes}>
+          {label}
+        </ComposerPillLabel>
+        {secondary ? (
+          <ComposerPillDetail {...secondaryAttributes}>{secondary}</ComposerPillDetail>
+        ) : null}
+        {busy ? (
+          <Spinner className="size-3 shrink-0" aria-hidden="true" role={undefined} />
+        ) : (
+          <ComposerPillChevron />
+        )}
+      </>
+    ) : (
+      <>
+        {icon}
+        <span className={cn("min-w-0 truncate", labelClassName)} {...labelAttributes}>
+          {label}
         </span>
-      ) : null}
-      {status ? <span className="shrink-0 text-warning">{status}</span> : null}
-      {busy ? (
-        <Spinner className="size-3 shrink-0" aria-hidden="true" role={undefined} />
-      ) : (
-        <ChevronDown className="shrink-0 text-muted-foreground" aria-hidden="true" />
-      )}
-    </>
-  );
+        {secondary ? (
+          <span
+            className="max-w-32 shrink-0 truncate text-muted-foreground"
+            {...secondaryAttributes}
+          >
+            {secondary}
+          </span>
+        ) : null}
+        {status ? <span className="shrink-0 text-warning">{status}</span> : null}
+        {busy ? (
+          <Spinner className="size-3 shrink-0" aria-hidden="true" role={undefined} />
+        ) : (
+          <ChevronDown className="shrink-0 text-muted-foreground" aria-hidden="true" />
+        )}
+      </>
+    );
 
   const highlighted =
     (highlightedKey ? optionsByKey.get(highlightedKey) : undefined) ??
@@ -429,7 +484,8 @@ export function ComposerPicker<T>({
         >
           <PopoverPrimitive.Popup
             data-slot="composer-picker"
-            initialFocus={focusTargetRef}
+            initialFocus={initialFocus ?? focusTargetRef}
+            finalFocus={finalFocus}
             className={cn(
               "relative isolate flex max-h-(--available-height) w-80 max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-popover text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-hidden",
               popupMotionClassName,
@@ -606,7 +662,13 @@ export function ComposerPicker<T>({
                 {detail ? (
                   <aside
                     aria-label="Details"
-                    className="hidden w-56 shrink-0 overflow-y-auto border-l border-border/60 p-3 @[34rem]/picker:block"
+                    data-slot="composer-picker-detail"
+                    className={cn(
+                      "shrink-0 overflow-y-auto border-l border-border/60",
+                      detailPlacement === "column"
+                        ? "flex w-44 flex-col p-1.5"
+                        : "hidden w-56 p-3 @[34rem]/picker:block",
+                    )}
                   >
                     {detail}
                   </aside>

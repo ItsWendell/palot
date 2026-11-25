@@ -1,6 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createStore, Provider } from "jotai";
+import type { OpenCodeClient } from "@opencode/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PalotFileAttachment } from "../../shared";
+import type { OpenCodeRuntimeStatus, PalotFileAttachment } from "../../shared";
+import { runtimeAtom } from "../atoms/workspace";
+import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { mapMessage } from "../services/opencode-mappers";
 import { FileAttachment } from "./file-attachment";
 
@@ -21,6 +25,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  resetOpenCodeClientForTest();
 });
 
 describe("FileAttachment", () => {
@@ -54,6 +59,32 @@ describe("FileAttachment", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Close image preview" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(attachmentPreview).not.toHaveBeenCalled();
+  });
+
+  it("shows a stored screenshot's preview through its connection without inline bytes", async () => {
+    const ref = `media:${"e".repeat(64)}`;
+    const get = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    setOpenCodeClientForTest({ experimental: { media: { get } } } as unknown as OpenCodeClient);
+    const store = createStore();
+    store.set(runtimeAtom, { connectionID: "media-connection" } as OpenCodeRuntimeStatus);
+    const message = mapMessage({
+      id: "stored",
+      type: "user",
+      time: { created: 1 },
+      text: "",
+      files: [
+        { uri: ref, name: file.name, mime: file.mime, source: { type: "uri", uri: file.uri } },
+      ] as never,
+    });
+    const view = render(
+      <Provider store={store}>
+        <FileAttachment file={message.files![0]!} />
+      </Provider>,
+    );
+    await screen.findByRole("button", { name: "Open preview of screenshot.png" });
+    expect(view.container.querySelector("img")?.getAttribute("src")).toBe("blob:preview");
+    expect(get).toHaveBeenCalledExactlyOnceWith({ hash: "e".repeat(64) });
     expect(attachmentPreview).not.toHaveBeenCalled();
   });
 

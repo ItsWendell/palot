@@ -382,15 +382,38 @@ describe("FileTab previews", () => {
     expect(wheel({ deltaY: 40 })).toBe(false);
   });
 
-  it("releases a media preview when its workbench tab becomes inactive", () => {
+  it("keeps an image and its zoom while its workbench tab is hidden", () => {
     mocks.query.data = bytes(137, 80, 78, 71, 13, 10, 26, 10);
     const view = render(<FileTab tab={tab} active />);
-    expect(screen.getByRole("img", { name: "notes.md" })).toBeTruthy();
+    const image = screen.getByRole("img", { name: "notes.md" });
+    const stage = image.parentElement!;
+    const pinch = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -40 });
+    Object.defineProperty(pinch, "ctrlKey", { value: true });
+    act(() => {
+      stage.dispatchEvent(pinch);
+    });
+    const fit = () => screen.getByRole("button", { name: "Fit image to pane" });
+    expect(fit().hasAttribute("disabled")).toBe(false);
+
     view.rerender(<FileTab tab={tab} active={false} />);
-    expect(screen.queryByRole("img", { name: "notes.md" })).toBeNull();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:one");
     view.rerender(<FileTab tab={tab} active />);
-    expect(screen.getByRole("img", { name: "notes.md" }).getAttribute("src")).toBe("blob:two");
+    expect(screen.getByRole("img", { name: "notes.md" })).toBe(image);
+    expect(image.getAttribute("src")).toBe("blob:one");
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(fit().hasAttribute("disabled")).toBe(false);
+  });
+
+  it("pauses audio and video when their tab is hidden, keeping the player", () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    mocks.query.data = mp4();
+    const view = render(<FileTab tab={tab} active />);
+    const video = screen.getByLabelText("Video preview: notes.md");
+    expect(pause).not.toHaveBeenCalled();
+    view.rerender(<FileTab tab={tab} active={false} />);
+    expect(pause).toHaveBeenCalledOnce();
+    view.rerender(<FileTab tab={tab} active />);
+    expect(screen.getByLabelText("Video preview: notes.md")).toBe(video);
+    expect(pause).toHaveBeenCalledOnce();
   });
 
   it.each([

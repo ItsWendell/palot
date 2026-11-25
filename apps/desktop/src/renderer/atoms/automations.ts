@@ -14,25 +14,6 @@ export const automationLoadingAtom = atom(
 export const automationErrorAtom = atom(
   (get) => get(automationErrorsByProfileAtom)[get(runtimeAtom)?.profileID ?? ""] ?? null,
 );
-export const groupedScheduledSessionIDsAtom = atom((get) => {
-  const snapshot = get(automationSnapshotAtom);
-  if (!snapshot) return new Set<string>();
-  const standaloneIDs = new Set(
-    snapshot.automations
-      .filter((automation) => automation.destination.type === "standalone")
-      .map((automation) => automation.id),
-  );
-  return new Set(
-    snapshot.runs
-      .filter(
-        (run) =>
-          run.rootSessionID &&
-          standaloneIDs.has(run.automationID) &&
-          run.state !== "needs-attention",
-      )
-      .map((run) => run.rootSessionID as string),
-  );
-});
 export const automationUnreadCountAtom = atom((get) => {
   const snapshot = get(automationSnapshotAtom);
   return (

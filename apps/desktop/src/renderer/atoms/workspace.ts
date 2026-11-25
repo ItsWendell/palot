@@ -176,14 +176,37 @@ export const activeShellsAtom = atom(
 export type SessionRuntimeStatus =
   | { type: "idle" }
   | { type: "busy" }
-  | { type: "retry"; attempt: number; message: string; next: number };
+  | {
+      type: "retry";
+      attempt: number;
+      message: string;
+      next: number;
+      /** What failed, from `session.retry.scheduled` (`session.status` does not say). */
+      error?: RetryError;
+      /** When OpenCode scheduled the retry, which is when the failure was recorded. */
+      scheduledAt?: number;
+    };
+
+/** The failure a retry follows: OpenCode's error type, HTTP status and requested wait. */
+export interface RetryError {
+  type: string;
+  status?: number;
+  retryAfterMs?: number;
+}
 
 export interface SessionExecutionState {
   status: "inactive" | "running" | "succeeded" | "failed" | "interrupted";
   startedAt: number | null;
   completedAt: number | null;
   parentID?: string;
-  error?: { type: string | null; message: string };
+  error?: {
+    type: string | null;
+    message: string;
+    status?: number;
+    retryAfterMs?: number;
+    /** The provider's response body, capped; OpenCode Console names limits and resets in it. */
+    body?: string;
+  };
 }
 
 export interface SubagentProgress {
@@ -191,13 +214,42 @@ export interface SubagentProgress {
   total: number;
 }
 
+/**
+ * Sessions with a running descendant: each running session's ancestors. A subagent that went
+ * idle while a subagent it started still runs (or waits for the user's answer) is not finished:
+ * that subagent reports back to it and wakes it.
+ */
+export function sessionsWithRunningDescendants(
+  states: Map<string, SessionExecutionState>,
+): Set<string> {
+  const ancestors = new Set<string>();
+  for (const [candidateID, state] of states) {
+    if (state.status !== "running") continue;
+    const visited = new Set([candidateID]);
+    let parentID = state.parentID;
+    while (parentID && !visited.has(parentID)) {
+      ancestors.add(parentID);
+      visited.add(parentID);
+      parentID = states.get(parentID)?.parentID;
+    }
+  }
+  return ancestors;
+}
+
+/**
+ * The turn's subagents and how many still run. An idle subagent counts as running while its
+ * own work does: it is in `onBackgroundWork` (its latest report lists background work still
+ * running) or one of its own subagents runs.
+ */
 export function subagentProgress(
   states: Map<string, SessionExecutionState>,
   sessionID: string,
   turnStartedAt: number | null,
+  onBackgroundWork: ReadonlySet<string> = new Set(),
 ): SubagentProgress {
   let active = 0;
   let total = 0;
+  const parentsOfRunning = sessionsWithRunningDescendants(states);
   for (const [candidateID, state] of states) {
     const visited = new Set([candidateID]);
     let parentID = state.parentID;
@@ -208,9 +260,13 @@ export function subagentProgress(
           state.status === "running" ||
           (state.startedAt !== null && state.startedAt >= turnStartedAt) ||
           (state.completedAt !== null && state.completedAt >= turnStartedAt);
-        if (belongsToTurn) {
+        const waiting =
+          (onBackgroundWork.has(candidateID) || parentsOfRunning.has(candidateID)) &&
+          state.status !== "failed" &&
+          state.status !== "interrupted";
+        if (belongsToTurn || waiting) {
           total += 1;
-          if (state.status === "running") active += 1;
+          if (state.status === "running" || waiting) active += 1;
         }
         break;
       }

@@ -20,7 +20,21 @@ export function workspaceFileQueryOptions(
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     retry: false,
+    // A refresh that read the same bytes keeps the cached array, so previews built from it
+    // (a PDF on page 5, a document's scroll position) don't reload.
+    structuralSharing: (previous: unknown, next: unknown) =>
+      previous instanceof Uint8Array && next instanceof Uint8Array && sameBytes(previous, next)
+        ? previous
+        : next,
   });
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 export function useWorkspaceFile(location: LocationRef, path: string, enabled = true) {

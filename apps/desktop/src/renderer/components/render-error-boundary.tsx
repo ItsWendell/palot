@@ -45,14 +45,36 @@ export function RenderErrorRecovery({ error, details }: { error: unknown; detail
   );
 }
 
+interface RenderErrorBoundaryState {
+  failed: boolean;
+  error: unknown;
+  details?: string;
+  resetKey?: string;
+}
+
+/**
+ * Shows a recovery screen when a descendant fails to render. A change of `resetKey` (the route
+ * a workspace shows) clears a failure. It does not remount healthy children: the location
+ * changes before the router renders the next route, so remounting would rebuild the previous one.
+ */
 export class RenderErrorBoundary extends Component<
-  { children: ReactNode },
-  { failed: boolean; error: unknown; details?: string }
+  { children: ReactNode; resetKey?: string },
+  RenderErrorBoundaryState
 > {
-  override state: { failed: boolean; error: unknown; details?: string } = {
+  override state: RenderErrorBoundaryState = {
     failed: false,
     error: null,
+    resetKey: this.props.resetKey,
   };
+  static getDerivedStateFromProps(
+    props: { resetKey?: string },
+    state: RenderErrorBoundaryState,
+  ): Partial<RenderErrorBoundaryState> | null {
+    if (props.resetKey === state.resetKey) return null;
+    return state.failed
+      ? { failed: false, error: null, details: undefined, resetKey: props.resetKey }
+      : { resetKey: props.resetKey };
+  }
   static getDerivedStateFromError(error: unknown) {
     return { failed: true, error };
   }

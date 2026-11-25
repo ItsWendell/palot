@@ -358,20 +358,59 @@ describe("MarkdownContent", () => {
     const view = render(<MarkdownContent value={"| Name | Value |\n| --- | --- |\n| One | 1 |"} />);
 
     fireEvent.click(view.container.querySelector('button[aria-label="Copy table"]')!);
-    await waitFor(() => expect(document.body.textContent).toContain("Copy as TSV"));
+    await waitFor(() => expect(document.body.textContent).toContain("Copy as table"));
     fireEvent.click(
       [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-        (item) => item.textContent === "Copy as TSV",
+        (item) => item.textContent === "Copy as table",
       )!,
     );
 
-    await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith("Name\tValue\nOne\t1"));
+    // TSV for spreadsheets and plain text, HTML for documents and chat.
+    await waitFor(() =>
+      expect(writeClipboardText).toHaveBeenCalledWith(
+        "Name\tValue\nOne\t1",
+        "<table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><tr><td>One</td><td>1</td></tr></tbody></table>",
+      ),
+    );
+
+    fireEvent.click(view.container.querySelector('button[aria-label="Copy table"]')!);
+    await waitFor(() => expect(document.body.textContent).toContain("Copy as Markdown"));
+    fireEvent.click(
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (item) => item.textContent === "Copy as Markdown",
+      )!,
+    );
+    // Markdown stays plain text, so it pastes as written.
+    await waitFor(() =>
+      expect(writeClipboardText).toHaveBeenLastCalledWith(expect.stringContaining("| Name")),
+    );
+    expect(writeClipboardText.mock.calls.at(-1)).toHaveLength(1);
   });
 
   it("renders block and inline math without blocking Markdown output", async () => {
     const view = render(<MarkdownContent value={"Inline $x^2$\n\n$$\ny = mx + b\n$$"} />);
 
     await waitFor(() => expect(view.container.querySelectorAll(".katex")).toHaveLength(2));
+  });
+
+  it("renders settled latex and math fences as display math, and others as code", async () => {
+    const view = render(
+      <MarkdownContent value={"```latex\n\\frac{a}{b}\n```\n\n```math\nx^2 + y^2\n```"} />,
+    );
+    await waitFor(() => expect(view.container.querySelectorAll(".markdown-math")).toHaveLength(2));
+    expect(view.container.querySelectorAll(".katex-error")).toHaveLength(0);
+
+    const invalid = render(<MarkdownContent value={"```tex\n\\documentclass{article}\n```"} />);
+    await waitFor(() =>
+      expect(invalid.container.querySelector(".markdown-highlight")?.textContent).toContain(
+        "\\documentclass{article}",
+      ),
+    );
+    expect(invalid.container.querySelector(".markdown-math")).toBeNull();
+
+    const streaming = render(<MarkdownContent value={"```latex\n\\frac{a}{b}\n```"} streaming />);
+    expect(streaming.container.querySelector(".markdown-highlight")).not.toBeNull();
+    expect(streaming.container.querySelector(".markdown-math, .markdown-math-fallback")).toBeNull();
   });
 
   it("does not interpret currency or escaped dollars as inline math", async () => {

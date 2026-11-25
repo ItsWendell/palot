@@ -1,28 +1,43 @@
-import { Check, Copy, Download, Minus, Plus, X } from "lucide-react";
+import { Check, Copy, Download, ImageOff, Minus, Plus, X } from "lucide-react";
 import { motion } from "motion/react";
 import { memo, useId, useState } from "react";
 import { useClipboardCopy } from "../hooks/use-clipboard-copy";
 import { useImageZoom } from "../hooks/use-image-zoom";
+import { useMediaSource } from "../hooks/use-media-source";
 import { cn } from "../lib/cn";
+import { spring } from "../lib/springs";
 import { showErrorToast } from "../lib/toast-error";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
+import { Skeleton } from "./ui/skeleton";
 
-const transition = { type: "spring", stiffness: 210, damping: 26, mass: 0.8 } as const;
+const transition = spring.slow;
 /** The toolbar and double-click toggle between fitted and this zoom. */
 const LIGHTBOX_ZOOM = 1.8;
 
 export const ReadImagePreview = memo(function ReadImagePreview({
-  src,
+  src: source,
   name,
   mime,
 }: {
+  /** A `data:` or object URL, or a `media:<hash>` reference resolved through the connection. */
   src: string;
   name: string;
   mime: string;
 }) {
   const layoutID = useId();
   const [open, setOpen] = useState(false);
+  const { url: src, failed } = useMediaSource(source, mime);
+
+  if (failed) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 bg-muted/25 px-2 py-1 text-xs text-muted-foreground">
+        <ImageOff className="size-3.5 shrink-0" aria-hidden="true" />
+        <span className="truncate">{name} is unavailable</span>
+      </span>
+    );
+  }
+  if (!src) return <Skeleton aria-label={`Loading ${name}`} className="h-24 w-36 rounded-lg" />;
 
   return (
     <>

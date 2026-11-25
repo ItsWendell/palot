@@ -16,6 +16,7 @@ import type {
   PullRequestTimelineItem,
 } from "../../shared/source-control-contract";
 import {
+  THREAD_FIELDS,
   toSnapshot,
   type PageInfo,
   type RawConnection,
@@ -63,7 +64,7 @@ const ACTOR = "__typename login avatarUrl";
 function checkContextFields(number: number): string {
   return `__typename
     ... on CheckRun {
-      name status conclusion detailsUrl startedAt completedAt
+      databaseId name status conclusion detailsUrl startedAt completedAt
       isRequired(pullRequestNumber: ${number})
       checkSuite { app { name } workflowRun { workflow { name } } }
     }
@@ -93,6 +94,7 @@ export function detailQuery(number: number): string {
         id number title url state isDraft body createdAt updatedAt mergedAt closedAt
         headRefName baseRefName headRefOid mergeable mergeStateStatus reviewDecision
         additions deletions changedFiles
+        ${THREAD_FIELDS}
         totalCommits: commits { totalCount }
         author { ${ACTOR} }
         repository { nameWithOwner }
@@ -134,6 +136,7 @@ export interface RawPerson {
 
 export interface RawCheckContext {
   __typename?: string;
+  databaseId?: number | null;
   name?: string | null;
   status?: string | null;
   conclusion?: string | null;
@@ -257,6 +260,10 @@ export function toCheck(raw: RawCheckContext): PullRequestCheck | null {
     url: raw.detailsUrl ?? null,
     startedAt: time(raw.startedAt),
     completedAt: time(raw.completedAt),
+    checkRunID:
+      typeof raw.databaseId === "number" && Number.isSafeInteger(raw.databaseId)
+        ? raw.databaseId
+        : null,
   };
 }
 

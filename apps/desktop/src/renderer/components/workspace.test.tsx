@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { createStore } from "jotai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { navigationOpenAtom, sidebarModeAtom } from "../atoms/ui";
+import { navigationOpenAtom } from "../atoms/ui";
 import { phaseAtom, runtimeAtom } from "../atoms/workspace";
 import { renderWithRouter } from "../test-utils/render-with-router";
 import { Workspace } from "./workspace";
@@ -9,7 +9,8 @@ import { palot } from "../services/palot";
 import type { AutomationNotificationTarget, OpenCodeRuntimeStatus } from "../../shared";
 
 // This suite verifies pane ownership; native E2E covers ScrollArea layout and animations.
-vi.mock("./ui/scroll-area", () => ({
+vi.mock("./ui/scroll-area", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./ui/scroll-area")>()),
   ScrollArea: ({
     children,
     className,
@@ -119,7 +120,7 @@ describe("Workspace pane visibility", () => {
       expect(screen.getByRole("button", { name: "Hide navigation" }).querySelector("svg")).not.toBe(
         null,
       );
-      expect(screen.getByRole("button", { name: "Show projects" }).querySelector("svg")).not.toBe(
+      expect(screen.getByRole("button", { name: "Show tasks" }).querySelector("svg")).not.toBe(
         null,
       );
       expect(screen.getByTestId("right-workbench-panel").getAttribute("data-collapsed")).toBe(
@@ -135,33 +136,33 @@ describe("Workspace pane visibility", () => {
     const store = createStore();
     store.set(phaseAtom, "ready");
     store.set(navigationOpenAtom, false);
-    store.set(sidebarModeAtom, "inbox");
     renderWithRouter(<Workspace content={null} />, store);
-    const inbox = await screen.findByRole("button", { name: "Show inbox" });
-    const projects = screen.getByRole("button", { name: "Show projects" });
+    const tasks = await screen.findByRole("button", { name: "Show tasks" });
 
-    // Passing over a view button without resting does not peek.
-    fireEvent.pointerEnter(projects, { pointerType: "mouse" });
-    fireEvent.pointerLeave(projects, { pointerType: "mouse" });
+    // Passing over the button without resting does not peek.
+    fireEvent.pointerEnter(tasks, { pointerType: "mouse" });
+    fireEvent.pointerLeave(tasks, { pointerType: "mouse" });
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(screen.queryByRole("complementary", { name: "Projects preview" })).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Tasks preview" })).toBeNull();
 
-    // Resting on a view peeks that view; Escape dismisses it.
-    fireEvent.pointerEnter(inbox, { pointerType: "mouse" });
-    expect(await screen.findByRole("complementary", { name: "Inbox preview" })).toBeTruthy();
-    expect(inbox.getAttribute("aria-pressed")).toBe("false");
+    // Resting on it peeks the list; Escape dismisses it.
+    fireEvent.pointerEnter(tasks, { pointerType: "mouse" });
+    expect(await screen.findByRole("complementary", { name: "Tasks preview" })).toBeTruthy();
+    expect(tasks.getAttribute("aria-pressed")).toBe("false");
     fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("complementary")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("complementary", { name: "Tasks preview" })).toBeNull(),
+    );
 
-    // Hovering the other view peeks it; leaving both rail and overlay closes it.
-    fireEvent.pointerEnter(projects, { pointerType: "mouse" });
-    expect(await screen.findByRole("complementary", { name: "Projects preview" })).toBeTruthy();
-    expect(store.get(sidebarModeAtom)).toBe("inbox");
+    // Leaving both rail and overlay closes it.
+    fireEvent.pointerEnter(tasks, { pointerType: "mouse" });
+    expect(await screen.findByRole("complementary", { name: "Tasks preview" })).toBeTruthy();
     fireEvent.pointerMove(document, { clientX: 900, clientY: 400 });
-    await waitFor(() => expect(screen.queryByRole("complementary")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("complementary", { name: "Tasks preview" })).toBeNull(),
+    );
 
     expect(store.get(navigationOpenAtom)).toBe(false);
-    expect(store.get(sidebarModeAtom)).toBe("inbox");
   });
 
   it("keeps the task column hidden on full-page routes and shows it as an overlay", async () => {

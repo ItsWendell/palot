@@ -94,7 +94,7 @@ function seedTranscriptData(
 
 describe("session transcript queries", () => {
   it.each(["succeeded", "failed", "interrupted"] as const)(
-    "hydrates %s idle markers without changing visible transcript rows",
+    "hydrates %s idle markers as the end of the turn they close",
     (outcome) => {
       const first = [rawMessage("user-first", 1, "First"), rawMessage("answer-first", 2, "Done")];
       const next = [rawMessage("user-next", 5, "Next"), rawMessage("answer-next", 6, "Ready")];
@@ -122,13 +122,14 @@ describe("session transcript queries", () => {
       const withoutMarkers = createSessionTranscriptProjector().project({
         messages: projectTranscriptMessages([...first, ...next]),
       });
-      expect(projection.rows.map((row) => row.id)).toEqual([
-        "user-first",
-        "answer-first",
-        "user-next",
-        "answer-next",
-      ]);
-      expect(projection.presentationRows).toEqual(withoutMarkers.presentationRows);
+      expect(projection.rows.map((row) => row.id)).toEqual(["user-first", "user-next"]);
+      expect(projection.rows[0]?.turn).toMatchObject({
+        status: { succeeded: "completed", failed: "failed", interrupted: "interrupted" }[outcome],
+        completedAt: 4,
+      });
+      const shape = (rows: typeof projection.presentationRows) =>
+        rows.map((row) => [row.id, row.kind]);
+      expect(shape(projection.presentationRows)).toEqual(shape(withoutMarkers.presentationRows));
       expect(projection.prompts).toEqual(withoutMarkers.prompts);
     },
   );

@@ -114,6 +114,10 @@ export const compactWindowsScenario: Scenario = {
           lineHeight: parseFloat(getComputedStyle(input).lineHeight),
         };
       });
+    const fitsTwoLines = async () => {
+      const box = await bounds();
+      return box.inputHeight < 3 * box.lineHeight;
+    };
     for (const [width, height] of [
       [310, 480],
       [640, 480],
@@ -122,7 +126,8 @@ export const compactWindowsScenario: Scenario = {
     ]) {
       await page.setViewportSize({ width: width!, height: height! });
       await input.fill("");
-      await expect.poll(async () => (await bounds()).inputHeight).toBeLessThan(55);
+      // The field shrinks back to its two-line minimum; the line height is the editor's own.
+      await expect.poll(fitsTwoLines).toBe(true);
       await input.fill(Array.from({ length: 30 }, (_, i) => `Draft line ${i + 1}`).join("\n"));
       await expect
         .poll(async () => {
@@ -132,7 +137,7 @@ export const compactWindowsScenario: Scenario = {
         .toBe(true);
       await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeVisible();
       await input.fill("One compact line");
-      await expect.poll(async () => (await bounds()).inputHeight).toBeLessThan(55);
+      await expect.poll(fitsTwoLines).toBe(true);
       await expect(page.getByText("Compact workspace ready.", { exact: true })).toBeInViewport();
       await page.screenshot({ path: join(runRoot, `compact-${width}-${height}.png`) });
     }
@@ -169,8 +174,8 @@ export const compactWindowsScenario: Scenario = {
     await expect(page.getByRole("button", { name: "Previous user turn" })).toHaveCount(0);
     await page.getByRole("button", { name: "Task actions", exact: true }).click();
     await expect(page.getByRole("menuitem", { name: "Previous user turn" })).toBeVisible();
-    await page.getByRole("menuitem", { name: "Prompt timeline", exact: true }).click();
-    await expect(page.getByRole("dialog", { name: "Prompt timeline", exact: true })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Jump to message…", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Jump to message", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "Show changes", exact: true }).click();
@@ -212,11 +217,16 @@ export const compactWindowsScenario: Scenario = {
     expect(child.url()).toContain(session.id);
     expect(page.url()).toBe(originalURL);
     const childInput = child.getByRole("textbox", { name: "Message Palot", exact: true });
-    await expect(childInput).toHaveValue("Shared draft before opening");
+    await expect(childInput).toHaveJSProperty("value", "Shared draft before opening");
     await childInput.fill("Edited in the second window");
-    await expect(input).toHaveValue("Edited in the second window");
-    await input.fill("");
-    await expect(childInput).toHaveValue("");
+    await expect(input).toHaveJSProperty("value", "Edited in the second window");
+    // Clear it as a person would. A scripted fill("") right after the synced text selects it
+    // in the DOM, and the editor reads that selection only after the Delete.
+    await input.focus();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Delete");
+    await expect(input).toHaveJSProperty("value", "");
+    await expect(childInput).toHaveJSProperty("value", "");
     await client.session.update({ sessionID: session.id, title: "Shared chat in two windows" });
     await expect(child.locator(".thread-header")).toContainText("Shared chat in two windows");
     await expect(page.locator(".thread-header")).toContainText("Shared chat in two windows");
@@ -240,10 +250,11 @@ export const compactWindowsScenario: Scenario = {
     await expect(page.getByText("Compact workspace ready.", { exact: true })).toBeVisible();
     // Also exercise closing the original main window, with another workspace remaining.
     const next = page.context().waitForEvent("page");
-    await page.evaluate(
-      async (id) => Reflect.get(window, "palot").openSessionWindow(id),
-      session.id,
-    );
+    // A session window names its connection, as the app's own callers do.
+    await page.evaluate(async (id) => {
+      const api = Reflect.get(window, "palot");
+      await api.openSessionWindow(id, (await api.runtimeStatus()).connectionID);
+    }, session.id);
     const remaining = await next;
     await expect(remaining.getByText("Compact workspace ready.", { exact: true })).toBeVisible();
     const primaryClosed = page.waitForEvent("close");

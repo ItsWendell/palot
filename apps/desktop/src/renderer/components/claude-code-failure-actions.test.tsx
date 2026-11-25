@@ -8,7 +8,7 @@ import * as clipboard from "../lib/clipboard";
 import { projectTranscriptTurns } from "../lib/turn-projection";
 import { renderWithRouter } from "../test-utils/render-with-router";
 import { ClaudeCodeFailureActions } from "./claude-code-failure-actions";
-import { TimelineBoundary } from "./thread";
+import { TimelineBoundary } from "./transcript/timeline-parts";
 
 function failure(message: string): PalotMessage {
   return {

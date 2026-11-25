@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { PalotEvent, PalotEventDeliveryMetadata } from "../../shared";
 import { inboxBranchKeys, openCodeKeys } from "./opencode-query";
 import {
+  changedFileQueryKeys,
+  forgetRemovedPath,
   markShutdownLocationStale,
   openCodeInvalidationKeys,
   sessionStatsShouldRevalidate,
@@ -143,6 +145,106 @@ describe("OpenCode query event routing", () => {
     }
     expect(client.getQueryState(watched)?.isInvalidated).toBe(true);
     expect(client.getQueryState(other)?.isInvalidated).toBe(false);
+    client.clear();
+  });
+  it("refreshes only the changed file, however its read is keyed", async () => {
+    const client = new QueryClient();
+    const location = { directory: "/repo", workspaceID: "wt" };
+    const changed = openCodeKeys.file("connection", location, "docs/guide.pdf");
+    const changedAbsolute = openCodeKeys.file(
+      "connection",
+      { directory: "/repo" },
+      "/repo/docs/guide.pdf",
+    );
+    const other = openCodeKeys.file("connection", location, "docs/other.pdf");
+    const listing = openCodeKeys.fileDirectory("connection", location, "docs");
+    const root = openCodeKeys.fileDirectory("connection", location, "");
+    for (const key of [changed, changedAbsolute, other, listing, root]) {
+      client.setQueryData(key, new Uint8Array([1]));
+    }
+    const refresh = async (file: string, kind: "add" | "change" | "unlink") => {
+      const event = {
+        type: "filesystem.changed",
+        location: { directory: "/repo" },
+        data: { file, event: kind },
+      } as PalotEvent;
+      for (const queryKey of [
+        ...openCodeInvalidationKeys("connection", event),
+        ...changedFileQueryKeys(client, "connection", event),
+      ]) {
+        await client.invalidateQueries({ queryKey, exact: true });
+      }
+    };
+    const invalidated = () =>
+      [changed, changedAbsolute, other, listing, root].map(
+        (key) => client.getQueryState(key)?.isInvalidated,
+      );
+
+    // OpenCode names the changed file by its absolute path.
+    await refresh("/repo/docs/guide.pdf", "change");
+    expect(invalidated()).toEqual([true, true, false, false, false]);
+
+    client.resetQueries();
+    for (const key of [changed, changedAbsolute, other, listing, root]) {
+      client.setQueryData(key, new Uint8Array([1]));
+    }
+    // A new file changes its directory's listing too.
+    await refresh("docs/new.pdf", "add");
+    expect(invalidated()).toEqual([false, false, false, true, false]);
+    client.clear();
+  });
+  it("forgets a removed folder's listings and files, and keeps the rest", async () => {
+    const client = new QueryClient();
+    const location = { directory: "/repo", workspaceID: "wt" };
+    const key = {
+      listing: openCodeKeys.fileDirectory("connection", location, "docs"),
+      nested: openCodeKeys.fileDirectory("connection", location, "docs/api"),
+      file: openCodeKeys.file("connection", location, "docs/api/guide.md"),
+      absolute: openCodeKeys.file("connection", { directory: "/repo" }, "/repo/docs/a.md"),
+      sibling: openCodeKeys.fileDirectory("connection", location, "docs-old"),
+      siblingFile: openCodeKeys.file("connection", location, "docs-old/a.md"),
+      parent: openCodeKeys.fileDirectory("connection", location, ""),
+      watched: openCodeKeys.fileDirectory("connection", location, "docs/watched"),
+    };
+    for (const queryKey of Object.values(key)) client.setQueryData(queryKey, [{ path: "x" }]);
+    // A listing still on screen.
+    const observer = new QueryObserver(client, {
+      queryKey: key.watched,
+      queryFn: async () => [{ path: "fresh" }],
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const event = {
+      type: "filesystem.changed",
+      location: { directory: "/repo" },
+      data: { file: "/repo/docs", event: "unlink" },
+    } as PalotEvent;
+
+    forgetRemovedPath(client, "connection", event);
+    for (const queryKey of changedFileQueryKeys(client, "connection", event))
+      await client.invalidateQueries({ queryKey, exact: true });
+
+    for (const removed of [key.listing, key.nested, key.file, key.absolute])
+      expect(client.getQueryState(removed)).toBeUndefined();
+    expect(client.getQueryData(key.watched)).toEqual([]);
+    expect(client.getQueryData(key.sibling)).toEqual([{ path: "x" }]);
+    expect(client.getQueryData(key.siblingFile)).toEqual([{ path: "x" }]);
+    // The parent still re-reads, as before.
+    expect(client.getQueryState(key.parent)?.isInvalidated).toBe(true);
+    unsubscribe();
+    client.clear();
+  });
+  it("re-reads a recreated folder's own listing", async () => {
+    const client = new QueryClient();
+    const location = { directory: "/repo" };
+    const listing = openCodeKeys.fileDirectory("connection", location, "docs");
+    client.setQueryData(listing, [{ path: "docs/old.md" }]);
+    const event = {
+      type: "filesystem.changed",
+      location,
+      data: { file: "/repo/docs", event: "add" },
+    } as PalotEvent;
+    expect(changedFileQueryKeys(client, "connection", event)).toContainEqual(listing);
     client.clear();
   });
   it.each(["session.inbox.cancelled", "session.revert.committed"])(
@@ -320,9 +422,11 @@ describe("OpenCode query event routing", () => {
       data: { id: "shell-1", status: "exited" },
     } as PalotEvent;
 
-    // Any workspace under the directory.
+    // Any workspace under the directory, and the server-wide background job lists that decide
+    // which directories Running work reads.
     expect(openCodeInvalidationKeys("connection-e", event)).toEqual([
       [...openCodeKeys.runningShellsRoot("connection-e"), "/repo"],
+      openCodeKeys.backgroundJobsRoot("connection-e"),
     ]);
   });
 
@@ -342,7 +446,7 @@ describe("OpenCode query event routing", () => {
     ]);
   });
 
-  it("refreshes settings and model catalogs when the active credential changes", () => {
+  it("refreshes usage limits, voice models, settings and model catalogs when the active credential changes", () => {
     const event = {
       id: "credential",
       created: 1,
@@ -354,9 +458,28 @@ describe("OpenCode query event routing", () => {
     } as PalotEvent;
 
     expect(openCodeInvalidationKeys("connection-g", event)).toEqual([
+      openCodeKeys.usageLimits("connection-g", "/repo"),
+      openCodeKeys.voiceModels("connection-g"),
       openCodeKeys.modelsLocation("connection-g", event.location!),
       openCodeKeys.settingsLocation("connection-g", event.location!),
     ]);
+  });
+
+  it("reads usage limits again when a turn ends, not on a poll", () => {
+    for (const type of ["session.execution.succeeded", "session.execution.failed"] as const) {
+      const event = {
+        id: type,
+        created: 1,
+        createdAt: 1,
+        receiveSequence: 1,
+        type,
+        location: { directory: "/repo" },
+        data: { sessionID: "ses_1", error: { type: "provider.go-limit", message: "limit" } },
+      } as unknown as PalotEvent;
+      expect(openCodeInvalidationKeys("connection-h", event)).toContainEqual(
+        openCodeKeys.usageLimits("connection-h", "/repo"),
+      );
+    }
   });
 
   it("refreshes the project catalog after project metadata changes", () => {

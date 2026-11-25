@@ -113,7 +113,8 @@ export const workspacePreviewScenario: Scenario = {
     }, sessionID);
   },
   async assert(page, { projectDirectory, runRoot, llm }) {
-    const response = page.locator(`[data-message-id="${RESPONSE_ID}"]`);
+    // A turn row is identified by its prompt and holds the reply.
+    const response = page.locator('[data-message-id="msg_workspace_preview_user"]');
     await response.getByRole("link", { name: "Open preview.png" }).click();
     const imageTab = page.locator('[data-workbench-pane="right"]').getByRole("tabpanel", {
       name: "preview.png",
@@ -211,8 +212,9 @@ export const workspacePreviewScenario: Scenario = {
     const filesTab = page.locator('[data-workbench-pane="right"]').getByRole("tabpanel", {
       name: "Files",
     });
-    await filesTab.getByRole("button", { name: "assets" }).click();
-    await filesTab.getByRole("button", { name: "nested.txt" }).click();
+    // Pierre's tree renders its rows as tree items in a shadow root.
+    await filesTab.getByRole("treeitem", { name: "assets", exact: true }).click();
+    await filesTab.getByRole("treeitem", { name: "nested.txt", exact: true }).click();
     const nestedTab = page.locator('[data-workbench-pane="right"]').getByRole("tabpanel", {
       name: "nested.txt",
     });

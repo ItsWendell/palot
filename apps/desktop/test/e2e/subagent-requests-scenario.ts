@@ -3,6 +3,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
+import { taskRowBySession } from "./task-list.ts";
 
 const CHILD_TITLE = "Coordinate the decision";
 const GRANDCHILD_TITLE = "Collect the decision";
@@ -11,14 +12,26 @@ const ANSWER = "Focused tests";
 const CHILD_DONE = "CHILD RESUMED AFTER DELEGATED ANSWER";
 const GRANDCHILD_DONE = "GRANDCHILD RECEIVED THE ANSWER";
 const PARENT_DONE = "PARENT FINISHED AFTER DELEGATED ANSWER";
+const PARENT_WAITING = "Waiting for the coordinator.";
+const CHILD_WAITING = "Waiting for the collector.";
+const CHILD_PROMPT = "Delegate collecting the verification decision to another general subagent.";
+const GRANDCHILD_PROMPT = "Ask the user which verification to run, then report their answer.";
+// Calls before the answer: parent launch, wait and first report; coordinator launch and wait;
+// collector question. The answer adds the collector's, coordinator's and parent's last turns.
+const CALLS_BEFORE_ANSWER = 6;
+const CALLS = 9;
 const REQUESTS = "[data-palot-request-session-id][data-palot-request-id]";
+// The panel shows one request at a time, paged in arrival order.
+const PANEL = '[data-slot="composer-panel"][aria-label="Pending request"]';
 const TIMEOUT = 30_000;
+// The list's 3 s order hold after a row's last change, plus a margin.
+const SETTLE_TIMEOUT = 6_000;
 
 export const subagentRequestsScenario: Scenario = {
   description:
     "answer nested subagent questions from the parent, retain simultaneous owner-scoped requests across reload, and check compact layout",
   prompt: "Delegate the verification decision and summarize the result without leaving this task.",
-  expectedModelCalls: 6,
+  expectedModelCalls: CALLS,
   async prepare(home) {
     const directory = join(home, ".config", "opencode");
     await mkdir(directory, { recursive: true });
@@ -41,31 +54,45 @@ export const subagentRequestsScenario: Scenario = {
     );
   },
   arrange(llm) {
-    llm.tool("subagent", {
-      agent: "general",
-      description: CHILD_TITLE,
-      prompt: "Delegate collecting the verification decision to another general subagent.",
-    });
-    llm.tool("subagent", {
-      agent: "general",
-      description: GRANDCHILD_TITLE,
-      prompt: "Ask the user which verification to run, then report their answer.",
-    });
-    llm.tool("question", {
-      questions: [
-        {
-          header: "Verification",
-          question: QUESTION,
-          options: [
-            { label: ANSWER, description: "Run only the tests covering the changed behavior." },
-            { label: "Full suite", description: "Run all project tests before continuing." },
-          ],
-        },
-      ],
-    });
-    llm.text(GRANDCHILD_DONE);
-    llm.text(CHILD_DONE);
+    // Subagents run in the background, so a parent's next call races its child's first one:
+    // each session answers from its own queue, keyed by its own task.
+    llm.tool("subagent", { agent: "general", description: CHILD_TITLE, prompt: CHILD_PROMPT });
+    llm.text(PARENT_WAITING);
+    // The coordinator goes idle after launching the collector and reports; then reports again.
+    llm.text(PARENT_WAITING);
     llm.text(PARENT_DONE);
+    llm.route(
+      CHILD_PROMPT,
+      (script) => {
+        script.tool("subagent", {
+          agent: "general",
+          description: GRANDCHILD_TITLE,
+          prompt: GRANDCHILD_PROMPT,
+        });
+        script.text(CHILD_WAITING);
+        script.text(CHILD_DONE);
+      },
+      { firstUserMessage: true },
+    );
+    llm.route(
+      GRANDCHILD_PROMPT,
+      (script) => {
+        script.tool("question", {
+          questions: [
+            {
+              header: "Verification",
+              question: QUESTION,
+              options: [
+                { label: ANSWER, description: "Run only the tests covering the changed behavior." },
+                { label: "Full suite", description: "Run all project tests before continuing." },
+              ],
+            },
+          ],
+        });
+        script.text(GRANDCHILD_DONE);
+      },
+      { firstUserMessage: true },
+    );
   },
   async run(page, { client, session, llm, runRoot }) {
     const parentHash = await page.evaluate(() => location.hash);
@@ -85,9 +112,7 @@ export const subagentRequestsScenario: Scenario = {
     await expect(page.locator(`[data-palot-subagent-launch="${child.id}"]`)).toContainText(
       "needs input",
     );
-    await expect(
-      delegatedCard.getByText(`Subagent · ${grandchild.title}`, { exact: true }),
-    ).toBeVisible();
+    await expect(delegatedCard).toContainText("From general subagent");
     await assertParentSelected(page, parentHash, this.prompt);
 
     // session.create has no parentID in beta-19507. The actual nested subagent
@@ -120,33 +145,48 @@ export const subagentRequestsScenario: Scenario = {
     expect(permission.effect).toBe("ask");
     const extraCard = requestCard(page, child.id, extra.id, "question");
     const permissionCard = requestCard(page, child.id, permission.id, "permission");
-    await expect(page.locator(REQUESTS)).toHaveCount(3);
-    await expect(extraCard).toContainText(`Subagent · ${child.title}`);
-    await expect(permissionCard).toContainText(`Subagent · ${child.title}`);
+    await expect(page.locator(PANEL)).toContainText(/\d of 3/);
+    await showRequest(page, extraCard);
+    await expect(extraCard).toContainText("From general subagent");
+    await showRequest(page, permissionCard);
+    await expect(permissionCard).toContainText("From general subagent");
     await expectPendingQuestion(client, grandchild.id, question!.id);
     await expectPendingQuestion(client, child.id, extra.id);
     expect(await client.session.form.list({ sessionID: session.id })).toEqual([]);
-    expect(llm.scriptedCalls()).toBe(3);
+    await llm.waitForCalls(CALLS_BEFORE_ANSWER);
+    expect(llm.scriptedCalls()).toBe(CALLS_BEFORE_ANSWER);
 
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.locator(REQUESTS)).toHaveCount(3, { timeout: TIMEOUT });
+    await expect(page.locator(PANEL)).toContainText(/\d of 3/, { timeout: TIMEOUT });
+    await showRequest(page, delegatedCard);
     await expect(delegatedCard).toContainText(QUESTION);
-    await expect(extraCard).toContainText(`Subagent · ${child.title}`);
-    await expect(permissionCard).toContainText(`Subagent · ${child.title}`);
+    await showRequest(page, extraCard);
+    await expect(extraCard).toContainText("From general subagent");
+    await showRequest(page, permissionCard);
+    await expect(permissionCard).toContainText("From general subagent");
     await assertParentSelected(page, parentHash, this.prompt);
 
     // The child remains inspectable, including its own forms and nested requests.
     await page.locator(`[data-palot-subagent-launch="${child.id}"]`).click();
     await expect(page.locator(`[data-palot-subagent-session="${child.id}"]`)).toBeVisible();
+    // The child takes messages through the normal composer.
+    await expect(page.locator("[data-palot-subagent-composer-note]")).toContainText(
+      "Messages go to this subagent",
+    );
+    // The child's own requests carry no subagent badge; its subagent's do.
+    await showRequest(page, extraCard);
     await expect(extraCard).toContainText("Should the coordinator include a separate appendix?");
-    await expect(delegatedCard).toContainText(`Subagent · ${grandchild.title}`);
+    await showRequest(page, delegatedCard);
+    await expect(delegatedCard).toContainText("From general subagent");
     await page.getByRole("button", { name: /^Open parent task: / }).click();
     await assertParentSelected(page, parentHash, this.prompt);
-    await expect(page.locator(REQUESTS)).toHaveCount(3);
+    await expect(page.locator(PANEL)).toContainText(/\d of 3/);
+    await showRequest(page, delegatedCard);
     await captureLayout(page, delegatedCard, runRoot);
 
     // Dismissing the direct child's extra question must not answer or dismiss
     // the grandchild's real blocked tool, nor the child's separate permission.
+    await showRequest(page, extraCard);
     await extraCard.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect(extraCard).toHaveCount(0);
     await expect
@@ -161,18 +201,21 @@ export const subagentRequestsScenario: Scenario = {
     ).toEqual([permission.id]);
     await assertParentSelected(page, parentHash, this.prompt);
 
-    await permissionCard.getByRole("button", { name: "Allow once", exact: true }).click();
+    await showRequest(page, permissionCard);
+    // The empty text field doubles as feedback, so Allow once is the composer's primary.
+    await page.getByRole("button", { name: "Allow once", exact: true }).click();
     await expect(permissionCard).toHaveCount(0);
     await expect.poll(() => client.permission.list({ sessionID: child.id })).toEqual([]);
     await expectPendingQuestion(client, grandchild.id, question!.id);
-    expect(llm.scriptedCalls()).toBe(3);
+    expect(llm.scriptedCalls()).toBe(CALLS_BEFORE_ANSWER);
 
     // Trusted keyboard selection and click submission exercise the real renderer
     // handlers. The service state and tool result below prove reply ownership.
+    await showRequest(page, delegatedCard);
     await delegatedCard.locator('[data-slot="questionnaire-item"]:visible').focus();
     await page.keyboard.press("1");
     await expect(delegatedCard.locator(`input[value="${ANSWER}"]`)).toBeChecked();
-    await delegatedCard.getByRole("button", { name: "Send", exact: true }).click();
+    await page.getByRole("button", { name: "Submit answer", exact: true }).click();
     await expect(delegatedCard).toHaveCount(0);
     await expect
       .poll(
@@ -209,14 +252,40 @@ export const subagentRequestsScenario: Scenario = {
     await expectAssistantText(client, grandchild.id, GRANDCHILD_DONE);
     await expectAssistantText(client, child.id, CHILD_DONE);
     expect(await client.session.form.list({ sessionID: session.id })).toEqual([]);
+    // The coordinator first reported while the collector still waited for the answer: OpenCode
+    // lists the collector as still running, so that report is not "Finished"; its last one is.
+    const reports = page.locator('[data-palot-background-report="subagent"]');
+    await expect(reports).toHaveCount(2);
+    await expect(reports).toContainText([
+      `1 subagent waiting for its subagent · ${CHILD_TITLE}`,
+      `Finished 1 subagent · ${CHILD_TITLE}`,
+    ]);
+    // The task's row reads idle at once; the list holds its place for a moment after a change
+    // (DESIGN: "The order holds"), then moves it out of Working.
+    const row = taskRowBySession(page, session.id);
+    await expect(row).not.toHaveAttribute("data-status", "working");
+    await expect
+      .poll(() => row.getAttribute("data-placement"), { timeout: SETTLE_TIMEOUT })
+      .not.toBe("working");
     await page.screenshot({ path: join(runRoot, "subagent-requests-completed.png") });
   },
   async assert(page, { llm }) {
     await expect(page.getByText(PARENT_DONE, { exact: true })).toBeVisible();
     await expect(page.locator(REQUESTS)).toHaveCount(0);
-    expect(llm.scriptedCalls()).toBe(6);
+    expect(llm.scriptedCalls()).toBe(CALLS);
   },
 };
+
+/** Pages the request panel until `card` is the request it shows. */
+async function showRequest(page: Page, card: Locator) {
+  for (let attempt = 0; attempt < 4 && !(await card.isVisible()); attempt += 1) {
+    await page
+      .locator(`${PANEL} [data-state="open"] > [data-slot="request-panel"]`)
+      .getByRole("button", { name: "Next request" })
+      .click();
+  }
+  await expect(card).toBeVisible();
+}
 
 async function onlyChild(client: OpenCodeClient, parentID: string): Promise<SessionInfo> {
   await expect
@@ -231,8 +300,9 @@ function requestCard(
   requestID: string,
   type: "question" | "permission",
 ) {
+  // Only the request in view: one fading out after paging is closed and takes no input.
   return page.locator(
-    `[data-palot-request-session-id="${sessionID}"][data-palot-request-id="${requestID}"][data-palot-request-type="${type}"]`,
+    `[data-state="open"] > [data-palot-request-session-id="${sessionID}"][data-palot-request-id="${requestID}"][data-palot-request-type="${type}"]`,
   );
 }
 

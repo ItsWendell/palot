@@ -62,6 +62,13 @@ function palotToolDetails(tool: PalotToolName, input: Record<string, unknown>): 
     .join("\n");
 }
 
+function toolArguments(args: Record<string, unknown>): string {
+  return Object.entries(args)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
+    .join("\n");
+}
+
 export function permissionPreview(
   request: PermissionRequest,
   messages: readonly PalotMessage[],
@@ -85,9 +92,23 @@ export function permissionPreview(
   let patch = "";
   let subject: string | undefined;
   let automationID: string | undefined;
+  // OpenCode 2.4 (#65269): a command its scanner can't analyze may reach any folder, so it asks
+  // `external_directory` for `*` and then `shell` with the reason. Neither can be saved.
+  const unanalyzedReason = text(metadata.reason);
   if (["shell", "bash"].includes(action)) {
     label = "Command";
-    body = text(input.command);
+    body = text(input.command) || (unanalyzedReason ? (request.resources[0] ?? "") : "");
+    if (unanalyzedReason && body) {
+      body = `${body}\n\nOpenCode couldn't analyze this command: ${unanalyzedReason}`;
+    }
+  } else if (
+    action === "external_directory" &&
+    request.resources.length === 1 &&
+    request.resources[0] === "*"
+  ) {
+    label = "Any folder (OpenCode couldn't analyze this command)";
+    body = text(input.command) || "The command may reach any folder.";
+    subject = "Any folder";
   } else if (["edit", "write", "apply_patch"].includes(action)) {
     label =
       Array.isArray(metadata.files) && metadata.files.length > 1
@@ -126,6 +147,15 @@ export function permissionPreview(
   } else if (action === "lsp") {
     label = "Language server request";
     body = [text(input.operation), path].filter(Boolean).join("\n");
+  }
+  if (!body && label === action) {
+    // MCP and other tools without a curated preview: the user approves these arguments, so show
+    // every one rather than only the resources.
+    const args = toolArguments({ ...input, ...record(metadata.input) });
+    if (args) {
+      label = "Arguments";
+      body = [request.message, args].filter(Boolean).join("\n\n");
+    }
   }
   body ||=
     request.resources.join("\n") || request.message || "OpenCode did not provide further details.";

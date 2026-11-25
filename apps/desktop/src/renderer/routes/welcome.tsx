@@ -29,12 +29,19 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
 import { ScrollFadeArea } from "../components/ui/scroll-fade-area";
+import {
+  SWITCHING_DESCRIPTION,
+  SwitchingActions,
+  SwitchingFields,
+  useSwitchingFlow,
+} from "../components/switching-dialog";
 import { usePalotNavigation } from "../hooks/use-navigation";
 import {
   useCacheSession,
   useProjectCatalog,
   useSessionCatalog,
 } from "../hooks/use-session-catalog";
+import { prefersReducedMotion } from "../hooks/use-reduced-motion";
 import { useSettingsSnapshot } from "../hooks/use-settings-snapshot";
 import { cn } from "../lib/cn";
 import { isPopularProvider, orderProviderIntegrations } from "../lib/provider-presentation";
@@ -46,7 +53,8 @@ export const Route = createFileRoute("/welcome")({
   component: WelcomeRoute,
 });
 
-type Step = "welcome" | "project" | "providers";
+type Step = "welcome" | "project" | "providers" | "switch";
+const STEPS: Step[] = ["welcome", "project", "providers", "switch"];
 type Target = {
   connectionID: string;
   projectID: string;
@@ -169,7 +177,7 @@ function WelcomeRoute() {
     setFinishing(true);
     if (fade) {
       setLeaving(true);
-      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      if (!prefersReducedMotion()) {
         await new Promise((resolve) => window.setTimeout(resolve, 180));
       }
     }
@@ -194,7 +202,9 @@ function WelcomeRoute() {
   }
 
   async function skipProject() {
-    await completeAndNavigate(() => openNewTask());
+    // Skipping the choice still starts in the most recent project, the first one listed, not in
+    // a project-free chat.
+    await completeAndNavigate(() => openNewTask(visible[0]?.id));
   }
 
   async function leaveReplay() {
@@ -267,8 +277,16 @@ function WelcomeRoute() {
                 onShowAll={() => setShowAllProviders(true)}
                 onBack={() => setStep("project")}
                 onConnect={setConnecting}
-                onFinish={(fade) => void finish(fade)}
+                onContinue={() => setStep("switch")}
                 onRetry={() => void settings.refetch()}
+              />
+            ) : null}
+            {step === "switch" && target ? (
+              <SwitchStep
+                finishing={finishing}
+                onBack={() => setStep("providers")}
+                onStarted={markComplete}
+                onSkip={() => void finish(true)}
               />
             ) : null}
           </div>
@@ -293,13 +311,13 @@ function WelcomeRoute() {
 }
 
 function StepIndicator({ step }: { step: Step }) {
-  const active = ["welcome", "project", "providers"].indexOf(step);
+  const active = STEPS.indexOf(step);
   return (
     <div
       className="mt-7 flex shrink-0 justify-center gap-1.5"
-      aria-label={`Step ${active + 1} of 3`}
+      aria-label={`Step ${active + 1} of ${STEPS.length}`}
     >
-      {[0, 1, 2].map((index) => (
+      {STEPS.map((_, index) => (
         <span
           key={index}
           className={cn(
@@ -510,7 +528,7 @@ function ProviderStep({
   onShowAll,
   onBack,
   onConnect,
-  onFinish,
+  onContinue,
   onRetry,
 }: {
   target: Target;
@@ -523,7 +541,7 @@ function ProviderStep({
   onShowAll(): void;
   onBack(): void;
   onConnect(integration: PalotIntegration): void;
-  onFinish(fade?: boolean): void;
+  onContinue(): void;
   onRetry(): void;
 }) {
   return (
@@ -622,14 +640,57 @@ function ProviderStep({
           Back
         </Button>
         <div className="flex items-center gap-2">
-          <Button type="button" variant="ghost" disabled={finishing} onClick={() => onFinish()}>
+          <Button type="button" variant="ghost" disabled={finishing} onClick={onContinue}>
             Skip provider setup
           </Button>
-          <Button type="button" disabled={finishing} onClick={() => onFinish(true)}>
-            {finishing ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
-            Start working
+          <Button type="button" disabled={finishing} onClick={onContinue}>
+            Continue
             <ArrowRight aria-hidden="true" />
           </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SwitchStep({
+  finishing,
+  onBack,
+  onStarted,
+  onSkip,
+}: {
+  finishing: boolean;
+  onBack(): void;
+  onStarted(): void;
+  onSkip(): void;
+}) {
+  const flow = useSwitchingFlow({ onStarted });
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <StepHeading
+        eyebrow="Optional"
+        title="Switching from another agent?"
+        description={SWITCHING_DESCRIPTION}
+      />
+      <ScrollFadeArea containerClassName="mt-6 min-h-0 flex-1" className="pr-1">
+        <SwitchingFields flow={flow} />
+      </ScrollFadeArea>
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t pt-5">
+        <Button type="button" variant="ghost" onClick={onBack}>
+          <ArrowLeft aria-hidden="true" />
+          Back
+        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={finishing || flow.starting}
+            onClick={onSkip}
+          >
+            {finishing ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}
+            Skip and start working
+          </Button>
+          <SwitchingActions flow={flow} />
         </div>
       </div>
     </div>

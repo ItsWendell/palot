@@ -17,6 +17,8 @@ const AUTOMATIC_PROMPT = "Use the configured automatic agent and reasoning for t
 const AUTOMATIC_RESPONSE = "Automatic agent defaults preserved.";
 const ALPHA_SYSTEM = "You are the memory-alpha deterministic fixture agent.";
 const BETA_SYSTEM = "You are the memory-beta deterministic fixture agent.";
+const SWITCH_RESPONSE = "Model switch fixture complete.";
+const UNCHANGED_RESPONSE = "Unchanged selection fixture complete.";
 const ref = (id: string, variant?: string): ModelRef => ({
   providerID: "test",
   id,
@@ -24,13 +26,16 @@ const ref = (id: string, variant?: string): ModelRef => ({
 });
 
 export const composerSelectionMemoryScenario: Scenario = {
+  tier: "core",
   description:
     "remember explicit agent, model, and reasoning choices without rewriting opened tasks",
   prompt: PROMPT,
-  expectedModelCalls: 2,
+  expectedModelCalls: 4,
   arrange(llm) {
     llm.text(AUTOMATIC_RESPONSE);
     llm.text(RESPONSE);
+    llm.text(SWITCH_RESPONSE);
+    llm.text(UNCHANGED_RESPONSE);
   },
   async prepareProject({ projectDirectory }) {
     await promisify(execFile)(
@@ -208,6 +213,19 @@ export const composerSelectionMemoryScenario: Scenario = {
     expect(
       messages.filter((message) => message.type === "user").map((message) => message.text),
     ).toEqual([PROMPT]);
+
+    // A model change between replies leaves a boundary marker; an unchanged selection does not.
+    const markers = page.locator('[data-palot-boundary="model-switch"]');
+    await expect(markers).toHaveCount(0);
+    await selectModel(page, MODEL, "Test Model");
+    await sendAndWait(page, "Answer after the model switch.", SWITCH_RESPONSE);
+    await expect(markers).toHaveCount(1);
+    await expect(markers).toHaveAccessibleName(/^Switched to Test Model\b/);
+    await page.screenshot({ path: join(runRoot, "switch-marker.png") });
+    await sendAndWait(page, "Answer without changing the selection.", UNCHANGED_RESPONSE);
+    await expect(markers).toHaveCount(1);
+    // Restore the remembered selection that assert() checks.
+    await selectModel(page, OTHER_MODEL, "Memory Alternate");
   },
   async assert(page, { client, projectDirectory }) {
     // A successfully created task commits draft selections for the next task and reload.
@@ -236,21 +254,36 @@ async function selectModel(page: Page, id: string, name: string) {
     .filter({ hasText: name })
     .click();
   await expect(page.getByRole("button", { name: /^Model:/ })).toContainText(name);
+  // A model with effort levels keeps the popover open on them.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("combobox", { name: "Choose model" })).toHaveCount(0);
 }
 
+async function sendAndWait(page: Page, prompt: string, response: string) {
+  await page.getByRole("textbox", { name: "Message Palot" }).fill(prompt);
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(page.getByText(response, { exact: true })).toBeVisible();
+}
+
+/** Effort sits beside the model list in the model popover; the pill reads "model · effort". */
 async function selectReasoning(page: Page, name: string) {
-  await page.getByRole("button", { name: /^Reasoning:/ }).click();
-  // Auto carries a description, so match the option by its leading label.
-  await page.getByRole("option", { name: new RegExp(`^${name}\\b`) }).click();
-  await expect(page.getByRole("button", { name: `Reasoning: ${name}`, exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: /^Model:/ }).click();
+  // Effort levels carry a hint, so match the option by its leading label.
+  await page
+    .getByRole("listbox", { name: /^Effort for / })
+    .getByRole("option", { name: new RegExp(`^${name}\\b`) })
+    .click();
+  await expect(effortPill(page, name)).toBeEnabled();
+}
+
+function effortPill(page: Page, effort: string) {
+  return page.getByRole("button", { name: new RegExp(`^Model: .*, effort ${effort}$`) });
 }
 
 async function expectControls(page: Page, agent: string, model: string, reasoning: string) {
   await expect(page.getByRole("button", { name: `Agent: ${agent}`, exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: /^Model:/ })).toContainText(model);
-  await expect(
-    page.getByRole("button", { name: `Reasoning: ${reasoning}`, exact: true }),
-  ).toBeEnabled();
+  await expect(effortPill(page, reasoning)).toBeEnabled();
 }
 
 async function expectSelection(
@@ -295,7 +328,7 @@ async function captureSelectors(page: Page, runRoot: string) {
   const viewport = page.viewportSize();
   try {
     await page.setViewportSize({ width: 920, height: 640 });
-    for (const name of [/^Agent:/, /^Model:/, /^Reasoning:/]) {
+    for (const name of [/^Agent:/, /^Model:/]) {
       await expect(page.getByRole("button", { name })).toBeInViewport();
     }
     await page.getByRole("main", { name: "New task", exact: true }).screenshot({

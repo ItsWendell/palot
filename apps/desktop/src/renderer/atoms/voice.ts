@@ -32,9 +32,6 @@ export const VOICE_OPTIONS: readonly VoiceOption[] = [
   { id: "noeul", label: "Noeul", description: "Korean" },
 ];
 
-/** OpenCode's voice route selects GPT-Live from this model family; it alone supports client delegation. */
-export const VOICE_MODEL = "gpt-live-1";
-
 export interface VoicePreferences {
   voice: string;
   /** `deviceId` from enumerateDevices, or null for the system default. */

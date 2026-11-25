@@ -6,6 +6,7 @@ import {
   preservedTranscriptMatch,
   stepTranscriptMatch,
   transcriptFindPartKey,
+  transcriptPartText,
 } from "./transcript-search";
 import type { TranscriptProjectionRow, TranscriptTurn, TurnActivityGroup } from "./turn-projection";
 
@@ -191,5 +192,15 @@ describe("match navigation", () => {
     expect(preservedTranscriptMatch(shifted, selected, 2)).toBe(3);
     expect(preservedTranscriptMatch([at(1)], selected, 5)).toBe(0);
     expect(preservedTranscriptMatch([], selected, 0)).toBe(-1);
+  });
+
+  describe("transcriptPartText", () => {
+    it("leaves OpenCode's <system-update> notes out of a prompt", () => {
+      const user = {
+        ...message("u", "user", []),
+        text: '<system-update>Note: The user opened the file "a.ts".</system-update>\nFix the bug',
+      };
+      expect(transcriptPartText(user, { type: "text", text: user.text })).toBe("Fix the bug");
+    });
   });
 });

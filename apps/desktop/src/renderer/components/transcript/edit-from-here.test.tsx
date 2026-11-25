@@ -10,7 +10,10 @@ import { palot } from "../../services/palot";
 import { EditFromHereButton, EditFromHereProvider } from "./edit-from-here";
 
 const mocks = vi.hoisted(() => ({ cache: vi.fn() }));
-vi.mock("../../hooks/use-session-catalog", () => ({ useCacheSession: () => mocks.cache }));
+vi.mock("../../hooks/use-session-catalog", () => ({
+  useCacheSession: () => mocks.cache,
+  useTaskTitleLookup: () => () => undefined,
+}));
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

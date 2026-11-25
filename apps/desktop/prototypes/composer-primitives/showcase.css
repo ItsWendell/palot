@@ -1,0 +1,6 @@
+/* The renderer's real stylesheet (tokens, fonts, primitives) plus the showcase's own sources. */
+@import "../../src/renderer/index.css";
+
+/* The app scans the whole renderer; here only the showcase and the parts it renders count. */
+@source "./";
+@source "../../src/renderer/components/composer-dock";

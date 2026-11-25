@@ -1,7 +1,8 @@
-import { expect, type Page } from "@playwright/test";
+import { expect } from "@playwright/test";
 import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
+import { openTaskSection, showTaskColumn, taskColumn, taskRow } from "./task-list.ts";
 
 const TITLE = "Palot E2E: project-scripts";
 const SCRIPT = "Settle marker";
@@ -14,17 +15,6 @@ async function markerLines(directory: string): Promise<number> {
   } catch {
     return 0;
   }
-}
-
-async function showProjects(page: Page) {
-  const navigation = page.locator('[data-shell-surface="navigation"][aria-hidden="false"]');
-  const toggle = page.getByRole("button", { name: /^(Show|Hide) navigation$/ });
-  await expect(toggle).toBeVisible();
-  if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
-  // Column views live on the rail, outside the task column; the active view toggles it.
-  const projects = page.getByRole("button", { name: "Show projects", exact: true });
-  if ((await projects.getAttribute("aria-pressed")) !== "true") await projects.click();
-  return navigation;
 }
 
 /**
@@ -65,18 +55,18 @@ export const projectScriptsScenario: Scenario = {
     await page.screenshot({ path: join(runRoot, "project-scripts-settings.png") });
     expect(await markerLines(projectDirectory)).toBe(0);
 
-    // Settle from the project row by keyboard.
+    // Settle from the task's row by keyboard (E on the focused row).
     await page.evaluate((id) => {
       location.hash = `#/sessions/${id}`;
     }, session.id);
-    const navigation = await showProjects(page);
-    const row = navigation.locator("[data-palot-task-row]").filter({ hasText: TITLE }).first();
-    await row.getByRole("button", { name: new RegExp(TITLE) }).focus();
-    await page.keyboard.press("Tab");
-    const settle = row.getByRole("button", { name: "Settle task", exact: true });
-    await expect(settle).toBeFocused();
+    await showTaskColumn(page);
+    const navigation = taskColumn(page);
+    const row = taskRow(navigation, TITLE).first();
+    await row.focus();
+    await expect(row).toBeFocused();
+    await expect(row.getByRole("button", { name: "Settle", exact: true })).toBeVisible();
     await page.screenshot({ path: join(runRoot, "project-scripts-row-actions.png") });
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("e");
 
     await expect(page.getByText(`Ran “${SCRIPT}” after settling: passed`)).toBeVisible();
     await expect.poll(() => markerLines(projectDirectory)).toBe(1);
@@ -89,12 +79,14 @@ export const projectScriptsScenario: Scenario = {
     await page.keyboard.press("Escape");
 
     // Unsettle and settle again without new activity: the same settlement does not rerun.
-    await expect(row).toHaveAttribute("data-palot-triage-section", "settled");
-    await row.getByRole("button", { name: "Unsettle task", exact: true }).click();
-    await expect(row).toHaveAttribute("data-palot-triage-section", "inbox");
+    await openTaskSection(navigation, "Settled");
+    await expect(row).toHaveAttribute("data-placement", "settled");
     await row.hover();
-    await row.getByRole("button", { name: "Settle task", exact: true }).click();
-    await expect(row).toHaveAttribute("data-palot-triage-section", "settled");
+    await row.getByRole("button", { name: "Move back", exact: true }).click();
+    await expect(row).not.toHaveAttribute("data-placement", "settled");
+    await row.hover();
+    await row.getByRole("button", { name: "Settle", exact: true }).click();
+    await expect(row).toHaveAttribute("data-placement", "settled");
     await page.waitForTimeout(1_500);
     expect(await markerLines(projectDirectory)).toBe(1);
   },

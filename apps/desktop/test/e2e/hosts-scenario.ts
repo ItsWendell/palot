@@ -13,9 +13,11 @@ export const hostsScenario: Scenario = {
   description:
     "remote-profile stage, commit and local-only push through OpenCode shell; create, watch, check pipelines and merge a fake GitLab MR",
   prompt: "",
-  expectedModelCalls: 1,
+  expectedModelCalls: 2,
   arrange(llm) {
     llm.text(JSON.stringify({ title, body: "Fixture-only change and checks." }));
+    // The watched pull request's merge notice starts one turn in the task.
+    llm.text("Noted the merge.");
   },
   async prepareProject({ projectDirectory, runRoot }) {
     const git = (...args: string[]) => exec("git", ["-C", projectDirectory, ...args]);
@@ -97,10 +99,13 @@ export const hostsScenario: Scenario = {
       await expect(
         dialog.getByRole("textbox", { name: "Pull request title", exact: true }),
       ).toHaveValue(title);
+      // Watching is on by default, so creating the pull request starts the watch.
+      await expect(
+        dialog.getByRole("checkbox", { name: "Watch pull request", exact: true }),
+      ).toBeChecked();
       await dialog.getByRole("button", { name: "Create pull request", exact: true }).click();
       const linked = page.getByRole("dialog", { name: "Pull request #7 linked", exact: true });
       await expect(linked).toBeVisible();
-      await linked.getByRole("button", { name: "Watch pull request", exact: true }).click();
       await expect(linked.getByRole("button", { name: "Watching", exact: true })).toBeVisible();
       await linked.getByRole("button", { name: "Done", exact: true }).click();
       await page.evaluate(async () => {
@@ -124,10 +129,24 @@ export const hostsScenario: Scenario = {
         merged: true,
         title,
       });
-      // Git's public shell API must not add hidden user or tool messages to the task.
-      expect((await client.message.list({ sessionID: session.id })).data).toEqual(
-        messagesBefore.data,
-      );
+      // The watch tells the task about the merge; that notice and its reply are the only new
+      // messages. Git's public shell API must not add hidden user or tool messages to the task.
+      const before = new Set(messagesBefore.data.map((message) => message.id));
+      const added = async () =>
+        (await client.message.list({ sessionID: session.id })).data
+          // `idle` marks the end of the notice's turn.
+          .filter((message) => !before.has(message.id) && message.type !== "idle")
+          .map((message) =>
+            message.type === "user"
+              ? `user:${String((message.metadata?.["palot.sourceControl"] as { kind?: unknown } | undefined)?.kind)}`
+              : message.type === "assistant"
+                ? `assistant:${message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")}`
+                : message.type,
+          )
+          .toSorted();
+      await expect
+        .poll(added, { timeout: 20_000 })
+        .toEqual(["assistant:Noted the merge.", "user:pull-request-watch"]);
       expect((await client.shell.list({ location: { directory: projectDirectory } })).data).toEqual(
         [],
       );

@@ -1,5 +1,9 @@
 // @vitest-environment node
 
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createServer, type Server } from "node:http";
+import { promisify } from "node:util";
 import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client";
 import type { Endpoint } from "@opencode/client/service";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +12,7 @@ import { SUPPORTED_OPENCODE_VERSION } from "./opencode-version";
 import {
   OpenCodeRuntimeLifecycle,
   discoverBundledOpenCodeBinary,
+  exemptLoopbackFromEnvironmentProxy,
   openCodeRuntimeLifecycleAdapter,
   type OpenCodeRuntimeLifecycleAdapter,
 } from "./opencode-runtime-lifecycle";
@@ -603,7 +608,8 @@ describe("OpenCodeRuntimeLifecycle discovery-only connection", () => {
       .mockResolvedValue(discoveredEndpoint);
     const ensureService = vi.fn();
     const discoverBinary = vi.fn();
-    const runtime = localRuntime({ discoverService, ensureService, discoverBinary });
+    // Keep the background service watch asleep so only the two connects discover.
+    const runtime = localRuntime({ discoverService, ensureService, discoverBinary, wait: asleep });
     await expect(runtime.connect()).rejects.toThrow("No reachable");
     await expect(runtime.connect({ startLocalService: true })).resolves.toMatchObject({
       connected: true,
@@ -613,6 +619,70 @@ describe("OpenCodeRuntimeLifecycle discovery-only connection", () => {
     expect(ensureService).not.toHaveBeenCalled();
     expect(discoverBinary).not.toHaveBeenCalled();
     await runtime.stop();
+  });
+
+  it("connects by itself once a missing local service appears", async () => {
+    const discoverService = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue(discoveredEndpoint);
+    const ensureService = vi.fn();
+    const statuses: OpenCodeRuntimeStatus[] = [];
+    const runtime = localRuntime({ discoverService, ensureService }, (status) =>
+      statuses.push(status),
+    );
+    await expect(runtime.connect()).rejects.toThrow("No reachable");
+    await vi.waitFor(() => expect(runtime.status().connected).toBe(true));
+    // The watch only discovers; it never starts a service on its own.
+    expect(ensureService).not.toHaveBeenCalled();
+    // One error for the failed connect; the empty probe in between stays silent.
+    expect(statuses.filter((status) => status.phase === "error")).toHaveLength(1);
+    await runtime.stop();
+  });
+
+  it("ignores a registered service that does not answer", async () => {
+    const dead = {
+      server: { info: vi.fn().mockRejectedValue(new Error("connection refused")) },
+    } as unknown as OpenCodeClient;
+    const discoverService = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue(discoveredEndpoint);
+    let probes = 0;
+    const wait = vi.fn((_ms: number, signal: AbortSignal) =>
+      ++probes <= 3 ? Promise.resolve() : asleep(_ms, signal),
+    );
+    const statuses: OpenCodeRuntimeStatus[] = [];
+    const runtime = localRuntime(
+      { discoverService, makeClient: vi.fn(() => dead), wait },
+      (status) => statuses.push(status),
+    );
+    await expect(runtime.connect()).rejects.toThrow("No reachable");
+    const afterConnect = statuses.length;
+    await vi.waitFor(() => expect(wait).toHaveBeenCalledTimes(4));
+    expect(dead.server.info).toHaveBeenCalledTimes(3);
+    expect(statuses).toHaveLength(afterConnect);
+    await runtime.stop();
+  });
+
+  it("stops watching for a local service when the connection is stopped", async () => {
+    const discoverService = vi.fn().mockResolvedValue(undefined);
+    let release: (() => void) | undefined;
+    const wait = vi.fn(
+      (_ms: number, signal: AbortSignal) =>
+        new Promise<void>((resolve, reject) => {
+          release = resolve;
+          signal.addEventListener("abort", () => reject(signal.reason));
+        }),
+    );
+    const runtime = localRuntime({ discoverService, wait });
+    await expect(runtime.connect()).rejects.toThrow("No reachable");
+    await vi.waitFor(() => expect(wait).toHaveBeenCalledTimes(1));
+    await runtime.stop();
+    release?.();
+    await Promise.resolve();
+    expect(discoverService).toHaveBeenCalledTimes(1);
   });
 
   it("does not turn discovery errors into automatic startup", async () => {
@@ -1028,6 +1098,42 @@ describe("OpenCodeRuntimeLifecycle stream watchdog", () => {
     expect(runtime.status().connected).toBe(true);
   });
 
+  it("backs off up to 30s from a server that confirms each stream and closes it at once", async () => {
+    let opened = 0;
+    const api = streamClient(async function* () {
+      opened += 1;
+      yield connectedEvent();
+    });
+    const wait = vi.fn(openCodeRuntimeLifecycleAdapter.wait);
+    const onReconnect = vi.fn(async () => {});
+    const runtime = new OpenCodeRuntimeLifecycle({
+      adapter: {
+        discoverService: vi.fn().mockResolvedValue(discoveredEndpoint),
+        ensureService: vi.fn(),
+        stopService: vi.fn(),
+        makeClient: () => api,
+        discoverBinary: vi.fn(),
+        wait,
+        now: Date.now,
+      },
+      onEvent: vi.fn(),
+      onReconnect,
+      onStatus: vi.fn(),
+    });
+    runtimes.push(runtime);
+    await runtime.connect();
+    // Each reconnect succeeds and its stream confirms, but none stays up long enough to count.
+    await vi.advanceTimersByTimeAsync(1_000 + 2_000 + 4_000 + 8_000 + 16_000 + 30_000 + 30_000);
+    expect(wait.mock.calls.map(([delay]) => delay)).toEqual([
+      1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000,
+    ]);
+    expect(opened).toBe(8);
+    expect(runtime.status()).toMatchObject({
+      phase: "reconnecting",
+      error: "OpenCode event stream closed",
+    });
+  });
+
   it("keeps a quiet stream healthy on raw keepalive activity and ignores retired callbacks", async () => {
     const { runtime, subscriptions, wait, onReconnect } = fixture();
     await runtime.connect();
@@ -1265,6 +1371,13 @@ async function waitForAbort(signal: AbortSignal): Promise<void> {
   );
 }
 
+/** An adapter `wait` that only ends when its signal aborts. */
+function asleep(_milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason));
+  });
+}
+
 function localRuntime(
   overrides: Partial<OpenCodeRuntimeLifecycleAdapter>,
   onStatus: (status: OpenCodeRuntimeStatus) => void = vi.fn(),
@@ -1289,3 +1402,120 @@ function localRuntime(
     onStatus,
   });
 }
+
+describe("local service traffic with an environment proxy", () => {
+  it("merges loopback hosts into NO_PROXY only when Node's environment proxy is on", () => {
+    const off: NodeJS.ProcessEnv = { HTTP_PROXY: "http://proxy.test", NO_PROXY: "corp.internal" };
+    exemptLoopbackFromEnvironmentProxy(off, []);
+    expect(off).toEqual({ HTTP_PROXY: "http://proxy.test", NO_PROXY: "corp.internal" });
+
+    const merged = "corp.internal,LOCALHOST,other.internal,127.0.0.1,::1,[::1]";
+    const on: NodeJS.ProcessEnv = {
+      NODE_USE_ENV_PROXY: "1",
+      NO_PROXY: "corp.internal, LOCALHOST",
+      no_proxy: "other.internal,",
+    };
+    exemptLoopbackFromEnvironmentProxy(on, []);
+    expect(on).toMatchObject({ NO_PROXY: merged, no_proxy: merged });
+
+    const loopback = "127.0.0.1,localhost,::1,[::1]";
+    for (const [env, execArgv] of [
+      [{ NODE_OPTIONS: "--max-old-space-size=4096 --use-env-proxy" }, []],
+      [{}, ["--use-env-proxy"]],
+    ] as const) {
+      const target: NodeJS.ProcessEnv = { ...env };
+      exemptLoopbackFromEnvironmentProxy(target, execArgv);
+      expect(target).toMatchObject({ NO_PROXY: loopback, no_proxy: loopback });
+    }
+
+    const wildcard: NodeJS.ProcessEnv = { NODE_USE_ENV_PROXY: "1", no_proxy: "corp.internal,*" };
+    exemptLoopbackFromEnvironmentProxy(wildcard, []);
+    expect(wildcard).toMatchObject({ NO_PROXY: "*", no_proxy: "*" });
+  });
+
+  it("keeps client and WebSocket traffic to a loopback service off the proxy", async () => {
+    const proxied: string[] = [];
+    const proxy = createServer((request, response) => {
+      proxied.push(`${request.method} ${request.url}`);
+      response.writeHead(502).end();
+    }).on("connect", (request, socket) => {
+      proxied.push(`CONNECT ${request.url}`);
+      socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    });
+    const service = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ version: SUPPORTED_OPENCODE_VERSION, pid: 1, urls: [] }));
+    }).on("upgrade", (request, socket) => {
+      const accept = createHash("sha1")
+        .update(`${request.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+        .digest("base64");
+      socket.end(
+        `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      );
+    });
+    const listen = (server: Server, host: string) =>
+      new Promise<number>((resolve) =>
+        server.listen(0, host, () => resolve((server.address() as { port: number }).port)),
+      );
+    const proxyUrl = `http://127.0.0.1:${await listen(proxy, "127.0.0.1")}`;
+    const port = await listen(service, "::");
+    try {
+      const proxyEnv = {
+        NODE_USE_ENV_PROXY: "1",
+        ...Object.fromEntries(
+          ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"].flatMap((key) => [
+            [key, proxyUrl],
+            [key.toLowerCase(), proxyUrl],
+          ]),
+        ),
+        NO_PROXY: "",
+        no_proxy: "",
+      };
+      const exempted: NodeJS.ProcessEnv = { ...proxyEnv };
+      exemptLoopbackFromEnvironmentProxy(exempted, []);
+      // Node reads NODE_USE_ENV_PROXY only at startup, so a child process stands in for Electron's
+      // main process. It applies the merged NO_PROXY after startup, as connect() does.
+      const script = `
+        const { OpenCode } = await import("@opencode/client");
+        const probe = () => Promise.all(JSON.parse(process.env.TEST_SERVICES).map(async (baseUrl) => [
+          await OpenCode.make({ baseUrl, fetch: (input, init) => globalThis.fetch(input, init) })
+            .server.info().then(() => "ok", () => "proxied"),
+          await new Promise((resolve) => {
+            const socket = new WebSocket(baseUrl.replace("http", "ws"));
+            socket.onopen = () => { socket.close(); resolve("ok"); };
+            socket.onerror = () => resolve("proxied");
+          }),
+        ]));
+        const before = await probe();
+        process.env.NO_PROXY = process.env.no_proxy = process.env.TEST_NO_PROXY;
+        console.log(JSON.stringify({ before, after: await probe() }));`;
+      const inherited = Object.entries(process.env).filter(
+        ([key]) => !/(_proxy|^node_options)$/i.test(key),
+      );
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        ["--input-type=module", "-e", script],
+        {
+          env: {
+            ...Object.fromEntries(inherited),
+            ...proxyEnv,
+            TEST_NO_PROXY: exempted.NO_PROXY,
+            TEST_SERVICES: JSON.stringify(
+              ["127.0.0.1", "localhost", "[::1]"].map((host) => `http://${host}:${port}`),
+            ),
+          },
+        },
+      );
+      const result = JSON.parse(stdout) as { before: string[][]; after: string[][] };
+      // Control: without the exemption the proxy receives every loopback request.
+      expect(result.before.flat()).toEqual(Array(6).fill("proxied"));
+      const proxiedBefore = proxied.length;
+      expect(proxiedBefore).toBeGreaterThan(0);
+      expect(result.after.flat()).toEqual(Array(6).fill("ok"));
+      expect(proxied).toHaveLength(proxiedBefore);
+    } finally {
+      proxy.close();
+      service.close();
+    }
+  }, 20_000);
+});

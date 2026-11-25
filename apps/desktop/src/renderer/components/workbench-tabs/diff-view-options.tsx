@@ -49,12 +49,15 @@ export function DiffViewOptionsMenu({
   layout,
   onFind,
   hideWhitespaceAvailable = true,
+  collapseQuietAvailable = false,
 }: {
   /** Layout in effect, after Auto resolves. */
   layout: DiffLayout;
   /** Opens Find in diff; omitted where the surface has no find. */
   onFind?(): void;
   hideWhitespaceAvailable?: boolean;
+  /** Multi-file surfaces offer to start lockfiles and generated files collapsed. */
+  collapseQuietAvailable?: boolean;
 }) {
   const [preferences, update] = useDiffViewPreferences();
   return (
@@ -66,7 +69,7 @@ export function DiffViewOptionsMenu({
       >
         {layout === "split" ? <Columns2 aria-hidden="true" /> : <Rows3 aria-hidden="true" />}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
+      <DropdownMenuContent align="end" className={collapseQuietAvailable ? "w-72" : "w-52"}>
         <DropdownMenuGroup>
           <DropdownMenuLabel>Layout</DropdownMenuLabel>
           <DropdownMenuRadioGroup
@@ -113,6 +116,17 @@ export function DiffViewOptionsMenu({
               onCheckedChange={(checked) => update({ hideWhitespace: checked })}
             >
               Hide whitespace changes
+            </DropdownMenuCheckboxItem>
+          </>
+        ) : null}
+        {collapseQuietAvailable ? (
+          <>
+            {hideWhitespaceAvailable ? null : <DropdownMenuSeparator />}
+            <DropdownMenuCheckboxItem
+              checked={preferences.collapseQuietFiles}
+              onCheckedChange={(checked) => update({ collapseQuietFiles: checked })}
+            >
+              Collapse lockfiles and generated files
             </DropdownMenuCheckboxItem>
           </>
         ) : null}

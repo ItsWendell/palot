@@ -3,13 +3,27 @@ import {
   type LocationRef,
   type PersistentPtyInfo,
 } from "@opencode/client";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PalotRunningShell, PalotSession } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
+import {
+  isScriptJob,
+  recordScriptJobEvent,
+  runningScriptJobs,
+  scriptJobTitle,
+  type ScriptJobEvent,
+  type ScriptJobList,
+} from "../lib/background-scripts";
 import { openCodeKeys } from "../lib/opencode-query";
 import { openCodeClient } from "../services/opencode-client";
+import { palot } from "../services/palot";
+import {
+  transcriptMessages,
+  transcriptQueryKey,
+  type TranscriptData,
+} from "./use-session-transcript";
 import { runningShellsQueryOptions } from "./use-running-shells";
 import { useSessionCatalog } from "./use-session-catalog";
 import { useLoadedLocations } from "./use-loaded-locations";
@@ -27,7 +41,18 @@ export interface SessionTerminal extends PersistentPtyInfo {
   active: boolean;
   missingSince?: number;
 }
-export type SessionProcess = SessionCommand | SessionTerminal;
+/** A Code Mode script running in the background (OpenCode 2.4 lists these as `codemode` jobs). */
+export interface SessionScript {
+  kind: "script";
+  id: string;
+  sessionID: string;
+  title: string;
+  startedAt: number;
+  location: LocationRef;
+  active: boolean;
+  missingSince?: number;
+}
+export type SessionProcess = SessionCommand | SessionTerminal | SessionScript;
 const RECENT_MS = 30_000;
 export const SHELL_POLL_MS = 2_000;
 export const TERMINAL_POLL_MS = 3_000;
@@ -79,6 +104,14 @@ export function reconcileProcesses(
   return { rows, inactiveSince };
 }
 
+/** OpenCode 2.4.0 sends `experimental.job.updated`, so job lists follow events instead of polling. */
+export function sendsJobEvents(version: string | null | undefined): boolean {
+  const match = version?.trim().match(/^v?(\d+)\.(\d+)\.\d+$/);
+  if (!match) return false;
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  return major > 2 || (major === 2 && minor >= 4);
+}
+
 export function useSessionProcesses(
   session: PalotSession,
   sessionIDs: ReadonlySet<string>,
@@ -88,6 +121,7 @@ export function useSessionProcesses(
   const runtime = useAtomValue(runtimeAtom);
   const catalog = useSessionCatalog();
   const connectionID = target?.connectionID ?? runtime?.connectionID ?? "disconnected";
+  const followsJobEvents = sendsJobEvents(runtime?.version);
   const enabled = Boolean(
     runtime?.connected &&
     connectionID !== "preview" &&
@@ -135,8 +169,88 @@ export function useSessionProcesses(
     connectionID,
     enabled && locations.some((location) => location.directory !== ownDirectory),
   );
+  // OpenCode 2.2.6+ lists the family's background jobs server-wide without loading any
+  // location. A directory with a live job of a family session is worth reading even when the
+  // list is open; idle subagent worktrees are then never booted. Older servers (no job list)
+  // fall back to reading every family directory while the list is open.
+  const jobs = useQuery({
+    queryKey: openCodeKeys.backgroundJobs(connectionID, session.id),
+    queryFn: ({ signal }) =>
+      openCodeClient(connectionID).experimental.job.list(
+        { sessionID: session.id, descendants: true, kind: "shell", status: "running" },
+        { signal },
+      ),
+    enabled: enabled && locations.some((location) => location.directory !== ownDirectory),
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) =>
+      enabled && open && !followsJobEvents && !query.state.error ? SHELL_POLL_MS : false,
+  });
+  // Background Code Mode scripts (2.4.0). The list is read once; `experimental.job.updated`
+  // events keep it current, including those that arrive while it loads. Servers without the
+  // `codemode` kind answer with an error, and then there are no script rows.
+  const scriptList = useQuery({
+    queryKey: openCodeKeys.backgroundScripts(connectionID, session.id),
+    queryFn: async ({ signal }): Promise<ScriptJobList> => {
+      const requestedAt = Date.now();
+      const jobs = await openCodeClient(connectionID).experimental.job.list(
+        { sessionID: session.id, descendants: true, kind: "codemode", status: "running" },
+        { signal },
+      );
+      return { jobs: jobs.filter(isScriptJob), requestedAt };
+    },
+    enabled,
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) =>
+      enabled && open && !followsJobEvents && !query.state.error ? SHELL_POLL_MS : false,
+  });
+  const [scriptEvents, setScriptEvents] = useState<{
+    scope: string;
+    events: ReadonlyMap<string, ScriptJobEvent>;
+  }>({ scope: "", events: new Map() });
+  useEffect(() => {
+    if (!enabled) return;
+    return palot.subscribe((batch) => {
+      if (batch.connectionID !== connectionID) return;
+      const updates = batch.events.flatMap((event) =>
+        event.type === "experimental.job.updated" && isScriptJob(event.data.info)
+          ? [event.data.info]
+          : [],
+      );
+      if (updates.length === 0) return;
+      const receivedAt = Date.now();
+      setScriptEvents((previous) => ({
+        scope: connectionID,
+        events: updates.reduce(
+          (events, info) => recordScriptJobEvent(events, info, receivedAt),
+          previous.scope === connectionID ? previous.events : new Map(),
+        ),
+      }));
+    });
+  }, [connectionID, enabled]);
+  const runningScripts = scriptList.isError
+    ? []
+    : runningScriptJobs(
+        scriptList.data,
+        scriptEvents.scope === connectionID ? scriptEvents.events : new Map(),
+      );
+  const jobDirectories = useMemo(() => {
+    if (!jobs.data) return null;
+    return new Set(
+      jobs.data.flatMap((job) => {
+        const owner = owners.get(job.sessionID);
+        return owner ? [owner.location.directory] : [];
+      }),
+    );
+  }, [jobs.data, owners]);
   const readable = (location: LocationRef) =>
-    open || location.directory === ownDirectory || loaded?.has(location.directory) === true;
+    location.directory === ownDirectory ||
+    loaded?.has(location.directory) === true ||
+    jobDirectories?.has(location.directory) === true ||
+    (open && jobDirectories === null);
   // Closed, the counts follow shell and terminal events after one read on mount. Only the open
   // list polls, for output-free changes such as a terminal's foreground process. A deleted
   // directory stops polling until it is read again.
@@ -208,6 +322,27 @@ export function useSessionProcesses(
               : [];
           }),
         ),
+        ...runningScripts.flatMap((job): SessionScript[] => {
+          const owner = owners.get(job.sessionID);
+          if (!owner) return [];
+          const transcript = queryClient.getQueryData<TranscriptData>(
+            transcriptQueryKey(connectionID, job.sessionID),
+          );
+          return [
+            {
+              kind: "script",
+              id: job.id,
+              sessionID: job.sessionID,
+              title:
+                scriptJobTitle(job.id, transcriptMessages(transcript)) ??
+                job.title ??
+                "Code Mode script",
+              startedAt: job.time.started,
+              location: owner.location,
+              active: true,
+            },
+          ];
+        }),
       ]
     : [];
   const [history, setHistory] = useState<ProcessHistory & { scope: string; now: number }>({
@@ -284,6 +419,7 @@ export function useSessionProcesses(
     },
     rows: resolved,
     commands: current.filter((row) => row.kind === "command" && row.active).length,
+    scripts: current.filter((row) => row.kind === "script" && row.active).length,
     terminals: current.filter((row) => row.kind === "terminal" && row.active).length,
     loading: shells.some((query) => query.isLoading) || terminals.some((query) => query.isLoading),
     error: shells.some((query) => query.isError)

@@ -41,7 +41,8 @@ describe("OpenCode service compatibility", () => {
     expect(isSupportedOpenCodeVersion("2.2.0")).toBe(true);
     expect(isSupportedOpenCodeVersion("2.2.1")).toBe(true);
     expect(isSupportedOpenCodeVersion("2.2.3")).toBe(true);
-    expect(isTestedOpenCodeVersion("2.2.5")).toBe(true);
+    expect(isSupportedOpenCodeVersion("2.2.5")).toBe(true);
+    expect(isTestedOpenCodeVersion("2.4.1")).toBe(true);
     expect(isSupportedOpenCodeVersion("0.0.0-beta-19507")).toBe(false);
   });
 
@@ -101,7 +102,7 @@ describe("OpenCode service compatibility", () => {
   });
 
   it("describes the exact supported version", () => {
-    expect(supportedOpenCodeVersionLabel()).toBe("2.2.5");
+    expect(supportedOpenCodeVersionLabel()).toBe("2.4.1");
   });
 
   it("only offers one-time pairing on stable services with the published endpoint", () => {

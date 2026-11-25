@@ -66,8 +66,9 @@ describe.each(["chat/completions", "responses"] as const)("text bursts on %s", (
       expect(deltas).toEqual(expected);
       expect(deltas.join("")).toBe(expected.join(""));
       expect(server.emissions.map((emission) => emission.payload)).toEqual(events);
-      const openingEnvelopes = endpoint === "responses" ? 2 : 1;
-      expect(events).toHaveLength(count + (endpoint === "responses" ? 4 : 2));
+      const openingEnvelopes = endpoint === "responses" ? 3 : 1;
+      // Responses: created, item and part added, then text, part and item done, completed.
+      expect(events).toHaveLength(count + (endpoint === "responses" ? 7 : 2));
       if (endpoint === "responses") {
         expect(events.at(-1).type).toBe("response.completed");
         expect(events.map((event) => event.sequence_number)).toEqual(
@@ -108,7 +109,7 @@ describe.each(["chat/completions", "responses"] as const)("text bursts on %s", (
         signal: abort.signal,
       });
       const drained = response.text().catch(() => undefined);
-      const openingEnvelopes = endpoint === "responses" ? 2 : 1;
+      const openingEnvelopes = endpoint === "responses" ? 3 : 1;
       expect(server.emissions).toHaveLength(openingEnvelopes + 2);
       const wait = vi.mocked(sleep).mock.results[0]!.value;
       const cancelled = expect(wait).rejects.toMatchObject({ name: "AbortError" });
@@ -127,6 +128,48 @@ describe.each(["chat/completions", "responses"] as const)("text bursts on %s", (
       expect(server.pendingResponses()).toBe(0);
     },
   );
+});
+
+describe("Responses output items", () => {
+  it("gives reasoning, message and tool items their own output slots and final text", async () => {
+    const server = new TestLLMServer();
+    servers.push(server);
+    await server.start();
+    server.toolsWithReasoningAndText(
+      [
+        { name: "read", input: { path: "a.txt" } },
+        { name: "read", input: { path: "b.txt" } },
+      ],
+      ["thinking"],
+      ["Reading ", "both."],
+      0,
+    );
+    const body = await (
+      await fetch(`${server.url}/responses`, {
+        method: "POST",
+        body: JSON.stringify({ model: "test-model", input: [] }),
+      })
+    ).text();
+    const events = body
+      .split("\n\n")
+      .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+      .map((line) => JSON.parse(line.slice(6)));
+    // OpenCode routes events by output slot: two items sharing one lose the later item's text.
+    const added = events.filter((event) => event.type === "response.output_item.added");
+    expect(added.map((event) => [event.item.type, event.output_index])).toEqual([
+      ["reasoning", 0],
+      ["message", 1],
+      ["function_call", 2],
+      ["function_call", 3],
+    ]);
+    const message = events.find(
+      (event) => event.type === "response.output_item.done" && event.item.type === "message",
+    );
+    expect(message.output_index).toBe(1);
+    expect(message.item.content).toEqual([
+      { type: "output_text", text: "Reading both.", annotations: [] },
+    ]);
+  });
 });
 
 describe("text burst validation", () => {

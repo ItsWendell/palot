@@ -19,13 +19,17 @@ export function attachmentPrompt(
   { files = [], modelInput, comments = [], browserComments = [] }: AttachmentDeliveryInput,
 ) {
   const inlineFiles: PalotFileAttachment[] = [];
+  const previewsAttached = modelInput === undefined || modelInput.includes("image");
   for (const comment of browserComments) {
-    if (comment.preview && (modelInput === undefined || modelInput.includes("image")))
+    if (comment.preview && previewsAttached)
       inlineFiles.push({
+        // A restored comment may carry a `media:<hash>` reference; the server re-reads its bytes.
         uri: comment.preview,
         name: browserCommentPreviewName(comment),
         mime: "image/jpeg",
-        size: Math.floor(comment.preview.length * 0.75),
+        size: comment.preview.startsWith("data:")
+          ? Math.floor(comment.preview.length * 0.75)
+          : null,
       });
   }
   const attachments = files.flatMap((file) => {
@@ -68,10 +72,19 @@ export function attachmentPrompt(
             comments,
             ...(browserComments.length
               ? {
-                  browserComments: browserComments.map((comment) => ({
-                    ...comment,
-                    element: { ...comment.element },
-                  })),
+                  // The attached file holds a preview once; metadata only names it. Without
+                  // an attached file, the comment keeps its bounded preview inline.
+                  browserComments: browserComments.map(
+                    ({ preview, previewFile: _previewFile, ...comment }) => ({
+                      ...comment,
+                      element: { ...comment.element },
+                      ...(preview
+                        ? previewsAttached
+                          ? { previewFile: browserCommentPreviewName(comment) }
+                          : { preview }
+                        : {}),
+                    }),
+                  ),
                 }
               : {}),
             attachments,

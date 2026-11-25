@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { PalotFileAttachment } from "../../shared";
 import {
+  MAX_RECENT_PROMPT_CHARS,
   MAX_RECENT_PROMPT_EMBEDDED,
   MAX_RECENT_PROMPTS,
+  MAX_RECENT_PROMPTS_WITH_FILES,
   loadRecentPrompts,
   portableComposerFiles,
   recentPromptFromSubmission,
@@ -118,6 +120,55 @@ describe("recent prompt contents", () => {
     expect(withNew[0]?.files.map((file) => file.name)).toEqual(["new.txt"]);
     expect(withNew[1]?.files).toEqual([]);
     expect(withNew[1]?.omittedFiles).toEqual(["old.txt"]);
+  });
+
+  it("keeps 200 prompts, with attachments only on the newest 100", () => {
+    let entries: RecentPrompt[] = [];
+    for (let index = 0; index < 210; index += 1) {
+      entries = rememberRecentPrompt(
+        entries,
+        prompt(`p${index}`, { files: [embedded(`f${index}.txt`)] }),
+      );
+    }
+    expect(MAX_RECENT_PROMPTS).toBe(200);
+    expect(entries).toHaveLength(200);
+    expect(entries[0]?.text).toBe("p209");
+    expect(entries[199]?.text).toBe("p10");
+    const newest = entries[MAX_RECENT_PROMPTS_WITH_FILES - 1]!;
+    expect(newest.files.map((file) => file.name)).toEqual([
+      `f${210 - MAX_RECENT_PROMPTS_WITH_FILES}.txt`,
+    ]);
+    const older = entries[MAX_RECENT_PROMPTS_WITH_FILES]!;
+    expect(older.text).toBe(`p${209 - MAX_RECENT_PROMPTS_WITH_FILES}`);
+    expect(older.files).toEqual([]);
+    expect(older.omittedFiles).toEqual([`f${209 - MAX_RECENT_PROMPTS_WITH_FILES}.txt`]);
+    // Recall names what the text-only entry no longer carries.
+    expect(recentPromptHistory([older])[0]?.omittedFiles).toEqual([older.omittedFiles[0]]);
+  });
+
+  it("drops the oldest prompts once a scope's stored text passes its budget", () => {
+    let entries: RecentPrompt[] = [];
+    for (let index = 0; index < 100; index += 1) {
+      entries = rememberRecentPrompt(entries, prompt(`${index} ${"x".repeat(3_990)}`));
+    }
+    expect(entries.length).toBeGreaterThan(20);
+    expect(entries.length).toBeLessThan(40);
+    expect(entries[0]?.text.startsWith("99 ")).toBe(true);
+    expect(JSON.stringify(entries).length).toBeLessThanOrEqual(MAX_RECENT_PROMPT_CHARS);
+  });
+
+  it("still loads history saved with the old 25-prompt limit and adds to it", () => {
+    const scope = recentPromptScope("profile", "project")!;
+    const key = persistedStorageKey(`composer.recent-prompts:${encodeURIComponent(scope)}`);
+    const saved = Array.from({ length: 25 }, (_, index) =>
+      prompt(`old ${index}`, { files: [embedded(`o${index}.txt`)], createdAt: index }),
+    );
+    window.localStorage.setItem(key, JSON.stringify({ version: 1, value: saved }));
+    expect(loadRecentPrompts(scope)).toHaveLength(25);
+    saveRecentPrompt(scope, prompt("new"));
+    const loaded = loadRecentPrompts(scope);
+    expect(loaded.map((item) => item.text)).toEqual(["new", ...saved.map((item) => item.text)]);
+    expect(loaded[25]?.files.map((file) => file.name)).toEqual(["o24.txt"]);
   });
 
   it("revalidates stored entries before they can be recalled", () => {

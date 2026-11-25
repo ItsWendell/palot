@@ -192,18 +192,16 @@ export function removeTranscriptCacheMessage(
   sessionID: string,
   messageID: string,
 ): void {
-  queryClient.setQueryData<TranscriptData>(
-    transcriptQueryKey(connectionID, sessionID),
-    (current) =>
-      current
-        ? {
-            ...current,
-            pages: current.pages.map((page) => ({
-              ...page,
-              data: page.data.filter((message) => message.id !== messageID),
-            })),
-          }
-        : current,
+  queryClient.setQueryData<TranscriptData>(transcriptQueryKey(connectionID, sessionID), (current) =>
+    current
+      ? {
+          ...current,
+          pages: current.pages.map((page) => ({
+            ...page,
+            data: page.data.filter((message) => message.id !== messageID),
+          })),
+        }
+      : current,
   );
 }
 

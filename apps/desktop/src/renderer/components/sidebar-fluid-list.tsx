@@ -2,7 +2,6 @@ import { useEffect, useRef, type ComponentProps, type FocusEvent, type MouseEven
 import { isOwnEvent, useFluidHover, type UseFluidHoverOptions } from "../hooks/use-fluid-hover";
 import { cn } from "../lib/cn";
 import { FluidHoverHighlight } from "./ui/fluid-hover-highlight";
-import { sidebarItemVariants } from "./ui/sidebar-styles";
 
 const LIST_SELECTOR = "[data-sidebar-fluid-list]";
 const ROW_SELECTOR = "[data-sidebar-fluid-row]";
@@ -10,39 +9,6 @@ const POPUP_OPEN_SELECTOR = "[data-popup-open]";
 
 /** Spread onto a row's root element to join the nearest `SidebarFluidList`. */
 export const sidebarFluidRowProps = { "data-sidebar-fluid-row": "" } as const;
-
-/**
- * Row styling for rows inside a `SidebarFluidList`: the shared sidebar item without
- * its own hover fill, which the list's gliding highlight replaces. Selected
- * (`data-active`), pressed, and focus states stay on the row.
- */
-export function sidebarFluidItemClass(className?: string) {
-  return sidebarItemVariants({
-    interactive: false,
-    className: cn(
-      "rounded-md outline-none transition-colors hover:bg-transparent hover:text-sidebar-foreground/95 active:bg-(--palot-sidebar-selected) data-active:hover:bg-(--palot-sidebar-selected) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring",
-      className,
-    ),
-  });
-}
-
-/**
- * For `InboxCardSurface` rows inside a `SidebarFluidList`: drops the card's own hover
- * fill and keeps a selected card's fill steady under the pointer.
- */
-export const sidebarFluidCardClass =
-  "hover:bg-transparent data-selected:hover:bg-(--palot-sidebar-selected)";
-
-/**
- * Section chevrons stay quiet while their section is open and appear on label hover
- * or keyboard focus; a collapsed section keeps its chevron as the reopen cue. Opacity
- * only, so counts never shift.
- */
-export function sectionChevronRevealClass(open: boolean) {
-  return open
-    ? "opacity-0 transition-[color,opacity] group-hover/section-label:opacity-100 group-focus-visible/section-label:opacity-100 group-hover/section-row:opacity-100 group-focus-within/section-row:opacity-100 pointer-coarse:opacity-100"
-    : undefined;
-}
 
 type SidebarFluidListProps = ComponentProps<"div"> & {
   axis?: UseFluidHoverOptions["axis"];

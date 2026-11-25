@@ -1,8 +1,34 @@
 /** A source-first document: Markdown is never normalized by a rich-text serializer. */
 import { Schema, type Node as PMNode } from "prosemirror-model";
-import { Decoration, DecorationSet } from "prosemirror-view";
+import { Plugin, PluginKey, type EditorState } from "prosemirror-state";
+import { Decoration, DecorationSet, type EditorView } from "prosemirror-view";
 import { normalizeComposerDraft, type ComposerDraft, type ComposerMention } from "./composer-draft";
+import { prContextSegments } from "./pr-context";
 import type { ReviewComment } from "./review-comments";
+
+/** What a chip is, as screen readers announce it. */
+const CHIP_NAMES: Record<string, string> = {
+  file: "File",
+  folder: "Folder",
+  skill: "Skill",
+  agent: "Agent",
+  reference: "Reference",
+  task: "Task",
+  terminal: "Terminal output",
+  "pull request": "Pull request",
+  "review comment": "Review comment",
+  "pr context": "Pull request context",
+};
+
+export function chipName(kind: string, source: string): string {
+  return kind === "file" && source.endsWith("/") ? CHIP_NAMES.folder! : (CHIP_NAMES[kind] ?? kind);
+}
+
+/** File and agent mentions can turn back into the text they stand for and be edited. */
+export function unwrappableChip(node: PMNode | null | undefined): node is PMNode {
+  const kind = node?.type.name === "context" ? node.attrs.mention?.kind : null;
+  return kind === "file" || kind === "agent";
+}
 
 export const composerSchema = new Schema({
   nodes: {
@@ -26,14 +52,18 @@ export const composerSchema = new Schema({
         mention: { default: null },
         comment: { default: null },
       },
+      leafText: (node) => node.attrs.source,
       toDOM: (node) => [
         "span",
         {
           "data-composer-chip": node.attrs.kind,
+          // A recent output's chip leads back to the task it came from (its menu).
+          "data-composer-chip-origin": node.attrs.mention?.origin?.sessionID,
+          "data-composer-chip-origin-title": node.attrs.mention?.origin?.title,
           role: "img",
           contenteditable: "false",
           title: node.attrs.source || node.attrs.comment?.comment,
-          "aria-label": `${node.attrs.kind}: ${node.attrs.label}`,
+          "aria-label": `${chipName(node.attrs.kind, node.attrs.source)}: ${node.attrs.label}`,
           class:
             "mx-0.5 inline-block max-w-full truncate rounded-md border border-border bg-muted px-1 align-bottom text-compact text-foreground",
         },
@@ -42,6 +72,14 @@ export const composerSchema = new Schema({
     },
   },
 });
+
+/** Shell commands: the same editor, text only. */
+export function plainDocument(text: string): PMNode {
+  return composerSchema.nodes.doc!.create(
+    null,
+    composerSchema.nodes.paragraph!.create(null, text ? composerSchema.text(text) : null),
+  );
+}
 
 /** Clipboard metadata is untrusted, even when it names this app's private MIME type. */
 export function richClipboardDraft(value: unknown): ComposerDraft | null {
@@ -67,6 +105,11 @@ export function richClipboardDraft(value: unknown): ComposerDraft | null {
         Number.isSafeInteger(mention.end) &&
         (mention.path === undefined || typeof mention.path === "string") &&
         (mention.title === undefined || typeof mention.title === "string") &&
+        (mention.origin === undefined ||
+          (typeof mention.origin === "object" &&
+            mention.origin !== null &&
+            typeof mention.origin.sessionID === "string" &&
+            typeof mention.origin.title === "string")) &&
         (mention.attachmentText === undefined || typeof mention.attachmentText === "string"),
     )
   )
@@ -100,6 +143,14 @@ export function richSourceChips(draft: ComposerDraft): SourceChip[] {
       kind: "terminal",
       label: "Terminal output",
     });
+  }
+  // PR repair context: the whole block is one chip named by its label.
+  let offset = 0;
+  for (const segment of prContextSegments(draft.text)) {
+    const length = segment.kind === "text" ? segment.text.length : segment.source.length;
+    if (segment.kind === "context")
+      chips.push({ start: offset, end: offset + length, kind: "pr context", label: segment.label });
+    offset += length;
   }
   for (const match of draft.text.matchAll(
     /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+)\b/g,
@@ -173,6 +224,15 @@ export function readRichDocument(doc: PMNode) {
   return { text, mentions, comments };
 }
 
+/** The review comments' chips in document order, by ID; cheap enough to run on every edit. */
+export function richCommentIDs(doc: PMNode): string {
+  let ids = "";
+  doc.firstChild!.forEach((node) => {
+    if (node.attrs.comment) ids += `${node.attrs.comment.id}\0`;
+  });
+  return ids;
+}
+
 /** Source offsets and editor positions differ only at atomic chips. */
 export function richOffset(doc: PMNode, position: number, reverse = false): number {
   let source = 0;
@@ -231,4 +291,54 @@ export function richDecorations(doc: PMNode): DecorationSet {
     }
   });
   return DecorationSet.create(doc, decorations);
+}
+
+/** Documents up to this size restyle on every edit; longer ones restyle once typing pauses. */
+const SYNC_STYLING_LIMIT = 4_000;
+/**
+ * Longer documents are not styled. An edit walks every styled range of the one paragraph, so in
+ * a long draft their number, not the patterns, sets what a key costs.
+ */
+const STYLING_LIMIT = 8_000;
+const STYLING_PAUSE_MS = 150;
+const markdownKey = new PluginKey<DecorationSet>("composer-markdown");
+
+function styling(doc: PMNode): DecorationSet {
+  return doc.content.size > STYLING_LIMIT ? DecorationSet.empty : richDecorations(doc);
+}
+
+/**
+ * Markdown styling as plugin state, so view updates that do not change the text reuse it.
+ * Longer drafts map the existing styling through each edit and restyle after a pause.
+ */
+export function composerMarkdownStyling(): Plugin<DecorationSet> {
+  return new Plugin<DecorationSet>({
+    key: markdownKey,
+    state: {
+      init: (_config, state) => styling(state.doc),
+      apply(tr, current, _previous, state: EditorState) {
+        if (tr.getMeta(markdownKey)) return styling(state.doc);
+        if (!tr.docChanged) return current;
+        const size = state.doc.content.size;
+        if (size <= SYNC_STYLING_LIMIT) return richDecorations(state.doc);
+        return size > STYLING_LIMIT ? DecorationSet.empty : current.map(tr.mapping, tr.doc);
+      },
+    },
+    props: { decorations: (state) => markdownKey.getState(state) },
+    view() {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      return {
+        update(view: EditorView, previous: EditorState) {
+          const size = view.state.doc.content.size;
+          if (view.state.doc === previous.doc || size <= SYNC_STYLING_LIMIT || size > STYLING_LIMIT)
+            return;
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            if (!view.isDestroyed) view.dispatch(view.state.tr.setMeta(markdownKey, true));
+          }, STYLING_PAUSE_MS);
+        },
+        destroy: () => clearTimeout(timer),
+      };
+    },
+  });
 }

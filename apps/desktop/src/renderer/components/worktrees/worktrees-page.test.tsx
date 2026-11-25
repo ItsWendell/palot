@@ -251,21 +251,19 @@ describe("WorktreesPage merged worktree retirement", () => {
     const activeIDs = vi
       .spyOn(opencodeCatalog, "listActiveSessionIDs")
       .mockResolvedValue(["elsewhere"]);
-    const sessionInfo = vi
-      .spyOn(opencodeCatalog, "getSessionInfo")
-      .mockImplementation(async (id) =>
-        id === "elsewhere"
-          ? ({
-              id,
-              title: "Other worktree",
-              location: { directory: "/worktrees/attached2" },
-            } as never)
-          : ({
-              id,
-              title: "Sub-package build",
-              location: { directory: "/worktrees/attached/packages/app" },
-            } as never),
-      );
+    const sessionInfo = vi.spyOn(opencodeCatalog, "getSessionInfo").mockImplementation(async (id) =>
+      id === "elsewhere"
+        ? ({
+            id,
+            title: "Other worktree",
+            location: { directory: "/worktrees/attached2" },
+          } as never)
+        : ({
+            id,
+            title: "Sub-package build",
+            location: { directory: "/worktrees/attached/packages/app" },
+          } as never),
+    );
     const remove = vi.spyOn(palot, "removeProjectCopy").mockResolvedValue(undefined);
     const store = createConnectedStore();
     const queryClient = createRendererQueryClient();

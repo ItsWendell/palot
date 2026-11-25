@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   execFile: vi.fn(),
@@ -47,7 +47,7 @@ vi.mock("../opencode-runtime", () => ({
   },
 }));
 
-import { ExternalOpenService } from "./service";
+import { ExternalOpenService, editorUrlScheme, localFilePath } from "./service";
 
 const localStatus = {
   connected: true,
@@ -153,5 +153,85 @@ describe.skipIf(process.platform !== "darwin")("ExternalOpenService", () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+describe("local file paths for external apps", () => {
+  it("rejects relative paths and paths that read as options", () => {
+    expect(() => localFilePath("src/main.ts")).toThrow("must be absolute");
+    expect(() => localFilePath("-a")).toThrow("must be absolute");
+    expect(() => localFilePath("--args")).toThrow("must be absolute");
+  });
+
+  it("normalises absolute paths", () => {
+    expect(localFilePath("/work/project/../project/./src/main.ts")).toBe(
+      "/work/project/src/main.ts",
+    );
+  });
+
+  it("percent-encodes path segments in editor links and keeps the position outside", () => {
+    const file = "/work/my project/#1 100%.ts";
+    expect(editorUrlScheme("vscode", file, 4, 2)).toBe(
+      "vscode://file/work/my%20project/%231%20100%25.ts:4:2",
+    );
+    expect(editorUrlScheme("zed", file, 4)).toBe("zed://file/work/my%20project/%231%20100%25.ts:4");
+    expect(editorUrlScheme("sublime-text", file, 4, 2)).toBe(
+      "subl://open?url=file:///work/my%20project/%231%20100%25.ts&line=4&column=2",
+    );
+  });
+});
+
+describe("ExternalOpenService file launches", () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+
+  beforeEach(() => {
+    Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+    mocks.preferences.clear();
+    mocks.execFile.mockReset();
+    mocks.access.mockReset();
+    mocks.runtimeStatus.mockReturnValue(localStatus);
+    mocks.access.mockImplementation(async (candidate: string) => {
+      if (candidate === "/Applications/Cursor.app") return;
+      throw new Error("missing");
+    });
+    mocks.execFile.mockImplementation(
+      (
+        _command: string,
+        _args: string[],
+        _options: unknown,
+        callback: (...args: unknown[]) => void,
+      ) => callback(null, "", ""),
+    );
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", platform);
+  });
+
+  function openCalls(): string[][] {
+    return mocks.execFile.mock.calls
+      .filter(([command]) => command === "/usr/bin/open")
+      .map(([, args]) => args as string[]);
+  }
+
+  it("passes the absolute file path to open", async () => {
+    await new ExternalOpenService().open({
+      resource: { kind: "file", path: "/work/-notes.md" },
+    });
+    expect(openCalls()).toEqual([["-a", "/Applications/Cursor.app", "/work/-notes.md"]]);
+  });
+
+  it("passes an encoded editor link to open", async () => {
+    await new ExternalOpenService().open({
+      resource: { kind: "file", path: "/work/a b.ts", line: 3 },
+    });
+    expect(openCalls()).toEqual([["cursor://file/work/a%20b.ts:3"]]);
+  });
+
+  it("refuses a path that open would read as an option", async () => {
+    await expect(
+      new ExternalOpenService().open({ resource: { kind: "file", path: "-a" } }),
+    ).rejects.toThrow("must be absolute");
+    expect(openCalls()).toEqual([]);
   });
 });

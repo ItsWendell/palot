@@ -1,9 +1,23 @@
-import { mkdtemp, open, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  attachDroppedPaths,
+  cleanupStagedAttachments,
   inspectPickedFiles,
   MAX_ATTACHMENT_BYTES,
   readAttachmentPreview,
@@ -130,6 +144,69 @@ describe("file attachments", () => {
     expect(result.errors).toHaveLength(2);
   });
 
+  describe("dropped and pasted paths", () => {
+    type Options = Parameters<typeof attachDroppedPaths>[1];
+    const local: Options = { localFileAttachments: true, prepare: (select) => select() };
+
+    test("attach exactly as picked files, keeping their names", async () => {
+      const directory = await temporaryDirectory();
+      const image = path.join(directory, "diagram.png");
+      const archive = path.join(directory, "notes.zip");
+      await Promise.all([writeFile(image, "image"), writeFile(archive, "zip")]);
+      const prepare = vi.fn<Options["prepare"]>((select) => select());
+
+      const result = await attachDroppedPaths(
+        { paths: [image, archive, directory], requestID: "drop" },
+        { localFileAttachments: true, prepare },
+      );
+
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(result.files).toEqual([
+        {
+          uri: pathToFileURL(image).href,
+          previewGrant: expect.any(String),
+          name: "diagram.png",
+          mime: "image/png",
+          size: 5,
+        },
+        {
+          uri: pathToFileURL(archive).href,
+          name: "notes.zip",
+          mime: "application/octet-stream",
+          size: 3,
+        },
+      ]);
+      // Folders are refused, as the picker, which only selects files, never offers them.
+      expect(result.errors).toEqual([
+        `${path.basename(directory)}: the selected item is not a file.`,
+      ]);
+    });
+
+    test("refuse relative paths, other values and more than the picker's limit", async () => {
+      await expect(attachDroppedPaths({ paths: ["notes.zip"] }, local)).rejects.toThrow("absolute");
+      await expect(attachDroppedPaths({ paths: [42] }, local)).rejects.toThrow("absolute");
+      await expect(attachDroppedPaths({ paths: "/a" }, local)).rejects.toThrow("invalid");
+      await expect(
+        attachDroppedPaths(
+          { paths: Array.from({ length: 21 }, (_, index) => `/tmp/${index}`) },
+          local,
+        ),
+      ).rejects.toThrow("Attach up to 20 files at a time.");
+    });
+
+    test("read nothing on a connection without local file attachments", async () => {
+      const directory = await temporaryDirectory();
+      const file = path.join(directory, "notes.txt");
+      await writeFile(file, "notes");
+      const prepare = vi.fn();
+
+      await expect(
+        attachDroppedPaths({ paths: [file] }, { localFileAttachments: false, prepare }),
+      ).rejects.toThrow("This action is unavailable for the active OpenCode server");
+      expect(prepare).not.toHaveBeenCalled();
+    });
+  });
+
   test("stages pasted screenshots as validated image attachments", async () => {
     const result = await stageClipboardImages([
       { mime: "image/png", data: Uint8Array.from([1, 2, 3]).buffer },
@@ -179,5 +256,37 @@ describe("file attachments", () => {
 
     expect(result.files).toEqual([]);
     expect(result.errors).toEqual(["Pasted image 1: this image type is not supported."]);
+  });
+
+  test("keeps staged directories of running instances and removes dead or old ones", async () => {
+    const root = await temporaryDirectory();
+    const now = Date.now();
+    const exited = spawnSync(process.execPath, ["-e", ""]).pid;
+    const entries = {
+      own: path.join(root, `clipboard-attachments-${process.pid}`),
+      running: path.join(root, `clipboard-attachments-${process.ppid}`),
+      exited: path.join(root, `clipboard-attachments-${exited}`),
+      oldRunning: path.join(root, `stale-attachments-${process.ppid}`),
+      unowned: path.join(root, "unowned"),
+      oldUnowned: path.join(root, "old-unowned"),
+    };
+    await Promise.all(Object.values(entries).map((directory) => mkdir(directory)));
+    const old = new Date(now - 2 * 24 * 60 * 60 * 1_000);
+    await Promise.all([utimes(entries.oldUnowned, old, old), utimes(entries.oldRunning, old, old)]);
+
+    await cleanupStagedAttachments(now, root);
+
+    expect(
+      Object.fromEntries(
+        Object.entries(entries).map(([name, directory]) => [name, existsSync(directory)]),
+      ),
+    ).toEqual({
+      own: true,
+      running: true,
+      exited: false,
+      oldRunning: false,
+      unowned: true,
+      oldUnowned: false,
+    });
   });
 });

@@ -104,6 +104,7 @@ it("uses the event owner for delayed completion metadata and subsequent navigati
   } as OpenCodeEvent;
   mocks.listener?.(event, runtime("a"));
   mocks.listener?.(event, runtime("b"));
+  await vi.waitFor(() => expect(a).toHaveBeenCalled());
   resolve({ title: "Original server", parentID: null });
   await vi.waitFor(() => expect(mocks.shown).toHaveLength(2));
   const notification = mocks.shown.find((item) => item.title === "Original server finished")!;
@@ -139,8 +140,39 @@ it("drops an in-flight completion when its owner is disabled before metadata ret
     } as OpenCodeEvent,
     runtime("a"),
   );
+  await vi.waitFor(() => expect(resolve).toBeTypeOf("function"));
   mocks.disconnected.add("a");
   resolve({ title: "Disabled task" });
   await vi.waitFor(() => expect(mocks.statusReads).toContain("a"));
   expect(mocks.shown).toHaveLength(0);
+});
+
+it("notifies once when a task and its background subagent have both finished", async () => {
+  const get = vi.fn(async ({ sessionID }: { sessionID: string }) =>
+    sessionID === "child"
+      ? { title: "Explore", parentID: "root" }
+      : { title: "Family task", parentID: null },
+  );
+  const active = vi.fn(async () => ({}));
+  mocks.clients.set("a", { session: { get, active } } as never);
+  const send = (id: string, type: string, data: Record<string, unknown>) =>
+    mocks.listener?.({ id, type, data } as OpenCodeEvent, runtime("a"));
+  send("1", "session.execution.started", { sessionID: "root" });
+  send("2", "session.created", { sessionID: "child", parentID: "root" });
+  send("3", "session.execution.started", { sessionID: "child" });
+  // The parent ends its launching turn while the child runs on.
+  send("4", "session.execution.succeeded", { sessionID: "root" });
+  send("5", "session.execution.succeeded", { sessionID: "child" });
+  send("6", "session.inbox.enqueued", {
+    sessionID: "root",
+    inboxID: "report",
+    item: { type: "synthetic", payload: { metadata: { source: "subagent" } } },
+  });
+  send("7", "session.execution.started", { sessionID: "root" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(mocks.shown).toHaveLength(0);
+  send("8", "session.execution.succeeded", { sessionID: "root" });
+  await vi.waitFor(() => expect(mocks.shown).toHaveLength(1));
+  expect(mocks.shown[0]!.title).toBe("Family task finished");
+  expect(active).toHaveBeenCalledOnce();
 });

@@ -4,6 +4,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  ClipboardItem,
   contentTracing,
   dialog,
   ipcMain,
@@ -20,19 +21,12 @@ import * as v from "valibot";
 import { openExternalUrl } from "./external-url";
 import { openDesktopDialog } from "./desktop-dialogs";
 import { writeClipboardImage } from "./clipboard-image";
-import { normalizeSshConfig } from "./ssh/config";
 import { sshInteractions } from "./ssh/interaction";
 import { IPC_CHANNELS } from "../shared/opencode-contract";
 import {
   normalizeAppearancePreferences,
   EXTERNAL_OPEN_TARGET_IDS,
-  type OpenCodeCredentialInput,
-  type OpenCodePairImportInput,
-  type OpenCodePairPayload,
-  type OpenCodeProfileCreateInput,
-  type OpenCodeProfileUpdateInput,
   type AppearanceUpdateInput,
-  type AttentionSnapshotInput,
   type NativeSymbolInput,
 } from "../shared";
 import type { AutomationCommand } from "../shared/automation-contract";
@@ -44,8 +38,13 @@ import { requestAppRestart } from "./app-restart";
 import { getResolvedChromeTier } from "./liquid-glass";
 import {
   ATTACHMENT_DIALOG_FILTERS,
+  attachDroppedPaths,
   inspectPickedFiles,
+  persistComposerAttachments,
   readAttachmentPreview,
+  releaseComposerAttachments,
+  restoreComposerAttachments,
+  sweepComposerAttachments,
   shutdownAttachmentStorage,
   stageClipboardImages,
   stageClipboardText,
@@ -77,6 +76,14 @@ import { appearanceService } from "./appearance-service";
 import { openCodeAttentionIndex } from "./attention-index";
 import { registerTrustedIpcHandler } from "./ipc-security";
 import {
+  identifier,
+  parseAttentionSnapshot,
+  parseOpenCodeRequest,
+  parsePairImport,
+  parseProfileCreate,
+  parseProfileUpdate,
+} from "./ipc-input";
+import {
   exportSupportBundle,
   palotDataLocations,
   removePalotOwnedData,
@@ -97,6 +104,7 @@ import { heapSnapshots } from "./diagnostics/heap-snapshots";
 import { palotToolHost, shutdownPalotToolHost } from "./palot-tools";
 import { registerGuestLinksIpc, shutdownGuestLinks } from "./guest-links/runtime";
 import { registerSpellcheckIpc } from "./spellcheck";
+import { registerPalotUpdateIpc } from "./palot-update-check";
 
 let performanceTraceActive = false;
 const requestProxy = new OpenCodeRequestProxy({
@@ -164,130 +172,6 @@ function assertTrustedMainFrame(event: Electron.IpcMainInvokeEvent): WebContents
   return event.sender;
 }
 
-function parseOpenCodeRequest(input: unknown) {
-  if (!input || typeof input !== "object") throw new Error("OpenCode request is invalid");
-  const value = input as Record<string, unknown>;
-  if (
-    typeof value.id !== "string" ||
-    typeof value.rendererStartedAt !== "number" ||
-    !Number.isFinite(value.rendererStartedAt) ||
-    typeof value.path !== "string" ||
-    typeof value.method !== "string" ||
-    !value.headers ||
-    typeof value.headers !== "object" ||
-    Array.isArray(value.headers) ||
-    (value.body !== null && !(value.body instanceof ArrayBuffer))
-  ) {
-    throw new Error("OpenCode request is invalid");
-  }
-  const headers: Record<string, string> = {};
-  for (const [key, header] of Object.entries(value.headers)) {
-    if (typeof header !== "string") throw new Error("OpenCode request headers are invalid");
-    headers[key] = header;
-  }
-  return {
-    id: value.id,
-    profileID: v.parse(v.optional(identifier), value.profileID),
-    connectionID: v.parse(v.optional(identifier), value.connectionID),
-    rendererStartedAt: value.rendererStartedAt,
-    path: value.path,
-    method: value.method,
-    headers,
-    body: value.body as ArrayBuffer | null,
-  };
-}
-
-function parseCredential(input: unknown): OpenCodeCredentialInput {
-  if (!input || typeof input !== "object") throw new Error("OpenCode credential is invalid");
-  const value = input as Record<string, unknown>;
-  if (value.type === "none") return { type: "none" };
-  if (
-    value.type === "basic" &&
-    typeof value.username === "string" &&
-    typeof value.password === "string"
-  ) {
-    return { type: "basic", username: value.username, password: value.password };
-  }
-  if (value.type === "bearer" && typeof value.token === "string") {
-    return { type: "bearer", token: value.token };
-  }
-  if (
-    value.type === "headers" &&
-    value.headers &&
-    typeof value.headers === "object" &&
-    !Array.isArray(value.headers)
-  ) {
-    const headers: Record<string, string> = {};
-    for (const [key, header] of Object.entries(value.headers)) {
-      if (typeof header !== "string") throw new Error("OpenCode credential headers are invalid");
-      headers[key] = header;
-    }
-    return { type: "headers", headers };
-  }
-  throw new Error("OpenCode credential is invalid");
-}
-
-function parseProfileCreate(input: unknown): OpenCodeProfileCreateInput {
-  if (!input || typeof input !== "object") throw new Error("OpenCode profile is invalid");
-  const value = input as Record<string, unknown>;
-  const name = v.parse(v.pipe(v.string(), v.minLength(1), v.maxLength(120)), value.name);
-  if (value.kind === "local") return { kind: "local", name };
-  if (value.kind === "ssh") return { kind: "ssh", name, ssh: normalizeSshConfig(value.ssh) };
-  if (value.kind === "remote" && Array.isArray(value.urls)) {
-    return {
-      kind: "remote",
-      name,
-      urls: value.urls.map((url) => v.parse(v.string(), url)),
-      credential: parseCredential(value.credential),
-      allowPlainHttp: v.parse(v.boolean(), value.allowPlainHttp),
-    };
-  }
-  throw new Error("OpenCode profile is invalid");
-}
-
-function parseProfileUpdate(input: unknown): OpenCodeProfileUpdateInput {
-  if (!input || typeof input !== "object") throw new Error("OpenCode profile is invalid");
-  const value = input as Record<string, unknown>;
-  const id = v.parse(identifier, value.id);
-  const parsed = parseProfileCreate({ ...value, credential: value.credential ?? { type: "none" } });
-  if (parsed.kind === "remote") {
-    return {
-      ...parsed,
-      id,
-      ...(value.credential === undefined ? { credential: undefined } : {}),
-    };
-  }
-  return { ...parsed, id };
-}
-
-function parsePairPayload(input: unknown): OpenCodePairPayload {
-  if (!input || typeof input !== "object") throw new Error("OpenCode pairing payload is invalid");
-  const value = input as Record<string, unknown>;
-  if (!Array.isArray(value.urls)) throw new Error("OpenCode pairing URLs are invalid");
-  return {
-    urls: value.urls.map((url) => v.parse(v.string(), url)),
-    username: v.parse(v.pipe(v.string(), v.minLength(1)), value.username),
-    password: v.parse(v.pipe(v.string(), v.minLength(1)), value.password),
-  };
-}
-
-function parsePairImport(input: unknown): OpenCodePairImportInput {
-  if (!input || typeof input !== "object") throw new Error("OpenCode pairing import is invalid");
-  const value = input as Record<string, unknown>;
-  if (value.link !== undefined) {
-    if (value.payload !== undefined)
-      throw new Error("Use a pairing link or reusable credentials, not both");
-    return {
-      link: v.parse(v.pipe(v.string(), v.minLength(1), v.maxLength(2_048)), value.link),
-      allowPlainHttp: v.parse(v.boolean(), value.allowPlainHttp),
-    };
-  }
-  return {
-    payload: parsePairPayload(value.payload),
-    allowPlainHttp: v.parse(v.boolean(), value.allowPlainHttp),
-  };
-}
-
 function requireRuntimeCapability(
   capability: "localPathActions" | "localFileAttachments" | "worktreeCreate",
 ): void {
@@ -296,26 +180,6 @@ function requireRuntimeCapability(
   }
 }
 
-function parseAttentionSnapshot(input: unknown): AttentionSnapshotInput {
-  if (!input || typeof input !== "object") throw new Error("Attention snapshot input is invalid");
-  const value = input as Record<string, unknown>;
-  if (!Array.isArray(value.sessions) || value.sessions.length > 2_000) {
-    throw new Error("Attention snapshot sessions are invalid");
-  }
-  for (const item of value.sessions) {
-    if (!item || typeof item !== "object") throw new Error("Attention session is invalid");
-    const session = item as Record<string, unknown>;
-    if (typeof session.id !== "string" || typeof session.projectID !== "string") {
-      throw new Error("Attention session identity is invalid");
-    }
-  }
-  return {
-    connectionID: v.parse(identifier, value.connectionID),
-    sessions: value.sessions as AttentionSnapshotInput["sessions"],
-  };
-}
-
-const identifier = v.pipe(v.string(), v.minLength(1), v.maxLength(512));
 const timestamp = v.pipe(v.number(), v.finite(), v.integer());
 
 const restartAppSchema = v.optional(
@@ -465,7 +329,11 @@ const automationHostSettingsSchema = v.strictObject({
 let ipcTrust:
   | {
       expectedWindow: (event: Electron.IpcMainInvokeEvent) => BrowserWindow | null;
-      openSessionWindow: (sessionID: string, owner: SessionWindowConnection) => Promise<void>;
+      openSessionWindow: (
+        sessionID: string,
+        owner: SessionWindowConnection,
+        background: boolean,
+      ) => Promise<void>;
       sessionWindowScope: (window: BrowserWindow) => SessionWindowScope | undefined;
       takeWindowTarget: (window: BrowserWindow) => ReturnType<typeof desktopNavigation.take>;
       expectedUrl: string;
@@ -571,6 +439,7 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   registerVoiceHostIpc(register);
   registerGuestLinksIpc(register);
   registerSpellcheckIpc(register);
+  registerPalotUpdateIpc(register);
   startProjectScripts();
   register(IPC_CHANNELS.browserRegister, (event, value: unknown) => {
     const win = browserWindow(event);
@@ -748,12 +617,19 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     return renderNativeSymbol(input);
   });
   register(IPC_CHANNELS.chromeTier, () => getResolvedChromeTier());
-  register(IPC_CHANNELS.openSessionWindow, (event, input: unknown, connectionID: unknown) => {
-    assertTrustedMainFrame(event);
-    const sessionID = v.parse(identifier, input);
-    const owner = sessionWindowConnection(connectionID, openCodeRuntime);
-    return options.openSessionWindow(sessionID, owner);
-  });
+  register(
+    IPC_CHANNELS.openSessionWindow,
+    (event, input: unknown, connectionID: unknown, windowOptions: unknown) => {
+      assertTrustedMainFrame(event);
+      const sessionID = v.parse(identifier, input);
+      const owner = sessionWindowConnection(connectionID, openCodeRuntime);
+      const background =
+        typeof windowOptions === "object" &&
+        windowOptions !== null &&
+        (windowOptions as { background?: unknown }).background === true;
+      return options.openSessionWindow(sessionID, owner, background);
+    },
+  );
   register(IPC_CHANNELS.closeWindow, (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
@@ -933,7 +809,10 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   });
   register(IPC_CHANNELS.profilesList, (event) => {
     assertTrustedMainFrame(event);
-    return openCodeRuntime.profileSnapshot();
+    return {
+      ...openCodeRuntime.profileSnapshot(),
+      credentialProtection: openCodeRuntime.credentialProtection(),
+    };
   });
   register(IPC_CHANNELS.profilesCreate, (event, input: unknown) => {
     assertTrustedMainFrame(event);
@@ -969,6 +848,10 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
   register(IPC_CHANNELS.pairingImport, (event, input: unknown) => {
     assertTrustedMainFrame(event);
     return openCodeRuntime.importPairing(parsePairImport(input));
+  });
+  register(IPC_CHANNELS.profilesCheck, (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    return openCodeRuntime.checkProfile(v.parse(identifier, input));
   });
   register(IPC_CHANNELS.webAccessInfo, (event) => {
     assertTrustedMainFrame(event);
@@ -1191,6 +1074,14 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
       return inspectPickedFiles(result.filePaths);
     });
   });
+  registerFocusedNative(IPC_CHANNELS.attachFilePaths, (event, input: unknown) =>
+    attachDroppedPaths(input, {
+      localFileAttachments: Boolean(
+        openCodeRuntime.runtimeStatus().capabilities?.localFileAttachments,
+      ),
+      prepare: (select) => withAttachmentRequest(event, input, select),
+    }),
+  );
   register(IPC_CHANNELS.saveSessionExport, async (event, input: unknown) => {
     assertTrustedMainFrame(event);
     if (!input || typeof input !== "object") throw new Error("Session export is invalid.");
@@ -1213,6 +1104,26 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     await writeFile(result.filePath, value.contents, "utf8");
     return result.filePath;
   });
+  register(IPC_CHANNELS.saveTextFileCopy, async (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    if (!input || typeof input !== "object") throw new Error("File copy is invalid.");
+    const value = input as Record<string, unknown>;
+    if (typeof value.suggestedName !== "string" || typeof value.contents !== "string") {
+      throw new Error("File copy is invalid.");
+    }
+    if (Buffer.byteLength(value.contents, "utf8") > MAX_SESSION_TRANSFER_BYTES) {
+      throw new Error("File copy exceeds the 50 MB limit.");
+    }
+    // The name comes from a workspace path, possibly on another computer: keep only its last part.
+    const name = path.basename(value.suggestedName.replaceAll("\\", "/")).trim() || "untitled.txt";
+    const result = await dialog.showSaveDialog({
+      title: "Save a copy",
+      defaultPath: path.join(app.getPath("downloads"), name),
+    });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, value.contents, "utf8");
+    return result.filePath;
+  });
   register(IPC_CHANNELS.pickSessionImport, async (event) => {
     assertTrustedMainFrame(event);
     const result = await openDesktopDialog("import", {
@@ -1228,10 +1139,13 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     }
     return { path, contents: await readFile(path, "utf8") };
   });
-  register(IPC_CHANNELS.writeClipboardText, (event, input: unknown) => {
+  register(IPC_CHANNELS.writeClipboardText, (event, input: unknown, html: unknown) => {
     assertTrustedMainFrame(event);
     if (typeof input !== "string") throw new Error("Clipboard text is invalid.");
-    return clipboard.writeText(input);
+    if (html === undefined) return clipboard.writeText(input);
+    if (typeof html !== "string") throw new Error("Clipboard HTML is invalid.");
+    // One item, so both formats land on the clipboard together.
+    return clipboard.write([new ClipboardItem({ "text/plain": input, "text/html": html })]);
   });
   register(IPC_CHANNELS.downloadUrl, async (event, input: unknown) => {
     assertTrustedMainFrame(event);
@@ -1285,6 +1199,23 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     requireRuntimeCapability("localFileAttachments");
     if (typeof input !== "string") throw new Error("Attachment URL is invalid.");
     return readAttachmentPreview(input);
+  });
+  // Stashed prompts and saved drafts: only files Palot staged itself are copied, restored or removed.
+  register(IPC_CHANNELS.persistComposerAttachments, (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    return persistComposerAttachments(input);
+  });
+  register(IPC_CHANNELS.restoreComposerAttachments, (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    return restoreComposerAttachments(input);
+  });
+  register(IPC_CHANNELS.releaseComposerAttachments, (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    return releaseComposerAttachments(input);
+  });
+  register(IPC_CHANNELS.sweepComposerAttachments, (event, input: unknown) => {
+    assertTrustedMainFrame(event);
+    return sweepComposerAttachments(input);
   });
   register(IPC_CHANNELS.heapSnapshots, (event, input: unknown) =>
     heapSnapshots(assertTrustedMainFrame(event), input),

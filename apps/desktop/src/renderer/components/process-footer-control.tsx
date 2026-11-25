@@ -23,6 +23,8 @@ export function processCountLabel(commands: number, terminals: number): string {
 }
 
 export function processStatus(row: SessionProcess): string {
+  if (row.kind === "script")
+    return row.active ? "Script running in the background" : "Script ended";
   if (row.kind === "terminal") {
     if (!row.active)
       return row.status === "exited" ? "Terminal exited" : "Terminal no longer listed";
@@ -152,6 +154,7 @@ function ScopedProcessFooter({
                     row.sessionID === session.id
                       ? "This conversation"
                       : processes.owners.get(row.sessionID ?? "")?.title || "Child task";
+                  if (row.kind === "script") return null;
                   const title =
                     row.kind === "command" ? row.command : terminalDisplayName(row, row.command);
                   return (

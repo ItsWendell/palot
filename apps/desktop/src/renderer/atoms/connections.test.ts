@@ -26,3 +26,21 @@ it("bootstraps the current server once, preserves disabling across reload, and e
   expect(store.get(atoms.includedProfileIDsAtom)).toEqual(["added"]);
   expect(store.get(atoms.disabledProfileIDsAtom)).toEqual(["local", "remote"]);
 });
+
+it("enables a disabled profile again only after an explicit start connected it", async () => {
+  const atoms = await import("./connections");
+  const store = createStore();
+  store.set(atoms.discoverProfilesAtom, { ids: ["local", "remote"], activeProfileID: "local" });
+  store.set(atoms.includedProfileIDsAtom, ["remote"]);
+  expect(store.get(atoms.disabledProfileIDsAtom)).toEqual(["local"]);
+
+  store.set(atoms.includeStartedProfileAtom, { profileID: "local", connected: false });
+  expect(store.get(atoms.disabledProfileIDsAtom)).toEqual(["local"]);
+
+  store.set(atoms.includeStartedProfileAtom, { profileID: "local", connected: true });
+  expect(store.get(atoms.includedProfileIDsAtom)).toEqual(["remote", "local"]);
+  expect(store.get(atoms.disabledProfileIDsAtom)).toEqual([]);
+
+  store.set(atoms.includeStartedProfileAtom, { profileID: "local", connected: true });
+  expect(store.get(atoms.includedProfileIDsAtom)).toEqual(["remote", "local"]);
+});

@@ -77,6 +77,29 @@ describe("composer restoration", () => {
       { kind: "reference", value: "opencode-v2", path: "/home/me/repos/opencode@dev" },
     ]);
   });
+  it("restores task mentions, titled from the catalog when the message has no title", () => {
+    const known = "ses_0123456789abcdefABCDEFGHIJ";
+    const unknown = "ses_ZYXWVUTSRQponmlkjihgfedcba";
+    const text = `Compare @session:${known} with @session:${unknown} and ${known}`;
+    const draft = composerDraftFromMessage(message({ text }), (id) =>
+      id === known ? "Fix login" : undefined,
+    );
+    expect(draft.text).toBe(text);
+    const first = text.indexOf("@session:");
+    const second = text.lastIndexOf("@session:");
+    expect(draft.mentions).toEqual([
+      expect.objectContaining({
+        kind: "task",
+        value: known,
+        title: "Fix login",
+        start: first,
+        end: first + `@session:${known}`.length,
+      }),
+      expect.objectContaining({ kind: "task", value: unknown, start: second }),
+    ]);
+    // A bare session ID was typed as text, not chosen as a mention.
+    expect(draft.mentions[1]).not.toHaveProperty("title");
+  });
   it("preserves full original text when presentation metadata is malformed", () => {
     expect(
       composerDraftFromMessage(
@@ -104,6 +127,26 @@ describe("composer restoration", () => {
       ).text,
     ).toBe("Original full prompt");
   });
+  it("restores a stored attachment by its reference, which the server reads back on send", () => {
+    const ref = `media:${"d".repeat(64)}`;
+    const source = message({
+      files: [
+        {
+          name: "shot.png",
+          mime: "image/png",
+          source: { type: "uri", uri: "file:///tmp/shot.png" },
+          uri: ref,
+          bytes: 120,
+        },
+      ],
+    });
+    expect(composerFilesFromMessage(source)).toEqual({
+      files: [{ name: "shot.png", mime: "image/png", uri: ref, previewMedia: ref, size: 120 }],
+      omitted: [],
+    });
+    expect(composerDraftFromMessage(source).text).toBe("Original full prompt");
+  });
+
   it("restores portable bytes but never local grants or unknown remote URLs", () => {
     const source = message({
       files: [

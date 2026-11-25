@@ -1,6 +1,14 @@
 import type { OpenCodeClient, SessionInfo } from "@opencode/client";
 import { inboxPolishScenario } from "./inbox-polish-scenario.ts";
 import { goalScenario } from "./goal-scenario.ts";
+import {
+  chooseProjectsMenuItem,
+  openTaskSection,
+  showTaskColumn,
+  taskColumn,
+  TASK_ROW,
+  taskRow,
+} from "./task-list.ts";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -27,6 +35,8 @@ import { reviewBaseScenario } from "./review-base-scenario.ts";
 import { reviewCommentsScenario } from "./review-comments-scenario.ts";
 import { browserNativeHttpScenario, browserNativeScenario } from "./browser-native-scenario.ts";
 import { artifactsScenario } from "./artifacts-scenario.ts";
+import { openCodeAutomationsScenario } from "./opencode-automations-scenario.ts";
+import { mediaRefsScenario } from "./media-refs-scenario.ts";
 import { themeEditorScenario } from "./theme-editor-scenario.ts";
 import { btwScenario } from "./btw-scenario.ts";
 import { quoteSourceScenario } from "./quote-source-scenario.ts";
@@ -36,6 +46,7 @@ import { projectScriptsScenario } from "./project-scripts-scenario.ts";
 import { guestLinksScenario } from "./guest-links-scenario.ts";
 import { streamingPatchScenario } from "./streaming-patch-scenario.ts";
 import type { TestLLMServer } from "./test-llm-server";
+import type { ScenarioRequirement } from "./scenario-requirements.ts";
 import { workflowScenarios } from "./workflow-scenarios.ts";
 import { pairingAddressScenario } from "./pairing-address-scenario.ts";
 import { composerSelectionMemoryScenario } from "./composer-selection-memory-scenario.ts";
@@ -43,6 +54,7 @@ import { composerPermissionsScenario } from "./composer-permissions-scenario.ts"
 import { palotToolsScenario } from "./palot-tools-scenario.ts";
 import { eventAutomationsScenario } from "./event-automations-scenario.ts";
 import { gitPrScenario } from "./git-pr-scenario.ts";
+import { shipButtonScenario } from "./ship-button-scenario.ts";
 import { hostsScenario } from "./hosts-scenario.ts";
 import { gitBranchesScenario } from "./git-branches-scenario.ts";
 import { composerContextScenario } from "./composer-context-scenario.ts";
@@ -54,7 +66,9 @@ import { markdownRichScenario } from "./markdown-rich-scenario.ts";
 import { transcriptFeaturesScenario } from "./transcript-features-scenario.ts";
 import { workspacePreviewScenario } from "./workspace-preview-scenario.ts";
 import { fileViewer2Scenario } from "./file-viewer-2-scenario.ts";
-import { assertCommandPaletteMaterial } from "./appearance-accessibility.ts";
+import { fileFindScenario } from "./file-find-scenario.ts";
+import { machinesScenario } from "./machines-scenario.ts";
+import { assertCommandPaletteMaterial, assertReducedMotion } from "./appearance-accessibility.ts";
 import { linuxDesktopScenario } from "./linux-desktop-scenario.ts";
 import { compactWindowsScenario } from "./compact-windows-scenario.ts";
 import { workbenchResizeScenario } from "./workbench-resize-scenario.ts";
@@ -83,6 +97,7 @@ import {
   transcriptRailScenario,
   transcriptRailStreamingScenario,
 } from "./transcript-rail-scenario.ts";
+import { transcriptPrependAnchorScenario } from "./transcript-prepend-anchor-scenario.ts";
 import {
   conversationToolsScenario,
   conversationPermissionScenario,
@@ -120,6 +135,11 @@ const STREAM_CONTINUITY_FILES = [
   "l",
 ] as const;
 const STREAM_CONTINUITY_CYCLES = ["A", "B", "C", "D"] as const;
+/**
+ * Each prompt stores a user message, an assistant message and an idle marker. With 85 turns the
+ * initial transcript plus two older pages reach the first prompt, so both automatic prepends run.
+ */
+const PREPEND_TURNS = 85;
 const RENDER_HISTORY_TURNS = 8;
 const RENDER_PROJECTION_CALLS = 15;
 const RENDER_SUBAGENT_CALLS = 4;
@@ -158,6 +178,8 @@ const RENDER_EXPECTED_MODEL_CALLS =
   RENDER_SUBAGENT_CALLS * 2 +
   1 +
   RENDER_POST_COMPACTION_CALLS;
+/** Task rows in the task column. */
+const TASK_ROWS = TASK_ROW;
 const PARALLEL_PERFORMANCE_LABELS = ["ALPHA", "BETA", "GAMMA", "DELTA"] as const;
 const PARALLEL_PERFORMANCE_CYCLES = 3;
 const PARALLEL_PERFORMANCE_MODEL_CALLS_PER_SESSION = PARALLEL_PERFORMANCE_CYCLES + 1;
@@ -169,16 +191,26 @@ const PARALLEL_PERFORMANCE_CHUNK_DELAY_MS =
 
 export interface Scenario {
   description: string;
+  /** Core scenarios cover the main flows, have been stable, and run in CI. */
+  tier?: "core";
   /** Native element picking requires a focusable, focused host window. */
   requiresFocus?: boolean;
+  /**
+   * Opt-in prerequisites, such as `--profile`. A batch skips the scenario unless all are met;
+   * a single named run stops before building when one is missing.
+   */
+  requires?: readonly ScenarioRequirement[];
   prompt: string;
   expectedModelCalls: number;
   onboarding?: boolean;
   modelRuntime?: "native-openai";
   /** Top-level OpenCode settings merged over the isolated test configuration. */
   openCodeConfig?: Record<string, unknown>;
-  /** Keep the isolated home outside this checkout, so its folders are not in a repository. */
-  homeOutsideCheckout?: boolean;
+  /**
+   * Keep the isolated home inside the run directory, and so inside this checkout's repository,
+   * rather than in a linked temporary folder outside it.
+   */
+  homeInsideCheckout?: boolean;
   arrange(llm: TestLLMServer): void;
   prepare?(home: string): Promise<void>;
   /** Extra environment for the isolated OpenCode service, such as a controlled PATH. */
@@ -209,6 +241,7 @@ interface ScenarioContext {
 
 export const scenarios = {
   "git-pr": gitPrScenario,
+  "ship-button": shipButtonScenario,
   hosts: hostsScenario,
   "inbox-polish": inboxPolishScenario,
   goal: goalScenario,
@@ -219,6 +252,8 @@ export const scenarios = {
   "markdown-html": markdownHtmlScenario,
   "workspace-preview": workspacePreviewScenario,
   "file-viewer-2": fileViewer2Scenario,
+  "file-find": fileFindScenario,
+  machines: machinesScenario,
   "composer-context": composerContextScenario,
   "composer-rich": composerRichScenario,
   "composer-keys": composerKeysScenario,
@@ -249,6 +284,7 @@ export const scenarios = {
   "conversation-tools": conversationToolsScenario,
   "transcript-rail": transcriptRailScenario,
   "transcript-rail-streaming": transcriptRailStreamingScenario,
+  "transcript-prepend-anchor": transcriptPrependAnchorScenario,
   "conversation-permission": conversationPermissionScenario,
   "composer-selection-memory": composerSelectionMemoryScenario,
   "composer-permissions": composerPermissionsScenario,
@@ -260,6 +296,7 @@ export const scenarios = {
   "review-comments": reviewCommentsScenario,
   "browser-native": browserNativeScenario,
   artifacts: artifactsScenario,
+  "media-refs": mediaRefsScenario,
   "theme-editor": themeEditorScenario,
   btw: btwScenario,
   "quote-source": quoteSourceScenario,
@@ -293,33 +330,34 @@ export const scenarios = {
       await tabTo(page, page.getByRole("button", { name: "Skip provider setup" }), 80);
       await page.keyboard.press("Enter");
 
+      await page.getByRole("heading", { name: "Switching from another agent?" }).waitFor();
+      await assertRouteAccessibility(page, "switching onboarding");
+      await tabTo(page, page.getByRole("button", { name: "Skip and start working" }), 40);
+      await page.keyboard.press("Enter");
+
       await page.getByRole("main", { name: "New task" }).waitFor();
       await assertRouteAccessibility(page, "new task");
       const composer = page.getByRole("textbox", { name: "Message Palot" });
       await tabTo(page, composer, 40);
       await page.keyboard.type("Keyboard-only draft");
-      await expect(composer).toHaveValue("Keyboard-only draft");
+      await expect(composer).toHaveJSProperty("value", "Keyboard-only draft");
 
+      // Mod+K in the composer opens its launcher; F6 leaves it for the next area, where Mod+K
+      // opens the command palette.
+      await page.keyboard.press("F6");
+      await expect(composer).not.toBeFocused();
       await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
       const commandSearch = page.getByRole("combobox", { name: "Search tasks and commands" });
       await commandSearch.fill("appearance");
-      await page
-        .getByRole("option", { name: /Appearance/ })
-        .first()
-        .waitFor();
+      // Results settle after typing; Enter acts on the highlighted row, so wait for it.
+      await expect(page.getByRole("option", { name: /^Appearance/ }).first()).toHaveAttribute(
+        "data-highlighted",
+        "",
+      );
       await page.keyboard.press("Enter");
       await page.getByRole("heading", { name: "Appearance", level: 1 }).waitFor();
       await assertRouteAccessibility(page, "appearance settings");
 
-      const appearanceCard = page.getByRole("button", { name: /System|Light|Dark/ }).first();
-      const beforeMotion = await appearanceCard.evaluate(
-        (element) =>
-          (
-            globalThis as unknown as {
-              getComputedStyle(value: unknown): { transitionDuration: string };
-            }
-          ).getComputedStyle(element).transitionDuration,
-      );
       const beforeFontSize = await page
         .getByRole("heading", { name: "Typography", level: 2 })
         .evaluate((element) =>
@@ -351,17 +389,7 @@ export const scenarios = {
         )
         .toBeGreaterThan(beforeFontSize);
 
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      const afterMotion = await appearanceCard.evaluate(
-        (element) =>
-          (
-            globalThis as unknown as {
-              getComputedStyle(value: unknown): { transitionDuration: string };
-            }
-          ).getComputedStyle(element).transitionDuration,
-      );
-      expect(afterMotion).not.toBe(beforeMotion);
-      expect(cssDurationMilliseconds(afterMotion)).toBeLessThanOrEqual(0.01);
+      await assertReducedMotion(page);
 
       await assertCommandPaletteMaterial(page);
 
@@ -373,16 +401,34 @@ export const scenarios = {
       await page.getByRole("option", { name: /Palot E2E: accessibility-keyboard/ }).waitFor();
       await page.keyboard.press("Enter");
     },
-    async assert(page) {
+    async assert(page, { runRoot }) {
       await expect.poll(() => new URL(page.url()).hash).toContain("/sessions/");
-      const settledShelf = page.getByRole("button", { name: /^Settled\b/ });
-      if ((await settledShelf.getAttribute("data-state")) !== "open") await settledShelf.click();
-      const taskRow = page
-        .locator("[data-inbox-compact-row]")
-        .filter({ hasText: "Palot E2E: accessibility-keyboard" })
-        .first();
-      await taskRow.waitFor();
-      const taskButton = taskRow.getByRole("button").first();
+      // F6 and Shift+F6 move focus between the task list, transcript and composer, and wrap.
+      // Focus taken while the palette is still closing can be lost; let it close first.
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      const taskComposer = page.getByRole("textbox", { name: "Message Palot" });
+      await taskComposer.focus();
+      await expect(taskComposer).toBeFocused();
+      for (const [key, region] of [
+        ["F6", "sidebar"],
+        ["F6", "transcript"],
+        ["F6", "composer"],
+        ["Shift+F6", "transcript"],
+        ["Shift+F6", "sidebar"],
+        ["Shift+F6", "composer"],
+      ] as const) {
+        await page.keyboard.press(key);
+        await expect
+          .poll(() => focusRegion(page), { message: `${key} moves focus to the ${region}` })
+          .toBe(region);
+        if (region === "transcript" && key === "F6")
+          await page.screenshot({ path: join(runRoot, "f6.png") });
+      }
+      const accessibilityRow = taskRow(page, "Palot E2E: accessibility-keyboard").first();
+      if (!(await accessibilityRow.isVisible().catch(() => false)))
+        await openTaskSection(page, "Settled");
+      await accessibilityRow.waitFor();
+      const taskButton = accessibilityRow;
       await taskButton.focus();
       await page.keyboard.press("Shift+F10");
       const deleteTask = page.getByRole("menuitem", { name: "Delete task" });
@@ -401,7 +447,8 @@ export const scenarios = {
     },
   },
   onboarding: {
-    description: "complete first-run project and provider setup",
+    tier: "core",
+    description: "complete first-run project, provider and switching setup",
     prompt: "",
     expectedModelCalls: 0,
     onboarding: true,
@@ -456,8 +503,15 @@ export const scenarios = {
       await projectSearch.fill(projectDirectory);
       await page.getByText(projectDirectory, { exact: true }).click();
       await page.getByRole("heading", { name: "Connect your models" }).waitFor();
+      await page.getByRole("button", { name: "Continue" }).click();
+      // The optional switching step: picking an agent enables Start; skipping starts working.
+      await page.getByRole("heading", { name: "Switching from another agent?" }).waitFor();
+      const startSwitching = page.getByRole("button", { name: "Start", exact: true });
+      await expect(startSwitching).toBeDisabled();
+      await page.getByRole("radio", { name: /Claude Code/ }).click();
+      await expect(startSwitching).toBeEnabled();
       const faded = await page
-        .getByRole("button", { name: "Start working" })
+        .getByRole("button", { name: "Skip and start working" })
         .evaluate(async (button) => {
           (button as HTMLElement).click();
           await new Promise((resolve) =>
@@ -478,7 +532,11 @@ export const scenarios = {
         .getAttribute("data-onboarding-project-name");
       expect(defaultProjectName).toBeTruthy();
       await page.getByRole("button", { name: "Skip for now" }).click();
-      await page.getByRole("combobox", { name: `Project: ${defaultProjectName}` }).waitFor();
+      // Skipping the choice starts in the first project onboarding listed.
+      await page
+        .getByRole("combobox", { name: "Task destination" })
+        .filter({ hasText: defaultProjectName! })
+        .waitFor();
     },
     async assert(page) {
       await page.getByRole("main", { name: "New task" }).waitFor();
@@ -487,6 +545,7 @@ export const scenarios = {
     },
   },
   "provider-settings": {
+    tier: "core",
     description: "manage multiple credentials from provider settings",
     prompt: "",
     expectedModelCalls: 0,
@@ -577,6 +636,7 @@ export const scenarios = {
     },
   },
   smoke: {
+    tier: "core",
     description: "one deterministic assistant turn",
     prompt: "Return the scripted smoke response.",
     expectedModelCalls: 1,
@@ -634,14 +694,32 @@ export const scenarios = {
     },
     async assert(page, { runRoot }) {
       await page.getByText("Python inspection complete.", { exact: true }).waitFor();
-      for (const selector of ["[data-palot-turn-activity]", "[data-palot-activity-group]"]) {
-        const triggers = page.locator(`${selector} > button[aria-expanded="false"]`);
-        for (const trigger of await triggers.all()) await trigger.click();
-      }
-      await page.getByRole("button", { name: /Ran shell commands with Python/ }).click();
+      const command = page.getByRole("button", { name: /Ran shell commands with Python/ });
+      // The turn folds when it settles, which can land after the answer text appears.
+      await expect
+        .poll(
+          async () => {
+            for (const selector of ["[data-palot-turn-activity]", "[data-palot-activity-group]"]) {
+              const triggers = page.locator(`${selector} > button[aria-expanded="false"]`);
+              for (const trigger of await triggers.all()) {
+                if (await trigger.isVisible()) await trigger.click();
+              }
+            }
+            return command.isVisible();
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(true);
+      await command.click();
       const python = page.getByLabel("Python script", { exact: true });
       await expect(python).toContainText("import json");
-      await expect(python.locator(".th-keyword").first()).toHaveText("import");
+      // Highlighted tokens carry their colour inline; the keyword gets a token of its own.
+      await expect(
+        python
+          .locator(".th-token")
+          .filter({ hasText: /^\s*import\s*$/ })
+          .first(),
+      ).toHaveAttribute("style", /color/);
       await expect(page.getByLabel("Shell commands", { exact: true })).toContainText("printf");
       await expect(page.getByText("Combined output", { exact: true })).toBeVisible();
       await expect(page.getByRole("region", { name: "Command output" })).toContainText(
@@ -673,11 +751,17 @@ export const scenarios = {
     async run(page) {
       await page.getByLabel("Message Palot").fill("What time is it?");
       await page.getByRole("button", { name: "Send message" }).click();
-      await page.getByText("What time is it?", { exact: true }).waitFor();
+      // The composer's textarea keeps its mount-time text node, so look in the transcript.
+      await page
+        .getByRole("article", { name: "user message" })
+        .getByText("What time is it?", { exact: true })
+        .waitFor();
       await page.getByText("The deterministic clock check is complete.", { exact: true }).waitFor();
     },
     async assert(page) {
-      const prompt = page.getByText("What time is it?", { exact: true });
+      const prompt = page
+        .getByRole("article", { name: "user message" })
+        .getByText("What time is it?", { exact: true });
       await expect(prompt).toBeVisible();
       await expect(prompt).toBeInViewport();
     },
@@ -789,13 +873,10 @@ export const scenarios = {
             STREAM_CONTINUITY_MAX_VISIBLE_GAP_MS,
           );
         }
+        // Single-line reasoning shows as a one-line label truncated to 96 characters, with
+        // the body collapsed, so only its first markers are ever visible. Require it to show.
         for (const phase of [report.preReasoning, report.postReasoning]) {
-          expect(phase.finalCount).toBe(STREAM_CONTINUITY_REASONING_MARKERS);
-          expect(phase.maxJump).toBeLessThanOrEqual(STREAM_CONTINUITY_MAX_MARKER_JUMP);
-          expect(phase.maxVisibleGapMs).not.toBeNull();
-          expect(phase.maxVisibleGapMs ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
-            STREAM_CONTINUITY_MAX_VISIBLE_GAP_MS,
-          );
+          expect(phase.finalCount).toBeGreaterThan(0);
         }
         expect(report.maxFrameIntervalMs).toBeLessThanOrEqual(STREAM_CONTINUITY_MAX_VISIBLE_GAP_MS);
         expect(report.statusGapObserved).toBe(false);
@@ -839,6 +920,19 @@ export const scenarios = {
       });
       await client.experimental.session.wait({ sessionID: session.id });
       await page.getByText(/STATUS-FINAL-12/).waitFor();
+      await expect(page.locator("[data-palot-turn-bar-duration]").last()).toHaveText(
+        /^Worked for \d/,
+      );
+      // Let the frame probe record the settled bar before it stops.
+      await page.waitForFunction(() =>
+        (
+          globalThis as unknown as {
+            __palotStreamContinuityProbe?: { frames: Array<{ turnBar: string | null }> };
+          }
+        ).__palotStreamContinuityProbe?.frames
+          .at(-1)
+          ?.turnBar?.startsWith("Worked for "),
+      );
       await writeFile(
         join(runRoot, "status-continuity.json"),
         JSON.stringify(await stopStreamContinuityProbe(page), null, 2),
@@ -851,20 +945,30 @@ export const scenarios = {
       ) as StreamContinuityReport;
       expect(report.statusGapObserved).toBe(false);
       expect(report.statusRegressed).toBe(false);
-      expect(report.frames.some((frame) => frame.activeStatus?.startsWith("Working for "))).toBe(
-        true,
-      );
-      expect(report.frames.some((frame) => frame.activeStatus?.startsWith("Finishing for "))).toBe(
-        true,
-      );
+      // The live line moves from working through the tool into finishing the answer, while the
+      // turn bar holds the only clock and settles into the finished summary.
+      expect(report.frames.some((frame) => frame.activeStatus === "Working")).toBe(true);
+      expect(
+        report.frames.some(
+          (frame) =>
+            frame.activeStatus === "Finishing" &&
+            frame.turnBar?.startsWith("Working for ") === true,
+        ),
+      ).toBe(true);
+      expect(
+        report.frames.filter((frame) => frame.activeStatus !== null).map((f) => f.activeStatus),
+      ).not.toContainEqual(expect.stringMatching(/\bfor \d/));
+      expect(report.frames.at(-1)?.turnBar).toMatch(/^Worked for \d/);
     },
   },
   usage: {
+    tier: "core",
     description: "navigate from the runtime footer through cached aggregate usage",
     prompt: "Return the scripted usage response.",
     expectedModelCalls: 1,
     arrange(llm) {
-      llm.text("Palot E2E usage complete");
+      // Output tokens give the task a usage row; the scripted model reports no cost.
+      llm.textChunksWithUsage(["Palot E2E usage complete"], 0, 1_200);
     },
     async assert(page, { client, runRoot, session }) {
       await client.experimental.session.wait({ sessionID: session.id });
@@ -919,6 +1023,27 @@ export const scenarios = {
       await page.getByText("No per-tool usage in this range.", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Hide details" }).click();
 
+      await expect(page.getByText("Cache hit rate", { exact: true }).first()).toBeVisible();
+      await expect(page.getByText(/Includes context compaction\./)).toBeVisible();
+      const tasksSection = page.getByRole("region", { name: "Tasks and automations" });
+      await tasksSection.scrollIntoViewIfNeeded();
+      const taskRow = tasksSection.locator(`[data-usage-task="${session.id}"]`);
+      await taskRow.waitFor();
+      await expect(tasksSection.getByText("OpenCode automations")).toBeVisible();
+      await page.screenshot({ path: join(runRoot, "usage-tasks.png") });
+      const projects = page.getByRole("region", { name: "Projects" });
+      await projects.locator("button[aria-expanded]").first().click();
+      await projects.getByRole("button", { name: "Show only this project" }).waitFor();
+      await page.screenshot({ path: join(runRoot, "usage-projects.png") });
+      await page.getByRole("button", { name: "Export usage" }).click();
+      await expect(page.getByRole("menuitem", { name: "Export as CSV" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: "Export as JSON" })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await taskRow.click();
+      await page.getByLabel("Current task").waitFor();
+      await page.getByRole("button", { name: "Usage", exact: true }).click();
+      await page.getByText("Reported cost", { exact: true }).waitFor();
+
       await page.getByRole("button", { name: "30 days" }).click();
       await expect(page.getByText("Reported cost", { exact: true })).toBeVisible();
       await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(0);
@@ -964,6 +1089,7 @@ export const scenarios = {
     },
   },
   "reload-recovery": {
+    tier: "core",
     description:
       "rehydrate the selected task, transcript, and unsent draft after a renderer reload",
     prompt: "Return the scripted reload recovery response.",
@@ -1021,7 +1147,8 @@ export const scenarios = {
     async assert(page) {
       await page.getByText("Palot E2E reload recovery complete", { exact: true }).waitFor();
       await expect(page.getByText(/Could not connect to OpenCode/)).toHaveCount(0);
-      await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue(
+      await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveJSProperty(
+        "value",
         RELOAD_RECOVERY_DRAFT,
       );
       const samples = await page.evaluate(() => {
@@ -1045,7 +1172,10 @@ export const scenarios = {
       ).toBe(false);
       await page.getByRole("textbox", { name: "Message Palot" }).fill("");
       await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveValue("");
+      await expect(page.getByRole("textbox", { name: "Message Palot" })).toHaveJSProperty(
+        "value",
+        "",
+      );
       await page.getByText("Palot E2E reload recovery complete", { exact: true }).waitFor();
     },
   },
@@ -1068,12 +1198,9 @@ export const scenarios = {
       const originalTitle = `Palot E2E: fork-delete`;
       const before = await client.session.list({ directory: session.location.directory });
       const beforeIDs = new Set(before.data.map((item) => item.id));
-      const originalRow = page
-        .locator("[data-palot-task-row], [data-palot-recent-row]")
-        .filter({ hasText: originalTitle })
-        .first();
+      const originalRow = taskRow(page, originalTitle).first();
       await originalRow.click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Fork" }).click();
+      await page.getByRole("menuitem", { name: "Fork", exact: true }).click();
 
       await expect
         .poll(async () => {
@@ -1094,10 +1221,7 @@ export const scenarios = {
         .toContain(forked.id);
       await page.getByText("Palot E2E fork lifecycle complete", { exact: true }).waitFor();
 
-      const forkedRow = page
-        .locator("[data-palot-task-row], [data-palot-recent-row]")
-        .filter({ has: page.locator("[data-active]") })
-        .first();
+      const forkedRow = page.locator(`${TASK_ROW}[data-open]`).first();
       await forkedRow.click({ button: "right" });
       await page.getByRole("menuitem", { name: "Delete task" }).click();
       await page.getByRole("alertdialog").getByRole("button", { name: "Delete task" }).click();
@@ -1180,27 +1304,17 @@ export const scenarios = {
         .toSorted((a, b) => b.canonical.length - a.canonical.length)[0]?.canonical;
       if (!mainCheckout) throw new Error("Repository checkout was not resolved");
       expect(mainCheckout).toBe(session.location.directory);
-      const navigation = page.locator('[data-shell-surface="navigation"][aria-hidden="false"]');
+      const navigation = taskColumn(page);
       const showProjects = async () => {
-        const toggle = page.getByRole("button", { name: /^(Show|Hide) navigation$/ });
-        await expect(toggle).toBeVisible();
-        if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
-        // The navigation rail sits outside the task column; choosing the active view hides it.
-        const projects = page
-          .locator('[data-shell-surface="rail"]')
-          .getByRole("button", { name: "Show projects", exact: true });
-        if ((await projects.getAttribute("aria-pressed")) !== "true") await projects.click();
+        await showTaskColumn(page);
         await navigation.waitFor();
       };
       await showProjects();
-      // Compact native windows render a navigation sheet alongside an inert inline sidebar.
-      const taskRow = navigation
-        .locator("[data-palot-task-row], [data-palot-recent-row]")
-        .filter({ hasText: "Palot E2E: worktree-lifecycle" })
-        .first();
-      await taskRow.click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Move to worktree" }).focus();
-      await page.keyboard.press("ArrowRight");
+      const worktreeRow = taskRow(navigation, "Palot E2E: worktree-lifecycle").first();
+      await worktreeRow.click({ button: "right" });
+      // Opening the submenu by click, not focus + ArrowRight: focus alone does not always
+      // highlight the item, and then the arrow key does nothing.
+      await page.getByRole("menuitem", { name: "Move to worktree" }).click();
       await page.getByRole("menuitem", { name: "New worktree" }).click();
 
       await expect
@@ -1220,12 +1334,11 @@ export const scenarios = {
         )
         .toBe(true);
 
-      const projectRow = navigation
-        .locator("[data-palot-project-row]")
-        .filter({ hasText: "Palot E2E: worktree-lifecycle" })
-        .first();
-      await projectRow.locator("[data-palot-project-trigger]").click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Manage worktrees" }).click();
+      // The open task's project: the View menu opens Worktrees there.
+      const manageWorktrees = async () => {
+        await chooseProjectsMenuItem(navigation, page, "Manage worktrees");
+      };
+      await manageWorktrees();
       const worktreeName = worktreeDirectory.split("/").at(-1)!;
       await page.getByRole("button", { name: `Tasks in ${worktreeName}`, exact: true }).click();
       const attachedTasks = page.getByRole("list", {
@@ -1249,7 +1362,7 @@ export const scenarios = {
       ).toBeVisible();
       // Route changes dismiss compact navigation, so reopen it before returning to the task menu.
       await showProjects();
-      await taskRow.click({ button: "right" });
+      await worktreeRow.click({ button: "right" });
       await page.getByRole("menuitem", { name: "Move to worktree" }).focus();
       await page.keyboard.press("ArrowRight");
       await page.getByRole("menuitem", { name: "Main checkout" }).click();
@@ -1257,8 +1370,8 @@ export const scenarios = {
         .poll(async () => (await client.session.get({ sessionID: session.id })).location.directory)
         .toBe(mainCheckout);
 
-      await projectRow.locator("[data-palot-project-trigger]").click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Manage worktrees" }).click();
+      await showProjects();
+      await manageWorktrees();
       await page
         .getByRole("button", { name: `Remove ${worktreeDirectory.split("/").at(-1)!}` })
         .click();
@@ -1296,8 +1409,12 @@ export const scenarios = {
       await expect
         .poll(async () => Boolean((await client.session.get({ sessionID: session.id })).revert))
         .toBe(true);
-      await expect(composer).toHaveValue("Produce the undo fixture response.");
-      await expect(page.getByText("Undo staged", { exact: true })).toBeVisible();
+      await expect(composer).toHaveJSProperty("value", "Produce the undo fixture response.");
+      // Undo staged is a tab on the composer's top edge.
+      const undoTab = page
+        .getByRole("toolbar", { name: "Task context" })
+        .getByRole("button", { name: /^Undo staged/ });
+      await expect(undoTab).toBeVisible();
 
       await composer.fill("/redo");
       await page.getByRole("option", { name: /\/redo/i }).click();
@@ -1305,8 +1422,8 @@ export const scenarios = {
       await expect
         .poll(async () => Boolean((await client.session.get({ sessionID: session.id })).revert))
         .toBe(false);
-      await expect(composer).toHaveValue("");
-      await expect(page.getByText("Undo staged", { exact: true })).toHaveCount(0);
+      await expect(composer).toHaveJSProperty("value", "");
+      await expect(undoTab).toHaveCount(0);
       await expect(response).toBeVisible();
     },
   },
@@ -1421,14 +1538,20 @@ export const scenarios = {
     },
   },
   "terminal-startup": {
+    tier: "core",
     description: "open an interactive terminal without an initialization error",
     prompt: "",
     expectedModelCalls: 0,
     arrange() {},
+    async prepareProject({ projectDirectory }) {
+      await mkdir(join(projectDirectory, "src"), { recursive: true });
+      await writeFile(join(projectDirectory, "src", "app.ts"), "export const app = 1;\n");
+      await writeFile(join(projectDirectory, "src", "linked.ts"), "export const linked = 2;\n");
+    },
     async run(page) {
       await page.keyboard.press("Control+Backquote");
     },
-    async assert(page) {
+    async assert(page, { client, projectDirectory }) {
       const terminal = page.locator("[data-workbench-terminal]");
       await terminal.waitFor();
       await terminal.locator("canvas").waitFor();
@@ -1440,9 +1563,98 @@ export const scenarios = {
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await page.keyboard.press("Control+BracketLeft");
       expect(page.url()).toBe(location);
+
+      // F6 leaves a focused terminal, and Shift+F6 returns to it.
+      await terminal.locator("canvas").click();
+      await page.keyboard.press("F6");
+      await expect.poll(() => focusRegion(page)).toBe("sidebar");
+      await page.keyboard.press("Shift+F6");
+      await expect.poll(() => focusRegion(page)).toBe("workbench");
+      expect(await terminal.evaluate((element) => element.contains(document.activeElement))).toBe(
+        true,
+      );
+      await page.keyboard.press("Shift+F6");
+      await expect.poll(() => focusRegion(page)).toBe("composer");
+
+      // Ctrl-clicking a printed `path:line` opens that file in the workbench.
+      const ptyID = (await terminal.getAttribute("data-workbench-terminal"))!;
+      await terminal.locator("canvas").click();
+      // Enter first discards input left by the shortcuts above; clear puts the path on row one.
+      await page.keyboard.press("Enter");
+      await page.keyboard.type("clear; printf 'src/app.ts:1\\n'\n");
+      await expect
+        .poll(async () => (await client.experimental.persistentPty.snapshot({ ptyID })).text)
+        .toMatch(/^src\/app\.ts:1$/m);
+      const fileTab = page.getByRole("tab", { name: /app\.ts/ });
+      await expect(async () => {
+        await terminal
+          .locator("canvas")
+          .click({ position: { x: 12, y: 6 }, modifiers: ["Control"] });
+        await expect(fileTab).toBeVisible({ timeout: 1_000 });
+      }).toPass({ timeout: 10_000 });
+      await expect(page.getByRole("tabpanel", { name: /app\.ts/ })).toContainText(
+        "export const app = 1;",
+      );
+
+      // An OSC 8 `file://{host}/…` link (`rg --hyperlink-format`) opens when the host is the
+      // terminal's server, and not when it names another machine.
+      const { hostname } = await client.server.info();
+      expect(hostname).toBeTruthy();
+      const linkedPath = encodeURI(join(projectDirectory, "src", "linked.ts"));
+      // The file tab opened above covers the terminal; bring its tab back first.
+      const terminalTabID = await page
+        .locator('[role="tabpanel"]:has([data-workbench-terminal])')
+        .getAttribute("aria-labelledby");
+      const printLink = async (host: string) => {
+        await page.locator(`[id="${terminalTabID}"]`).click();
+        await terminal.locator("canvas").click();
+        await page.keyboard.type(
+          `clear; printf '\\033]8;;%s\\033\\\\linked\\033]8;;\\033\\\\\\n' 'file://${host}${linkedPath}#L1'\n`,
+        );
+        await expect
+          .poll(async () => (await client.experimental.persistentPty.snapshot({ ptyID })).text)
+          .toMatch(/^linked$/m);
+      };
+      const linkedTab = page.getByRole("tab", { name: /linked\.ts/ });
+      await printLink("elsewhere.invalid");
+      await terminal.locator("canvas").click({ position: { x: 12, y: 6 }, modifiers: ["Control"] });
+      await page.waitForTimeout(1_000);
+      await expect(linkedTab).toHaveCount(0);
+      await printLink(hostname!);
+      await expect(async () => {
+        await terminal
+          .locator("canvas")
+          .click({ position: { x: 12, y: 6 }, modifiers: ["Control"] });
+        await expect(linkedTab).toBeVisible({ timeout: 1_000 });
+      }).toPass({ timeout: 10_000 });
+      await expect(page.getByRole("tabpanel", { name: /linked\.ts/ })).toContainText(
+        "export const linked = 2;",
+      );
+
+      // A paste over the 1 MiB IPC limit reaches the program whole, in ordered pieces.
+      await page.locator(`[id="${terminalTabID}"]`).click();
+      await terminal.locator("canvas").click();
+      const pasteBytes = 1_300_000;
+      await page.keyboard.type(
+        `clear; stty -icanon -echo; head -c ${pasteBytes} | wc -c; stty icanon echo\n`,
+      );
+      await terminal.locator("canvas").evaluate((canvas, bytes) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", "x".repeat(bytes));
+        canvas.dispatchEvent(
+          new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+        );
+      }, pasteBytes);
+      await expect
+        .poll(async () => (await client.experimental.persistentPty.snapshot({ ptyID })).text, {
+          timeout: 30_000,
+        })
+        .toMatch(new RegExp(`^\\s*${pasteBytes}\\s*$`, "m"));
+      await expect(page.getByText("Could not send input to the terminal")).toHaveCount(0);
     },
   },
   "workbench-tabs": {
+    tier: "core",
     description: "open workspace files, diffs, and terminals in OpenCode-native tabs",
     prompt: "Reference the deterministic workbench fixture.",
     expectedModelCalls: 1,
@@ -1509,6 +1721,17 @@ export const scenarios = {
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Collapse all diffs", exact: true }).click();
       await page.getByRole("button", { name: "Expand all diffs", exact: true }).click();
+      // A Viewed tick folds the file and counts it; unticking brings it back.
+      const viewed = page.getByRole("checkbox", {
+        name: "Mark workbench-e2e.txt as viewed",
+        exact: true,
+      });
+      await viewed.click();
+      await expect(changedFile).toHaveAttribute("aria-expanded", "false");
+      await expect(page.locator("[data-palot-changes-viewed]")).toContainText("1 of 1 viewed");
+      await page.screenshot({ path: join(runRoot, "changes-viewed.png") });
+      await viewed.click();
+      await expect(changedFile).toHaveAttribute("aria-expanded", "true");
       await page
         .getByRole("button", { name: "Open workbench-e2e.txt in a tab", exact: true })
         .click();
@@ -1638,19 +1861,21 @@ export const scenarios = {
       });
       const alphaEnd = page.getByText("ALPHA END", { exact: true });
       const betaEnd = page.getByText("BETA END", { exact: true });
+      // Both histories arrive unseen, so the first open of each lands on its first unseen
+      // message (65181177); read down to the end before measuring switches between them.
+      const jumpToBottom = page.getByRole("button", { name: "Scroll to bottom", exact: true });
+      await jumpToBottom.click();
       await betaEnd.waitFor();
       await waitForTranscriptBottom(page);
 
-      const alphaButton = page.getByRole("button", {
-        name: /^Open Palot E2E: session-switch-performance, /,
-      });
+      // The beta title extends the alpha one, so the alpha row excludes it.
+      const alphaButton = taskRow(page, /Palot E2E: session-switch-performance(?!-beta)/).first();
       await alphaButton.click();
+      await jumpToBottom.click();
       await alphaEnd.waitFor();
       await waitForTranscriptBottom(page);
 
-      const betaButton = page.getByRole("button", {
-        name: /^Open Palot E2E: session-switch-performance-beta, /,
-      });
+      const betaButton = taskRow(page, "Palot E2E: session-switch-performance-beta").first();
       await betaButton.waitFor();
       const switchToBeta = async () => {
         await betaButton.evaluate((button) => {
@@ -1901,9 +2126,9 @@ export const scenarios = {
     description:
       "automatically prepend older history on upward scrolling and preserve the visible reading anchor",
     prompt: "Load a cold paginated transcript and prepend its earlier messages.",
-    expectedModelCalls: 72,
+    expectedModelCalls: PREPEND_TURNS,
     arrange(llm) {
-      for (let turn = 0; turn < 72; turn += 1) {
+      for (let turn = 0; turn < PREPEND_TURNS; turn += 1) {
         llm.text(longTranscript("PREPEND", turn));
       }
     },
@@ -1916,7 +2141,7 @@ export const scenarios = {
         sessionID: session.id,
         title: "Palot E2E: transcript-prepend-restoration-history",
       });
-      for (let turn = 0; turn < 72; turn += 1) {
+      for (let turn = 0; turn < PREPEND_TURNS; turn += 1) {
         await client.session.prompt({
           sessionID: session.id,
           text: `Populate prepend history ${turn}.`,
@@ -1931,7 +2156,7 @@ export const scenarios = {
         (globalThis as unknown as { location: { hash: string } }).location.hash =
           `#/sessions/${id}`;
       }, sessionID);
-      await page.getByText("PREPEND turn 71 complete", { exact: true }).waitFor();
+      await page.getByText(`PREPEND turn ${PREPEND_TURNS - 1} complete`, { exact: true }).waitFor();
       await waitForTranscriptBottom(page);
     },
     async assert(page, { runRoot }) {
@@ -1960,8 +2185,9 @@ export const scenarios = {
           // Give range/measurement callbacks opportunities to expose duplicate requests.
           await waitForAnimationFrames(page, 20);
           expect(await originalViewport.evaluate((viewport) => viewport.isConnected)).toBe(true);
-          // The full first page includes the existing one-message cursor verification.
-          expect((await readTranscriptPrependProbe(page)).requests).toBe(pageNumber === 1 ? 2 : 1);
+          // The first older page takes two 100-message lists, because its first list starts
+          // inside a turn, plus the one-message cursor verification. The second ends history.
+          expect((await readTranscriptPrependProbe(page)).requests).toBe(pageNumber === 1 ? 3 : 1);
           if (pageNumber === 2) {
             await page.mouse.wheel(0, -1_000_000);
             await waitForAnimationFrames(page, 20);
@@ -1994,14 +2220,16 @@ export const scenarios = {
     },
   },
   "message-auto-scroll": {
-    description: "keep a long transcript at the live edge when sending from the composer",
+    description:
+      "keep a scrolled-up reader in place when sending, and follow the live edge when already there",
     prompt: "Populate a long transcript, then send from the composer.",
-    expectedModelCalls: 9,
+    expectedModelCalls: 10,
     arrange(llm) {
       for (let turn = 0; turn < 8; turn += 1) {
         llm.text(longTranscript("HISTORY", turn));
       }
       llm.text("COMPOSER SEND COMPLETE");
+      llm.text("LIVE EDGE SEND COMPLETE");
     },
     async run(page, { client, session }) {
       for (let turn = 0; turn < 8; turn += 1) {
@@ -2011,36 +2239,55 @@ export const scenarios = {
 
       await page.getByText("HISTORY turn 7 complete", { exact: true }).waitFor();
       await waitForTranscriptBottom(page);
-      await page.getByLabel("Task transcript").hover();
+      const transcript = page.getByLabel("Task transcript", { exact: true });
+      const fromEnd = () =>
+        transcript.evaluate(
+          (viewport) => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+        );
+      const top = () => transcript.evaluate((viewport) => viewport.scrollTop);
+      await transcript.hover();
       await page.mouse.wheel(0, -1_200);
-      await expect
-        .poll(() =>
-          page
-            .getByLabel("Task transcript")
-            .evaluate(
-              (viewport) => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
-            ),
-        )
-        .toBeGreaterThan(500);
+      await expect.poll(fromEnd).toBeGreaterThan(500);
+      const jump = page.getByRole("button", { name: "Scroll to bottom" });
+      await jump.waitFor();
+      const resting = await top();
+      const below = await fromEnd();
+
+      // A reader scrolled up stays where they are; the sent prompt lands below them.
       await page.getByLabel("Message Palot").fill("Send from the long transcript.");
       await page.getByRole("button", { name: "Send message" }).click();
-      await page
-        .getByLabel("Task transcript", { exact: true })
-        .getByText("Send from the long transcript.", { exact: true })
-        .waitFor();
+      await client.experimental.session.wait({ sessionID: session.id });
+      await expect.poll(fromEnd).toBeGreaterThan(below);
+      expect(Math.abs((await top()) - resting)).toBeLessThanOrEqual(2);
+      await expect(jump).toBeVisible();
+
+      await jump.click();
+      await waitForTranscriptBottom(page);
+      await transcript.getByText("COMPOSER SEND COMPLETE", { exact: true }).waitFor();
+
+      // A reader at the live edge follows the next prompt.
+      await page.getByLabel("Message Palot").fill("Send from the live edge.");
+      await page.getByRole("button", { name: "Send message" }).click();
+      await transcript.getByText("Send from the live edge.", { exact: true }).waitFor();
       await waitForTranscriptBottom(page);
     },
     async assert(page) {
-      await page.getByText("COMPOSER SEND COMPLETE", { exact: true }).waitFor();
+      await page.getByText("LIVE EDGE SEND COMPLETE", { exact: true }).waitFor();
       await waitForTranscriptBottom(page);
+      await expect(page.getByRole("button", { name: "Scroll to bottom" })).toBeHidden();
     },
   },
   "render-react-scan": {
+    requires: [{ flag: "react-scan" }],
     description:
       "profile two long sessions through every native tool projection, subagents, switching, compaction, and continued work",
     prompt: "",
     expectedModelCalls: RENDER_EXPECTED_MODEL_CALLS,
-    arrange(llm) {
+    // The script depends on the OpenCode release (see arrangeRenderSubagentFlow), so run()
+    // arranges it once the server's version is known, before the first prompt.
+    arrange() {},
+    async run(page, { client, llm, session, projectDirectory }) {
+      const background = alwaysBackgroundsSubagents((await client.server.info()).version);
       const fixtureURL = llm.fixture(
         "/fixtures/render-workload.md",
         "# Render workload fixture\n\nDeterministic local web content for the Palot E2E harness.\n",
@@ -2048,14 +2295,13 @@ export const scenarios = {
       );
       arrangeRenderHistory(llm, "ALPHA");
       arrangeRenderProjectionFlow(llm, "ALPHA", fixtureURL);
-      arrangeRenderSubagentFlow(llm, "ALPHA");
+      arrangeRenderSubagentFlow(llm, "ALPHA", background);
       arrangeRenderHistory(llm, "BETA");
       arrangeRenderProjectionFlow(llm, "BETA", fixtureURL);
-      arrangeRenderSubagentFlow(llm, "BETA");
+      arrangeRenderSubagentFlow(llm, "BETA", background);
       llm.textChunks(compactionSummaryChunks(), STREAM_CHUNK_DELAY_MS);
       arrangePostCompactionFlow(llm);
-    },
-    async run(page, { client, llm, session, projectDirectory }) {
+
       await Promise.all([
         mkdir(join(projectDirectory, "src"), { recursive: true }),
         mkdir(join(projectDirectory, "fixtures"), { recursive: true }),
@@ -2122,8 +2368,8 @@ export const scenarios = {
         },
         { alphaSessionID: session.id, betaSessionID: beta.id },
       );
-      await page.getByRole("button", { name: /^Show inbox/ }).click();
-      await expect(page.getByLabel("Inbox navigation")).toBeVisible();
+      await showTaskColumn(page);
+      await expect(taskColumn(page)).toBeVisible();
 
       await resetReactScanPhase(page, "alpha-history");
       await populateRenderHistory(client, session.id, "ALPHA");
@@ -2160,7 +2406,11 @@ export const scenarios = {
       });
 
       await resetReactScanPhase(page, "switch-alpha-to-beta");
-      await switchRenderSession(page, betaTitle, "BETA HISTORY END", "ALPHA HISTORY END");
+      // BETA's history arrived while it was never open, so opening it lands on its first
+      // unseen message (65181177), not the end.
+      await switchRenderSession(page, betaTitle, "BETA HISTORY START", "ALPHA HISTORY END");
+      await page.getByRole("button", { name: "Scroll to bottom", exact: true }).click();
+      await page.getByText("BETA HISTORY END", { exact: true }).waitFor();
       await finishReactScanPhase(page, "switch-alpha-to-beta", {
         visibleSession: "beta",
         activitySession: "switch",
@@ -2353,6 +2603,7 @@ export const scenarios = {
     },
   },
   "viewed-unread": {
+    tier: "core",
     description: "preserve unread state on hover and acknowledge it when opened",
     prompt: "Return the scripted unread response.",
     expectedModelCalls: 1,
@@ -2374,16 +2625,16 @@ export const scenarios = {
       await page.getByLabel("Current task").waitFor();
       await client.session.prompt({ sessionID: session.id, text: "Return the unread response." });
     },
-    async assert(page, { client, session }) {
+    async assert(page, { client, session, runRoot }) {
       const target = page
-        .locator("[data-palot-task-row], [data-palot-recent-row]")
+        .locator(TASK_ROWS)
         .filter({ has: page.getByText("Palot E2E: viewed-unread", { exact: true }) })
         .first();
-      const unread = target.getByLabel("Unread task activity");
+      const unread = target.locator('[data-slot="status-mark"][data-kind="unseen"]');
       await unread.waitFor();
       await target.hover();
       await unread.waitFor();
-      await target.getByRole("button").click();
+      await target.click();
       await unread.waitFor({ state: "detached" });
       await expect
         .poll(async () => {
@@ -2395,10 +2646,52 @@ export const scenarios = {
       if (viewed.time.idle === undefined || viewed.time.viewed !== viewed.time.idle) {
         throw new Error("Opening the unread task did not acknowledge the exact idle watermark");
       }
+
+      const current = page
+        .locator(TASK_ROWS)
+        .filter({ has: page.getByText("Palot E2E: viewed-unread-current", { exact: true }) })
+        .first();
+      const markRead = async (name: "Mark as unread" | "Mark as read") => {
+        await target.click({ button: "right" });
+        // The list's own entries end with their key ("U").
+        await page.getByRole("menuitem", { name: new RegExp(`^${name}(\\s*U)?$`) }).click();
+      };
+      const storedMark = () =>
+        page.evaluate(
+          (id) =>
+            (localStorage.getItem("palot.desktop.state.tasks.unread-marks") ?? "").includes(id),
+          session.id,
+        );
+
+      // Marking the open task unread keeps it unread after leaving, until it is opened again.
+      await markRead("Mark as unread");
+      await unread.waitFor();
+      await current.click();
+      await expect.poll(() => new URL(page.url()).hash).not.toContain(session.id);
+      await unread.waitFor();
+      expect(await storedMark()).toBe(true);
+      await target.click();
+      await unread.waitFor({ state: "detached" });
+      await expect.poll(storedMark).toBe(false);
+
+      // A task marked unread from its menu shows unread until it is opened or marked read.
+      await current.click();
+      await markRead("Mark as unread");
+      await unread.waitFor();
+      await page.screenshot({ path: join(runRoot, "mark-unread.png") });
+      await markRead("Mark as read");
+      await unread.waitFor({ state: "detached" });
+      expect(new URL(page.url()).hash).not.toContain(session.id);
+      await markRead("Mark as unread");
+      await unread.waitFor();
+      await target.click();
+      await unread.waitFor({ state: "detached" });
     },
   },
   "event-automations": eventAutomationsScenario,
+  "opencode-automations": openCodeAutomationsScenario,
   "scheduled-run": {
+    tier: "core",
     description: "create a local schedule and dispatch it through OpenCode",
     prompt: "Return the scripted setup response.",
     expectedModelCalls: 1,
@@ -2443,12 +2736,7 @@ export const scenarios = {
       await openLatestRun.waitFor();
       await openLatestRun.click();
       await page.getByText("Scheduled execution complete", { exact: true }).waitFor();
-      if (
-        (await page
-          .locator("[data-palot-task-row], [data-palot-recent-row]")
-          .filter({ hasText: "Scheduled E2E sweep" })
-          .count()) !== 0
-      ) {
+      if ((await page.locator(TASK_ROW).filter({ hasText: "Scheduled E2E sweep" }).count()) !== 0) {
         throw new Error("Successful scheduled sessions must stay grouped under Scheduled");
       }
     },
@@ -2463,11 +2751,8 @@ export const scenarios = {
     },
     async assert(page) {
       await page.getByText("Scheduled continuation setup ready", { exact: true }).waitFor();
-      // The Inbox row's own button covers its text; right-click the row, as a person would.
-      await page
-        .getByRole("button", { name: /^Open Palot E2E: scheduled-continuation,/ })
-        .first()
-        .click({ button: "right" });
+      // Right-click the task's row, as a person would.
+      await taskRow(page, "Palot E2E: scheduled-continuation").first().click({ button: "right" });
       await page.getByRole("menuitem", { name: "Schedule follow-up" }).click();
       await page.getByLabel("Scheduled task title").fill("Continuation E2E follow-up");
       await page
@@ -2492,7 +2777,7 @@ export const scenarios = {
     arrange(llm) {
       llm.text("Projection settings session ready");
     },
-    async assert(page) {
+    async assert(page, { runRoot }) {
       await page.getByText("Projection settings session ready", { exact: true }).waitFor();
       await page.evaluate(() => {
         (globalThis as unknown as { location: { hash: string } }).location.hash =
@@ -2501,7 +2786,7 @@ export const scenarios = {
 
       const expectedGeneralLabels = [
         ["Default workspace", "Worktree"],
-        ["Approval behavior", "Ask"],
+        ["Approvals for new tasks", "Defaults"],
         ["Messages while running", "Queue"],
       ] as const;
       for (const [label, value] of expectedGeneralLabels) {
@@ -2521,35 +2806,59 @@ export const scenarios = {
         throw new Error("Auto-background steering should be opt-in");
       }
 
-      const timelineStyle = page.getByRole("combobox", { name: "Timeline style" });
+      const timelineStyle = page.getByRole("radiogroup", { name: "Timeline style" });
       await timelineStyle.waitFor();
-      if (!(await timelineStyle.textContent())?.includes("Balanced")) {
+      if (
+        (await timelineStyle
+          .getByRole("radio", { name: "Balanced" })
+          .getAttribute("aria-checked")) !== "true"
+      ) {
         throw new Error("Balanced was not the default timeline style");
       }
       const reasoningSummaries = page.getByRole("switch", {
         name: "Show reasoning summaries in the timeline",
       });
+      await reasoningSummaries.waitFor();
+      await page.getByLabel("Completed turns").waitFor();
+      const timelineSection = page
+        .locator("section")
+        .filter({
+          has: page.getByRole("heading", { name: "Timeline", exact: true }),
+        })
+        .last();
+      const advanced = timelineSection.getByRole("button", { name: /^Advanced/ });
+      if ((await advanced.getAttribute("aria-expanded")) !== "false") {
+        throw new Error("Advanced timeline settings should start closed");
+      }
+      await timelineSection.screenshot({ path: join(runRoot, "timeline-settings.png") });
+      await advanced.click();
       const currentActivity = page.getByRole("switch", {
         name: "Keep current activity expanded",
       });
-      await reasoningSummaries.waitFor();
       await currentActivity.waitFor();
       if (!(await reasoningSummaries.isChecked()) || !(await currentActivity.isChecked())) {
         throw new Error("Balanced timeline defaults were not enabled");
       }
-      await timelineStyle.click();
-      await page.getByRole("option", { name: "Detailed" }).click();
+      await timelineStyle.getByRole("radio", { name: "Detailed" }).click();
+      await expect(timelineStyle.getByRole("radio", { name: "Detailed" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
       await page
         .getByText(
-          "Shows every activity row while keeping raw tool inputs and outputs inspectable.",
+          "Shows every tool call and thought as its own row and leaves finished turns unfolded.",
           { exact: true },
         )
         .waitFor();
 
-      await page.getByRole("button", { name: "Customize timeline activity" }).click();
       await page.getByLabel("Edits display").waitFor();
       await page.getByLabel("Commands details").waitFor();
-      await page.getByLabel("Completed turns").waitFor();
+      await page.getByRole("combobox", { name: "Commands display" }).click();
+      await page.getByRole("option", { name: "Grouped" }).click();
+      await timelineSection.getByRole("button", { name: /^Advanced · 1 customized/ }).waitFor();
+      await page.getByRole("button", { name: "Reset to preset" }).click();
+      await timelineSection.getByRole("button", { name: /^Advanced(?! · )/ }).waitFor();
+      await timelineSection.screenshot({ path: join(runRoot, "timeline-settings-advanced.png") });
 
       await page.evaluate(() => {
         (globalThis as unknown as { location: { hash: string } }).location.hash =
@@ -2575,8 +2884,14 @@ export const scenarios = {
   "batch-input-steady": batchInputPerformanceScenario("steady"),
   "batch-input-burst": batchInputPerformanceScenario("burst"),
   "subagent-success": {
+    tier: "core",
     description: "a parent delegates to a general subagent and finishes",
     prompt: "Delegate this inspection to a general subagent, then summarize its result.",
+    // OpenCode 2.2.7 waits for the child: launch, the child, then the parent's answer. Later
+    // releases return at once: the parent takes another step while the child runs, and the
+    // child's report wakes it for the answer (four calls). Each session answers from its own
+    // script; the parent answers once its request carries the child's result. The child takes
+    // about a second, so its report cannot reach the parent before that extra step.
     expectedModelCalls: 3,
     arrange(llm) {
       llm.tool("subagent", {
@@ -2584,13 +2899,27 @@ export const scenarios = {
         description: "inspect bug",
         prompt: "look into the cache key path",
       });
-      llm.text("The child inspected the cache key path successfully.");
-      llm.text("The delegated inspection completed successfully.");
+      llm.route(
+        "look into the cache key path",
+        (script) =>
+          script.textChunks(["The child inspected ", "the cache key path successfully."], 250),
+        { firstUserMessage: true },
+      );
+      llm.route("The child inspected the cache key path successfully.", (script) =>
+        script.text("The delegated inspection completed successfully."),
+      );
+    },
+    async run(_page, { client, session, llm }) {
+      if (alwaysBackgroundsSubagents((await client.server.info()).version)) {
+        llm.text("Waiting for the inspection.");
+      }
+      await client.session.prompt({ sessionID: session.id, text: this.prompt });
     },
     async assert(page) {
       await page
         .getByText("The delegated inspection completed successfully.", { exact: true })
         .waitFor();
+      await expect(page.getByRole("alert", { name: "Response failed" })).toHaveCount(0);
       // The compact subagent row names agent, status, and description in one label.
       await page
         .getByRole("button", { name: "General subagent finished: inspect bug", exact: true })
@@ -2600,6 +2929,9 @@ export const scenarios = {
   "subagent-card-stability": {
     description: "keep subagent summaries stable while their isolated elapsed counter advances",
     prompt: "Delegate a timed inspection to a general subagent.",
+    // Scripted like subagent-success: the child answers from its own route and the parent
+    // answers once its request carries the child's result. On always-background releases the
+    // parent finishes an extra step while the child still streams, and the card must stay put.
     expectedModelCalls: 3,
     arrange(llm) {
       llm.tool("subagent", {
@@ -2607,14 +2939,24 @@ export const scenarios = {
         description: "Timed inspection",
         prompt: "Inspect the scripted fixture and report back.",
       });
-      llm.reasoningAndTextChunks(
-        Array.from({ length: 40 }, () => "Inspecting the timed fixture. "),
-        Array.from({ length: 40 }, () => "The child inspection is progressing. "),
-        100,
+      llm.route(
+        "Inspect the scripted fixture and report back.",
+        (script) =>
+          script.reasoningAndTextChunks(
+            Array.from({ length: 40 }, () => "Inspecting the timed fixture. "),
+            Array.from({ length: 40 }, () => "The child inspection is progressing. "),
+            100,
+          ),
+        { firstUserMessage: true },
       );
-      llm.text("The timed delegation completed.");
+      llm.route("The child inspection is progressing.", (script) =>
+        script.text("The timed delegation completed."),
+      );
     },
     async run(page, { client, session, llm, runRoot }) {
+      if (alwaysBackgroundsSubagents((await client.server.info()).version)) {
+        llm.text("Waiting for the timed inspection.");
+      }
       await client.session.prompt({ sessionID: session.id, text: this.prompt });
       await llm.waitForCalls(2);
       const card = page.getByRole("button", {
@@ -2665,7 +3007,16 @@ export const scenarios = {
       llm.text("The task continued while the shell command remained in the background.");
     },
     async assert(page) {
-      await page.getByRole("button", { name: "Running work: 1 running", exact: true }).waitFor();
+      await page
+        .getByRole("toolbar", { name: "Task context" })
+        .getByRole("button", { name: "1 running", exact: true })
+        .waitFor();
+      // The live line names the running command and offers the background after five seconds.
+      const liveLine = page.locator('[data-palot-active-turn-status="command"]');
+      await expect(liveLine).toContainText(/Running .*sleep 30/);
+      await expect(liveLine.getByRole("button", { name: "Move to background" })).toBeVisible({
+        timeout: 10_000,
+      });
       if (
         await page
           .getByRole("button", {
@@ -2675,16 +3026,12 @@ export const scenarios = {
       ) {
         throw new Error("Background prompt appeared before a steer was submitted");
       }
-      await page.getByRole("textbox", { name: "Message Palot" }).fill("Continue now");
-      await page.getByRole("button", { name: "Choose message delivery" }).click();
-      await page.getByRole("menuitemradio", { name: /Steer current turn/ }).click();
-      await page.getByRole("button", { name: "Steer current turn" }).click();
-      await page
-        .getByText(
-          "The shell command 'sleep 30' is blocking your message from steering this turn.",
-          { exact: true },
-        )
-        .waitFor();
+      // Queue stays the default; Mod+Enter steers this one message.
+      const message = page.getByRole("textbox", { name: "Message Palot" });
+      await message.fill("Continue now");
+      await message.press("ControlOrMeta+Enter");
+      // The waiting steer's own queue row offers to move the work aside.
+      await page.getByText("Waiting for `sleep 30` to finish", { exact: true }).waitFor();
       await page
         .getByRole("button", {
           name: "Send blocking work to background so the message can steer this turn",
@@ -2706,7 +3053,10 @@ export const scenarios = {
       llm.text("The steering message continued after the shell moved to the background.");
     },
     async assert(page) {
-      await page.getByRole("button", { name: "Running work: 1 running", exact: true }).waitFor();
+      await page
+        .getByRole("toolbar", { name: "Task context" })
+        .getByRole("button", { name: "1 running", exact: true })
+        .waitFor();
       const sessionHash = await page.evaluate(
         () => (globalThis as unknown as { location: { hash: string } }).location.hash,
       );
@@ -2722,10 +3072,10 @@ export const scenarios = {
       await page.evaluate((hash) => {
         (globalThis as unknown as { location: { hash: string } }).location.hash = hash;
       }, sessionHash);
-      await page.getByRole("textbox", { name: "Message Palot" }).fill("Continue now");
-      await page.getByRole("button", { name: "Choose message delivery" }).click();
-      await page.getByRole("menuitemradio", { name: /Steer current turn/ }).click();
-      await page.getByRole("button", { name: "Steer current turn" }).click();
+      // Queue stays the default; Mod+Enter steers this one message.
+      const message = page.getByRole("textbox", { name: "Message Palot" });
+      await message.fill("Continue now");
+      await message.press("ControlOrMeta+Enter");
       await page
         .getByText("The steering message continued after the shell moved to the background.", {
           exact: true,
@@ -2753,6 +3103,18 @@ export const scenarios = {
   "transcript-features": transcriptFeaturesScenario,
 } satisfies Record<string, Scenario>;
 
+/**
+ * Whether OpenCode runs every subagent in the background: releases after 2.2.7 and prereleases,
+ * as `opencodeAlwaysBackgroundsSubagents` in the renderer decides.
+ */
+function alwaysBackgroundsSubagents(version: string): boolean {
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(-.+)?$/);
+  if (!match) return false;
+  if (match[4]) return true;
+  const [major, minor, patch] = match.slice(1, 4).map(Number) as [number, number, number];
+  return major !== 2 ? major > 2 : minor !== 2 ? minor > 2 : patch > 7;
+}
+
 async function tabTo(page: Page, target: Locator, attempts = 30): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
     if (
@@ -2772,10 +3134,13 @@ async function tabTo(page: Page, target: Locator, attempts = 30): Promise<void> 
   throw new Error(`Keyboard focus did not reach ${await target.getAttribute("aria-label")}`);
 }
 
-function cssDurationMilliseconds(value: string): number {
-  const first = value.split(",", 1)[0]?.trim() ?? "";
-  const duration = Number.parseFloat(first);
-  return first.endsWith("ms") ? duration : duration * 1_000;
+/** The `data-focus-region` that holds keyboard focus, as F6 moves between them. */
+function focusRegion(page: Page): Promise<string | null> {
+  return page.evaluate(
+    () =>
+      document.activeElement?.closest("[data-focus-region]")?.getAttribute("data-focus-region") ??
+      null,
+  );
 }
 
 async function assertRouteAccessibility(page: Page, route: string): Promise<void> {
@@ -2954,7 +3319,11 @@ function parallelSessionPerformanceScenario(
         const composer = page.getByRole("textbox", { name: "Message Palot", exact: true });
         await composer.click();
         await page.keyboard.type("warm");
-        await composer.fill("");
+        // Clear it as a person would. A scripted fill("") right after typed characters selects
+        // the text in the DOM, and the editor reads that selection only after the Delete.
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.press("Delete");
+        await expect(composer).toHaveJSProperty("value", "");
         await composer.evaluate((element) => (element as HTMLElement).blur());
       }
       for (let run = 0; run < runs; run += 1) {
@@ -3123,7 +3492,9 @@ function parallelSessionPerformanceScenario(
         // without submitting, and preserve the exact draft when finished.
         const composer = page.getByRole("textbox", { name: "Message Palot", exact: true });
         const dock = page.locator("[data-palot-composer-dock]");
-        const draft = await composer.inputValue();
+        const draft = await composer.evaluate(
+          (element) => (element as unknown as { value: string }).value,
+        );
         const height = await dock.evaluate((element) => element.getBoundingClientRect().height);
         await composer.fill(
           `${draft}\n${Array.from({ length: 6 }, () => "Composer resize fixture").join("\n")}`,
@@ -3306,7 +3677,10 @@ interface StreamContinuityFrame {
   preReasoningCount: number;
   postReasoningCount: number;
   activityCount: number;
+  /** What the live line announces: "Working", "Finishing", a tool title; no clock. */
   activeStatus: string | null;
+  /** The latest turn bar's lead: "Working for 3s" while running, then "Worked for 5s". */
+  turnBar: string | null;
 }
 
 interface StreamContinuityPhaseReport {
@@ -3388,14 +3762,16 @@ async function startStreamContinuityProbe(
         postReasoningCount: number;
         activityCount: number;
         activeStatus: string | null;
+        turnBar: string | null;
+      }
+      interface ProbeElement {
+        textContent: string | null;
+        querySelector(selector: string): ProbeElement | null;
       }
       interface BrowserGlobal {
         document: {
-          querySelector(selector: string): {
-            textContent: string | null;
-            getAttribute(name: string): string | null;
-          } | null;
-          querySelectorAll(selector: string): { length: number };
+          querySelector(selector: string): ProbeElement | null;
+          querySelectorAll(selector: string): ArrayLike<ProbeElement>;
         };
         performance: { now(): number };
         requestAnimationFrame(callback: (timestamp: number) => void): number;
@@ -3439,11 +3815,14 @@ async function startStreamContinuityProbe(
         }
         probe.previousRafAt = now;
         const transcript = browser.document.querySelector('[aria-label="Task transcript"]');
-        const activeStatus = browser.document.querySelector(
-          '[role="status"][aria-label^="Working for "], [role="status"][aria-label^="Finishing for "]',
-        );
-        if (activeStatus && activeStatus !== probe.previousStatusElement) probe.statusMounts += 1;
-        probe.previousStatusElement = activeStatus;
+        // The live line names what runs ("Working", "Reading a.txt", "Finishing") without a
+        // clock; the turn bar above the work holds the clock.
+        const statusLine = browser.document.querySelector("[data-palot-active-turn-status]");
+        const activeStatus = statusLine?.querySelector('[role="status"]') ?? null;
+        if (statusLine && statusLine !== probe.previousStatusElement) probe.statusMounts += 1;
+        probe.previousStatusElement = statusLine;
+        const turnBars = browser.document.querySelectorAll("[data-palot-turn-bar-duration]");
+        const turnBar = turnBars.length > 0 ? turnBars[turnBars.length - 1]! : null;
         const text = transcript?.textContent ?? "";
         const frame = {
           atMs: now - startedAt,
@@ -3452,7 +3831,8 @@ async function startStreamContinuityProbe(
           preReasoningCount: text.match(probe.preReasoningPattern)?.length ?? 0,
           postReasoningCount: text.match(probe.postReasoningPattern)?.length ?? 0,
           activityCount: browser.document.querySelectorAll("[data-palot-activity-group]").length,
-          activeStatus: activeStatus?.getAttribute("aria-label") ?? null,
+          activeStatus: activeStatus?.textContent?.trim() || null,
+          turnBar: turnBar?.textContent?.trim() || null,
         };
         const last = frames.at(-1);
         if (
@@ -3462,7 +3842,8 @@ async function startStreamContinuityProbe(
           frame.preReasoningCount !== last.preReasoningCount ||
           frame.postReasoningCount !== last.postReasoningCount ||
           frame.activityCount !== last.activityCount ||
-          frame.activeStatus !== last.activeStatus
+          frame.activeStatus !== last.activeStatus ||
+          frame.turnBar !== last.turnBar
         ) {
           frames.push(frame);
         }
@@ -3485,6 +3866,7 @@ async function stopStreamContinuityProbe(page: Page): Promise<StreamContinuityRe
       postReasoningCount: number;
       activityCount: number;
       activeStatus: string | null;
+      turnBar: string | null;
     }
     interface BrowserGlobal {
       performance: { now(): number };
@@ -3544,8 +3926,8 @@ async function stopStreamContinuityProbe(page: Page): Promise<StreamContinuityRe
     let finishingObserved = false;
     let statusRegressed = false;
     for (const frame of activeStatusFrames) {
-      if (frame.activeStatus?.startsWith("Finishing for ")) finishingObserved = true;
-      if (finishingObserved && frame.activeStatus?.startsWith("Working for ")) {
+      if (frame.activeStatus?.startsWith("Finishing")) finishingObserved = true;
+      if (finishingObserved && frame.activeStatus?.startsWith("Working")) {
         statusRegressed = true;
       }
     }
@@ -3695,7 +4077,17 @@ function arrangeRenderProjectionFlow(
   llm.textChunks(streamChunks(`${label} TOOL PROJECTIONS COMPLETE`), STREAM_FINAL_CHUNK_DELAY_MS);
 }
 
-function arrangeRenderSubagentFlow(llm: TestLLMServer, label: "ALPHA" | "BETA"): void {
+/**
+ * The parent's calls come from the shared queue and the child's from its own route, so the
+ * child cannot take a parent's step. OpenCode 2.2.7 waits for the child: launch, then the
+ * parent's answer. Always-background releases return at once, so the parent takes an extra
+ * step while the child runs and the child's report wakes it for the answer.
+ */
+function arrangeRenderSubagentFlow(
+  llm: TestLLMServer,
+  label: "ALPHA" | "BETA",
+  background: boolean,
+): void {
   llm.toolWithText(
     "subagent",
     {
@@ -3708,18 +4100,32 @@ function arrangeRenderSubagentFlow(llm: TestLLMServer, label: "ALPHA" | "BETA"):
     ),
     STREAM_CHUNK_DELAY_MS,
   );
-  llm.toolWithText(
-    "grep",
-    { pattern: "projection coverage", path: "fixtures", include: "*.txt" },
-    streamChunks(
-      `${label} child: I’m locating the deterministic projection marker before reporting to the parent. `,
-    ),
-    STREAM_CHUNK_DELAY_MS,
+  // The marker ends with the closing quote of the serialized message, so it matches only the
+  // child's own task: after compaction the parent's checkpoint repeats the prompt, escaped.
+  llm.route(
+    `Search the render fixture and report ${label} child completion."`,
+    (script) => {
+      script.toolWithText(
+        "grep",
+        { pattern: "projection coverage", path: "fixtures", include: "*.txt" },
+        streamChunks(
+          `${label} child: I’m locating the deterministic projection marker before reporting to the parent. `,
+        ),
+        STREAM_CHUNK_DELAY_MS,
+      );
+      script.textChunks(
+        streamChunks(`${label} CHILD COMPLETE: projection coverage marker found.`),
+        STREAM_FINAL_CHUNK_DELAY_MS,
+      );
+    },
+    { firstUserMessage: true },
   );
-  llm.textChunks(
-    streamChunks(`${label} CHILD COMPLETE: projection coverage marker found.`),
-    STREAM_FINAL_CHUNK_DELAY_MS,
-  );
+  if (background) {
+    llm.textChunks(
+      streamChunks(`${label}: the child is still searching; I’ll report when it finishes.`),
+      STREAM_FINAL_CHUNK_DELAY_MS,
+    );
+  }
   llm.textChunks(streamChunks(`${label} SUBAGENT COMPLETE`), STREAM_FINAL_CHUNK_DELAY_MS);
 }
 
@@ -3793,12 +4199,16 @@ async function runRenderProjectionFlow(
   });
   const choice = page.locator(`input[value="${label} concise"]`);
   await choice.waitFor();
-  await page.locator("[data-palot-composer-request]").waitFor();
-  if (await page.getByRole("textbox", { name: "Message Palot" }).isVisible()) {
-    throw new Error("The blocking question did not replace the composer body");
-  }
+  // The question is answered in a panel above the message field, which stays in place.
+  const request = page.locator("[data-palot-composer-request]");
+  await request.waitFor();
+  await expect(page.getByRole("textbox", { name: "Message Palot" })).toBeVisible();
   await choice.check({ force: true });
-  await page.getByRole("button", { name: "Send", exact: true }).click({ force: true });
+  await expect(choice).toBeChecked();
+  // A forced click on the still-disabled button would be lost; wait for the answer to count.
+  const submit = page.getByRole("button", { name: "Submit answer", exact: true });
+  await expect(submit).toBeEnabled();
+  await submit.click();
   await prompt;
   await client.experimental.session.wait({ sessionID });
   await page.getByText(`${label} TOOL PROJECTIONS COMPLETE`, { exact: true }).waitFor();
@@ -3823,12 +4233,10 @@ async function switchRenderSession(
   staleMarker: string,
 ): Promise<void> {
   const row = page
-    .locator(
-      "[data-palot-task-row], [data-palot-recent-row], [data-inbox-card], [data-inbox-compact-row]",
-    )
+    .locator(TASK_ROW)
     .filter({ has: page.getByText(title, { exact: true }) })
     .first();
-  const button = row.getByRole("button").first();
+  const button = row;
   await button.waitFor();
   await button.evaluate((element) => {
     element.addEventListener(
@@ -4081,6 +4489,11 @@ async function finishReactScanPhase(
 
 interface TranscriptPrependAnchor {
   turnID: string;
+  /**
+   * The answer inside the anchor turn. Rows above it in the same turn, such as a notice that
+   * older history explains away, may change, so the answer is what has to stay put.
+   */
+  responseID: string;
   viewportTop: number;
   scrollHeight: number;
 }
@@ -4261,6 +4674,10 @@ async function startTranscriptPrependProbe(page: Page): Promise<void> {
       querySelectorAll(selector: string): ArrayLike<{
         dataset: { turnRowId?: string };
         getBoundingClientRect(): { top: number; bottom: number };
+        querySelector(selector: string): {
+          dataset: { palotResponseMessage?: string };
+          getBoundingClientRect(): { top: number };
+        } | null;
       }>;
     };
     const browser = globalThis as unknown as {
@@ -4296,10 +4713,13 @@ async function startTranscriptPrependProbe(page: Page): Promise<void> {
               .filter(({ rect }) => rect.bottom >= viewportTop)
               .toSorted((left, right) => left.rect.top - right.rect.top)[0];
             const turnID = anchor?.element.dataset.turnRowId;
-            if (anchor && turnID)
+            const response = anchor?.element.querySelector("[data-palot-response-message]");
+            const responseID = response?.dataset.palotResponseMessage;
+            if (anchor && turnID && response && responseID)
               probe.anchor = {
                 turnID,
-                viewportTop: anchor.rect.top - viewportTop,
+                responseID,
+                viewportTop: response.getBoundingClientRect().top - viewportTop,
                 scrollHeight: transcript.scrollHeight,
               };
           }
@@ -4335,12 +4755,12 @@ async function transcriptPrependAnchorShift(
     const transcript = viewport as unknown as {
       getBoundingClientRect(): { top: number };
       querySelectorAll(selector: string): ArrayLike<{
-        dataset: { turnRowId?: string };
+        dataset: { palotResponseMessage?: string };
         getBoundingClientRect(): { top: number };
       }>;
     };
-    const anchor = Array.from(transcript.querySelectorAll("[data-turn-row-id]")).find(
-      (element) => element.dataset.turnRowId === anchorState.turnID,
+    const anchor = Array.from(transcript.querySelectorAll("[data-palot-response-message]")).find(
+      (element) => element.dataset.palotResponseMessage === anchorState.responseID,
     );
     if (!anchor) return Number.POSITIVE_INFINITY;
     return Math.abs(

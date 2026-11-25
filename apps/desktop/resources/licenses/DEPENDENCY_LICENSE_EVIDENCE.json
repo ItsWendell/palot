@@ -99,5 +99,25 @@
     "firstLine": 99,
     "lastLine": 109,
     "source": "https://registry.npmjs.org/strictdom/-/strictdom-1.0.1.tgz#package/README.md"
+  },
+  {
+    "name": "data-uri-to-buffer",
+    "version": "4.0.1",
+    "license": "MIT",
+    "file": "README.md",
+    "sha256": "a7cc4332acfa1f9b6530e01aac77fefe74f2efa32579215fddaa473013f9a25c",
+    "firstLine": 62,
+    "lastLine": 86,
+    "source": "https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz#package/README.md"
+  },
+  {
+    "name": "@tokenizer/token",
+    "version": "0.3.0",
+    "license": "MIT",
+    "file": "README.md",
+    "sha256": "a88c936c259cc261d5b37a2433735e9819e01f824bdc26e644d46ccd3055c8d7",
+    "firstLine": 8,
+    "lastLine": 18,
+    "source": "https://registry.npmjs.org/@tokenizer/token/-/token-0.3.0.tgz#package/README.md"
   }
 ]

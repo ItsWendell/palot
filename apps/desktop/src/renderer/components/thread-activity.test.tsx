@@ -10,13 +10,20 @@ import {
   type TurnActivityGroup,
   type TurnPart,
 } from "../lib/turn-projection";
-import {
-  ActivityGroup,
-  CompactionBoundary,
-  ThoughtDisclosure,
-  TimelineBoundary,
-  TurnActivity,
-} from "./thread";
+import { CompactionBoundary } from "./transcript/compaction-row";
+import { ActivityGroup, TurnActivity } from "./transcript/activity-group";
+import { ThoughtDisclosure, TimelineBoundary } from "./transcript/timeline-parts";
+
+const catalog = vi.hoisted(() => ({
+  sessions: [
+    { id: "ses_source", title: "Source task" },
+    { id: "ses_fork", title: "Source task (fork #1)", forkedFrom: "ses_source" },
+  ],
+}));
+vi.mock("../hooks/use-session-catalog", () => ({
+  useSessionCatalogSelector: (select: (sessions: typeof catalog.sessions) => unknown) =>
+    select(catalog.sessions),
+}));
 
 function message(content: PalotMessageContent[]): PalotMessage {
   return {
@@ -149,6 +156,121 @@ describe("ActivityGroup", () => {
     expect(screen.queryByText("The server restarted while you were working.")).toBeNull();
   });
 
+  it("renders goal, restart, instructions, image and watch notices as their own quiet rows", async () => {
+    const user = userEvent.setup();
+    const notice = (id: string, data: Record<string, unknown>, type = "synthetic") =>
+      ({
+        ...message([]),
+        id,
+        type,
+        createdAt: 10,
+        text: "body",
+        data,
+      }) as PalotMessage;
+    const groups = [
+      notice("goal", { description: "Goal: Ship it", metadata: { source: "goal", goalID: "g" } }),
+      notice("restart", {
+        description: "Continuing after restart",
+        metadata: { notice: "restart" },
+      }),
+      notice("instructions", {
+        description: "Loaded AGENTS.md, apps/AGENTS.md",
+        metadata: { instruction: { paths: ["/r/AGENTS.md", "/r/apps/AGENTS.md"] } },
+      }),
+      notice("image", {
+        description: "Image generation",
+        metadata: {
+          source: "experimental_image_generate",
+          jobID: "j",
+          state: "completed",
+          path: "a.png",
+        },
+      }),
+      notice("watch", { description: "CI failed on main", metadata: { source: "console.watch" } }),
+    ].map((value) => {
+      const turn = createSessionTranscriptProjector().project({ messages: [value] }).rows[0]!.turn;
+      return turn.rootBoundary!;
+    });
+
+    render(
+      <>
+        {groups.map((group) => (
+          <TimelineBoundary key={group.id} group={group} />
+        ))}
+      </>,
+    );
+
+    expect(screen.getByRole("status", { name: "Goal: Ship it" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Image generation" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "CI failed on main" })).toBeTruthy();
+    expect(screen.queryByText("body")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "OpenCode restarted" }));
+    expect(screen.getAllByText("Continuing after restart").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Loaded instructions" }));
+    expect(screen.getAllByText("AGENTS.md, apps/AGENTS.md").length).toBeGreaterThan(0);
+  });
+
+  it("names the source task on a fork notice and keeps the model-facing text out", () => {
+    const text =
+      "<fork-notice>\nThis conversation is a fork of another conversation.\n</fork-notice>";
+    const notice = (id: string) =>
+      ({
+        ...message([]),
+        id,
+        type: "synthetic",
+        createdAt: 10,
+        text,
+        data: { description: "Fork notice" },
+      }) as PalotMessage;
+    const groups = [notice("msg_fork_notice_ses_fork"), notice("msg_copied")].map(
+      (value) =>
+        createSessionTranscriptProjector().project({ messages: [value] }).rows[0]!.turn
+          .rootBoundary!,
+    );
+
+    render(
+      <>
+        {groups.map((group) => (
+          <TimelineBoundary key={group.id} group={group} />
+        ))}
+      </>,
+    );
+
+    expect(screen.getByRole("status", { name: "Forked from Source task" })).toBeTruthy();
+    // A notice copied from an earlier fork has a new ID, so its source is unknown.
+    expect(screen.getByRole("status", { name: "Forked from another task" })).toBeTruthy();
+    expect(screen.queryByText(/fork of another conversation/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Forked from/ })).toBeNull();
+  });
+
+  it("merges finished background commands into one row that lists them", async () => {
+    const user = userEvent.setup();
+    const report = (id: string, createdAt: number) =>
+      ({
+        ...message([]),
+        id,
+        type: "synthetic",
+        createdAt,
+        text: `<shell id="${id}" state="completed" command="make ${id}">\nfailed\n</shell>`,
+        data: {
+          description: `make ${id}`,
+          metadata: { source: "shell", shellID: id, state: "completed", exit: 2 },
+        },
+      }) as PalotMessage;
+    const group = createSessionTranscriptProjector().project({
+      messages: [report("build", 10), report("lint", 11)],
+    }).rows[0]!.turn.rootBoundary!;
+
+    render(<TimelineBoundary group={group} />);
+
+    const row = screen.getByRole("button", { name: "2 commands failed" });
+    expect(screen.queryByText("make build")).toBeNull();
+    await user.click(row);
+    expect(screen.getByText("make build")).toBeTruthy();
+    expect(screen.getByText("make lint")).toBeTruthy();
+    expect(screen.getAllByText("exit 2")).toHaveLength(2);
+  });
+
   it("renders retry and failure boundaries with live semantics", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
@@ -204,6 +326,40 @@ describe("ActivityGroup", () => {
     vi.useRealTimers();
   });
 
+  it("counts down a usage-limit retry inside its label", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const retry: PalotMessageContent = {
+      type: "timeline-boundary",
+      id: "retry",
+      name: "Usage limit reached · retrying (attempt 2)",
+      text: "5-hour limit reached",
+      status: "running",
+      data: {
+        kind: "retry",
+        tone: "warning",
+        limit: "Usage limit reached",
+        attempt: 2,
+        at: 41_000,
+      },
+    };
+    render(
+      <TimelineBoundary
+        group={{
+          id: "retry",
+          kind: "boundary",
+          title: retry.name!,
+          status: "running",
+          entries: [{ message: message([retry]), part: retry, index: 0 }],
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("status", { name: "Usage limit reached · retrying in 40s (attempt 2)" }),
+    ).toBeTruthy();
+    vi.useRealTimers();
+  });
+
   it("renders interruptions as a neutral compact status", () => {
     const interrupted: PalotMessageContent = {
       type: "timeline-boundary",
@@ -234,7 +390,7 @@ describe("ActivityGroup", () => {
     ).toBeTruthy();
   });
 
-  it("keeps failed activity accessible without a visible failed chip", () => {
+  it("shows how many calls failed beside the group title", () => {
     const parts: PalotMessageContent[] = [
       {
         type: "reasoning",
@@ -256,18 +412,16 @@ describe("ActivityGroup", () => {
     const group: TurnActivityGroup = {
       id: "activity-1",
       kind: "tools",
-      title: "Running tests",
+      title: "Ran 1 command",
       status: "failed",
       entries: parts.map((part, index) => ({ message: source, part, index })),
     };
 
-    render(<ActivityGroup group={group} live />);
+    render(<ActivityGroup group={group} live={false} />);
 
-    const trigger = screen.getByRole("button", {
-      name: "Running tests Failed",
-    });
+    const trigger = screen.getByRole("button", { name: /^Ran 1 command\s*· 1 failed$/ });
     expect(trigger.querySelector('[data-slot="badge"]')).toBeNull();
-    expect(screen.getByText("Failed", { selector: ".sr-only" })).toBeTruthy();
+    expect(within(trigger).getByText("· 1 failed")).toBeTruthy();
   });
 
   it("keeps a newly running tool group collapsed until the user opens it", () => {
@@ -339,7 +493,7 @@ describe("ActivityGroup", () => {
       />,
     );
 
-    const trigger = screen.getByRole("button", { name: "Reasoning · 3 steps · 33.5s" });
+    const trigger = screen.getByRole("button", { name: "Reasoning · 3 steps · 33s" });
     expect(
       screen.queryByRole("button", { name: /Reasoning: Evaluating database options/ }),
     ).toBeNull();
@@ -355,7 +509,7 @@ describe("ActivityGroup", () => {
     await user.click(trigger);
     expect(
       screen.getByRole("button", {
-        name: "Reasoning: Planning middleware layering · 3 steps · 33.5s",
+        name: "Reasoning: Planning middleware layering · 3 steps · 33s",
       }),
     ).toBeTruthy();
   });
@@ -554,7 +708,7 @@ describe("ActivityGroup", () => {
 
     expect(
       screen
-        .getByRole("button", { name: "Running 'bun test' Failed" })
+        .getByRole("button", { name: /^Running 'bun test'\s*· 1 failed$/ })
         .getAttribute("aria-expanded"),
     ).toBe("true");
     expect(result.container.querySelectorAll("button").length).toBeGreaterThan(1);
@@ -822,7 +976,7 @@ describe("TurnActivity", () => {
       />,
     );
     const view = within(result.container);
-    const trigger = view.getByRole("button", { name: "Worked for 1s" });
+    const trigger = view.getByRole("button", { name: "Worked for 1s · 1 subagent" });
 
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(view.getByText("Pinned companion")).toBeTruthy();
@@ -832,6 +986,177 @@ describe("TurnActivity", () => {
 
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(view.getByText("Hidden companion work")).toBeTruthy();
+  });
+
+  it("folds a finished prompt's work behind one duration and keeps its steer in view", async () => {
+    const user = userEvent.setup();
+    const base = { agent: null, model: null, tokens: null, data: {} };
+    const prompt: PalotMessage = {
+      ...base,
+      id: "prompt",
+      type: "user",
+      createdAt: 1_000,
+      completedAt: 1_000,
+      finish: null,
+      text: "Fix the parser",
+      content: [{ type: "text", text: "Fix the parser" }],
+    };
+    const explore: PalotMessage = {
+      ...base,
+      id: "explore",
+      type: "assistant",
+      createdAt: 2_000,
+      completedAt: 3_000,
+      finish: "tool-calls",
+      text: null,
+      content: [
+        {
+          type: "tool",
+          id: "read",
+          name: "read",
+          state: { status: "completed", input: { path: "src/parser.ts" } },
+        },
+      ],
+    };
+    const steer: PalotMessage = {
+      ...prompt,
+      id: "steer",
+      createdAt: 4_000,
+      completedAt: 4_000,
+      text: "Keep the old API",
+      content: [{ type: "text", text: "Keep the old API" }],
+    };
+    const answer: PalotMessage = {
+      ...base,
+      id: "answer",
+      type: "assistant",
+      createdAt: 5_000,
+      completedAt: 6_000,
+      finish: "stop",
+      text: null,
+      content: [{ type: "text", id: "answer-text", text: "Done.", time: { created: 5_000 } }],
+    };
+    const idle: PalotMessage = {
+      ...base,
+      id: "idle",
+      type: "idle",
+      createdAt: 7_000,
+      completedAt: 7_000,
+      finish: null,
+      text: null,
+      content: [],
+      data: { outcome: "succeeded" },
+    };
+    const [turn] = createSessionTranscriptProjector().project({
+      messages: [prompt, explore, steer, answer, idle],
+    }).rows;
+    const result = render(<TurnActivity turn={turn!.turn} sessionID="session-steer" />);
+    const view = within(result.container);
+    const trigger = view.getByRole("button", { name: "Worked for 6s" });
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(view.getByText("Steer")).toBeTruthy();
+    expect(view.getByText("Keep the old API")).toBeTruthy();
+    expect(view.queryByText("Read 1 file")).toBeNull();
+
+    await user.click(trigger);
+
+    // The turn's only group shows its row directly under the bar.
+    expect(view.queryByText("Read 1 file")).toBeNull();
+    expect(view.getByText(/parser\.ts/)).toBeTruthy();
+  });
+
+  it("folds a completed turn that ended on its work behind the whole run's duration", () => {
+    const base = { agent: null, model: null, tokens: null, text: null, data: {} };
+    const messages: PalotMessage[] = [
+      {
+        ...base,
+        id: "prompt",
+        type: "user",
+        createdAt: 1_000,
+        completedAt: 1_000,
+        finish: null,
+        content: [{ type: "text", text: "Check the parser" }],
+      },
+      {
+        ...base,
+        id: "explore",
+        type: "assistant",
+        createdAt: 2_000,
+        completedAt: 3_000,
+        finish: "tool-calls",
+        content: [
+          { type: "text", id: "plan", text: "Checking." },
+          {
+            type: "tool",
+            id: "read",
+            name: "read",
+            state: { status: "completed", input: { path: "src/parser.ts" } },
+          },
+        ],
+      },
+      {
+        ...base,
+        id: "idle",
+        type: "idle",
+        createdAt: 9_000,
+        completedAt: 9_000,
+        finish: null,
+        content: [],
+        data: { outcome: "succeeded" },
+      },
+    ];
+    const [row] = createSessionTranscriptProjector().project({ messages }).rows;
+    const result = render(<TurnActivity turn={row!.turn} sessionID="session-no-answer" />);
+
+    const trigger = within(result.container).getByRole("button", { name: "Worked for 8s" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(within(result.container).queryByText("Checking.")).toBeNull();
+  });
+
+  it("holds a settled turn's outcome while the task's subagents still run", () => {
+    const messages: PalotMessage[] = [
+      {
+        id: "prompt",
+        type: "user",
+        createdAt: 1_000,
+        completedAt: 1_000,
+        text: "Explore",
+        agent: null,
+        model: null,
+        tokens: null,
+        finish: null,
+        content: [],
+        data: null,
+      },
+      {
+        ...message([{ type: "tool", id: "read", name: "read", state: { status: "completed" } }]),
+        id: "work",
+        createdAt: 2_000,
+        completedAt: 3_000,
+        finish: "tool-calls",
+      },
+      {
+        ...message([]),
+        id: "idle",
+        type: "idle",
+        createdAt: 9_000,
+        completedAt: 9_000,
+        finish: null,
+        data: { outcome: "succeeded" },
+      },
+    ];
+    const [row] = createSessionTranscriptProjector().project({ messages }).rows;
+    const waiting = render(
+      <TurnActivity turn={row!.turn} sessionID="session-waiting" runningSubagents={2} />,
+    );
+    expect(
+      within(waiting.container).getByRole("button", { name: "Waiting for 2 subagents" }),
+    ).toBeTruthy();
+    waiting.unmount();
+
+    const settled = render(<TurnActivity turn={row!.turn} sessionID="session-settled" />);
+    expect(within(settled.container).getByRole("button", { name: /^Worked for 8s/ })).toBeTruthy();
   });
 
   it("collapses prior work while the final response is streaming", () => {
@@ -929,7 +1254,7 @@ describe("TurnActivity", () => {
       </Provider>,
     );
 
-    const turnTrigger = screen.getByRole("button", { name: "Completed in 1s" });
+    const turnTrigger = screen.getByRole("button", { name: "Worked for 1s" });
     expect(turnTrigger.getAttribute("aria-expanded")).toBe("false");
     await user.click(turnTrigger);
 
@@ -1003,7 +1328,7 @@ describe("TurnActivity", () => {
     );
 
     const scope = within(view.container);
-    const turnTrigger = scope.getByRole("button", { name: "Completed in 1s" });
+    const turnTrigger = scope.getByRole("button", { name: "Worked for 1s" });
     expect(turnTrigger.getAttribute("aria-expanded")).toBe("false");
     expect(scope.getByRole("group", { name: "Artifact: Coverage report" })).toBeTruthy();
     await user.click(turnTrigger);
@@ -1060,7 +1385,7 @@ describe("TurnActivity", () => {
 
     const view = within(result.container);
     expect(view.queryByRole("button", { name: "Expand all activity" })).toBeNull();
-    await user.click(view.getByRole("button", { name: "Worked for 1s" }));
+    await user.click(view.getByRole("button", { name: "Worked for 1s · ran 1 command" }));
     expect(view.getByRole("button", { name: "Read files" }).getAttribute("aria-expanded")).toBe(
       "false",
     );
@@ -1176,6 +1501,227 @@ describe("TurnActivity", () => {
 
     const second = render(<TurnActivity {...props} />);
     expect(second.container.querySelector("button")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  describe("group headers in a settled turn", () => {
+    const base = { agent: null, model: null, tokens: null, text: null, data: {} };
+    const prompt: PalotMessage = {
+      ...base,
+      id: "prompt",
+      type: "user",
+      createdAt: 1_000,
+      completedAt: 1_000,
+      finish: null,
+      content: [{ type: "text", text: "Check the repo" }],
+    };
+    const shell = (id: string, command: string, failed = false): PalotMessageContent => ({
+      type: "tool",
+      id,
+      name: "shell",
+      state: failed
+        ? { status: "error", input: { command }, error: "exit 1" }
+        : { status: "completed", input: { command }, output: `${command} ok` },
+    });
+    const thought = (id: string, text: string): PalotMessageContent => ({
+      type: "reasoning",
+      id,
+      text,
+      time: { created: 2_000, completed: 2_100 },
+    });
+    const assistant = (
+      id: string,
+      content: PalotMessageContent[],
+      options: { createdAt: number; running?: boolean },
+    ): PalotMessage => ({
+      ...base,
+      id,
+      type: "assistant",
+      createdAt: options.createdAt,
+      completedAt: options.running ? null : options.createdAt + 500,
+      finish: options.running ? null : "tool-calls",
+      content,
+    });
+    const answer: PalotMessage = {
+      ...base,
+      id: "answer",
+      type: "assistant",
+      createdAt: 9_000,
+      completedAt: 9_500,
+      finish: "stop",
+      content: [{ type: "text", id: "answer-text", text: "All good." }],
+    };
+    const idle: PalotMessage = {
+      ...base,
+      id: "idle",
+      type: "idle",
+      createdAt: 10_000,
+      completedAt: 10_000,
+      finish: null,
+      content: [],
+      data: { outcome: "succeeded" },
+    };
+    const renderTurn = (messages: PalotMessage[], sessionID: string) => {
+      const [row] = createSessionTranscriptProjector().project({ messages }).rows;
+      const result = render(<TurnActivity turn={row!.turn} sessionID={sessionID} />);
+      return { turn: row!.turn, view: within(result.container) };
+    };
+    const expandedButtons = (view: ReturnType<typeof within>) =>
+      view
+        .queryAllByRole("button")
+        .filter((button: HTMLElement) => button.hasAttribute("aria-expanded"));
+
+    it("shows a single group's commands one click after the turn bar", async () => {
+      const user = userEvent.setup();
+      const work = assistant(
+        "work",
+        [
+          thought("t1", "Checking the tree"),
+          shell("s1", "git status"),
+          thought("t2", "Now the log"),
+          shell("s2", "git log -1"),
+          shell("s3", "ls"),
+        ],
+        { createdAt: 2_000 },
+      );
+      const { turn, view } = renderTurn([prompt, work, answer, idle], "session-flat-single");
+      expect(turn.activity.filter((group) => group.kind === "tools")).toHaveLength(1);
+
+      const bar = view.getByRole("button", { name: /^Worked for .* · ran 3 commands$/ });
+      expect(view.queryByRole("button", { name: /Ran git status/ })).toBeNull();
+      await user.click(bar);
+
+      expect(view.queryByRole("button", { name: /^Ran 3 commands/ })).toBeNull();
+      for (const command of ["git status", "git log -1", "ls"]) {
+        expect(view.getByRole("button", { name: new RegExp(`Ran ${command}`) })).toBeTruthy();
+      }
+      // Every remaining disclosure controls content that exists.
+      for (const button of expandedButtons(view)) {
+        const controls = button.getAttribute("aria-controls");
+        if (controls) expect(document.getElementById(controls)).not.toBeNull();
+      }
+    });
+
+    it("flattens a small group and keeps a large group's collapsed header", async () => {
+      const user = userEvent.setup();
+      const small = assistant("small", [shell("a1", "git status"), shell("a2", "git diff")], {
+        createdAt: 2_000,
+      });
+      const commentary = assistant(
+        "commentary",
+        [{ type: "text", id: "note", text: "Now the full test matrix." }],
+        { createdAt: 3_000 },
+      );
+      const large = assistant(
+        "large",
+        [
+          thought("p1", "Running the matrix"),
+          ...["one", "two", "three", "four", "five"].map((name) =>
+            shell(`b-${name}`, `bun test ${name}`),
+          ),
+        ],
+        { createdAt: 4_000 },
+      );
+      large.content[0] = { ...large.content[0]!, presentation: "preamble" } as PalotMessageContent;
+      const { turn, view } = renderTurn(
+        [prompt, small, commentary, large, answer, idle],
+        "session-flat-mixed",
+      );
+      const processGroups = turn.activity.filter((group) => group.kind === "tools");
+      expect(processGroups).toHaveLength(2);
+
+      await user.click(view.getByRole("button", { name: /^Worked for / }));
+
+      expect(view.getByRole("button", { name: /Ran git status/ })).toBeTruthy();
+      expect(view.getByRole("button", { name: /Ran git diff/ })).toBeTruthy();
+      expect(view.getByText("Now the full test matrix.")).toBeTruthy();
+      const header = view.getByRole("button", { name: processGroups[1]!.title });
+      expect(header.getAttribute("aria-expanded")).toBe("false");
+      expect(view.queryByRole("button", { name: /Ran bun test one/ })).toBeNull();
+
+      await user.click(header);
+      expect(view.getByRole("button", { name: /Ran bun test one/ })).toBeTruthy();
+    });
+
+    it("keeps a failed small group's failure visible without its header", async () => {
+      const user = userEvent.setup();
+      const failing = assistant("failing", [shell("f1", "bun test", true)], { createdAt: 2_000 });
+      const recovery = assistant(
+        "recovery",
+        [
+          thought("p1", "Fixing the test"),
+          ...["one", "two", "three", "four"].map((name) => shell(`r-${name}`, `bun test ${name}`)),
+        ],
+        { createdAt: 3_000 },
+      );
+      recovery.content[0] = {
+        ...recovery.content[0]!,
+        presentation: "preamble",
+      } as PalotMessageContent;
+      const { view } = renderTurn([prompt, failing, recovery, answer, idle], "session-flat-failed");
+
+      const bar = view.getByRole("button", { name: /^Worked for .* · 1 failed$/ });
+      await user.click(bar);
+
+      expect(view.queryByRole("button", { name: /· 1 failed$/ })).toBe(bar);
+      const row = view.getByRole("button", { name: /bun test/ });
+      expect(within(row).getByText("Failed")).toBeTruthy();
+    });
+
+    it("keeps a running turn's live group header", () => {
+      const work = assistant("work", [shell("s1", "git status"), shell("s2", "git log -1")], {
+        createdAt: 2_000,
+        running: true,
+      });
+      work.content[1] = {
+        type: "tool",
+        id: "s2",
+        name: "shell",
+        state: { status: "running", input: { command: "git log -1" } },
+      };
+      const { turn, view } = renderTurn([prompt, work], "session-flat-running");
+      expect(turn.status).toBe("working");
+      const group = turn.activity.find((candidate) => candidate.kind === "tools")!;
+      expect(group.headerless).toBeUndefined();
+      expect(view.getByRole("button", { name: new RegExp(group.title) })).toBeTruthy();
+    });
+
+    it("keeps a lone command row's element when the turn settles and drops its header", () => {
+      const running = assistant("work", [shell("s1", "git status")], {
+        createdAt: 2_000,
+        running: true,
+      });
+      running.content[0] = {
+        type: "tool",
+        id: "s1",
+        name: "shell",
+        state: { status: "running", input: { command: "git status" } },
+      };
+      const projector = createSessionTranscriptProjector();
+      const turnOf = (messages: PalotMessage[]) => projector.project({ messages }).rows[0]!.turn;
+      const working = turnOf([prompt, running]);
+      const result = render(
+        <TurnActivity turn={working} sessionID="session-flat-transition" preventAutoCollapse />,
+      );
+      const view = within(result.container);
+      expect(
+        view.getByRole("button", { name: new RegExp(working.activity[0]!.title) }),
+      ).toBeTruthy();
+      // The group header names the command too; the row comes after it.
+      const row = view.getAllByRole("button", { name: /git status/ }).at(-1);
+
+      const settled = turnOf([
+        prompt,
+        assistant("work", [shell("s1", "git status")], { createdAt: 2_000 }),
+        answer,
+        idle,
+      ]);
+      expect(settled.activity.find((group) => group.kind === "tools")?.headerless).toBe(true);
+      result.rerender(
+        <TurnActivity turn={settled} sessionID="session-flat-transition" preventAutoCollapse />,
+      );
+
+      expect(view.getByRole("button", { name: /Ran git status/ })).toBe(row);
+    });
   });
 });
 

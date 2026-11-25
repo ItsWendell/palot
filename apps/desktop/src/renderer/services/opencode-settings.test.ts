@@ -16,8 +16,10 @@ import {
   getMcpServerStatus,
   loadSettings,
   removeMcpServer,
+  supportsSavedPermissionUpdate,
   updatePlugin,
   updatePlugins,
+  updateSavedPermission,
 } from "./opencode-settings";
 
 const location = {
@@ -923,6 +925,105 @@ describe("renderer OpenCode settings service", () => {
       { projectID: "resolved-project" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  describe("updateSavedPermission", () => {
+    const saved = {
+      id: "per_1",
+      projectID: "project-1",
+      action: "shell",
+      resource: "git status *",
+      time: { created: 0, updated: 0 },
+    };
+    const input = { directory: "/repo", projectID: "project-1", id: "per_1" };
+
+    /** The error the published promise client throws for this server reply to an update. */
+    async function updateRejection(response: Response): Promise<unknown> {
+      const real = OpenCode.make({
+        baseUrl: "http://opencode.test",
+        fetch: vi.fn(async () => response),
+      });
+      return real.permission.saved.update({ id: "per_1", resource: "git *" }).then(
+        () => {
+          throw new Error("expected the update to fail");
+        },
+        (error: unknown) => error,
+      );
+    }
+
+    function savedClient(update: ReturnType<typeof vi.fn>) {
+      return client({
+        permission: { saved: { list: vi.fn().mockResolvedValue([saved]), update } },
+      });
+    }
+
+    it("sends only the changed fields after checking the rule belongs to the project", async () => {
+      const update = vi.fn().mockResolvedValue({ ...saved, resource: "git *" });
+      setOpenCodeClientForTest(savedClient(update));
+
+      await expect(updateSavedPermission({ ...input, resource: "git *" })).resolves.toEqual({
+        status: "updated",
+        permission: { ...saved, resource: "git *" },
+      });
+      expect(update).toHaveBeenCalledWith(
+        { id: "per_1", resource: "git *" },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    it("refuses a rule from another project without updating it", async () => {
+      const update = vi.fn();
+      setOpenCodeClientForTest(savedClient(update));
+
+      await expect(updateSavedPermission({ ...input, id: "per_other" })).rejects.toThrow(
+        "does not belong to the selected project",
+      );
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("reports a duplicate rule as a conflict", async () => {
+      const conflict = await updateRejection(
+        new Response(
+          JSON.stringify({
+            _tag: "ConflictError",
+            resource: "per_1",
+            message: "A saved permission already allows shell for git *",
+          }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        ),
+      );
+      setOpenCodeClientForTest(savedClient(vi.fn().mockRejectedValue(conflict)));
+
+      await expect(updateSavedPermission({ ...input, resource: "git *" })).resolves.toEqual({
+        status: "conflict",
+      });
+    });
+
+    it("reports a server without the route as unsupported", async () => {
+      const missing = await updateRejection(new Response(null, { status: 404 }));
+      setOpenCodeClientForTest(savedClient(vi.fn().mockRejectedValue(missing)));
+
+      await expect(updateSavedPermission({ ...input, resource: "git *" })).resolves.toEqual({
+        status: "unsupported",
+      });
+    });
+
+    it("propagates other failures", async () => {
+      const failure = Object.assign(new Error("Saved permission not found: per_1"), {
+        _tag: "PermissionSavedNotFoundError",
+      });
+      setOpenCodeClientForTest(savedClient(vi.fn().mockRejectedValue(failure)));
+
+      await expect(updateSavedPermission({ ...input, resource: "git *" })).rejects.toBe(failure);
+    });
+
+    it("offers editing from OpenCode 2.1.0 and on unknown versions", () => {
+      expect(supportsSavedPermissionUpdate("2.0.24")).toBe(false);
+      expect(supportsSavedPermissionUpdate("2.1.0")).toBe(true);
+      expect(supportsSavedPermissionUpdate("v2.2.7")).toBe(true);
+      expect(supportsSavedPermissionUpdate("3.0.0")).toBe(true);
+      expect(supportsSavedPermissionUpdate(null)).toBe(true);
+    });
   });
 
   it("cancels the aggregate settings read through the caller signal", async () => {

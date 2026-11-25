@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PalotModel } from "../../shared";
 import {
+  effortLabel,
   findModelForQuery,
   formatTokenLimit,
   groupPickerModels,
@@ -119,5 +120,13 @@ describe("model picker helpers", () => {
     usages = toggleFavoriteModel(usages, "scope", "a");
     usages = toggleFavoriteModel(usages, "scope", "a");
     expect(usages).toEqual({ scope: { favorites: [], recent: ["b", "f", "e", "d", "c"] } });
+  });
+});
+
+describe("effortLabel", () => {
+  it("spells out xhigh and capitalizes other efforts", () => {
+    expect(effortLabel("xhigh")).toBe("Extra high");
+    expect(effortLabel("high")).toBe("High");
+    expect(effortLabel("max")).toBe("Max");
   });
 });

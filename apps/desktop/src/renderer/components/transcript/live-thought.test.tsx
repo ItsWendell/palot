@@ -53,7 +53,7 @@ function workingTurn(
 }
 
 function StatusLine({ turn }: { turn: TranscriptTurn }) {
-  return <ActiveTurnMeta startedAt={turn.startedAt} thought={latestTurnThought(turn)} />;
+  return <ActiveTurnMeta turn={turn} />;
 }
 
 afterEach(cleanup);
@@ -106,8 +106,5 @@ describe("latest thought in the running status", () => {
     ];
     expect(latestTurnThought(workingTurn(reasoning, false))).toBeNull();
     expect(latestTurnThought({ ...workingTurn(reasoning), status: "completed" })).toBeNull();
-
-    render(<ActiveTurnMeta startedAt={1} thought={null} />);
-    expect(document.querySelector("[data-palot-active-turn-thought]")).toBeNull();
   });
 });

@@ -10,7 +10,7 @@ import { composerDraftFromMessage } from "../../lib/composer-restoration";
 import { retainedComposerFiles, browserCommentsFromMessage } from "../../lib/browser-comments";
 import { reviewCommentsFromMessage } from "../../lib/review-comments";
 import { showErrorToast } from "../../lib/toast-error";
-import { useCacheSession } from "../../hooks/use-session-catalog";
+import { useCacheSession, useTaskTitleLookup } from "../../hooks/use-session-catalog";
 import { palot } from "../../services/palot";
 import { Button } from "../ui/button";
 
@@ -30,6 +30,7 @@ export function EditFromHereProvider({
 }) {
   const runtime = useAtomValue(runtimeAtom);
   const cache = useCacheSession(runtime);
+  const taskTitle = useTaskTitleLookup(runtime);
   const store = useStore();
   const [pending, setPending] = useState(false);
   const scope = composerScope(runtime?.profileID ?? "", `session:${session.id}`);
@@ -56,14 +57,17 @@ export function EditFromHereProvider({
       const data = message.data;
       store.set(
         composerDraftAtomFamily(scope),
-        composerDraftFromMessage({
-          ...message,
-          files: [],
-          data:
-            data && typeof data === "object" && !Array.isArray(data)
-              ? { ...data, files: [] }
-              : null,
-        }),
+        composerDraftFromMessage(
+          {
+            ...message,
+            files: [],
+            data:
+              data && typeof data === "object" && !Array.isArray(data)
+                ? { ...data, files: [] }
+                : null,
+          },
+          taskTitle,
+        ),
       );
       store.set(stateAtom, (current) => ({
         ...current,

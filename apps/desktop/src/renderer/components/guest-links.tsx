@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { Link2, Unlink } from "lucide-react";
@@ -288,46 +288,28 @@ function GuestShareDialog({
   );
 }
 
-export function GuestPendingMessages({ sessionID }: { sessionID: string }) {
+/**
+ * Guest messages waiting for this task's owner to pass them on. They show in the composer's
+ * request panel; Send passes one to the agent and Dismiss drops it.
+ */
+export function useGuestPendingMessages(sessionID: string | null) {
   const runtime = useAtomValue(runtimeAtom);
   const { state, busy, command } = useGuestLinks();
-  const messages = state.pending.filter(
-    (message) => message.sessionID === sessionID && message.connectionID === runtime?.connectionID,
-  );
-  if (!messages.length) return null;
-  return (
-    <section
-      aria-label="Pending guest messages"
-      className="mx-auto mb-2 max-h-64 w-full max-w-3xl space-y-2 overflow-y-auto px-4"
-    >
-      {messages.map((message) => (
-        <div key={message.id} className="space-y-2 rounded-md border border-border bg-card p-3">
-          <p className="text-compact font-medium">
-            Guest message from {message.name}{" "}
-            <span className="text-meta font-normal text-muted-foreground">· Unverified</span>
-          </p>
-          <p className="max-h-32 overflow-y-auto text-compact whitespace-pre-wrap break-words">
-            {message.text}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={busy || message.sending || !runtime?.connected}
-              onClick={() => command({ type: "approve", messageID: message.id })}
-            >
-              {message.sending ? "Sending…" : "Send"}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || message.sending}
-              onClick={() => command({ type: "dismiss", messageID: message.id })}
-            >
-              Dismiss
-            </Button>
-          </div>
-        </div>
-      ))}
-    </section>
-  );
+  const connectionID = runtime?.connectionID;
+  const connected = Boolean(runtime?.connected);
+  const pending = state.pending;
+  return useMemo(() => {
+    const messages = sessionID
+      ? pending.filter(
+          (message) => message.sessionID === sessionID && message.connectionID === connectionID,
+        )
+      : [];
+    return {
+      messages,
+      busy,
+      connected,
+      approve: (messageID: string) => command({ type: "approve", messageID }),
+      dismiss: (messageID: string) => command({ type: "dismiss", messageID }),
+    };
+  }, [busy, command, connected, connectionID, pending, sessionID]);
 }

@@ -11,6 +11,7 @@ import { createRendererQueryClient } from "../lib/query-client";
 import type { PendingRequestView } from "../lib/view-models";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { ComposerQueue } from "./composer-queue";
+import { toast } from "./ui/toast";
 
 function pending(
   id: string,
@@ -62,7 +63,7 @@ function renderQueue(element: ReactElement, interrupted = false) {
 }
 
 function row(label: string) {
-  return screen.getByRole("region", { name: `Pending message actions: ${label}` });
+  return screen.getByRole("group", { name: `Pending message actions: ${label}` });
 }
 
 afterEach(() => {
@@ -92,8 +93,8 @@ describe("ComposerQueue", () => {
       />,
     );
     // Three inputs collapse to a count; opening the list reveals each row.
-    expect(screen.queryByRole("region", { name: /^Pending message actions/ })).toBeNull();
-    act(() => screen.getByRole("button", { name: "3 pending" }).click());
+    expect(screen.queryByRole("group", { name: /^Pending message actions/ })).toBeNull();
+    act(() => screen.getByRole("button", { name: /^3 pending/ }).click());
 
     const first = row("Run tests after this turn");
     expect(within(first).getByText("Queued · 1")).toBeTruthy();
@@ -116,7 +117,7 @@ describe("ComposerQueue", () => {
         requests={[pending("a", "One"), pending("b", "Two"), pending("c", "Three")]}
       />,
     );
-    const toggle = screen.getByRole("button", { name: "3 queued" });
+    const toggle = screen.getByRole("button", { name: /^3 queued · next: One/ });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("One")).toBeNull();
 
@@ -260,5 +261,191 @@ describe("ComposerQueue", () => {
     // The refused cancellation stays visible with a retry.
     await waitFor(() => expect(within(row("Second")).getByText("Failed")).toBeTruthy());
     expect(within(row("Second")).getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("keeps the first queued row's Steer now in view while a turn runs", () => {
+    inbox();
+    renderQueue(
+      <ComposerQueue
+        sessionID="ses_1"
+        working
+        requests={[pending("a", "First"), pending("b", "Second")]}
+      />,
+    );
+    expect(
+      within(row("First")).getByRole("button", { name: "Steer now" }).hasAttribute("data-pinned"),
+    ).toBe(true);
+    expect(
+      within(row("Second")).getByRole("button", { name: "Steer now" }).hasAttribute("data-pinned"),
+    ).toBe(false);
+  });
+
+  it("offers to background the work a steer waits behind, on the steer's own row", async () => {
+    const user = userEvent.setup();
+    inbox();
+    const onBackground = vi.fn();
+    renderQueue(
+      <ComposerQueue
+        sessionID="ses_1"
+        working
+        requests={[
+          pending("a", "Queued later"),
+          pending("b", "Change course", "steer"),
+          pending("c", "Also later"),
+        ]}
+        blocked={{
+          id: "b",
+          submittedAt: 1,
+          items: [
+            {
+              kind: "subagent",
+              id: "child-1",
+              agent: "Explore",
+              description: "Map the timeline",
+              startedAt: 1,
+              fallbackStatus: "running",
+              background: false,
+            },
+          ],
+          backgrounding: false,
+          retry: false,
+          error: null,
+          onBackground,
+        }}
+      />,
+    );
+    // A blocked steer keeps the collapsed list open so its offer shows.
+    const blocked = row("Change course");
+    expect(blocked.getAttribute("data-state")).toBe("blocked");
+    expect(
+      within(blocked).getByText(/Waiting for the Map the timeline subagent to finish/),
+    ).toBeTruthy();
+    await user.click(
+      within(blocked).getByRole("button", {
+        name: "Send blocking work to background so the message can steer this turn",
+      }),
+    );
+    expect(onBackground).toHaveBeenCalledOnce();
+  });
+
+  it("says Try again with the error after backgrounding failed", () => {
+    inbox();
+    renderQueue(
+      <ComposerQueue
+        sessionID="ses_1"
+        working
+        requests={[pending("b", "Change course", "steer")]}
+        blocked={{
+          id: "b",
+          submittedAt: 1,
+          items: [
+            {
+              kind: "shell",
+              id: "s",
+              command: "bun test",
+              startedAt: 1,
+              background: false,
+            } as never,
+          ],
+          backgrounding: false,
+          retry: true,
+          error: "Could not background the blocking work.",
+          onBackground: vi.fn(),
+        }}
+      />,
+    );
+    const blocked = row("Change course");
+    expect(within(blocked).getByText(/Waiting for `bun test` to finish/)).toBeTruthy();
+    expect(within(blocked).getByText("Could not background the blocking work.")).toBeTruthy();
+    expect(
+      within(blocked).getByRole("button", { name: "Retry sending blocking work to background" })
+        .textContent,
+    ).toContain("Try again");
+  });
+
+  it("shows a message being edited as a row that can discard the edit", async () => {
+    const user = userEvent.setup();
+    inbox();
+    const onDiscard = vi.fn();
+    renderQueue(<ComposerQueue sessionID="ses_1" working requests={[]} editing={{ onDiscard }} />);
+    const editing = screen.getByRole("group", { name: "Editing a pending message" });
+    expect(editing.textContent).toContain("Editing in the message box");
+    await user.click(within(editing).getByRole("button", { name: "Cancel edit" }));
+    expect(onDiscard).toHaveBeenCalledOnce();
+  });
+});
+
+describe("ComposerQueue: Move to top", () => {
+  type Item = { id: string; type: "user"; delivery: string; payload: { text: string } };
+
+  function server(texts: string[], failText?: string) {
+    let items: Item[] = texts.map((text) => ({
+      id: text,
+      type: "user",
+      delivery: "queue",
+      payload: { text },
+    }));
+    const prompt = vi.fn(async (input: { id: string; text: string }) => {
+      if (input.text === failText) throw new Error("its file is gone");
+      items = [
+        ...items,
+        { id: input.id, type: "user", delivery: "queue", payload: { text: input.text } },
+      ];
+    });
+    const list = vi.fn(async () => items);
+    const cancel = vi.fn(async ({ inboxID }: { inboxID: string }) => {
+      items = items.filter((item) => item.id !== inboxID);
+    });
+    (window as unknown as { palot?: PalotApi }).palot = { runtimeStatus: vi.fn() } as never;
+    setOpenCodeClientForTest({
+      session: { prompt, inbox: { list, cancel, update: vi.fn() } },
+    } as unknown as OpenCodeClient);
+    return { texts: () => items.map((item) => item.payload.text), prompt };
+  }
+
+  const rowLabels = () =>
+    screen
+      .getAllByRole("group", { name: /^Pending message actions/ })
+      .map((element) =>
+        element.getAttribute("aria-label")!.replace("Pending message actions: ", ""),
+      );
+
+  it("offers Move to top on queued rows after the first and moves the message there", async () => {
+    const inbox = server(["A", "B"]);
+    renderQueue(
+      <ComposerQueue sessionID="ses_1" working requests={[pending("A", "A"), pending("B", "B")]} />,
+    );
+    expect(within(row("A")).queryByRole("button", { name: "Move to top" })).toBeNull();
+    await userEvent.click(within(row("B")).getByRole("button", { name: "Move to top" }));
+    // The rows show the new order at once, before OpenCode's events arrive.
+    expect(rowLabels()).toEqual(["B", "A"]);
+    await waitFor(() => expect(inbox.texts()).toEqual(["B", "A"]));
+    expect(rowLabels()).toEqual(["B", "A"]);
+  });
+
+  it("keeps every message and says so when a message cannot be re-queued", async () => {
+    const inbox = server(["A", "B", "C"], "B");
+    const add = vi.spyOn(toast, "add");
+    renderQueue(
+      <ComposerQueue
+        sessionID="ses_1"
+        working
+        requests={[pending("A", "A"), pending("B", "B"), pending("C", "C")]}
+      />,
+    );
+    act(() => screen.getByRole("button", { name: /^3 queued/ }).click());
+    await userEvent.click(within(row("C")).getByRole("button", { name: "Move to top" }));
+    await waitFor(() =>
+      expect(add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "error",
+          title: "Could not move the message to the top",
+          description: expect.stringContaining("its file is gone"),
+        }),
+      ),
+    );
+    expect(inbox.texts()).toEqual(["A", "B", "C"]);
+    expect(rowLabels()).toEqual(["A", "B", "C"]);
+    add.mockRestore();
   });
 });

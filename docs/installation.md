@@ -1,6 +1,6 @@
 # Install Palot
 
-Palot 0.23.0 is pre-release software, not a supported stable release. Use a desktop
+Palot 0.24.0 is pre-release software, not a supported stable release. Use a desktop
 asset from a current [GitHub release](https://github.com/ItsWendell/palot/releases),
 when available, or build from source below. The 0.12.0 release is source-only;
 older 0.11.x installers are the previous application, not Palot v2. Updates are
@@ -66,8 +66,8 @@ your installed OpenCode, or let you explicitly download a verified fallback from
 opencode.ai in **OpenCode release settings**. Starting or restarting the shared
 service is a separate confirmation. See [runtime management](opencode-runtime.md).
 
-Palot 0.23.0 requires stable OpenCode **2.0.7 or later in the 2.x series** and uses
-the **2.2.5** client and exact isolated release-smoke runtime. Earlier stable
+Palot 0.24.0 requires stable OpenCode **2.0.7 or later in the 2.x series** and uses
+the **2.4.1** client and exact isolated release-smoke runtime. Earlier stable
 services are refused; V2 betas require explicit consent. Update an older service
 separately before connecting. Updating Palot does not upgrade or restart OpenCode.
 See [compatibility](opencode-runtime.md#compatibility) for configuration changes
@@ -87,7 +87,7 @@ Build on the machine where you intend to use it, as your normal user.
 
 ## Platform status
 
-These are the existing platform checks, not a claim that every 0.23.0 artifact or
+These are the existing platform checks, not a claim that every 0.24.0 artifact or
 new feature is qualified on each system. Browser development scenarios do not
 verify the packaged Lighthouse dependency. See [desktop testing](desktop-testing.md)
 for the narrower scenario scopes.
@@ -159,6 +159,15 @@ The `t64` suffixes are intentional for Ubuntu 24.04; do not paste this list into
 older Ubuntu releases. The GTK package pulls in its accessibility, X11, and
 Wayland dependencies. On Ubuntu's default policy, the user-local app needs the
 per-application sandbox setup below after cloning, before its first launch.
+
+### Linux desktop tests
+
+The desktop E2E tests (`bun run test:e2e`) also need Weston. On Linux they open
+Palot on a private headless Weston display by default, so nothing appears on your
+desktop, and they stop before building when Weston is missing. Install the `weston`
+package with your distro's package manager (`sudo pacman -S --needed weston`,
+`sudo dnf install weston`, or `sudo apt install weston`). Building and running Palot
+itself does not need it.
 
 ### Linux desktop integration
 
@@ -280,6 +289,12 @@ If you set `XDG_DATA_HOME`, use a nonempty absolute path; otherwise leave it uns
 - Launcher: `~/.local/bin/palot-nightly`
 - Desktop entry: `${XDG_DATA_HOME:-$HOME/.local/share}/applications/dev.palot.desktop.nightly.desktop`
 - Launch log: `${XDG_DATA_HOME:-$HOME/.local/share}/palot/nightly-launch.log`
+
+The install also refreshes the applications database (`update-desktop-database`) and makes
+Nightly the `palot://` link handler (`xdg-mime default`), so `xdg-open 'palot://task/<id>'`
+opens the task. Either step only warns if it fails. Pass `--no-launch` (for example
+`bun apps/desktop/scripts/linux-package.ts install nightly --no-launch`) to install without
+starting the app.
 
 Launch from your desktop menu, or run `~/.local/bin/palot-nightly --show`. Add
 `~/.local/bin` to PATH if you want the shorter `palot-nightly` command.

@@ -57,7 +57,8 @@ export const distractorCatalog: CatalogTool[] = [
     "session_create",
     "session_list",
     "session_get",
-    "session_rename",
+    "session.rename",
+    "session.move",
     "session_prompt",
     "session_wait",
     "session_archive",
@@ -68,7 +69,7 @@ export const distractorCatalog: CatalogTool[] = [
     "worktree_create",
   ].map((name) => ({
     path: `opencode.${name}`,
-    description: `OpenCode ${name.replaceAll("_", " ")}`,
+    description: `OpenCode ${name.replace(/[._]/g, " ")}`,
   })),
   ...Object.entries({
     aws: [

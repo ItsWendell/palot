@@ -30,7 +30,7 @@ function CollapsibleContent({
         smooth && "box-border min-w-0 overflow-hidden data-open:overflow-visible",
         smooth &&
           animate &&
-          "h-(--collapsible-panel-height) transition-[height,opacity] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] data-ending-style:h-0 data-ending-style:overflow-hidden data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:overflow-hidden data-starting-style:opacity-0 motion-reduce:transition-none",
+          "h-(--collapsible-panel-height) transition-[height,opacity] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] data-ending-style:h-0 data-ending-style:overflow-hidden data-ending-style:opacity-0 data-ending-style:duration-160 data-starting-style:h-0 data-starting-style:overflow-hidden data-starting-style:opacity-0",
         !smooth && className,
       )}
       {...props}

@@ -1,4 +1,4 @@
-import { Provider, createStore } from "jotai";
+import { Provider, atom, createStore } from "jotai";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -16,6 +16,7 @@ import type {
 } from "../../shared";
 import {
   autoBackgroundOnSteerAtom,
+  composerDraftAtomFamily,
   compactBeforeSendSuggestionAtom,
   defaultDeliveryAtom,
   defaultModelsAtom,
@@ -39,7 +40,21 @@ import type { PendingRequestView } from "../lib/view-models";
 import { resetOpenCodeClientForTest, setOpenCodeClientForTest } from "../services/opencode-client";
 import { palot } from "../services/palot";
 import { Composer } from "./composer";
+import type { ComposerRunningWork } from "./composer/composer-standing";
+import type { BackgroundWorkItem } from "./subagent-activity";
+
+/** Running work as the thread hands it over: a stable atom. */
+function runningWorkOf(items: BackgroundWorkItem[]) {
+  return atom<ComposerRunningWork>({ items, work: null });
+}
+
+const openSession = vi.hoisted(() => vi.fn());
+vi.mock("../hooks/use-navigation", async (original) => ({
+  ...(await original<typeof import("../hooks/use-navigation")>()),
+  usePalotNavigation: () => ({ openSession }),
+}));
 import { toast } from "./ui/toast";
+import type { ComposerEditorElement } from "../lib/composer-editor-element";
 
 const session: PalotSession = {
   id: "session-composer",
@@ -110,6 +125,16 @@ function renderComposer(
   );
 }
 
+function messageBox() {
+  return screen.getByRole("textbox", { name: "Message Palot" });
+}
+
+/** Attaches through the launcher: `+`, then its "Attach files" row. */
+async function pickAttachments(user: { click(element: Element): Promise<void> } = userEvent) {
+  await user.click(screen.getByRole("button", { name: "Add files, commands and more" }));
+  await user.click(await screen.findByRole("option", { name: /^Attach files/ }));
+}
+
 function pendingSteer(id: string, createdAt: number): PendingRequestView {
   return {
     id,
@@ -177,14 +202,15 @@ describe("Composer discovery", () => {
       "test-profile",
       queryClient,
     );
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "See @");
     const option = await screen.findByRole("option", { name: "Related task Palot project" });
     expect(screen.queryByRole("option", { name: /Child task/ })).toBeNull();
     expect(screen.queryByRole("option", { name: /Wrong server task/ })).toBeNull();
     await user.click(option);
     expect(input.value).toBe(`See @session:${taskID} `);
-    await user.click(screen.getByRole("button", { name: "Remove task mention Related task" }));
+    expect(screen.getByRole("img", { name: "Task: Related task" })).toBeTruthy();
+    await user.keyboard("{Backspace}{Backspace}");
     expect(input.value).toBe("See ");
     await user.type(input, "@Related");
     await user.click(await screen.findByRole("option", { name: "Related task Palot project" }));
@@ -230,7 +256,7 @@ describe("Composer discovery", () => {
     expect(admitted).not.toHaveBeenCalled();
     expect(store.get(state).files).toBe(files);
     expect(store.get(state).sending).toBe(false);
-    expect((input as HTMLTextAreaElement).value).toBe("");
+    expect((input as ComposerEditorElement).value).toBe("");
     const tabs =
       store.get(workbenchStateAtom).scopes[
         workbenchScopeKey({ profileID: "test-profile", sessionID: session.id })
@@ -238,7 +264,7 @@ describe("Composer discovery", () => {
     expect(tabs).toMatchObject([{ kind: "btw", resource: { question: "Why this approach?" } }]);
     fireEvent.change(input, { target: { value: "Next message" } });
     await act(async () => response.resolve({ text: "Side answer" }));
-    expect((input as HTMLTextAreaElement).value).toBe("Next message");
+    expect((input as ComposerEditorElement).value).toBe("Next message");
   });
 
   it("sends a review comment on its own and leaves the draft and queued comments alone", async () => {
@@ -261,7 +287,7 @@ describe("Composer discovery", () => {
     };
     store.set(state, (current) => ({ ...current, comments: [queued] }));
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     fireEvent.change(input, { target: { value: "Unfinished thought" } });
     const sender = store.get(composerDirectSendAtomFamily(scope));
     expect(sender).toBeTypeOf("function");
@@ -323,9 +349,9 @@ describe("Composer discovery", () => {
     expect(screen.getByText("Enter a question after /btw.")).toBeTruthy();
     expect(generate).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
-    expect((input as HTMLTextAreaElement).value).toBe("/btw ");
+    expect((input as ComposerEditorElement).value).toBe("/btw ");
   });
-  it("blocks sending during attachment selection, shows progress, and cancels without losing the draft", async () => {
+  it("holds a send during attachment selection, shows progress, and cancels both without losing the draft", async () => {
     let complete!: (result: PalotFilePickerResult) => void;
     let progress!: (value: PalotAttachmentProgress) => void;
     const unsubscribe = vi.fn();
@@ -344,12 +370,14 @@ describe("Composer discovery", () => {
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
     const input = screen.getByRole("textbox", { name: "Message Palot" });
     await userEvent.type(input, "Keep this draft");
-    await userEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    await pickAttachments();
     expect(screen.getByRole("status").textContent).toBe("Preparing attachments…");
-    expect(screen.getByRole("button", { name: "Send message" }).hasAttribute("disabled")).toBe(
-      true,
-    );
     fireEvent.keyDown(input, { key: "Enter" });
+    expect(
+      (await screen.findByRole("button", { name: "Sends when the upload finishes" })).hasAttribute(
+        "disabled",
+      ),
+    ).toBe(true);
     expect(send).not.toHaveBeenCalled();
     const requestID = pick.mock.calls[0]![1]!;
     act(() =>
@@ -369,7 +397,10 @@ describe("Composer discovery", () => {
     expect(unsubscribe).toHaveBeenCalled();
     await act(async () => complete({ files: [], errors: ["Stale error"] }));
     expect(screen.queryByText("Stale error")).toBeNull();
-    expect((input as HTMLTextAreaElement).value).toBe("Keep this draft");
+    expect((input as ComposerEditorElement).value).toBe("Keep this draft");
+    // Canceling the upload drops the held send.
+    await screen.findByRole("button", { name: "Send message" });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("cancels an old scope's upload and ignores its late completion", async () => {
@@ -384,7 +415,7 @@ describe("Composer discovery", () => {
     const cancel = vi.spyOn(palot, "cancelAttachmentUpload").mockResolvedValue(undefined);
     const store = createStore();
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
-    await userEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    await pickAttachments();
     act(() =>
       store.set(runtimeAtom, {
         ...store.get(runtimeAtom)!,
@@ -463,9 +494,8 @@ describe("Composer discovery", () => {
         expect.any(String),
       ),
     );
-    expect(
-      fireEvent.paste(input, { clipboardData: { items: [], getData: () => "plain text" } }),
-    ).toBe(true);
+    fireEvent.paste(input, { clipboardData: { items: [], getData: () => "plain text" } });
+    expect((input as ComposerEditorElement).value).toBe("plain text");
     expect(attach).toHaveBeenCalledOnce();
   });
 
@@ -486,7 +516,10 @@ describe("Composer discovery", () => {
         onCreateSession={createSession}
       />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "Approvals: Defaults" }));
+    // Defaults show no chip; approvals change in the launcher's Approvals entry.
+    expect(screen.queryByRole("button", { name: /^Approvals:/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Add files, commands and more" }));
+    await userEvent.click(await screen.findByRole("option", { name: /^Approvals/ }));
     await userEvent.click(await screen.findByRole("option", { name: /^Full access/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Enable Full access" }));
     await screen.findByRole("button", { name: "Approvals: Full access" });
@@ -499,7 +532,29 @@ describe("Composer discovery", () => {
       expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ approvalMode: "full" })),
     );
     await waitFor(() => expect(send).toHaveBeenCalledOnce());
-    expect(screen.getByRole("button", { name: "Approvals: Defaults" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Approvals:/ })).toBeNull();
+  });
+
+  it("offers Send to several models in the model popover of a new task only", async () => {
+    const createSession = vi.fn().mockResolvedValue(session);
+    renderComposer(
+      <Composer
+        session={{ ...session, id: "new:project-1" }}
+        messages={[]}
+        isWorking={false}
+        onCreateSession={createSession}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Model:/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Send to several models…" }));
+    expect(await screen.findByRole("dialog", { name: "Send to several models…" })).toBeTruthy();
+    expect(createSession).not.toHaveBeenCalled();
+    cleanup();
+
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+    await userEvent.click(screen.getByRole("button", { name: /^Model:/ }));
+    await screen.findByRole("button", { name: "Manage models" });
+    expect(screen.queryByRole("button", { name: "Send to several models…" })).toBeNull();
   });
 
   it("does not memoize away external session permission updates", () => {
@@ -513,7 +568,7 @@ describe("Composer discovery", () => {
       </QueryClientProvider>
     );
     const view = render(wrap(session));
-    expect(screen.getByRole("button", { name: "Approvals: Defaults" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Approvals:/ })).toBeNull();
     view.rerender(
       wrap({ ...session, permissions: [{ action: "*", resource: "*", effect: "allow" }] }),
     );
@@ -551,12 +606,13 @@ describe("Composer discovery", () => {
       model: { id: "reasoner", providerID: "openai", variant: "default" },
     };
     renderComposer(<Composer session={hydratedSession} messages={[]} isWorking={false} />);
-    await screen.findByRole("button", { name: "Model: Reasoner" });
-    await userEvent.click(screen.getByRole("button", { name: "Reasoning: Auto" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Model: Reasoner, effort Auto" }),
+    );
     expect(screen.getByRole("option", { name: /^Auto/ }).getAttribute("aria-selected")).toBe(
       "true",
     );
-    expect(screen.getByRole("option", { name: "High" }).getAttribute("aria-selected")).toBe(
+    expect(screen.getByRole("option", { name: /^High/ }).getAttribute("aria-selected")).toBe(
       "false",
     );
     expect(hydratedSession.model.variant).toBe("default");
@@ -664,7 +720,7 @@ describe("Composer discovery", () => {
         onCreateSession={createSession}
       />,
     );
-    await screen.findByRole("button", { name: "Model: Reasoner" });
+    await screen.findByRole("button", { name: "Model: Reasoner, effort Auto" });
     const input = screen.getByRole("textbox", { name: "Message Palot" });
     await userEvent.type(input, "Plan the change{Enter}");
     expect(createSession).not.toHaveBeenCalled();
@@ -685,8 +741,9 @@ describe("Composer discovery", () => {
     // OpenCode lists its resolved default agent first; the draft shows it by name.
     await userEvent.click(await screen.findByRole("button", { name: "Agent: Plan (default)" }));
     await userEvent.click(await screen.findByRole("option", { name: "Plan" }));
-    await userEvent.click(screen.getByRole("button", { name: /^Reasoning:/ }));
-    await userEvent.click(screen.getByRole("option", { name: "High" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Model:/ }));
+    await userEvent.click(screen.getByRole("option", { name: /^High/ }));
+    await waitFor(() => expect(screen.queryByRole("listbox", { name: /^Effort/ })).toBeNull());
     await userEvent.click(input);
     await userEvent.keyboard("{Enter}");
     expect(createSession).toHaveBeenCalledWith({
@@ -926,8 +983,10 @@ describe("Composer discovery", () => {
       store,
     );
 
-    await userEvent.click(await screen.findByRole("button", { name: "Reasoning: Low" }));
-    await userEvent.click(screen.getByRole("option", { name: "High" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Model: Reasoner, effort Low" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: /^High/ }));
 
     expect(
       store.get(defaultModelsAtom)[modelProjectPreferenceKey("test-profile", session.projectID)],
@@ -936,7 +995,9 @@ describe("Composer discovery", () => {
       providerID: "openai",
       variant: "low",
     });
-    expect(await screen.findByRole("button", { name: "Reasoning: High" })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: "Model: Reasoner, effort High" }),
+    ).toBeTruthy();
   });
 
   it.each(["project-1", "global"])(
@@ -1154,8 +1215,8 @@ describe("Composer discovery", () => {
           list: vi.fn().mockResolvedValue({
             data: [
               {
-                name: "review",
-                description: "Review current changes",
+                name: "lint",
+                description: "Run the linter",
               },
             ],
           }),
@@ -1166,10 +1227,10 @@ describe("Composer discovery", () => {
 
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
-    await user.type(input, "/rev");
-    await user.click(await screen.findByRole("option", { name: /\/review/i }));
-    expect(input.value).toBe("/review ");
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
+    await user.type(input, "/lin");
+    await user.click(await screen.findByRole("option", { name: /\/lint/i }));
+    expect(input.value).toBe("/lint ");
 
     await user.type(input, "auth");
     await user.keyboard("{Enter}");
@@ -1178,13 +1239,39 @@ describe("Composer discovery", () => {
       expect(runCommand).toHaveBeenCalledWith(
         {
           sessionID: session.id,
-          name: "review",
+          name: "lint",
           text: "auth",
           delivery: "steer",
         },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
+  });
+
+  it("closes the command list for // and for paths that match no command folder", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(
+      client({
+        command: {
+          list: vi.fn().mockResolvedValue({
+            data: [{ name: "git/commit", description: "Commit staged changes" }],
+          }),
+        },
+      }),
+    );
+
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
+    await user.type(input, "/git/");
+    expect(await screen.findByRole("option", { name: /\/git\/commit/i })).toBeTruthy();
+    await user.keyboard("{Control>}a{/Control}{Backspace}");
+    await user.type(input, "/home/me");
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    await user.keyboard("{Control>}a{/Control}{Backspace}");
+    await user.type(input, "//");
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
   });
 
   it("finds and runs a command from a nested folder by its path", async () => {
@@ -1207,7 +1294,7 @@ describe("Composer discovery", () => {
 
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     // Typing past the folder's slash keeps the suggestion list on that command.
     await user.type(input, "/git/co");
     await user.click(await screen.findByRole("option", { name: /\/git\/commit/i }));
@@ -1305,7 +1392,7 @@ describe("Composer discovery", () => {
 
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "Check @auth");
     await waitFor(() =>
       expect(findWorkspaceFiles).toHaveBeenCalledWith(
@@ -1318,7 +1405,7 @@ describe("Composer discovery", () => {
         expect.anything(),
       ),
     );
-    await user.click(await screen.findByRole("option", { name: /@auth\.ts.*src\/auth\.ts/i }));
+    await user.click(await screen.findByRole("option", { name: /^auth\.ts src/ }));
 
     expect(input.value).toBe("Check @src/auth.ts ");
   });
@@ -1375,7 +1462,7 @@ describe("Composer discovery", () => {
 
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "Ask @");
     const agents = await screen.findByRole("group", { name: "Agents" });
     const references = screen.getByRole("group", { name: "References" });
@@ -1419,7 +1506,7 @@ describe("Composer discovery", () => {
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     const send = vi.spyOn(palot, "sendComposerPrompt");
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
 
     for (const [name, commandID] of [
       ["fork", "task.fork"],
@@ -1507,7 +1594,7 @@ describe("Composer discovery", () => {
     );
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "/");
     await screen.findByRole("option", { name: /\/alpha/i });
     const bravo = screen.getByRole("option", { name: /\/bravo/i });
@@ -1537,14 +1624,13 @@ describe("Composer discovery", () => {
       }),
     );
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "/");
     await screen.findByRole("option", { name: /\/alpha/i });
 
-    // The suggestions filter with a deferred query, so Enter can arrive before they catch up.
+    // Enter in the same tick as the edit acts on the rows of the typed query, rendered or not.
     act(() => {
       fireEvent.change(input, { target: { value: "/be", selectionStart: 3, selectionEnd: 3 } });
-      expect(screen.getByRole("option", { name: /\/alpha/i })).toBeTruthy();
       fireEvent.keyDown(input, { key: "Enter" });
     });
 
@@ -1566,7 +1652,7 @@ describe("Composer discovery", () => {
 
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "/comp");
     await user.click(await screen.findByRole("option", { name: /\/compact/i }));
     expect(input.value).toBe("/compact ");
@@ -1627,7 +1713,7 @@ describe("Composer discovery", () => {
 
     renderComposer(<Composer session={session} messages={[message]} isWorking={false} />);
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "/und");
     await user.click(await screen.findByRole("option", { name: /\/undo/i }));
     await user.keyboard("{Enter}");
@@ -1703,7 +1789,7 @@ describe("Composer discovery", () => {
       />,
     );
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "/red");
     await user.click(await screen.findByRole("option", { name: /\/redo/i }));
     await user.keyboard("{Enter}");
@@ -1750,7 +1836,7 @@ describe("Composer discovery", () => {
       renderComposer(
         <Composer session={{ ...session, revert }} messages={messages} isWorking={false} />,
       );
-      const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+      const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
       fireEvent.change(input, { target: { value: `/${command}` } });
       await userEvent.click(
         await screen.findByRole("option", { name: new RegExp(`/${command}`, "i") }),
@@ -1836,7 +1922,7 @@ describe("Composer discovery", () => {
       );
       const mounted = render(view(session));
       const input = () =>
-        screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+        screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
       fireEvent.change(input(), { target: { value: "/undo" } });
       await userEvent.click(await screen.findByRole("option", { name: /\/undo/i }));
       fireEvent.keyDown(input(), { key: "Enter" });
@@ -1904,7 +1990,7 @@ describe("Composer discovery", () => {
           isWorking
         />,
       );
-      const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+      const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
       fireEvent.change(input, { target: { value: `/${command}` } });
       await userEvent.click(
         await screen.findByRole("option", { name: new RegExp(`/${command}`, "i") }),
@@ -1929,21 +2015,67 @@ describe("Composer prompt stash", () => {
     ];
     store.set(state, (current) => ({ ...current, files }));
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     fireEvent.change(input, { target: { value: "Save this prompt" } });
     fireEvent.keyDown(document, { key: "s", ctrlKey: true });
     expect(input.value).toBe("Save this prompt");
     fireEvent.keyDown(input, { key: "s", ctrlKey: true });
-    expect(input.value).toBe("");
+    await waitFor(() => expect(input.value).toBe(""));
     expect(store.get(state).files).toEqual([]);
     const scope = JSON.stringify(["test-profile", session.projectID]);
     expect(loadPromptStash(scope)[0]).toMatchObject({ draft: { text: "Save this prompt" }, files });
     fireEvent.change(input, { target: { value: "New unsent work" } });
-    await userEvent.click(screen.getByRole("button", { name: "Prompt stash" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Restore Save this prompt" }));
-    expect(input.value).toBe("Save this prompt");
+    // The launcher sets the new work aside, then swaps it into the stash for the restored one.
+    await userEvent.click(screen.getByRole("button", { name: "Add files, commands and more" }));
+    await userEvent.click(await screen.findByRole("option", { name: /^Stashed prompts/ }));
+    await userEvent.click(await screen.findByRole("option", { name: /^Save this prompt/ }));
+    await waitFor(() => expect(input.value).toBe("Save this prompt"));
     expect(store.get(state).files).toEqual(files);
     expect(loadPromptStash(scope).map((entry) => entry.draft.text)).toEqual(["New unsent work"]);
+  });
+
+  it("keeps pasted files with a stashed prompt and says which ones did not come back", async () => {
+    const store = createStore();
+    const state = composerStateAtomFamily(composerScope("test-profile", `session:${session.id}`));
+    const pasted = (name: string) => ({
+      uri: `file:///staged/${name}`,
+      name,
+      mime: "image/png",
+      size: 1,
+    });
+    store.set(state, (current) => ({
+      ...current,
+      files: [pasted("kept.png"), pasted("gone.png")],
+    }));
+    const persist = vi
+      .spyOn(palot, "persistComposerAttachments")
+      .mockImplementation(async (uris) => uris.map((uri) => uri.replace("staged", "stash")));
+    vi.spyOn(palot, "restoreComposerAttachments").mockResolvedValue([
+      { status: "restored", uri: "file:///staged/again.png" },
+      { status: "missing" },
+    ]);
+    const release = vi.spyOn(palot, "releaseComposerAttachments").mockResolvedValue();
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
+    fireEvent.change(input, { target: { value: "With screenshots" } });
+    fireEvent.keyDown(input, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(input.value).toBe(""));
+    expect(persist).toHaveBeenCalledWith(["file:///staged/kept.png", "file:///staged/gone.png"]);
+    const scope = JSON.stringify(["test-profile", session.projectID]);
+    expect(loadPromptStash(scope)[0]?.files.map((file) => file.uri)).toEqual([
+      "file:///stash/kept.png",
+      "file:///stash/gone.png",
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "Add files, commands and more" }));
+    await userEvent.click(await screen.findByRole("option", { name: /^Stashed prompts/ }));
+    await userEvent.click(await screen.findByRole("option", { name: /^With screenshots/ }));
+    await waitFor(() => expect(input.value).toBe("With screenshots"));
+    expect(store.get(state).files).toEqual([
+      { ...pasted("kept.png"), uri: "file:///staged/again.png" },
+    ]);
+    expect(await screen.findByText(/Not restored: gone\.png/)).toBeTruthy();
+    expect(release).toHaveBeenCalledWith(["file:///stash/kept.png", "file:///stash/gone.png"]);
+    expect(loadPromptStash(scope)).toEqual([]);
   });
 
   it("does not stash while an attachment upload can still mutate the draft", async () => {
@@ -1951,21 +2083,18 @@ describe("Composer prompt stash", () => {
     vi.spyOn(palot, "pickFiles").mockReturnValue(upload.promise);
     vi.spyOn(palot, "onAttachmentProgress").mockReturnValue(() => undefined);
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     fireEvent.change(input, { target: { value: "Keep me" } });
-    await userEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    await pickAttachments();
     fireEvent.keyDown(input, { key: "s", ctrlKey: true });
     expect(input.value).toBe("Keep me");
     expect(loadPromptStash(JSON.stringify(["test-profile", session.projectID]))).toEqual([]);
-    expect(screen.getByRole("button", { name: "Prompt stash" }).hasAttribute("disabled")).toBe(
-      true,
-    );
     await act(async () => upload.resolve({ files: [], errors: [] }));
   });
 
   it("accepts a workspace-file drop as a resolved mention only from the same workspace", () => {
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     const transfer = (profileID: string) => ({
       types: [WORKSPACE_FILE_DRAG_TYPE],
       getData: () => JSON.stringify({ profileID, ...session.location, path: "src/example.ts" }),
@@ -1974,9 +2103,7 @@ describe("Composer prompt stash", () => {
     expect(input.value).toBe("");
     fireEvent.drop(input, { dataTransfer: transfer("test-profile") });
     expect(input.value).toBe("@src/example.ts ");
-    expect(
-      screen.getByRole("button", { name: "Remove file mention @src/example.ts" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("img", { name: "File: @src/example.ts" })).toBeTruthy();
   });
 });
 
@@ -1992,7 +2119,7 @@ describe("Composer text entry", () => {
     setOpenCodeClientForTest(client({ session: { prompt } }));
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
-    const input = screen.getByRole("textbox", { name: "Message Palot" }) as HTMLTextAreaElement;
+    const input = screen.getByRole("textbox", { name: "Message Palot" }) as ComposerEditorElement;
     await userEvent.type(input, "First line{Shift>}{Enter}{/Shift}Second line");
     expect(input.value).toBe("First line\nSecond line");
     expect(prompt).not.toHaveBeenCalled();
@@ -2030,7 +2157,9 @@ describe("Composer steering", () => {
 
     const input = screen.getByRole("textbox", { name: "Message Palot" });
     fireEvent.change(input, { target: { value: "Run this next" } });
-    expect(screen.getByRole("button", { name: "Choose message delivery" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Queue message after current turn" })).toBeTruthy();
+    // Delivery is a setting; the composer has no menu for it.
+    expect(screen.queryByRole("button", { name: "Choose message delivery" })).toBeNull();
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() =>
@@ -2041,22 +2170,51 @@ describe("Composer steering", () => {
     );
   });
 
-  it("changes the busy submit action from the delivery menu", async () => {
-    const user = userEvent.setup();
+  it("follows the default delivery and previews Steer while Mod is held", async () => {
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
-
-    renderComposer(<Composer session={session} messages={[]} isWorking />);
+    const store = createStore();
+    renderComposer(<Composer session={session} messages={[]} isWorking />, store);
 
     fireEvent.change(screen.getByRole("textbox", { name: "Message Palot" }), {
       target: { value: "Change course" },
     });
-    expect(screen.getByRole("button", { name: "Queue message after current turn" })).toBeTruthy();
-    expect(screen.getByText("Queue", { exact: true })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Choose message delivery" }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /Steer current turn/i }));
+    const primary = screen.getByRole("button", { name: "Queue message after current turn" });
+    expect(primary.textContent).toBe("Queue");
+    fireEvent.keyDown(window, { key: "Control" });
+    await waitFor(() => expect(primary.getAttribute("aria-label")).toBe("Steer current turn"));
+    expect(primary.textContent).toBe("Steer");
+    fireEvent.keyUp(window, { key: "Control" });
+    await waitFor(() => expect(primary.textContent).toBe("Queue"));
 
-    expect(screen.getByRole("button", { name: "Steer current turn" })).toBeTruthy();
-    expect(screen.getByText("Steer", { exact: true })).toBeTruthy();
+    act(() => store.set(defaultDeliveryAtom, "steer"));
+    expect(screen.getByRole("button", { name: "Steer current turn" }).textContent).toBe("Steer");
+  });
+
+  it("steers with a Mod-click while queue is the default", async () => {
+    const prompt = vi.fn().mockResolvedValue({
+      id: "message-steer-click",
+      sessionID: session.id,
+      type: "user" as const,
+      delivery: "steer" as const,
+      time: { created: 10_000 },
+    });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ session: { prompt } }));
+    renderComposer(<Composer session={session} messages={[]} isWorking />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Message Palot" }), {
+      target: { value: "Correct course" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Queue message after current turn" }), {
+      ctrlKey: true,
+    });
+
+    await waitFor(() =>
+      expect(prompt).toHaveBeenCalledWith(
+        expect.objectContaining({ delivery: "steer", text: "Correct course" }),
+        expect.anything(),
+      ),
+    );
   });
 
   it("steers directly with Cmd or Ctrl Enter while queue is selected", async () => {
@@ -2082,6 +2240,136 @@ describe("Composer steering", () => {
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
+  });
+
+  it("queues a message first with Alt+Enter while the task works, whatever the default", async () => {
+    type Item = { id: string; type: "user"; delivery: string; payload: { text: string } };
+    let items: Item[] = [
+      { id: "msg-a", type: "user", delivery: "queue", payload: { text: "A" } },
+      { id: "msg-b", type: "user", delivery: "queue", payload: { text: "B" } },
+    ];
+    const prompt = vi.fn(async (input: { id: string; text: string; delivery: string }) => {
+      items = [
+        ...items,
+        { id: input.id, type: "user", delivery: input.delivery, payload: { text: input.text } },
+      ];
+      return {
+        id: input.id,
+        sessionID: session.id,
+        type: "user" as const,
+        delivery: input.delivery,
+        time: { created: 10_000 },
+      };
+    });
+    const list = vi.fn(async () => items);
+    const cancel = vi.fn(async ({ inboxID }: { inboxID: string }) => {
+      items = items.filter((item) => item.id !== inboxID);
+    });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ session: { prompt, inbox: { list, cancel } } }));
+    const store = createStore();
+    store.set(defaultDeliveryAtom, "steer");
+    const queued = (id: string, detail: string): PendingRequestView => ({
+      ...pendingSteer(id, 2),
+      detail,
+      delivery: "queue",
+    });
+    renderComposer(
+      <Composer
+        session={session}
+        messages={[]}
+        isWorking
+        pendingInputs={[queued("msg-a", "A"), queued("msg-b", "B")]}
+      />,
+      store,
+    );
+
+    fireEvent.change(messageBox(), { target: { value: "Do this first" } });
+    fireEvent.keyDown(messageBox(), { key: "Enter", altKey: true });
+
+    await waitFor(() =>
+      expect(items.map((item) => item.payload.text)).toEqual(["Do this first", "A", "B"]),
+    );
+    expect(prompt.mock.calls[0]![0]).toMatchObject({ text: "Do this first", delivery: "queue" });
+    // The others went back behind it, queued and without waking the task.
+    expect(prompt.mock.calls.slice(1).map(([input]) => input)).toMatchObject([
+      { text: "A", delivery: "queue", resume: false },
+      { text: "B", delivery: "queue", resume: false },
+    ]);
+    expect(items.every((item) => item.delivery === "queue")).toBe(true);
+  });
+
+  it("steers only the first queued message with Cmd or Ctrl Enter on an empty composer", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    const prompt = vi.fn();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ session: { prompt, inbox: { update } } }));
+    const queued = (id: string, detail: string): PendingRequestView => ({
+      ...pendingSteer(id, 2),
+      detail,
+      delivery: "queue",
+    });
+
+    renderComposer(
+      <Composer
+        session={session}
+        messages={[]}
+        isWorking
+        pendingInputs={[
+          pendingSteer("msg-steering", 1),
+          queued("msg-a", "A"),
+          queued("msg-b", "B"),
+          queued("msg-c", "C"),
+        ]}
+      />,
+    );
+
+    fireEvent.keyDown(messageBox(), { key: "Enter", ctrlKey: true });
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledExactlyOnceWith({
+        sessionID: session.id,
+        inboxID: "msg-a",
+        delivery: "steer",
+      }),
+    );
+    expect(prompt).not.toHaveBeenCalled();
+
+    // Plain Enter on an empty composer still does nothing.
+    fireEvent.keyDown(messageBox(), { key: "Enter" });
+    expect(update).toHaveBeenCalledOnce();
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("keeps Cmd or Ctrl Enter on the composer when it holds a message or the task is idle", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    const prompt = vi.fn().mockResolvedValue({
+      id: "message-steer",
+      sessionID: session.id,
+      type: "user" as const,
+      delivery: "steer" as const,
+      time: { created: 10_000 },
+    });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ session: { prompt, inbox: { update } } }));
+    const queue = [{ ...pendingSteer("msg-a", 2), delivery: "queue" as const }];
+
+    renderComposer(
+      <Composer session={session} messages={[]} isWorking={false} pendingInputs={queue} />,
+    );
+    fireEvent.keyDown(messageBox(), { key: "Enter", metaKey: true });
+    cleanup();
+
+    renderComposer(<Composer session={session} messages={[]} isWorking pendingInputs={queue} />);
+    fireEvent.change(messageBox(), { target: { value: "Correct course" } });
+    fireEvent.keyDown(messageBox(), { key: "Enter", metaKey: true });
+
+    await waitFor(() =>
+      expect(prompt).toHaveBeenCalledWith(
+        expect.objectContaining({ delivery: "steer", text: "Correct course" }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("sends an opted-in steer immediately and backgrounds a blocking subagent after five seconds", async () => {
@@ -2133,7 +2421,7 @@ describe("Composer steering", () => {
         messages={liveMessages}
         isWorking
         pendingInputs={pendingInputs}
-        backgroundWork={[
+        runningWork={runningWorkOf([
           {
             kind: "subagent",
             id: "child-1",
@@ -2143,7 +2431,7 @@ describe("Composer steering", () => {
             fallbackStatus: "running",
             background: false,
           },
-        ]}
+        ])}
       />,
       store,
     );
@@ -2207,7 +2495,7 @@ describe("Composer steering", () => {
         messages={liveMessages}
         isWorking
         pendingInputs={pendingInputs}
-        backgroundWork={[
+        runningWork={runningWorkOf([
           {
             kind: "shell",
             id: "shell-1",
@@ -2215,7 +2503,7 @@ describe("Composer steering", () => {
             startedAt: 1_000,
             background: false,
           },
-        ]}
+        ])}
       />,
       store,
     );
@@ -2265,7 +2553,7 @@ describe("Composer steering", () => {
         session={session}
         messages={[]}
         isWorking
-        backgroundWork={[
+        runningWork={runningWorkOf([
           {
             kind: "shell",
             id: "shell-1",
@@ -2273,7 +2561,7 @@ describe("Composer steering", () => {
             startedAt: 1_000,
             background: false,
           },
-        ]}
+        ])}
       />,
       store,
     );
@@ -2335,7 +2623,7 @@ describe("Composer steering", () => {
         messages={liveMessages}
         isWorking
         pendingInputs={pendingInputs}
-        backgroundWork={[
+        runningWork={runningWorkOf([
           {
             kind: "subagent",
             id: "child-1",
@@ -2345,7 +2633,7 @@ describe("Composer steering", () => {
             fallbackStatus: "running",
             background: false,
           },
-        ]}
+        ])}
       />,
       store,
     );
@@ -2357,11 +2645,7 @@ describe("Composer steering", () => {
     await act(() => vi.advanceTimersByTimeAsync(5_000));
 
     expect(prompt).toHaveBeenCalledOnce();
-    expect(
-      screen.getByText(
-        /The subagent 'Map the timeline' is blocking your message from steering this turn/,
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText(/Waiting for the Map the timeline subagent to finish/)).toBeTruthy();
     expect(
       screen.getByText(/Could not background the blocking work: No background capacity/),
     ).toBeTruthy();
@@ -2451,12 +2735,12 @@ describe("Composer pending inputs", () => {
   }
 
   function input() {
-    return screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    return screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
   }
 
   async function writeOriginalDraft() {
     fireEvent.change(input(), { target: { value: "Original unsent draft" } });
-    await userEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    await pickAttachments();
     expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
   }
 
@@ -2491,7 +2775,7 @@ describe("Composer pending inputs", () => {
       });
       expect(input().value).toBe("/undo ");
       expect(screen.queryByRole("button", { name: "Remove queued.txt" })).toBeNull();
-      expect(screen.queryByText(/Resubmitting adds it to the end/)).toBeNull();
+      expect(screen.queryByText(/adds it to the end of the queue/)).toBeNull();
       fireEvent.keyDown(input(), { key: "Enter" });
       expect(cancel).toHaveBeenCalledTimes(1);
       // New typing remains the independent original draft when cancellation finishes elsewhere.
@@ -2516,7 +2800,7 @@ describe("Composer pending inputs", () => {
       expect(
         screen.getByText(delivery === "queue" ? "Queue" : "Steer", { exact: true }),
       ).toBeTruthy();
-      await userEvent.click(screen.getByRole("button", { name: "Discard edit and restore draft" }));
+      await userEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
       expect(input().value).toBe("Original unsent draft");
       expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
       expect(interrupt).not.toHaveBeenCalled();
@@ -2578,7 +2862,7 @@ describe("Composer pending inputs", () => {
     const returned = mount();
     expect(input().value).toBe("First profile edit");
     expect(screen.getByRole("button", { name: "Remove queued.txt" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Discard edit and restore draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
     expect(input().value).toBe("Original unsent draft");
     expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
     returned.unmount();
@@ -2606,7 +2890,7 @@ describe("Composer pending inputs", () => {
       await act(async () => result.resolve(receipt));
       expect(input().value).toBe("Other profile edit");
       expect(screen.getByRole("button", { name: "Remove queued.txt" })).toBeTruthy();
-      await userEvent.click(screen.getByRole("button", { name: "Discard edit and restore draft" }));
+      await userEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
       expect(input().value).toBe("Original unsent draft");
       expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
       other.unmount();
@@ -2628,7 +2912,7 @@ describe("Composer pending inputs", () => {
     mount();
     expect(input().value).toBe("Revised queued draft");
     expect(screen.getByRole("button", { name: "Remove queued.txt" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Discard edit and restore draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
     expect(input().value).toBe("Original unsent draft");
     expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Remove queued.txt" })).toBeNull();
@@ -2662,7 +2946,7 @@ describe("Composer pending inputs", () => {
     mount();
     expect(input().value).toBe("Original unsent draft");
     expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
-    expect(screen.queryByText(/Resubmitting adds it to the end/)).toBeNull();
+    expect(screen.queryByText(/adds it to the end of the queue/)).toBeNull();
   });
 
   it("keeps a failed edited submission and its original draft across remount, then retries", async () => {
@@ -2712,9 +2996,7 @@ describe("Composer pending inputs", () => {
       expect(input().value).toBe("Newer draft while sending");
       if (editing) {
         expect(screen.getByRole("button", { name: "Remove queued.txt" })).toBeTruthy();
-        await userEvent.click(
-          screen.getByRole("button", { name: "Discard edit and restore draft" }),
-        );
+        await userEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
         expect(input().value).toBe("Original unsent draft");
       }
       expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
@@ -2754,7 +3036,7 @@ describe("Composer pending inputs", () => {
     await editQueuedDraft();
     fireEvent.keyDown(input(), { key: "Enter" });
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-    await userEvent.click(screen.getByRole("button", { name: "Discard edit and restore draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
     fireEvent.change(input(), { target: { value: "Updated original draft" } });
     await act(async () => result.reject(new Error("Send failed")));
     expect(input().value).toBe("Updated original draft");
@@ -2774,7 +3056,7 @@ describe("Composer pending inputs", () => {
     fireEvent.change(input(), { target: { value: "Typed while canceling" } });
     await act(async () => result.resolve());
     expect(input().value).toBe("Queued draft");
-    await userEvent.click(screen.getByRole("button", { name: "Discard edit and restore draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
     expect(input().value).toBe("Typed while canceling");
     expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
     expect(cancel).toHaveBeenCalledTimes(1);
@@ -2788,10 +3070,10 @@ describe("Composer pending inputs", () => {
     await editQueuedDraft();
     expect(input().value).toBe("Original unsent draft");
     expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
-    expect(screen.queryByText(/Resubmitting adds it to the end/)).toBeNull();
+    expect(screen.queryByText(/adds it to the end of the queue/)).toBeNull();
   });
 
-  it("renders queued and steering inputs in a sibling rail above the input body", () => {
+  it("renders queued and steering inputs inside the card, above the message", () => {
     Object.defineProperty(window, "palot", {
       configurable: true,
       value: bridge({}),
@@ -2830,15 +3112,15 @@ describe("Composer pending inputs", () => {
       />,
     );
 
-    const pending = screen.getByRole("region", { name: `Pending message actions: ${detail}` });
+    const pending = screen.getByRole("group", { name: `Pending message actions: ${detail}` });
     const rail = screen.getByRole("region", { name: "Pending messages" });
-    const inputGroup = input().closest('[data-slot="input-group"]');
+    const card = input().closest('[data-slot="composer"]');
     expect(rail.contains(pending)).toBe(true);
-    expect(pending.closest('[data-slot="input-group"]')).toBeNull();
-    expect(rail.nextElementSibling?.contains(inputGroup)).toBe(true);
+    expect(card?.contains(rail)).toBe(true);
+    expect(rail.compareDocumentPosition(input()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       within(rail)
-        .getAllByRole("region")
+        .getAllByRole("group")
         .map((row) => row.getAttribute("data-palot-request-id")),
     ).toEqual(["msg-pending", "msg-steering"]);
     expect(screen.getByText(detail).className).toContain("truncate");
@@ -2880,7 +3162,7 @@ describe("Composer pending inputs", () => {
       expect(screen.queryByText("Failed") === null).toBe(outcome === "success");
       expect(input().value).toBe("Original unsent draft");
       expect(screen.getByRole("button", { name: "Remove original.txt" })).toBeTruthy();
-      expect(screen.queryByText(/Resubmitting adds it to the end/)).toBeNull();
+      expect(screen.queryByText(/adds it to the end of the queue/)).toBeNull();
     },
   );
 
@@ -2921,7 +3203,7 @@ describe("Composer pending inputs", () => {
         pendingInputs={[{ ...pendingSteer(queuedMessage.id, 2), detail: " ", delivery: "queue" }]}
       />,
     );
-    const row = screen.getByRole("region", { name: `Pending message actions: ${label}` });
+    const row = screen.getByRole("group", { name: `Pending message actions: ${label}` });
     expect(within(row).getByText(label)).toBeTruthy();
     await editQueuedDraft();
     expect(cancel).toHaveBeenCalledExactlyOnceWith({
@@ -2959,7 +3241,7 @@ describe("Composer pending inputs", () => {
     act(() => undo());
     expect(input().value).toBe("Queued draft");
     expect(screen.getByRole("button", { name: "Remove queued.txt" })).toBeTruthy();
-    expect(screen.getByText(/Resubmitting adds it to the end/)).toBeTruthy();
+    expect(screen.getByText(/adds it to the end of the queue/)).toBeTruthy();
     // Undo never re-admits on its own; a paused queue stays paused.
     expect(send).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledTimes(1);
@@ -3049,7 +3331,7 @@ describe("Composer pending inputs", () => {
       />,
     );
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "Existing composer draft");
     await user.click(screen.getByRole("button", { name: "Edit pending message" }));
 
@@ -3057,9 +3339,9 @@ describe("Composer pending inputs", () => {
       expect(cancel).toHaveBeenCalledWith({ sessionID: session.id, inboxID: message.id }),
     );
     expect(input.value).toBe("Pending message to revise");
-    expect(screen.getByText(/Resubmitting adds it to the end/)).toBeTruthy();
+    expect(screen.getByText(/adds it to the end of the queue/)).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Discard edit and restore draft" }));
+    await user.click(screen.getByRole("button", { name: "Cancel edit" }));
     expect(input.value).toBe("Existing composer draft");
   });
 });
@@ -3125,12 +3407,20 @@ describe("Composer compact before send", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
   });
 
-  it("sends without compacting from the menu", async () => {
+  it("says why in one notice line, whose Send as is turns the primary back into Send", async () => {
     const user = userEvent.setup();
     const { prompt, compact } = setup(idleTask(2 * 60 * 60_000));
+    const notice = screen.getByRole("status");
+    expect(notice.textContent).toMatch(/Sending re-reads 15\dk tokens of history/);
     await user.type(screen.getByRole("textbox", { name: "Message Palot" }), "Just send it");
-    await user.click(screen.getByRole("button", { name: "More send options" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Send without compacting" }));
+    expect(screen.getByRole("button", { name: "Compact and send" })).toBeTruthy();
+    await user.click(within(notice).getByRole("button", { name: "Send as is" }));
+    expect(screen.queryByRole("button", { name: "Compact and send" })).toBeNull();
+    await user.click(within(notice).getByRole("button", { name: "Compact first" }));
+    expect(screen.getByRole("button", { name: "Compact and send" })).toBeTruthy();
+    await user.click(within(notice).getByRole("button", { name: "Send as is" }));
+    await user.click(screen.getByRole("textbox", { name: "Message Palot" }));
+    await user.keyboard("{Enter}");
 
     await waitFor(() => expect(prompt).toHaveBeenCalled());
     expect(compact).not.toHaveBeenCalled();
@@ -3139,7 +3429,7 @@ describe("Composer compact before send", () => {
   it("stops suggesting after Don't suggest again and remembers it", async () => {
     const user = userEvent.setup();
     const { store } = setup(idleTask(2 * 60 * 60_000));
-    await user.click(screen.getByRole("button", { name: "More send options" }));
+    await user.click(screen.getByRole("button", { name: "More about compacting" }));
     await user.click(await screen.findByRole("menuitem", { name: "Don't suggest again" }));
 
     expect(await screen.findByRole("button", { name: "Send message" })).toBeTruthy();
@@ -3152,7 +3442,7 @@ describe("Composer compact before send", () => {
     const failure = Promise.reject(new Error("Busy"));
     failure.catch(() => undefined);
     const { prompt } = setup(idleTask(2 * 60 * 60_000), failure);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "Try again later");
     await user.keyboard("{Enter}");
 
@@ -3166,8 +3456,26 @@ describe("Composer compact before send", () => {
   });
 });
 
+const blockingQuestion: PendingRequestView = {
+  id: "que_blocking",
+  type: "question",
+  title: "Approach",
+  resources: [],
+  savePatterns: [],
+  fields: [],
+  questions: [
+    {
+      header: "Approach",
+      question: "Choose an approach",
+      multiple: false,
+      custom: false,
+      options: [{ label: "Minimal" }],
+    },
+  ],
+};
+
 describe("Composer blocking requests", () => {
-  it("hides unrelated composer controls while keeping Stop available for a blocking request", async () => {
+  it("keeps the field, the row and Stop usable beside a blocking question", async () => {
     const interrupt = vi.spyOn(palot, "interrupt").mockResolvedValue(undefined);
     Object.defineProperty(window, "palot", {
       configurable: true,
@@ -3179,26 +3487,50 @@ describe("Composer blocking requests", () => {
         session={session}
         messages={[]}
         isWorking
-        requestBody={<section aria-label="Blocking question">Choose an approach</section>}
+        requests={[blockingQuestion]}
         pendingInputs={[pendingSteer("msg-waiting", 2)]}
       />,
     );
 
-    expect(screen.getByRole("region", { name: "Blocking question" })).toBeTruthy();
+    const panel = screen.getByRole("region", { name: "Pending request" });
+    expect(within(panel).getByText("Choose an approach")).toBeTruthy();
     const rail = screen.getByRole("region", { name: "Pending messages" });
-    const question = screen.getByRole("region", { name: "Blocking question" });
-    expect(rail.closest('[data-slot="input-group"]')).toBeNull();
-    expect(rail.nextElementSibling?.contains(question)).toBe(true);
-    expect(question.closest('[data-slot="input-group"]')).toBeTruthy();
+    // The request grows from the card's top edge, above the queue and the text field.
+    expect(panel.closest('[data-slot="composer"]')?.contains(rail)).toBe(true);
+    expect(panel.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(rail).getByRole("button", { name: "Run after current turn" })).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "Message Palot" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Agent:/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Approvals: Defaults" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /^Context window/ })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message Palot" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Agent:/ })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Stop task" }));
     expect(interrupt).toHaveBeenCalledWith(session.id);
+  });
+
+  it("returns dropped focus to the message input once the request closes", async () => {
+    Object.defineProperty(window, "palot", {
+      configurable: true,
+      value: bridge({}),
+    });
+    const store = createStore();
+    const queryClient = createRendererQueryClient();
+    const { rerender } = renderComposer(
+      <Composer session={session} messages={[]} isWorking={false} requests={[blockingQuestion]} />,
+      store,
+      "test-profile",
+      queryClient,
+    );
+    expect(document.activeElement).toBe(document.body);
+
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <Provider store={store}>
+          <Composer session={session} messages={[]} isWorking={false} />
+        </Provider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Message Palot" })),
+    );
   });
 });
 
@@ -3248,13 +3580,13 @@ describe("Composer shell mode", () => {
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
 
     await user.type(screen.getByRole("textbox", { name: "Message Palot" }), "!");
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Shell command" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Shell command" });
     expect(input.value).toBe("");
     expect(input.placeholder).toBe("Run a shell command");
     expect(screen.getByRole("button", { name: "Exit shell mode" })).toBeTruthy();
 
     await user.type(input, "/bin/ls @src $HOME");
-    expect(screen.queryByRole("listbox", { name: "Composer suggestions" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Add to message" })).toBeNull();
     await user.keyboard("{Enter}");
 
     await waitFor(() =>
@@ -3272,7 +3604,7 @@ describe("Composer shell mode", () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
 
     await user.type(input, "!");
     await user.type(input, "ls");
@@ -3289,13 +3621,13 @@ describe("Composer shell mode", () => {
 
     await user.type(input, "keep this text");
     fireEvent.keyDown(input, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
-    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Shell command" }).value).toBe(
-      "keep this text",
-    );
+    expect(
+      screen.getByRole<ComposerEditorElement>("textbox", { name: "Shell command" }).value,
+    ).toBe("keep this text");
     fireEvent.keyDown(input, { key: "E", code: "KeyE", ctrlKey: true, shiftKey: true });
-    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" }).value).toBe(
-      "keep this text",
-    );
+    expect(
+      screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" }).value,
+    ).toBe("keep this text");
   });
 
   it("creates the new task first, then runs the shell command in it", async () => {
@@ -3344,7 +3676,7 @@ describe("Composer prompt history", () => {
     historyMessage("user-2", "user", "Second prompt", 3),
   ];
 
-  function press(input: HTMLTextAreaElement, key: "ArrowUp" | "ArrowDown", caret: number) {
+  function press(input: ComposerEditorElement, key: "ArrowUp" | "ArrowDown", caret: number) {
     input.setSelectionRange(caret, caret);
     fireEvent.select(input);
     fireEvent.keyDown(input, { key });
@@ -3353,7 +3685,7 @@ describe("Composer prompt history", () => {
   it("recalls prompts newest first from an empty composer and restores the empty draft", async () => {
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     renderComposer(<Composer session={session} messages={messages} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
 
     press(input, "ArrowUp", 0);
     expect(input.value).toBe("Second prompt");
@@ -3373,7 +3705,7 @@ describe("Composer prompt history", () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     renderComposer(<Composer session={session} messages={messages} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "Work in progress");
 
     press(input, "ArrowUp", input.value.length);
@@ -3392,7 +3724,7 @@ describe("Composer prompt history", () => {
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     setOpenCodeClientForTest(client({ session: { shell } }));
     renderComposer(<Composer session={session} messages={messages} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
 
     await user.type(input, "!");
     await user.type(input, "ls -la{Enter}");
@@ -3407,7 +3739,7 @@ describe("Composer prompt history", () => {
     expect(input.value).toBe("pwd");
 
     await user.keyboard("{Escape}");
-    await user.clear(input);
+    await user.keyboard("{Control>}a{/Control}{Backspace}");
     press(input, "ArrowUp", 0);
     expect(input.value).toBe("Second prompt");
   });
@@ -3455,17 +3787,21 @@ describe("Composer shortcuts", () => {
         onCreateSession={vi.fn()}
       />,
     );
-    await screen.findByRole("button", { name: "Reasoning: Auto" });
+    const pill = (effort: string) =>
+      screen.findByRole("button", { name: `Model: Reasoner, effort ${effort}` });
+    await pill("Auto");
     const input = screen.getByRole("textbox", { name: "Message Palot" });
     const cycle = () =>
       fireEvent.keyDown(input, { key: "D", code: "KeyD", ctrlKey: true, shiftKey: true });
 
     cycle();
-    expect(await screen.findByRole("button", { name: "Reasoning: Low" })).toBeTruthy();
+    expect(await pill("Low")).toBeTruthy();
     cycle();
-    expect(await screen.findByRole("button", { name: "Reasoning: High" })).toBeTruthy();
+    expect(await pill("High")).toBeTruthy();
     cycle();
-    expect(await screen.findByRole("button", { name: "Reasoning: Auto" })).toBeTruthy();
+    expect(await pill("Auto")).toBeTruthy();
+    // The effort changes without opening the popover.
+    expect(screen.queryByRole("combobox", { name: "Choose model" })).toBeNull();
   });
 
   it("cycles primary agents forward and backward, loading them on demand", async () => {
@@ -3558,37 +3894,35 @@ describe("Composer mention context", () => {
 
     await user.type(screen.getByRole("textbox", { name: "Message Palot" }), "@");
     await waitFor(() => expect(find).toHaveBeenCalled());
-    const listbox = await screen.findByRole("listbox", { name: "Composer suggestions" });
+    const listbox = await screen.findByRole("listbox", { name: "Mention a file, task or agent" });
     await waitFor(() =>
       expect(
         within(listbox)
           .getAllByRole("option")
           .map((option) => option.textContent),
-      ).toEqual([
-        "@auth.tssrc/auth.ts",
-        "@guide.mddocs/guide.md",
-        "@auth.test.tstest/auth.test.ts",
-      ]),
+      ).toEqual(["auth.ts srcOpen", "guide.md docsOpen", "auth.test.ts test"]),
     );
   });
 
-  it("shows resolved mentions beside attachments and removes them explicitly", async () => {
+  it("shows resolved mentions inline and removes them with one Backspace", async () => {
     const user = userEvent.setup();
     const find = vi.fn().mockResolvedValue({ data: [{ path: "src/auth.ts", type: "file" }] });
     Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
     setOpenCodeClientForTest(client({ file: { find } }));
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
 
     await user.type(input, "Check @auth");
-    await user.click(await screen.findByRole("option", { name: /src\/auth\.ts/ }));
-    const mentions = screen.getByRole("group", { name: "Mentions" });
-    expect(within(mentions).getByText("@src/auth.ts")).toBeTruthy();
-    expect(within(mentions).getByText("File")).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: "Remove file mention @src/auth.ts" }));
-    expect(input.value).toBe("Check ");
+    const option = await screen.findByRole("option", { name: /^auth\.ts src/ });
+    // Rows of an older search stay listed but unpickable until this query's search returns.
+    await waitFor(() => expect(option.getAttribute("aria-disabled")).toBeNull());
+    await user.click(option);
+    expect(within(input).getByRole("img", { name: "File: @src/auth.ts" })).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Mentions" })).toBeNull();
+
+    await user.keyboard("{Backspace}{Backspace}");
+    expect(input.value).toBe("Check ");
+    expect(screen.queryByRole("img", { name: "File: @src/auth.ts" })).toBeNull();
   });
 
   it("does not show plain text that only looks like a mention", async () => {
@@ -3644,21 +3978,21 @@ describe("Composer mention context", () => {
   it("keeps the first row highlighted while results update under a resting pointer", async () => {
     const user = userEvent.setup();
     const { highlighted, resolveAgents } = renderLateAgents();
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "@");
-    const guide = () => screen.getByRole("option", { name: /docs\/guide\.md/ });
-    await screen.findByRole("option", { name: /docs\/guide\.md/ });
-    expect(highlighted()).toEqual(["@auth.tssrc/auth.ts"]);
+    const guide = () => screen.getByRole("option", { name: /^guide\.md docs/ });
+    await screen.findByRole("option", { name: /^guide\.md docs/ });
+    expect(highlighted()).toEqual(["auth.ts srcOpen"]);
 
     // A list that renders or scrolls under a resting pointer sends movement-free events.
     fireEvent.pointerMove(guide(), { movementX: 0, movementY: 0 });
     await resolveAgents();
     await screen.findByRole("option", { name: /@explore/ });
     fireEvent.pointerMove(guide(), { movementX: 0, movementY: 0 });
-    expect(highlighted()).toEqual(["@exploreSubagent"]);
+    expect(highlighted()).toEqual(["@explore Subagent"]);
 
     fireEvent.pointerMove(guide(), { movementX: 2, movementY: 1 });
-    expect(highlighted()).toEqual(["@guide.mddocs/guide.md"]);
+    expect(highlighted()).toEqual(["guide.md docsOpen"]);
     await user.keyboard("{Enter}");
     expect(input.value).toBe("@docs/guide.md ");
   });
@@ -3666,24 +4000,24 @@ describe("Composer mention context", () => {
   it("keeps a suggestion chosen with the arrows when new results list before it", async () => {
     const user = userEvent.setup();
     const { highlighted, resolveAgents } = renderLateAgents();
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await user.type(input, "@");
-    await screen.findByRole("option", { name: /docs\/guide\.md/ });
+    await screen.findByRole("option", { name: /^guide\.md docs/ });
     await user.keyboard("{ArrowDown}");
-    expect(highlighted()).toEqual(["@guide.mddocs/guide.md"]);
+    expect(highlighted()).toEqual(["guide.md docsOpen"]);
 
     await resolveAgents();
     await screen.findByRole("option", { name: /@explore/ });
-    expect(highlighted()).toEqual(["@guide.mddocs/guide.md"]);
+    expect(highlighted()).toEqual(["guide.md docsOpen"]);
     await user.keyboard("{ArrowUp}");
-    expect(highlighted()).toEqual(["@auth.tssrc/auth.ts"]);
+    expect(highlighted()).toEqual(["auth.ts srcOpen"]);
     await user.keyboard("{ArrowDown}{Enter}");
     expect(input.value).toBe("@docs/guide.md ");
   });
 });
 
 describe("Composer recent prompts", () => {
-  function press(input: HTMLTextAreaElement, key: "ArrowUp" | "ArrowDown", caret: number) {
+  function press(input: ComposerEditorElement, key: "ArrowUp" | "ArrowDown", caret: number) {
     input.setSelectionRange(caret, caret);
     fireEvent.select(input);
     fireEvent.keyDown(input, { key });
@@ -3718,7 +4052,7 @@ describe("Composer recent prompts", () => {
 
     const sibling = { ...session, id: "session-sibling" };
     renderComposer(<Composer session={sibling} messages={[]} isWorking={false} />, store);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await waitFor(() => expect(input.value).toBe(""));
 
     press(input, "ArrowUp", 0);
@@ -3746,7 +4080,7 @@ describe("Composer recent prompts", () => {
     saveRecentPrompt(recentPromptScope("test-profile", "project-2"), prompt("Other project"));
     saveRecentPrompt(recentPromptScope("other-profile", "project-1"), prompt("Other server"));
     renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     press(input, "ArrowUp", 0);
     expect(input.value).toBe("");
   });
@@ -3796,14 +4130,338 @@ describe("Composer recent outputs", () => {
       queryClient,
     );
 
-    await user.click(screen.getByRole("button", { name: "Recent project outputs" }));
+    await user.click(screen.getByRole("button", { name: "Add files, commands and more" }));
+    await user.click(await screen.findByRole("option", { name: /^Recent outputs/ }));
     const output = await screen.findByRole("option", { name: /login\.ts/ });
-    expect(screen.getByRole("option", { name: /Open original task.*Fix login/ })).toBeTruthy();
+    // Opening the task an output came from is navigation, which the launcher does not offer.
+    expect(screen.queryByRole("option", { name: /Open original task/ })).toBeNull();
     expect(screen.queryByText("foreign.ts")).toBeNull();
     await user.click(output);
 
-    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Palot" });
+    const input = screen.getByRole<ComposerEditorElement>("textbox", { name: "Message Palot" });
     await waitFor(() => expect(input.value).toBe("@src/login.ts "));
-    expect(screen.getByRole("button", { name: "Remove file mention @src/login.ts" })).toBeTruthy();
+    const chip = screen.getByRole("img", { name: "File: @src/login.ts" });
+
+    // In the message, the chip's own menu leads back to the task the output came from.
+    fireEvent.contextMenu(chip, { clientX: 20, clientY: 20 });
+    await user.click(await screen.findByRole("menuitem", { name: "Open original task" }));
+    expect(openSession).toHaveBeenCalledExactlyOnceWith(sibling.id);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(input.value).toBe("@src/login.ts ");
+  });
+
+  it("keeps the field's own menu on chips that did not come from a task", async () => {
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    const store = createStore();
+    store.set(composerDraftAtomFamily(composerScope("test-profile", `session:${session.id}`)), {
+      text: "@src/app.ts ",
+      mentions: [
+        {
+          localID: "m1",
+          kind: "file",
+          value: "src/app.ts",
+          text: "@src/app.ts",
+          start: 0,
+          end: 11,
+        },
+      ],
+      command: null,
+    });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    const chip = screen.getByRole("img", { name: "File: @src/app.ts" });
+    expect(fireEvent.contextMenu(chip)).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+});
+
+describe("Composer row", () => {
+  it("shows the approvals chip only when not Defaults and opens the launcher on Approvals", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    renderComposer(
+      <Composer
+        session={{ ...session, permissions: [{ action: "*", resource: "*", effect: "allow" }] }}
+        messages={[]}
+        isWorking={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Approvals: Full access" }));
+    const approvals = await screen.findByRole("listbox", { name: "Approvals" });
+    const full = within(approvals).getByRole("option", { name: /^Full access/ });
+    expect(full.getAttribute("aria-current")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(messageBox()));
+    // Escape steps back to the launcher's root, then closes it.
+    await user.keyboard("{Escape}");
+    expect(await screen.findByRole("listbox", { name: "Add to message" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Add to message" })).toBeNull(),
+    );
+    expect(document.activeElement).toBe(messageBox());
+  });
+
+  describe("at narrow widths", () => {
+    const restorers: (() => void)[] = [];
+    let available = 1000;
+
+    /**
+     * happy-dom has no layout: a control with a tone (pills, the pie) is 90px until labels
+     * drop, then 28px like any other button.
+     */
+    function stubWidth(property: "scrollWidth" | "clientWidth", get: (e: HTMLElement) => number) {
+      const slot = property === "scrollWidth" ? "composer-actions" : "composer-footer";
+      let owner: object | null = HTMLElement.prototype;
+      while (owner && !Object.getOwnPropertyDescriptor(owner, property))
+        owner = Object.getPrototypeOf(owner);
+      const original = Object.getOwnPropertyDescriptor(owner!, property)!;
+      Object.defineProperty(HTMLElement.prototype, property, {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.dataset.slot === slot ? get(this) : original.get!.call(this);
+        },
+      });
+      restorers.push(() => {
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>)[property];
+        if (owner === HTMLElement.prototype)
+          Object.defineProperty(HTMLElement.prototype, property, original);
+      });
+    }
+
+    beforeEach(() => {
+      stubWidth("scrollWidth", (group) => {
+        const compact = group.closest("[data-slot=composer-footer]")?.hasAttribute("data-compact");
+        return Array.from(group.querySelectorAll("button"))
+          .filter((button) => !button.closest("[data-folded]"))
+          .reduce(
+            (sum, button) =>
+              // A tooltip or popover trigger replaces a pill's data-slot, not its tone.
+              sum + (button.dataset.tone && !compact ? 90 : 28),
+            0,
+          );
+      });
+      stubWidth("clientWidth", () => available);
+    });
+
+    afterEach(() => {
+      for (const restore of restorers.splice(0).reverse()) restore();
+    });
+
+    it.each([
+      // Start: +, agent; end: model, context, send. With labels: 326.
+      [400, false, true],
+      // Without labels: 140.
+      [250, true, true],
+      // Folding the pie adds "…", so it saves nothing, but the row still never wraps.
+      [130, true, false],
+    ])("at %ipx drops labels (%s) and keeps the context pie (%s)", async (width, compact, pie) => {
+      available = width;
+      Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+      renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+      await screen.findByRole("button", { name: /^Model:/ });
+
+      const row = document.querySelector<HTMLElement>("[data-slot=composer-footer]")!;
+      expect(row.hasAttribute("data-compact")).toBe(compact);
+      const meter = screen.getByRole("button", { name: /^Context window/ });
+      expect(meter.closest("[data-slot=composer-foldable]")?.hasAttribute("data-folded")).toBe(
+        !pie,
+      );
+      const more = screen.queryByRole("button", { name: "More controls" });
+      expect(Boolean(more)).toBe(!pie);
+      if (!more) return;
+      await userEvent.click(more);
+      expect(await screen.findByRole("menuitem", { name: "Context details" })).toBeTruthy();
+    });
+  });
+});
+
+describe("Composer foundation changes", () => {
+  it("keeps Stop beside Queue while the task runs and the composer holds a message", async () => {
+    const user = userEvent.setup();
+    const interrupt = vi.spyOn(palot, "interrupt").mockResolvedValue(undefined);
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    renderComposer(<Composer session={session} messages={[]} isWorking />);
+
+    await user.type(messageBox(), "Also update the docs");
+    expect(screen.getByRole("button", { name: "Queue message after current turn" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Stop task" }));
+
+    expect(interrupt).toHaveBeenCalledWith(session.id);
+    expect((messageBox() as ComposerEditorElement).value).toBe("Also update the docs");
+  });
+
+  it("keeps Stop beside Run while a shell command is typed during a turn", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    renderComposer(<Composer session={session} messages={[]} isWorking />);
+
+    await user.type(messageBox(), "!");
+    await user.type(screen.getByRole("textbox", { name: "Shell command" }), "ls");
+
+    expect(screen.getByRole("button", { name: "Run shell command" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop task" })).toBeTruthy();
+  });
+
+  it("reports message errors on their own line, apart from attachment errors", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(palot, "onAttachmentProgress").mockReturnValue(() => undefined);
+    vi.spyOn(palot, "pickFiles").mockResolvedValue({
+      files: [],
+      errors: ["huge.bin is larger than 50 MB."],
+    });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+
+    await pickAttachments(user);
+    await screen.findByText("huge.bin is larger than 50 MB.");
+    fireEvent.change(messageBox(), { target: { value: "/btw " } });
+    fireEvent.keyDown(messageBox(), { key: "Enter" });
+
+    const alerts = screen.getAllByRole("alert").map((alert) => alert.textContent);
+    expect(alerts).toEqual(["huge.bin is larger than 50 MB.", "Enter a question after /btw."]);
+  });
+
+  it("asks in the app dialog before replacing an unfinished goal", async () => {
+    const user = userEvent.setup();
+    const call = vi.fn().mockResolvedValue({
+      output: {
+        id: "goal-1",
+        objective: "Ship the release",
+        status: "paused",
+        rounds: 2,
+        maxRounds: 50,
+        updatedAt: 1,
+      },
+    });
+    const runCommand = vi.fn().mockResolvedValue(undefined);
+    const confirm = vi.fn(() => true);
+    Object.defineProperty(window, "confirm", { configurable: true, value: confirm });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ rpc: { call }, session: { command: runCommand } }));
+    const store = createStore();
+    store.set(composerDraftAtomFamily(composerScope("test-profile", `session:${session.id}`)), {
+      text: "/goal Something else",
+      mentions: [],
+      command: { name: "goal", start: 0, end: 5 },
+    });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    // The goal must have loaded before Enter, or there is nothing to ask about replacing.
+    await waitFor(() => expect(call).toHaveBeenCalled());
+    await act(async () => {
+      await call.mock.results[0]?.value;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    fireEvent.keyDown(messageBox(), { key: "Enter" });
+    const dialog = await screen.findByRole("alertdialog", { name: "Replace the current goal?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(runCommand).not.toHaveBeenCalled();
+    expect((messageBox() as ComposerEditorElement).value).toBe("/goal Something else");
+
+    fireEvent.keyDown(messageBox(), { key: "Enter" });
+    await user.click(await screen.findByRole("button", { name: "Replace goal" }));
+    await waitFor(() =>
+      expect(runCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionID: session.id, name: "goal", text: "Something else" }),
+        expect.anything(),
+      ),
+    );
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("waits for a goal still loading before deciding whether to ask", async () => {
+    const user = userEvent.setup();
+    let loadGoal!: (value: unknown) => void;
+    const call = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          loadGoal = resolve;
+        }),
+    );
+    const runCommand = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ rpc: { call }, session: { command: runCommand } }));
+    const store = createStore();
+    store.set(composerDraftAtomFamily(composerScope("test-profile", `session:${session.id}`)), {
+      text: "/goal Something else",
+      mentions: [],
+      command: { name: "goal", start: 0, end: 5 },
+    });
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+    await waitFor(() => expect(call).toHaveBeenCalled());
+
+    // Enter lands before the goal has loaded; the answer comes after it.
+    fireEvent.keyDown(messageBox(), { key: "Enter" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+    act(() =>
+      loadGoal({
+        output: {
+          id: "goal-1",
+          objective: "Ship the release",
+          status: "active",
+          rounds: 1,
+          maxRounds: 50,
+          updatedAt: 1,
+        },
+      }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Replace the current goal?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(runCommand).not.toHaveBeenCalled();
+    expect((messageBox() as ComposerEditorElement).value).toBe("/goal Something else");
+  });
+
+  it("sends /goal as before when the goal read never settles", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const call = vi.fn(() => new Promise(() => undefined));
+      const runCommand = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+      setOpenCodeClientForTest(client({ rpc: { call }, session: { command: runCommand } }));
+      const store = createStore();
+      store.set(composerDraftAtomFamily(composerScope("test-profile", `session:${session.id}`)), {
+        text: "/goal Something else",
+        mentions: [],
+        command: { name: "goal", start: 0, end: 5 },
+      });
+      renderComposer(<Composer session={session} messages={[]} isWorking={false} />, store);
+      await waitFor(() => expect(call).toHaveBeenCalled());
+
+      fireEvent.keyDown(messageBox(), { key: "Enter" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_100);
+      });
+      await waitFor(() =>
+        expect(runCommand).toHaveBeenCalledWith(
+          expect.objectContaining({ sessionID: session.id, name: "goal", text: "Something else" }),
+          expect.anything(),
+        ),
+      );
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("loads the / catalog while idle, so the first / lists commands without a request", async () => {
+    const user = userEvent.setup();
+    const list = vi.fn().mockResolvedValue({
+      data: [{ name: "review", description: "Review current changes" }],
+    });
+    Object.defineProperty(window, "palot", { configurable: true, value: bridge({}) });
+    setOpenCodeClientForTest(client({ command: { list } }));
+    renderComposer(<Composer session={session} messages={[]} isWorking={false} />);
+
+    await waitFor(() => expect(list).toHaveBeenCalledOnce());
+    await act(async () => undefined);
+    await user.type(messageBox(), "/rev");
+
+    expect(screen.getByRole("option", { name: /\/review/i })).toBeTruthy();
+    expect(list).toHaveBeenCalledOnce();
   });
 });

@@ -7,10 +7,12 @@ import {
   Cpu,
   Download,
   FileSearch,
+  FolderInput,
   FolderTree,
   GitFork,
   GitPullRequest,
   Layers2,
+  History,
   Inbox,
   MessageCircle,
   MessageSquare,
@@ -40,8 +42,14 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useSyncExternalStore } from "react";
 import { actionableErrorMessage, type PalotSession } from "../../shared";
 import { useAttentionItems } from "./use-attention-items";
-import { catalogSessionIsUnread } from "./use-session-info";
-import { commandPaletteReturnFocusAtom, navigationOpenAtom, sidebarModeAtom } from "../atoms/ui";
+import { useUnreadMarkLookup } from "./use-task-unread";
+import { taskIsUnread } from "../lib/task-unread";
+import {
+  commandPaletteReturnFocusAtom,
+  inboxViewPreferencesAtom,
+  navigationOpenAtom,
+  type TaskListGrouping,
+} from "../atoms/ui";
 import { composerActionRequestAtom, type ComposerAction } from "../atoms/command-requests";
 import { runtimeAtom } from "../atoms/workspace";
 import { useWorkbenchCommands, useWorkbenchScope } from "../atoms/workbench";
@@ -75,10 +83,12 @@ import {
 import { palot } from "../services/palot";
 import { openNewWorkbenchTerminal } from "../services/workbench-terminal";
 import { usePalotNavigation } from "./use-navigation";
-import { openTranscriptFindAtom } from "../components/transcript-find";
+import { openTranscriptFindAtom, openTranscriptJumpAtom } from "../components/transcript-find";
 import { useSessionActivity } from "./use-session-activity";
 import { useSessionFork } from "./use-session-fork";
 import { useVoiceCall } from "./use-voice-call";
+import { moveToFolderRequestAtom } from "../components/move-to-folder-dialog";
+import { isChatSession } from "../lib/chats";
 import { voiceCall } from "../services/voice-call";
 import { supportsOpenCodeVoice } from "../lib/voice/voice-support";
 import { useProjectCatalog, useSessionCatalog } from "./use-session-catalog";
@@ -91,13 +101,34 @@ interface UseGlobalCommandsOptions {
   onChooseProject(): void;
   /** Shows the palette on the Files tab for the open task. */
   onOpenFiles(): void;
+  /** The focused connection's tasks whose last turn failed and that are not settled. */
+  failedSessionIDs?: ReadonlySet<string>;
 }
+
+const TASK_GROUPINGS: readonly {
+  value: TaskListGrouping;
+  title: string;
+  description: string;
+}[] = [
+  {
+    value: "inbox",
+    title: "Group tasks as an inbox",
+    description: "One list across projects, newest news first",
+  },
+  { value: "project", title: "Group tasks by project", description: "One group per project" },
+  {
+    value: "server",
+    title: "Group tasks by server",
+    description: "Servers, then projects within each",
+  },
+];
 
 export function useGlobalCommands({
   tasks,
   recentTasks,
   onChooseProject,
   onOpenFiles,
+  failedSessionIDs,
 }: UseGlobalCommandsOptions) {
   // Command shortcuts follow personal bindings.
   useShortcutOverrides();
@@ -106,10 +137,12 @@ export function useGlobalCommands({
   const loadedSessions = useSessionCatalog();
   const queryClient = useQueryClient();
   const runtime = useAtomValue(runtimeAtom);
+  const markedUnread = useUnreadMarkLookup();
   const activity = useSessionActivity().data;
   const attentionItems = useAttentionItems();
   const [navigationOpen, setNavigationOpen] = useAtom(navigationOpenAtom);
-  const [sidebarMode, setSidebarMode] = useAtom(sidebarModeAtom);
+  const [taskListView, setTaskListView] = useAtom(inboxViewPreferencesAtom);
+  const grouping = taskListView.grouping ?? "inbox";
   const diagnosticsPreferences = useSyncExternalStore(
     subscribeDiagnosticsPreferences,
     readDiagnosticsPreferences,
@@ -123,8 +156,10 @@ export function useGlobalCommands({
     },
   });
   const openTranscriptFind = useSetAtom(openTranscriptFindAtom);
+  const openTranscriptJump = useSetAtom(openTranscriptJumpAtom);
   const requestComposerAction = useSetAtom(composerActionRequestAtom);
   const setPaletteReturnFocus = useSetAtom(commandPaletteReturnFocusAtom);
+  const requestMoveToFolder = useSetAtom(moveToFolderRequestAtom);
   const forkSession = useSessionFork();
   const voicePhase = useVoiceCall().snapshot.phase;
   const sessionID = useRouterState({
@@ -235,6 +270,31 @@ export function useGlobalCommands({
           } catch (error) {
             showErrorToast("Could not fork task", error);
           }
+        },
+      },
+      {
+        id: "task.moveToFolder",
+        title: "Move task to folder…",
+        description: "Continue this task in another project or folder",
+        group: "actions",
+        icon: FolderInput,
+        keywords: ["move", "project", "directory", "relocate", "worktree"],
+        kind: "action",
+        disabledReason: !selectedSession
+          ? "Open a task first"
+          : selectedSession.parentID
+            ? "A subagent moves with its task"
+            : isChatSession(selectedSession)
+              ? "Use Move to project for a chat"
+              : sessionRunning(id)
+                ? "Wait for the task to finish"
+                : undefined,
+        runAfterClose: true,
+        run: () => {
+          if (!selectedSession) return;
+          // The dialog takes focus; the palette must not hand it back on close.
+          setPaletteReturnFocus(null);
+          requestMoveToFolder({ session: selectedSession, owner: runtime });
         },
       },
       {
@@ -395,20 +455,18 @@ export function useGlobalCommands({
         kind: "action",
         run: () => setNavigationOpen(!navigationOpen),
       },
-      {
-        id: "sidebar.mode.toggle",
-        title: sidebarMode === "inbox" ? "Show projects" : "Show inbox",
-        description:
-          sidebarMode === "inbox"
-            ? "Switch the sidebar to projects"
-            : "Switch the sidebar to inbox",
-        group: "actions",
-        icon: sidebarMode === "inbox" ? FolderTree : Inbox,
-        keywords: ["sidebar", "tasks", "attention"],
-        suggested: true,
-        kind: "action",
-        run: () => setSidebarMode(sidebarMode === "inbox" ? "project" : "inbox"),
-      },
+      ...TASK_GROUPINGS.filter((choice) => choice.value !== grouping).map(
+        (choice): GlobalCommand => ({
+          id: `tasks.group.${choice.value}`,
+          title: choice.title,
+          description: choice.description,
+          group: "actions",
+          icon: choice.value === "inbox" ? Inbox : FolderTree,
+          keywords: ["sidebar", "tasks", "group", "view", "projects", "inbox", "servers"],
+          kind: "action",
+          run: () => setTaskListView((current) => ({ ...current, grouping: choice.value })),
+        }),
+      ),
     );
   }
 
@@ -556,6 +614,18 @@ export function useGlobalCommands({
         kind: "action",
         runAfterClose: true,
         run: () => openTranscriptFind(),
+      },
+      {
+        id: "task.jump",
+        title: "Jump to message",
+        description: "Search every prompt in this task and scroll to it",
+        group: "actions",
+        icon: History,
+        keywords: ["prompt", "timeline", "history", "earlier", "go to", "message"],
+        shortcut: boundShortcutKeys("task.jump"),
+        kind: "action",
+        runAfterClose: true,
+        run: () => openTranscriptJump(),
       },
       ...taskActionCommands(sessionID),
       {
@@ -775,11 +845,13 @@ export function useGlobalCommands({
   const focusedStatus = (session: PalotSession): PaletteTaskStatus | undefined =>
     attentionSessionIDs.has(session.id)
       ? "attention"
-      : sessionRunning(session.id)
-        ? "running"
-        : catalogSessionIsUnread(session)
-          ? "unread"
-          : undefined;
+      : failedSessionIDs?.has(session.id) && !sessionRunning(session.id)
+        ? "failed"
+        : sessionRunning(session.id)
+          ? "running"
+          : taskIsUnread(session, { marked: markedUnread(session.id) })
+            ? "unread"
+            : undefined;
   commands.push(
     ...tasks.map((task): GlobalCommand => {
       const { session } = task;

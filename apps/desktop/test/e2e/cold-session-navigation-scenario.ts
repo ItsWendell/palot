@@ -7,6 +7,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import type { PalotApi } from "../../src/shared/opencode-contract";
 import { startLoopbackServiceProxy } from "./loopback-service-proxy.ts";
 import type { Scenario } from "./scenarios.ts";
+import { showTaskColumn, taskColumn, taskRow } from "./task-list.ts";
 
 const turns = 60;
 const remoteName = "Cold navigation isolated loopback";
@@ -156,7 +157,8 @@ async function measure(page: Page, row: Locator, sessionID: string, label: strin
               Boolean(
                 viewport &&
                 surface &&
-                viewport.querySelector(`[data-message-id="msg_${label}_assistant_${turns - 1}"]`),
+                // A turn row carries its prompt's ID and holds the reply.
+                viewport.querySelector(`[data-message-id="msg_${label}_user_${turns - 1}"]`),
               );
             const visibleRows = Array.from(
               viewport?.querySelectorAll("[data-message-id]") ?? [],
@@ -362,23 +364,16 @@ export const coldSessionNavigationScenario: Scenario = {
         { url: proxy.url, name: remoteName },
       );
       await page.setViewportSize({ width: 1440, height: 920 });
-      const inbox = page.getByRole("button", { name: /^Show inbox/ });
-      const options = page.getByRole("button", { name: "Inbox options", exact: true });
-      if (!(await inbox.isVisible()))
-        await page.getByRole("button", { name: "Show navigation", exact: true }).click();
-      // The rail toggles the active view's column, so only open the Inbox when it is closed.
-      if (!(await options.isVisible())) await inbox.click();
-      await options.click();
-      await page.getByRole("menuitem", { name: "Enabled servers", exact: true }).hover();
-      const monitor = page.getByRole("menuitemcheckbox", {
-        name: new RegExp(`^Enable ${remoteName}`),
-      });
+      await showTaskColumn(page);
+      await page.getByRole("button", { name: "Open Palot menu", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Servers", exact: true }).hover();
+      const monitor = page.getByRole("menuitemcheckbox", { name: new RegExp(`^${remoteName} `) });
       await expect(monitor).toBeVisible();
       if ((await monitor.getAttribute("aria-checked")) !== "true") await monitor.click();
       await page.keyboard.press("Escape");
       await page.keyboard.press("Escape");
       for (const label of ["LOCAL", "REMOTE"] as const) {
-        const row = page.getByRole("button", { name: new RegExp(`^Cold navigation ${label} ·`) });
+        const row = taskRow(taskColumn(page), `Cold navigation ${label}`).first();
         await expect(row).toBeVisible({ timeout: 30_000 });
         expect(page.url()).not.toContain(ids[label]);
         const probe = await measure(page, row, ids[label], label);

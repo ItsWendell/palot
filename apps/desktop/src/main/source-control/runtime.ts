@@ -4,6 +4,7 @@ import log from "electron-log/main";
 import type { SourceControlChangedEvent } from "../../shared/source-control-contract";
 import { SOURCE_CONTROL_IPC_CHANNELS } from "../../shared/source-control-contract";
 import { palotDatabase } from "../database/client";
+import { desktopNotificationService } from "../notification-service";
 import { classifyOpenCodeProfile } from "../opencode-connections/capabilities";
 import { openCodeRuntime } from "../opencode-runtime";
 import { sessionTriageStore } from "../session-triage-store";
@@ -87,6 +88,7 @@ const sessions: SourceControlSessions = {
         complete: latest.complete,
         createdAt: session.time.created,
         updatedAt: session.time.updated,
+        archivedAt: session.time.archived ?? null,
       };
     }),
   prompt: (profileID, sessionID, text, metadata) =>
@@ -159,6 +161,7 @@ export function sourceControlService(): SourceControlService {
     gitForProfile,
     git,
     emit,
+    notifyReady: (input) => desktopNotificationService().notifyPullRequestReady(input),
     log: sourceControlLog,
   });
   service = new SourceControlService({

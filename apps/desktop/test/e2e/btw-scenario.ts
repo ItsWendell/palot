@@ -3,6 +3,7 @@ import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
 import { isTitleRequest } from "./test-llm-server.ts";
+import type { ComposerEditorElement } from "../../src/renderer/lib/composer-editor-element.ts";
 
 const PARENT_PROMPT = "The project mascot is a violet heron. Keep working on the parent task.";
 const OTHER_TITLE = "BTW separate task";
@@ -108,7 +109,7 @@ export const btwScenario: Scenario = {
     const assertActive = async () => {
       expect((await client.session.active())[session.id]).toEqual({ type: "running" });
       // A nonempty composer intentionally replaces Stop with Queue/Steer.
-      if (!(await composer.inputValue()))
+      if (!(await composer.evaluate((element) => (element as ComposerEditorElement).value)))
         await expect(page.getByRole("button", { name: "Stop task", exact: true })).toBeEnabled();
       await expect(composer).toBeEditable();
     };
@@ -117,7 +118,7 @@ export const btwScenario: Scenario = {
       await composer.press("Enter");
       await expect(tab(question)).toBeVisible();
       await expect(panel(question)).toBeVisible();
-      await expect(composer).toHaveValue("");
+      await expect(composer).toHaveJSProperty("value", "");
       await expect(composer).toBeEditable();
     };
 
@@ -141,17 +142,19 @@ export const btwScenario: Scenario = {
       await ask(FIRST);
       await composer.fill(DRAFT);
       await expect(panel(FIRST).getByText(FIRST_ANSWER, { exact: true })).toBeVisible();
-      await expect(composer).toHaveValue(DRAFT);
+      await expect(composer).toHaveJSProperty("value", DRAFT);
       await assertTransient();
       await assertActive();
 
       await ask(BACKGROUND);
       await llm.waitForCalls(3);
       await expect(panel(BACKGROUND).getByRole("status")).toContainText("Answering");
+      // Answered out of view, so its tab gets an unread dot until it is shown.
+      await tab(FIRST).click();
       await composer.fill(DRAFT);
       await switchTask(page, other.id, OTHER_TITLE);
       await expect(page.getByRole("tab", { name: /^BTW:/ })).toHaveCount(0);
-      await expect(composer).toHaveValue("");
+      await expect(composer).toHaveJSProperty("value", "");
       // The owner is no longer mounted. Its answer must still land in its own
       // persisted workbench, not the selected task's composer or workbench.
       await expect
@@ -169,8 +172,18 @@ export const btwScenario: Scenario = {
         location.hash = `#/sessions/${id}`;
       }, session.id);
       await expect(composer).toBeVisible();
+      await expect(panel(FIRST).getByText(FIRST_ANSWER, { exact: true })).toBeVisible();
+      const unread = pane.getByRole("tab", { name: `BTW: ${BACKGROUND}, new answer`, exact: true });
+      await expect(unread.locator("[data-workbench-tab-unread]")).toBeVisible();
+      await pane
+        .locator("header")
+        .first()
+        .screenshot({ path: join(runRoot, "btw-unread-dot.png") });
+      await page.screenshot({ path: join(runRoot, "btw-unread-dot-page.png") });
+      await unread.click();
       await expect(panel(BACKGROUND).getByText(BACKGROUND_ANSWER, { exact: true })).toBeVisible();
-      await expect(composer).toHaveValue(DRAFT);
+      await expect(tab(BACKGROUND).locator("[data-workbench-tab-unread]")).toHaveCount(0);
+      await expect(composer).toHaveJSProperty("value", DRAFT);
       await tab(FIRST).click();
       await expect(panel(FIRST).getByText(FIRST_ANSWER, { exact: true })).toBeVisible();
       await expect
@@ -181,7 +194,7 @@ export const btwScenario: Scenario = {
         ]);
 
       await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(composer).toHaveValue(DRAFT);
+      await expect(composer).toHaveJSProperty("value", DRAFT);
       await expect(tab(FIRST)).toBeVisible();
       await expect(tab(BACKGROUND)).toBeVisible();
       await expect(panel(FIRST).getByText(FIRST_ANSWER, { exact: true })).toBeVisible();
@@ -317,6 +330,8 @@ export const btwScenario: Scenario = {
 };
 
 async function switchTask(page: Page, sessionID: string, title: string) {
+  // Mod+K in the composer opens its launcher; the task palette answers it everywhere else.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
   await page.getByRole("combobox", { name: "Search tasks and commands" }).fill(title);
   await page.getByRole("option", { name: new RegExp(title) }).click();

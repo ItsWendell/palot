@@ -1,10 +1,28 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PalotSession } from "../../shared";
 import { runtimeAtom } from "../atoms/workspace";
-import { RunningWorkControl } from "./running-work-control";
+import { RunningWorkPanel, useRunningWork, type RunningWorkScope } from "./running-work-control";
 import type { BackgroundWorkItem } from "./subagent-activity";
+
+/** The composer's background tab and its panel, as the thread wires them. */
+function RunningWorkTab(props: Omit<RunningWorkScope, "open">) {
+  const [open, setOpen] = useState(false);
+  const work = useRunningWork({ ...props, open });
+  if (!work.visible) return null;
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`Running work: ${work.label}`}
+        onClick={() => setOpen(!open)}
+      />
+      {open ? <RunningWorkPanel work={work} onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
 
 const mocks = vi.hoisted(() => ({
   processes: vi.fn(),
@@ -13,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   client: vi.fn(),
   interrupt: vi.fn(),
   remove: vi.fn(),
+  cancel: vi.fn(),
 }));
 vi.mock("../hooks/use-session-processes", () => ({
   useSessionProcesses: (...args: unknown[]) => mocks.processes(...args),
@@ -26,7 +45,11 @@ vi.mock("../atoms/workbench", () => ({ useWorkbenchCommands: () => ({ openTab: m
 vi.mock("../services/opencode-client", () => ({
   openCodeClient: (id: string) => {
     mocks.client(id);
-    return { session: { interrupt: mocks.interrupt }, shell: { remove: mocks.remove } };
+    return {
+      session: { interrupt: mocks.interrupt },
+      shell: { remove: mocks.remove },
+      experimental: { job: { cancel: mocks.cancel } },
+    };
   },
 }));
 
@@ -59,7 +82,7 @@ function setup(items: BackgroundWorkItem[] = [agent]) {
   } as never);
   const view = render(
     <Provider store={store}>
-      <RunningWorkControl
+      <RunningWorkTab
         session={{ id: "root", location: { directory: "/root" } } as PalotSession}
         sessionIDs={new Set(["root", "child"])}
         items={items}
@@ -76,6 +99,7 @@ describe("running work", () => {
     mocks.processes.mockReturnValue({
       rows: [command],
       commands: 1,
+      scripts: 0,
       terminals: 0,
       owners: new Map([["child", { title: "Child" }]]),
       terminalsSupported: true,
@@ -153,6 +177,7 @@ describe("running work", () => {
         { ...command, kind: "terminal", id: "pty", title: "zsh", userTitle: "Dev server" },
       ],
       commands: 0,
+      scripts: 0,
       terminals: 1,
       owners: new Map(),
       terminalsSupported: true,
@@ -173,5 +198,32 @@ describe("running work", () => {
       },
       { pane: "bottom" },
     );
+  });
+  it("lists a background script by its calls and stops it through its job", async () => {
+    mocks.processes.mockReturnValue({
+      rows: [
+        {
+          kind: "script",
+          id: "cm_1",
+          sessionID: "child",
+          title: "Shell ./slow.sh",
+          startedAt: 1,
+          location: { directory: "/child" },
+          active: true,
+        },
+      ],
+      commands: 0,
+      scripts: 1,
+      terminals: 0,
+      owners: new Map(),
+      terminalsSupported: true,
+    });
+    mocks.cancel.mockResolvedValue(undefined);
+    setup([]);
+    fireEvent.click(screen.getByRole("button", { name: "Running work: 1 running" }));
+    expect(await screen.findByRole("region", { name: "Background scripts" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop Shell ./slow.sh" }));
+    await waitFor(() => expect(mocks.cancel).toHaveBeenCalledWith({ id: "cm_1" }));
+    expect(mocks.remove).not.toHaveBeenCalled();
   });
 });

@@ -36,6 +36,8 @@ export interface PendingRequestView {
   fields: PendingFormFieldView[];
   delivery?: "steer" | "queue";
   ownerMessageID?: string;
+  /** The tool part a permission request holds, from its `source`. */
+  toolPartID?: string;
   createdAt?: number;
   /**
    * The directory of a location-wide MCP elicitation. OpenCode owns these by location, not
@@ -172,22 +174,6 @@ export function projectForSession(
   return visible.find((project) => projectLocation(project) === location);
 }
 
-export function selectRecentSessions(
-  sessions: PalotSession[],
-  activeSessionIDs: ReadonlySet<string>,
-  limit = 5,
-): PalotSession[] {
-  const roots = sessions.filter((session) => !session.parentID);
-  const active = roots
-    .filter((session) => activeSessionIDs.has(session.id))
-    .toSorted((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
-  const recent = roots
-    .filter((session) => !activeSessionIDs.has(session.id))
-    .toSorted((a, b) => sessionActivityAt(b) - sessionActivityAt(a) || a.id.localeCompare(b.id))
-    .slice(0, Math.max(0, limit - active.length));
-  return [...active, ...recent];
-}
-
 export function projectLocation(project: PalotProject): string {
   return project.canonical || project.sandboxes[0] || "";
 }
@@ -235,6 +221,7 @@ function permissionView(value: PermissionRequest, index: number): PendingRequest
     fields: [],
     delivery: undefined,
     ownerMessageID: value.source?.messageID ?? ownerMessageID(value.metadata),
+    ...(value.source?.type === "tool" && value.source.id ? { toolPartID: value.source.id } : {}),
   };
 }
 

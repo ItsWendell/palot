@@ -13,17 +13,18 @@ import type {
   PullRequestDraftComment,
   PullRequestFile,
   PullRequestReviewComment,
-  PullRequestTimelineItem,
 } from "../../../../shared/source-control-contract";
 import { contentCacheKey } from "../../../lib/file-diffs";
 import { hideWhitespaceChanges } from "../../../lib/diff-whitespace";
+import { classifyChangedFile, isQuietKind } from "../../../lib/changed-file-kind";
+import type { ReviewThread } from "../pull-request-threads";
 
 /** Files with more changed lines than this start folded, like GitHub's large-diff guard. */
 export const LARGE_FILE_CHANGED_LINES = 1_500;
 
 export type GitHubSide = PullRequestDraftComment["side"];
 
-export type ReviewThread = Extract<PullRequestTimelineItem, { kind: "review-thread" }>;
+export { lineReviewThreads, type ReviewThread } from "../pull-request-threads";
 
 /** A line comment waiting to be sent with the next review. */
 export interface PendingReviewComment extends PullRequestDraftComment {
@@ -100,7 +101,8 @@ export function parsePullRequestPatch(
   if (cached !== undefined || parsed.has(key)) return cached ?? null;
   let result: FileDiffMetadata | null = null;
   try {
-    result = parsePatchFiles(text, key).flatMap((patch) => patch.files)[0] ?? null;
+    result =
+      parsePatchFiles(text, { cacheKeyPrefix: key }).flatMap((patch) => patch.files)[0] ?? null;
   } catch {
     result = null;
   }
@@ -224,14 +226,22 @@ export function countViewed(files: readonly PullRequestFile[]): number {
   return files.reduce((total, file) => total + (file.viewed === "viewed" ? 1 : 0), 0);
 }
 
-/** Viewed and very large files start folded; the reader's own toggles win. */
+/**
+ * Viewed and very large files start folded, and with `collapseQuiet` lockfiles, generated
+ * files and migrations too; the reader's own toggles win.
+ */
 export function isFileCollapsed(
   file: PullRequestFile,
   overrides: ReadonlyMap<string, boolean>,
+  collapseQuiet = false,
 ): boolean {
   const override = overrides.get(file.path);
   if (override !== undefined) return override;
-  return file.viewed === "viewed" || file.additions + file.deletions > LARGE_FILE_CHANGED_LINES;
+  return (
+    file.viewed === "viewed" ||
+    file.additions + file.deletions > LARGE_FILE_CHANGED_LINES ||
+    (collapseQuiet && isQuietKind(classifyChangedFile(file.path)))
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -266,14 +276,6 @@ export function draftAnchorFromRange(
     ...(first !== last ? { startLine: first } : {}),
     side: toGitHubSide(range.endSide ?? range.side),
   };
-}
-
-/** Review threads that can sit on a line: current (not outdated) and anchored. */
-export function lineReviewThreads(items: readonly PullRequestTimelineItem[]): ReviewThread[] {
-  return items.filter(
-    (item): item is ReviewThread =>
-      item.kind === "review-thread" && !item.isOutdated && item.line !== null,
-  );
 }
 
 export function threadSide(thread: ReviewThread): GitHubSide {

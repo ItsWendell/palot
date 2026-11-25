@@ -2,6 +2,12 @@ appId: dev.palot.desktop
 productName: Palot
 copyright: Copyright (c) 2026 Palot contributors
 
+# palot://task/<id> links open a task (src/shared/task-link.ts).
+protocols:
+  - name: Palot task link
+    schemes:
+      - palot
+
 directories:
   buildResources: resources
   output: release

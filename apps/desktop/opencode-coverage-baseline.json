@@ -1,6 +1,6 @@
 {
-  "contractFingerprint": "1d92ef14b61ac85ca5ced182e62895061859e77b0940dbc84c9bb0f8ff923887",
-  "contractVersion": "2.2.5",
+  "contractFingerprint": "5e9d01dc2713952a3111a2d3503aa2a0f2a9755cf219082692a63e6aa0e64ac7",
+  "contractVersion": "2.4.1",
   "events": {
     "agent.updated": {
       "expectedProductionMention": true,
@@ -25,7 +25,15 @@
     },
     "credential.updated": {
       "expectedProductionMention": true,
-      "payloadFingerprint": "5ed280e5a81715d8c47a28ff23af5cdeb315622803b331841f1d7e60f93a1d4b"
+      "payloadFingerprint": "0d213a98db41110e26d4f69c1b903b18d5c88969e5f8bf5b699e296c8be4ae32"
+    },
+    "experimental.job.updated": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "0becfd5393a0d4fad022488df5c79fd9d7baa2966191fa82af1fa6c70b496bcd"
+    },
+    "experimental.mcp.event": {
+      "expectedProductionMention": false,
+      "payloadFingerprint": "b17dfcbc4d6f26fdd6241943b1bd365737c3e9afc3665a25320ddbb579672c79"
     },
     "filesystem.changed": {
       "expectedProductionMention": true,
@@ -117,13 +125,13 @@
       "payloadFingerprint": "a06977ca4f48145b121fee50d54a059d09209a69b9857afd68301c2929282e6c"
     },
     "pty.deleted": {
-      "expectedProductionMention": false,
-      "note": "Open Palot terminals reconcile through the ticketed PTY transport and explicit PTY queries.",
+      "expectedProductionMention": true,
+      "note": "Refreshes the terminal lists Running work and terminal tab labels read (opencode-query-events); open terminals still reconcile through the ticketed PTY transport.",
       "payloadFingerprint": "d70c9f559a3bbf7dae20359cf80c989f60529d1fad1a3f35c31ba7131da1eee9"
     },
     "pty.exited": {
-      "expectedProductionMention": false,
-      "note": "Open Palot terminals reconcile through the ticketed PTY transport and explicit PTY queries.",
+      "expectedProductionMention": true,
+      "note": "Refreshes the terminal lists Running work and terminal tab labels read (opencode-query-events); open terminals still reconcile through the ticketed PTY transport.",
       "payloadFingerprint": "8e721c3f4d3b384313877d6847afd379c1f6dee48b0b6367648c8152f396bd51"
     },
     "pty.updated": {
@@ -290,6 +298,10 @@
     "session.step.failed": {
       "expectedProductionMention": true,
       "payloadFingerprint": "45105f6e47f5eac3304b5ca33cf3ef9ceaf4ea0df891d82533697bc4f859ebf9"
+    },
+    "session.step.first-token": {
+      "expectedProductionMention": true,
+      "payloadFingerprint": "fe6df80ddc765359477e297d7925738f7ec676ece92abbd6eb865f1baac83b6c"
     },
     "session.step.started": {
       "expectedProductionMention": true,
@@ -506,6 +518,40 @@
       "expectedProductionReference": false,
       "note": "Palot Browser loads this route by URL in the task partition; main attaches the server credential only to artifacts opened from the transcript (main/browser/artifact-access.ts). Page loads never use the generated client."
     },
+    "experimental.automation.create": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "Agents create OpenCode automations with its automation tool; the Scheduled page lists them read-only and creates Palot's own schedules instead."
+    },
+    "experimental.automation.delete": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Scheduled page: Delete on an OpenCode automation row, confirmed in place."
+    },
+    "experimental.automation.get": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false,
+      "note": "The list carries every field the Scheduled page shows; it has no per-automation detail view."
+    },
+    "experimental.automation.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Scheduled page lists OpenCode automations by project directory on every connected server, refreshed on open and every minute while visible; forbidden (flag off) or a missing route hides the section."
+    },
+    "experimental.automation.pause": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Scheduled page: Pause on an OpenCode automation row."
+    },
+    "experimental.automation.resume": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Scheduled page: Resume on a paused OpenCode automation row."
+    },
+    "experimental.blob.get": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
     "experimental.config.update": {
       "disposition": "integrated",
       "expectedProductionReference": true
@@ -539,9 +585,45 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
+    "experimental.generate.video.create": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
+    "experimental.generate.video.get": {
+      "disposition": "not-integrated",
+      "expectedProductionReference": false
+    },
     "experimental.integration.wellknown.add": {
       "disposition": "integrated",
       "expectedProductionReference": true
+    },
+    "experimental.job.cancel": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.job.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true
+    },
+    "experimental.machine.add": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Settings → Machines adds a machine with the server's own URLs as reach and shows the join string; Replace key retries with replace."
+    },
+    "experimental.machine.link": {
+      "disposition": "intentional-omit",
+      "expectedProductionReference": false,
+      "note": "The worker's WebSocket link. Palot never dials it; it only builds join-string addresses that point at this path."
+    },
+    "experimental.machine.list": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Settings → Machines lists each server's machines, hides servers without the flag, and polls while the add dialog waits for a join."
+    },
+    "experimental.machine.remove": {
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Settings → Machines removes a machine after an in-place confirm."
     },
     "experimental.mcp.add": {
       "disposition": "integrated",
@@ -568,8 +650,9 @@
       "expectedProductionReference": true
     },
     "experimental.media.get": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
+      "disposition": "integrated",
+      "expectedProductionReference": true,
+      "note": "Resolves media: references in transcripts and inbox reads. Palot asks for references only when the renderer opt-in (localStorage palot.opencode.media-refs) is on; it is off by default."
     },
     "experimental.migration.v1.status": {
       "disposition": "intentional-omit",
@@ -624,30 +707,6 @@
       "disposition": "integrated",
       "expectedProductionReference": true
     },
-    "experimental.schedule.create": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
-    },
-    "experimental.schedule.delete": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
-    },
-    "experimental.schedule.get": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
-    },
-    "experimental.schedule.list": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
-    },
-    "experimental.schedule.pause": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
-    },
-    "experimental.schedule.resume": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
-    },
     "experimental.session.export": {
       "disposition": "integrated",
       "expectedProductionReference": true
@@ -690,8 +749,8 @@
       "expectedProductionReference": true
     },
     "experimental.voice.models": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "experimental.voice.session": {
       "disposition": "integrated",
@@ -796,8 +855,8 @@
       "expectedProductionReference": true
     },
     "permission.saved.update": {
-      "disposition": "not-integrated",
-      "expectedProductionReference": false
+      "disposition": "integrated",
+      "expectedProductionReference": true
     },
     "plugin.check": {
       "disposition": "integrated",

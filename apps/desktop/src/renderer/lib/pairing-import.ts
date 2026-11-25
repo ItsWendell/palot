@@ -1,5 +1,17 @@
 import type { OpenCodePairImportInput } from "../../shared";
+import { normalizeServerName } from "../../shared/server-name";
 import { preferredPairingAddress } from "./pairing-address";
+
+/** A name carried by pairing JSON. Absent or empty is fine; anything else is refused. */
+function payloadName(payload: Record<string, unknown>): string | undefined {
+  if (!("name" in payload) || payload.name === null) return undefined;
+  if (typeof payload.name !== "string")
+    throw new Error("The pairing details have an invalid server name.");
+  if (!payload.name.trim()) return undefined;
+  const name = normalizeServerName(payload.name);
+  if (!name) throw new Error("The pairing details have an invalid server name.");
+  return name;
+}
 
 export function parsePairingText(
   text: string,
@@ -10,6 +22,8 @@ export function parsePairingText(
     | Omit<Extract<OpenCodePairImportInput, { payload: unknown }>, "allowPlainHttp">;
   urls: string[];
   selectedAddress?: string;
+  /** The server name the pairing details carry, from newer OpenCode and Palot. */
+  name?: string;
 } {
   if (text.length > 16_384) throw new Error("Pairing details are too long.");
   if (!text.trim().startsWith("{")) {
@@ -38,7 +52,9 @@ export function parsePairingText(
     throw new Error("Enter valid pairing JSON.");
   }
   if (!value || typeof value !== "object") throw new Error("Invalid pairing JSON.");
+  if (Array.isArray(value)) throw new Error("Invalid pairing JSON.");
   const payload = value as Record<string, unknown>;
+  const name = payloadName(payload);
   if (!Array.isArray(payload.urls) || !payload.urls.length || payload.urls.length > 16)
     throw new Error("Pairing JSON needs between 1 and 16 server URLs.");
   const urls = [
@@ -46,7 +62,12 @@ export function parsePairingText(
       payload.urls.map((address: unknown) => {
         if (typeof address !== "string" || address.length > 2_048)
           throw new Error("Pairing JSON contains an invalid server URL.");
-        const url = new URL(address.trim());
+        let url: URL;
+        try {
+          url = new URL(address.trim());
+        } catch {
+          throw new Error("Pairing JSON contains an invalid server URL.");
+        }
         if (
           !["http:", "https:"].includes(url.protocol) ||
           url.username ||
@@ -75,6 +96,7 @@ export function parsePairingText(
       input: { link: `${address}/auth/connect/${payload.code}` },
       urls,
       selectedAddress: address,
+      ...(name ? { name } : {}),
     };
   }
   if (
@@ -87,5 +109,6 @@ export function parsePairingText(
   return {
     input: { payload: { urls, username: payload.username, password: payload.password } },
     urls,
+    ...(name ? { name } : {}),
   };
 }

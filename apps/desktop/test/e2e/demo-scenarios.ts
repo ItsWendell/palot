@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Scenario } from "./scenarios.ts";
+import { showTaskColumn, taskColumn } from "./task-list.ts";
 import type { TestLLMScript } from "./test-llm-server.ts";
 
 const execFileAsync = promisify(execFile);
@@ -200,10 +201,18 @@ export const demoScenarios: Record<
       const decision = await createTask(client, openCodeDirectory, questionTitle);
       await client.session.prompt({ sessionID: decision.id, text: prompts.search });
       await navigate(page, decision.id);
-      const panel = page.locator("[data-palot-composer-request]");
+      // An answered request stays mounted, inert, while it animates out; the next request with
+      // the same question fades in beside it. Only the live request counts.
+      const panel = page.locator("[data-palot-composer-request]:not([inert] *)");
       await expect(panel.getByText(question, { exact: true })).toBeVisible();
-      await panel.locator('input[value="Explicit filter"]').check();
-      await panel.getByRole("button", { name: "Send", exact: true }).click();
+      // Pick by the visible choice; its label sits above the input so its text stays selectable.
+      await panel
+        .locator('[data-slot="questionnaire-choice"]')
+        .filter({ hasText: "Explicit filter" })
+        .click();
+      await expect(panel.locator('input[value="Explicit filter"]')).toBeChecked();
+      // The answer is submitted with the composer's primary button.
+      await page.getByRole("button", { name: "Submit answer", exact: true }).click();
       await client.experimental.session.wait({ sessionID: decision.id });
       await expect(page.getByText(answer, { exact: true })).toBeVisible();
       await client.session.prompt({
@@ -220,8 +229,8 @@ export const demoScenarios: Record<
       });
       await llm.waitForCalls(8);
       await navigate(page, session.id);
-      await page.getByRole("button", { name: /^Show inbox/ }).click();
-      await expect(page.getByLabel("Inbox navigation", { exact: true })).toBeVisible();
+      await showTaskColumn(page);
+      await expect(taskColumn(page)).toBeVisible();
       await writeFile(
         join(runRoot, "demo.json"),
         JSON.stringify({ palot: session.id, opencode: running.id, question: decision.id }, null, 2),
@@ -232,7 +241,7 @@ export const demoScenarios: Record<
       await expect(
         page.getByLabel("Current task").getByText(palotTitle, { exact: true }),
       ).toBeVisible();
-      const inbox = page.getByLabel("Inbox navigation", { exact: true });
+      const inbox = taskColumn(page);
       for (const title of [openCodeTitle, questionTitle, cleanupTitle, cancellationTitle]) {
         await expect(inbox.getByText(title, { exact: true })).toBeVisible();
       }

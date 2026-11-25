@@ -48,8 +48,10 @@ export function verifyLinuxPackageMetadata(
   }
 }
 
-export function verifyInstalledLinuxDesktopEntry(desktop: string, channel: Channel) {
-  const identity = linuxDistributionIdentity(channel);
+/** Both channels claim it, so the most recently installed (or started) one receives links. */
+export const LINUX_TASK_LINK_MIME_TYPE = "x-scheme-handler/palot";
+
+function desktopEntryGroups(desktop: string) {
   const groups = new Map<string, Map<string, string>>();
   let group: Map<string, string> | undefined;
   for (const line of desktop.split(/\r?\n/)) {
@@ -62,6 +64,35 @@ export function verifyInstalledLinuxDesktopEntry(desktop: string, channel: Chann
       if (entry) group?.set(entry[1]!, entry[2]!);
     }
   }
+  return groups;
+}
+
+function verifyTaskLinkHandler(main: Map<string, string> | undefined) {
+  if (!main?.get("MimeType")?.split(";").includes(LINUX_TASK_LINK_MIME_TYPE)) {
+    throw new Error(`Desktop entry must declare MimeType=${LINUX_TASK_LINK_MIME_TYPE};.`);
+  }
+  // %U is where the desktop puts the palot:// link; without it the link never reaches Palot.
+  if (!main.get("Exec")?.split(/\s+/).includes("%U")) {
+    throw new Error("Desktop entry Exec must pass links with %U.");
+  }
+}
+
+/** The entry in resources/, used by the local install and the Arch recipe. */
+export function verifyBundledLinuxDesktopEntry(desktop: string, channel: Channel) {
+  const identity = linuxDistributionIdentity(channel);
+  const main = desktopEntryGroups(desktop).get("Desktop Entry");
+  if (
+    main?.get("Exec") !== `${identity.executable} --show %U` ||
+    main.get("StartupWMClass") !== identity.appId
+  ) {
+    throw new Error("Bundled desktop entry has the wrong channel identity.");
+  }
+  verifyTaskLinkHandler(main);
+}
+
+export function verifyInstalledLinuxDesktopEntry(desktop: string, channel: Channel) {
+  const identity = linuxDistributionIdentity(channel);
+  const groups = desktopEntryGroups(desktop);
   const main = groups.get("Desktop Entry");
   const command = main?.get("Exec")?.match(/^(?:"([^"]+)"|(\S+))(?:\s|$)/);
   if (
@@ -79,6 +110,7 @@ export function verifyInstalledLinuxDesktopEntry(desktop: string, channel: Chann
   if (groups.get("Desktop Action NewTask")?.get("Exec") !== `${identity.executable} --new-task`) {
     throw new Error("Installed NewTask desktop action has the wrong channel command.");
   }
+  verifyTaskLinkHandler(main);
 }
 
 /** Query format: [%{FILEMODES:perms}\t%{FILENAMES}\n]. Files alone do not give
@@ -216,13 +248,10 @@ export async function verifyLinuxArtifact(artifact: string, channel: Channel, ve
       await verifyPackagedDependencyNotices(path.join(app, "resources"), build);
     }
     await verifyExternalRuntimePackage(path.join(app, "resources"));
-    const desktop = await readFile(path.join(app, "resources", identity.desktopName), "utf8");
-    if (
-      !desktop.includes(`Exec=${identity.executable} --show`) ||
-      !desktop.includes(`StartupWMClass=${identity.appId}`)
-    ) {
-      throw new Error("Bundled desktop entry has the wrong channel identity.");
-    }
+    verifyBundledLinuxDesktopEntry(
+      await readFile(path.join(app, "resources", identity.desktopName), "utf8"),
+      channel,
+    );
     return { artifact: file, format, channel, packageName: identity.packageName };
   } finally {
     await rm(temporary, { recursive: true, force: true });

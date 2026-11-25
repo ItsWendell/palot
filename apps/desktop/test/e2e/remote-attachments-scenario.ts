@@ -30,10 +30,15 @@ export const remoteAttachmentsScenario: Scenario = {
       // Pair only with the harness-owned service. The one-time link is redeemed by main.
       const created =
         pairing.mode === "link"
-          ? await api.importOpenCodePairing({
-              link: `${loopback}/auth/connect/${pairing.code}`,
-              allowPlainHttp: true,
-            })
+          ? await api
+              .importOpenCodePairing({
+                link: `${loopback}/auth/connect/${pairing.code}`,
+                allowPlainHttp: true,
+              })
+              .then((result) => {
+                if (!result.ok) throw new Error(result.problem.title);
+                return result.snapshot;
+              })
           : await api.createOpenCodeProfile({
               kind: "remote",
               name: "Remote attachments fixture",
@@ -82,7 +87,13 @@ export const remoteAttachmentsScenario: Scenario = {
           localFileAttachments: true,
         });
       await expect(page.getByRole("textbox", { name: "Message Palot", exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Attach files", exact: true })).toBeEnabled();
+      // Attaching is offered in the launcher for a remote server that accepts local files.
+      await page.getByRole("button", { name: "Add files, commands and more", exact: true }).click();
+      await expect(page.getByRole("option", { name: /^Attach files/ })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      await page.keyboard.press("Escape");
 
       const result = await page.evaluate(
         async (bytes) => {

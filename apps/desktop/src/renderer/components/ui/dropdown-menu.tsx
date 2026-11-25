@@ -123,10 +123,20 @@ function DropdownMenuSub({ ...props }: MenuPrimitive.SubmenuRoot.Props) {
   return <MenuPrimitive.SubmenuRoot data-slot="dropdown-menu-sub" {...props} />;
 }
 
+/**
+ * Hovering a submenu trigger opens its submenu after this long, so a pointer crossing it on the
+ * way somewhere else (into a neighbour's submenu, down to a lower item) doesn't open it.
+ */
+export const SUBMENU_OPEN_DELAY_MS = 180;
+/** An open submenu waits this long after the pointer leaves its trigger, so switching doesn't blink. */
+export const SUBMENU_CLOSE_DELAY_MS = 100;
+
 function DropdownMenuSubTrigger({
   className,
   inset,
   children,
+  delay = SUBMENU_OPEN_DELAY_MS,
+  closeDelay = SUBMENU_CLOSE_DELAY_MS,
   ...props
 }: MenuPrimitive.SubmenuTrigger.Props & {
   inset?: boolean;
@@ -135,6 +145,8 @@ function DropdownMenuSubTrigger({
     <MenuPrimitive.SubmenuTrigger
       data-slot="dropdown-menu-sub-trigger"
       data-inset={inset}
+      delay={delay}
+      closeDelay={closeDelay}
       className={cn(
         "relative flex min-h-7 cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm outline-hidden select-none focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-inset:pl-7.5 data-popup-open:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
         className,

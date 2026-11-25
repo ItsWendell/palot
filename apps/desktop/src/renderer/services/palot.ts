@@ -12,6 +12,7 @@ import type {
   SessionStatsInput,
   SessionSwitchAgentInput,
   SessionSwitchModelInput,
+  SessionInboxUser,
   SessionTransferData,
 } from "@opencode/client";
 import { sessionTransferToMarkdown } from "../lib/session-markdown";
@@ -37,7 +38,9 @@ import type {
   RunCommandInput,
   OpenCodeRuntimeStatus,
   OpenCodeConnectInput,
+  OpenCodeConnectionCheck,
   OpenCodePairImportInput,
+  OpenCodePairImportResult,
   OpenCodePairingInfo,
   OpenCodeProfileCreateInput,
   OpenCodeProfileSnapshot,
@@ -46,6 +49,7 @@ import type {
   OpenCodeWebAccessInfo,
   PalotApi,
   PalotAttachmentProgress,
+  PalotAttachmentRestore,
   PalotAttentionSnapshot,
   PalotComposerCatalog,
   PalotEventBatch,
@@ -76,7 +80,7 @@ import { promptMentionParts, type PromptMentionInput } from "../lib/prompt-menti
 import { openCodeClient } from "./opencode-client";
 import { attachmentPrompt, type AttachmentDeliveryInput } from "./opencode-attachment-delivery";
 import { mapSession } from "./opencode-mappers";
-import { openCodeRequestSignal } from "./opencode-request";
+import { COMMAND_TIMEOUT_MS, openCodeRequestSignal } from "./opencode-request";
 import {
   findWorkspaceFiles as findOpenCodeWorkspaceFiles,
   getSession as getOpenCodeSession,
@@ -117,6 +121,8 @@ import {
   updatePlugins as updateOpenCodePlugins,
   updateCredential as updateOpenCodeCredential,
   updatePlugin as updateOpenCodePlugin,
+  updateSavedPermission as updateOpenCodeSavedPermission,
+  type UpdateSavedPermissionResult,
 } from "./opencode-settings";
 import {
   createWorktree as createOpenCodeWorktree,
@@ -132,6 +138,17 @@ import {
   resizePty as resizeOpenCodePty,
   snapshotPty as snapshotOpenCodePty,
 } from "./opencode-pty";
+
+export type ReplyPermissionRequest = Omit<PermissionReplyInput, "decision"> & {
+  reply: PermissionReplyInput["decision"];
+  /** The connection that owns the request; the focused one when omitted. */
+  connectionID?: string;
+};
+
+export type ReplyQuestionRequest = ReplyQuestionInput & {
+  /** The connection that owns the request; the focused one when omitted. */
+  connectionID?: string;
+};
 
 const now = Date.now();
 let triageQueue = Promise.resolve();
@@ -381,7 +398,7 @@ const previewRequests: SessionRequestSnapshot = {
 const previewRuntime: OpenCodeRuntimeStatus = {
   connectionID: "preview",
   profileID: "preview",
-  contractVersion: "2.2.5",
+  contractVersion: "2.4.1",
   phase: "connected",
   connected: true,
   source: "shared-service",
@@ -398,7 +415,7 @@ const previewRuntime: OpenCodeRuntimeStatus = {
     pairing: "show",
   },
   binaryPath: "/opt/homebrew/bin/opencode",
-  version: "2.2.5",
+  version: "2.4.1",
   pid: 42001,
   managed: true,
   lastConnectedAt: now,
@@ -804,10 +821,18 @@ export const palot = {
     return api.openCodePairingInfo();
   },
 
-  async importOpenCodePairing(input: OpenCodePairImportInput): Promise<OpenCodeProfileSnapshot> {
+  async importOpenCodePairing(input: OpenCodePairImportInput): Promise<OpenCodePairImportResult> {
     const api = getApi();
     if (!api) throw new Error("OpenCode pairing is unavailable in preview mode");
-    return api.importOpenCodePairing(input);
+    const result = await api.importOpenCodePairing(input);
+    if (result.ok) window.dispatchEvent(new Event("palot:profiles-changed"));
+    return result;
+  },
+
+  async checkOpenCodeProfile(profileID: string): Promise<OpenCodeConnectionCheck> {
+    const api = getApi();
+    if (!api) throw new Error("OpenCode connections are unavailable in preview mode");
+    return api.checkOpenCodeProfile(profileID);
   },
 
   async openCodeWebAccessInfo(): Promise<OpenCodeWebAccessInfo> {
@@ -1207,12 +1232,18 @@ export const palot = {
     return getApi()?.takeOpenTarget() ?? null;
   },
 
-  async openSessionWindow(sessionID: string, connectionID?: string): Promise<void> {
+  async openSessionWindow(
+    sessionID: string,
+    connectionID?: string,
+    options?: { background?: boolean },
+  ): Promise<void> {
     flushScheduledPersistedValues();
     const api = getApi();
     if (!api) return;
     const target = connectionID ?? (await api.runtimeStatus()).connectionID;
-    await api.openSessionWindow(sessionID, target);
+    await (options?.background
+      ? api.openSessionWindow(sessionID, target, { background: true })
+      : api.openSessionWindow(sessionID, target));
   },
 
   async closeWindow(): Promise<void> {
@@ -1387,7 +1418,8 @@ export const palot = {
           : {}),
         ...(input.delivery ? { delivery: input.delivery } : {}),
       },
-      { signal },
+      // The command responds only after its own steps ran, which can take minutes.
+      { signal: openCodeRequestSignal(undefined, COMMAND_TIMEOUT_MS) },
     );
   },
 
@@ -1464,9 +1496,10 @@ export const palot = {
     userMessageID: string,
     requestSignal?: AbortSignal,
     connectionID?: string,
+    context?: number,
   ): Promise<FileDiffInfo[]> {
     if (!apiAvailable()) return [];
-    return listOpenCodeTurnDiffs(sessionID, userMessageID, requestSignal, connectionID);
+    return listOpenCodeTurnDiffs(sessionID, userMessageID, requestSignal, connectionID, context);
   },
 
   async listModels(
@@ -1563,6 +1596,13 @@ export const palot = {
 
   async removeSavedPermission(input: Parameters<typeof removeOpenCodeSavedPermission>[0]) {
     if (apiAvailable()) await removeOpenCodeSavedPermission(input);
+  },
+
+  async updateSavedPermission(
+    input: Parameters<typeof updateOpenCodeSavedPermission>[0],
+  ): Promise<UpdateSavedPermissionResult> {
+    if (!apiAvailable()) throw new Error("Palot bridge is unavailable");
+    return updateOpenCodeSavedPermission(input);
   },
 
   async connectIntegrationKey(input: Parameters<typeof connectOpenCodeIntegrationKey>[0]) {
@@ -1672,6 +1712,13 @@ export const palot = {
     }
   },
 
+  /** Saves text the renderer already holds, so it works for files on a paired computer too. */
+  async saveTextFileCopy(suggestedName: string, contents: string): Promise<string | null> {
+    const api = getApi();
+    if (!api) throw new Error("Palot bridge is unavailable");
+    return api.saveTextFileCopy({ suggestedName, contents });
+  },
+
   async exportSession(
     sessionID: string,
     title?: string | null,
@@ -1743,18 +1790,18 @@ export const palot = {
     return mapSession(imported);
   },
 
-  async replyPermission(
-    input: Omit<PermissionReplyInput, "decision"> & { reply: PermissionReplyInput["decision"] },
-  ): Promise<void> {
+  /** `connectionID` answers on the server that owns the request; the focused one by default. */
+  async replyPermission(input: ReplyPermissionRequest): Promise<void> {
     if (apiAvailable()) {
-      const { reply, ...request } = input;
-      await openCodeClient().permission.reply({ ...request, decision: reply });
+      const { reply, connectionID, ...request } = input;
+      await openCodeClient(connectionID).permission.reply({ ...request, decision: reply });
     }
   },
 
-  async replyQuestion(input: ReplyQuestionInput): Promise<void> {
+  /** `connectionID` answers on the server that owns the request; the focused one by default. */
+  async replyQuestion(input: ReplyQuestionRequest): Promise<void> {
     if (!apiAvailable()) return;
-    const client = openCodeClient();
+    const client = openCodeClient(input.connectionID);
     const form = await client.session.form.get({
       sessionID: input.sessionID,
       formID: input.requestID,
@@ -1811,6 +1858,49 @@ export const palot = {
       sessionID: input.sessionID,
       inboxID: input.inputID,
     });
+  },
+
+  /**
+   * Admits a copy of a queued inbox message under a new ID, queued behind everything else and
+   * without waking an idle task. Files go back by the URI they came from, as OpenCode's app
+   * does, so a server file reference stays a reference.
+   */
+  async requeuePendingInput(sessionID: string, id: string, item: SessionInboxUser): Promise<void> {
+    if (!apiAvailable()) return;
+    const { payload } = item;
+    await openCodeClient().session.prompt(
+      {
+        sessionID,
+        id,
+        text: payload.text,
+        ...(payload.files?.length
+          ? {
+              files: payload.files.map((file) => ({
+                uri:
+                  file.source.type === "uri"
+                    ? file.source.uri
+                    : `data:${file.mime};base64,${file.data}`,
+                ...(file.name ? { name: file.name } : {}),
+                ...(file.description ? { description: file.description } : {}),
+                ...(file.mention ? { mention: file.mention } : {}),
+              })),
+            }
+          : {}),
+        ...(payload.agents?.length ? { agents: payload.agents } : {}),
+        ...(payload.skills?.length
+          ? {
+              skills: payload.skills.map((skill) => ({
+                id: skill.id,
+                ...(skill.mention ? { mention: skill.mention } : {}),
+              })),
+            }
+          : {}),
+        ...(payload.metadata ? { metadata: payload.metadata } : {}),
+        delivery: "queue",
+        resume: false,
+      },
+      { signal: openCodeRequestSignal() },
+    );
   },
 
   async interrupt(sessionID: string, connectionID?: string) {
@@ -1920,6 +2010,19 @@ export const palot = {
         ) ?? Promise.resolve({ files: [], errors: [] }))
       : Promise.resolve({ files: [], errors: [] }),
 
+  /** The file's absolute path, or "" for one without, such as a pasted bitmap or a browser build. */
+  pathForFile: (file: File): string => (apiAvailable() ? (getApi()?.pathForFile(file) ?? "") : ""),
+
+  attachDroppedFiles: async (files: File[], connectionID?: string, requestID?: string) => {
+    const api = getApi();
+    if (!apiAvailable() || !api) throw new Error("File attachments are unavailable.");
+    return api.attachDroppedFiles(
+      files,
+      connectionID ?? (await palot.runtimeStatus()).connectionID,
+      requestID,
+    );
+  },
+
   attachClipboardText: async (text: string, connectionID?: string, requestID?: string) => {
     const api = getApi();
     if (!apiAvailable() || !api) throw new Error("Text attachments are unavailable.");
@@ -1958,6 +2061,24 @@ export const palot = {
           connectionID ?? (await palot.runtimeStatus()).connectionID,
         ) ?? Promise.resolve(null))
       : Promise.resolve(null),
+
+  /** Without the desktop bridge nothing is staged, so every URI is kept as it is. */
+  persistComposerAttachments: async (uris: string[]): Promise<string[]> =>
+    apiAvailable() && uris.length ? (getApi()?.persistComposerAttachments(uris) ?? uris) : uris,
+
+  restoreComposerAttachments: async (uris: string[]): Promise<PalotAttachmentRestore[]> =>
+    apiAvailable() && uris.length
+      ? (getApi()?.restoreComposerAttachments(uris) ??
+        uris.map(() => ({ status: "kept" as const })))
+      : uris.map(() => ({ status: "kept" as const })),
+
+  releaseComposerAttachments: async (uris: string[]): Promise<void> => {
+    if (apiAvailable() && uris.length) await getApi()?.releaseComposerAttachments(uris);
+  },
+
+  sweepComposerAttachments: async (retainedURIs: string[]): Promise<void> => {
+    if (apiAvailable()) await getApi()?.sweepComposerAttachments(retainedURIs);
+  },
 
   subscribe(listener: (batch: PalotEventBatch) => void): () => void {
     return apiAvailable()

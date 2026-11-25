@@ -168,9 +168,7 @@ export class ExternalOpenService {
         throw error;
       }
     } else {
-      const filePath = input.resource.path.startsWith("~")
-        ? path.join(process.env.HOME ?? "", input.resource.path.slice(1))
-        : input.resource.path;
+      const filePath = localFilePath(input.resource.path);
       try {
         await this.launchFile(target, filePath, input.resource.line, input.resource.column);
       } catch (error) {
@@ -189,39 +187,6 @@ export class ExternalOpenService {
     const detected = await this.detectTargets();
     const preferred = this.preferredTarget(detected);
     return preferred ? { id: preferred.definition.id, label: preferred.definition.label } : null;
-  }
-
-  async openFile(
-    filePath: string,
-    line?: number,
-    column?: number,
-    targetID?: ExternalOpenTargetID,
-  ): Promise<ExternalOpenResult> {
-    const detected = await this.detectTargets();
-    const target = targetID
-      ? detected.find((candidate) => candidate.definition.id === targetID)
-      : this.preferredTarget(detected);
-    const resolvedPath = filePath.startsWith("~")
-      ? path.join(process.env.HOME ?? "", filePath.slice(1))
-      : filePath;
-    if (!target) {
-      if (process.platform === "darwin") {
-        await execFileAsync("/usr/bin/open", [resolvedPath], { timeout: 10_000 });
-      }
-      return { openedTargetID: "finder" };
-    }
-
-    try {
-      await this.launchFile(target, resolvedPath, line, column);
-    } catch (error) {
-      this.invalidate();
-      throw error;
-    }
-
-    if (target.definition.kind === "editor") {
-      this.store.set("preferredEditorID", target.definition.id);
-    }
-    return { openedTargetID: target.definition.id };
   }
 
   private async resolveSessionDirectory(
@@ -292,7 +257,9 @@ export class ExternalOpenService {
       return;
     }
     if (target.appPath) {
-      await execFileAsync("/usr/bin/open", ["-a", target.appPath, directory], { timeout: 10_000 });
+      await execFileAsync("/usr/bin/open", ["-a", target.appPath, directory], {
+        timeout: 10_000,
+      });
       return;
     }
     throw new Error(`${target.definition.label} is no longer installed`);
@@ -322,7 +289,9 @@ export class ExternalOpenService {
     }
 
     if (target.appPath) {
-      await execFileAsync("/usr/bin/open", ["-a", target.appPath, filePath], { timeout: 10_000 });
+      await execFileAsync("/usr/bin/open", ["-a", target.appPath, filePath], {
+        timeout: 10_000,
+      });
       return;
     }
 
@@ -330,14 +299,32 @@ export class ExternalOpenService {
   }
 }
 
-function editorUrlScheme(
+/**
+ * A renderer-supplied file path as an absolute, normalised local path. A relative path would
+ * resolve against Palot's own working directory, so it is refused.
+ */
+export function localFilePath(input: string): string {
+  const expanded = input.startsWith("~")
+    ? path.join(process.env.HOME ?? "", input.slice(1))
+    : input;
+  // An absolute path starts with `/`, so `open` can never read it as an option.
+  if (!path.isAbsolute(expanded)) throw new Error("The file path must be absolute");
+  return path.resolve(expanded);
+}
+
+/** Percent-encodes each segment so `#`, `?`, `%` and spaces cannot change the URL's meaning. */
+function encodedPath(filePath: string): string {
+  return filePath.split("/").map(encodeURIComponent).join("/");
+}
+
+export function editorUrlScheme(
   targetID: ExternalOpenTargetID,
   filePath: string,
   line: number,
   column?: number,
 ): string | null {
   const lineSuffix = column ? `:${line}:${column}` : `:${line}`;
-  const cleanPath = filePath.replace(/^\/+/, "");
+  const cleanPath = encodedPath(filePath.replace(/^\/+/, ""));
   switch (targetID) {
     case "cursor":
       return `cursor://file/${cleanPath}${lineSuffix}`;
@@ -353,7 +340,7 @@ function editorUrlScheme(
     case "windsurf":
       return `windsurf://file/${cleanPath}${lineSuffix}`;
     case "sublime-text":
-      return `subl://open?url=file://${encodeURI(filePath)}&line=${line}${column ? `&column=${column}` : ""}`;
+      return `subl://open?url=file://${encodedPath(filePath)}&line=${line}${column ? `&column=${column}` : ""}`;
     default:
       return null;
   }

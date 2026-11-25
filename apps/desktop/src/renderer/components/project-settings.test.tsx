@@ -136,6 +136,18 @@ describe("Project settings", () => {
     );
   });
 
+  it("lays short fields beside their labels and long ones underneath, without resets", async () => {
+    setup();
+    const layout = (label: string) =>
+      screen.getByLabelText(label).closest("[data-slot=settings-row]")?.getAttribute("data-layout");
+    await screen.findByLabelText("Main checkout directory");
+    expect(layout("Project name")).toBe("inline");
+    expect(layout("Icon color")).toBe("inline");
+    expect(layout("Worktree startup command")).toBe("stacked");
+    expect(layout("Main checkout directory")).toBe("stacked");
+    expect(screen.queryByRole("button", { name: /to default$/ })).toBeNull();
+  });
+
   it("retains failed edits, then saves only the edited field", async () => {
     const user = userEvent.setup();
     const update = vi

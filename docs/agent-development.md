@@ -37,10 +37,56 @@ opencode2 --version
 printf 'Required OpenCode: %s\n' "$version"
 ```
 
-If needed, install the matching CLI with
+E2E runs and the strobe benchmarks look for that exact version in this order:
+`OPENCODE_BIN`, then `.local/opencode-bin/<version>/opencode` in the primary
+checkout, then `opencode2` in common install locations and on `PATH`. A binary of
+another version is skipped. The primary checkout's copy serves every worktree and
+leaves your global install alone. To put one there, download the package for your
+platform (`linux-x64`, `linux-arm64`, `darwin-arm64`, `darwin-x64`, and so on):
+
+```sh
+primary="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+mkdir -p "$primary/.local/opencode-bin/$version"
+cd "$(mktemp -d)"
+npm pack "@opencode/cli-linux-x64@$version"
+tar -xzf opencode-cli-linux-x64-*.tgz package/bin/opencode
+mv package/bin/opencode "$primary/.local/opencode-bin/$version/opencode"
+```
+
+Alternatively install the matching CLI globally with
 `bun add --global --trust "@opencode/cli@$version"`. Replacing the shared service can
 interrupt other tasks. E2E uses a separate service and never needs to replace it.
-`OPENCODE_BIN=/absolute/path/to/opencode2` lets E2E try a specific binary first.
+
+## Dependency overrides
+
+The root `package.json` `overrides` force a version that a dependency would not
+pick on its own. Recheck the reason before removing or bumping one:
+
+- `shiki`, `@shikijs/core`, `@shikijs/themes`, `@shikijs/types`: `@pierre/diffs`
+  and `@pierre/theming` accept Shiki `^3 || ^4`; the overrides keep every consumer
+  on one highlighter version so themes and grammars come from a single copy.
+- `katex`: forced to the desktop's own 0.19.1 although `mermaid` declares
+  `^0.18.0`, so Mermaid math runs on a KaTeX version Mermaid does not declare
+  support for. Check diagrams with math after changing either package.
+- `legacy-javascript`, `third-party-web`: `@paulirish/trace_engine` (under
+  `lighthouse`) asks for `latest`. `legacy-javascript` ships no license file in any
+  release, so its license text is reviewed evidence recorded for exactly 0.0.1 in
+  `apps/desktop/resources/licenses/DEPENDENCY_LICENSE_UPSTREAM.json`; the pins keep
+  `latest` from moving either package to an unreviewed version. Lighthouse 13.6.0
+  (trace_engine 0.0.67) no longer needs them, but it stays at 13.5.0: its
+  `@sentry/node` 11 pulls `@sentry/bundler-plugins` and `oxc-parser` 0.152, whose
+  native bindings ship no license file and fail the packaged license inventory.
+- `vite`: maps to `@voidzero-dev/vite-plus-core`, which `vite-plus` requires at its
+  own version, so plugins that depend on `vite` load the Vite+ core.
+
+`effect`, `@effect/platform-node` and `@effect/platform-node-shared` in
+`apps/desktop/package.json`, and `effect` in
+`packages/opencode-voice-coordinator/package.json`, must equal the `effect` version
+that `@opencode/protocol` depends on, and `bun.lock` must resolve one `effect`.
+`@effect/platform-node-shared` has no direct importer; its exact entry holds that
+package at the same version. `bun run check` runs
+`bun apps/desktop/scripts/check-effect-pin.ts` to enforce this. Bump the family
+together when upgrading OpenCode.
 
 ## Choose verification by the change
 
@@ -104,7 +150,7 @@ See [CODING_STANDARDS.md](../CODING_STANDARDS.md).
 ## Agent tool discoverability eval
 
 The normal unit suite checks 32 natural search phrasings against Palot's real
-catalog plus 300+ competing tools, using OpenCode's Code Mode ranking (unchanged from 2.2.0 to 2.2.1).
+catalog plus 300+ competing tools, using OpenCode's Code Mode ranking.
 For an opt-in paid-model check, from `apps/desktop` run:
 
 ```sh

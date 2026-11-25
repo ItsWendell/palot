@@ -16,10 +16,16 @@ import {
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
+  PalotBrowserComment,
   PalotBrowserSelection,
   PalotBrowserUserCommand,
 } from "../../../shared/browser-contract";
-import { composerStateAtomFamily } from "../../atoms/composer-state";
+import {
+  composerDirectBrowserSendAtomFamily,
+  composerStateAtomFamily,
+} from "../../atoms/composer-state";
+import { matchesShortcut, type ShortcutKeys } from "../../lib/keyboard-shortcuts";
+import { ShortcutKbd } from "../ui/kbd";
 import { browserRecentSitesAtom } from "../../atoms/workbench";
 import { recordBrowserRecentSite } from "../../lib/browser-recent-sites";
 import { composerScope } from "../../lib/composer-scope";
@@ -48,6 +54,8 @@ import {
 
 /** The last address recorded per page, so suggestions count navigations, not remounts. */
 const recordedPageURLs = new Map<string, string>();
+
+const SEND_COMMENT_KEYS: ShortcutKeys = ["Mod", "Enter"];
 
 export function BrowserTab({
   scope,
@@ -82,9 +90,12 @@ export function BrowserTab({
   const [inspecting, setInspecting] = useState(false);
   const [selection, setSelection] = useState<PalotBrowserSelection | null>(null);
   const [comment, setComment] = useState("");
-  const composerStateAtom = composerStateAtomFamily(
-    composerScope(scope.profileID, `session:${scope.sessionID}`),
-  );
+  const composerScopeKey = composerScope(scope.profileID, `session:${scope.sessionID}`);
+  const composerStateAtom = composerStateAtomFamily(composerScopeKey);
+  // Present while the task's composer is open; it owns the model, agent and delivery choice.
+  const sendNow = useAtomValue(composerDirectBrowserSendAtomFamily(composerScopeKey));
+  const [commentSending, setCommentSending] = useState(false);
+  const [commentFailed, setCommentFailed] = useState(false);
   const composerState = useAtomValue(composerStateAtom);
   const commentCount = (
     (composerState.edit ? composerState.edit.browserComments : composerState.browserComments) ?? []
@@ -118,6 +129,7 @@ export function BrowserTab({
     setInspecting(false);
     setSelection(null);
     setComment("");
+    setCommentFailed(false);
     if (!bindingID || !active) return;
     return palot.onBrowserEvent((event) => {
       if (event.type !== "inspect" || event.bindingID !== bindingID || event.tabID !== tabID)
@@ -248,6 +260,35 @@ export function BrowserTab({
         .browserPageControl(bindingID, pageID, { type: "find.stop" })
         .catch(() => undefined);
   }, [active, bindingID, findOpen, findQuery, pageID]);
+
+  /** The comment as the composer keeps it: live while the page is unchanged, else saved. */
+  function commentItem(): PalotBrowserComment {
+    const item = {
+      ...selection!,
+      bindingID: bindingID ?? undefined,
+      id: crypto.randomUUID(),
+      comment: comment.trim(),
+    };
+    const live =
+      bindingID && page?.generation === selection!.generation && page.url === selection!.url;
+    return live ? item : durableBrowserComment(item);
+  }
+
+  /** Mod+Enter or Send now: sends just this comment, like a line comment's Send now. */
+  async function sendComment() {
+    if (!sendNow || !selection || commentSending || !comment.trim() || comment.length > 8000)
+      return;
+    setCommentSending(true);
+    setCommentFailed(false);
+    const sent = await sendNow(commentItem()).catch(() => false);
+    setCommentSending(false);
+    if (!sent) {
+      setCommentFailed(true);
+      return;
+    }
+    setSelection(null);
+    setComment("");
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" inert={!active}>
@@ -399,16 +440,9 @@ export function BrowserTab({
           className="flex shrink-0 flex-col gap-2 border-b border-border p-3"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!comment.trim() || comment.length > 8000 || commentCount >= 10) return;
-            const item = {
-              ...selection,
-              bindingID: bindingID ?? undefined,
-              id: crypto.randomUUID(),
-              comment: comment.trim(),
-            };
-            const live =
-              bindingID && page?.generation === selection.generation && page.url === selection.url;
-            const saved = live ? item : durableBrowserComment(item);
+            if (commentSending || !comment.trim() || comment.length > 8000 || commentCount >= 10)
+              return;
+            const saved = commentItem();
             setComposerState((current) => {
               const comments =
                 (current.edit ? current.edit.browserComments : current.browserComments) ?? [];
@@ -455,19 +489,49 @@ export function BrowserTab({
           <Textarea
             autoFocus
             aria-label="Comment about selected element"
+            aria-describedby={commentFailed ? "browser-comment-error" : undefined}
             placeholder="What should change here?"
             value={comment}
             maxLength={8000}
+            readOnly={commentSending}
             onChange={(event) => setComment(event.target.value)}
+            onKeyDown={(event) => {
+              if (!sendNow || !matchesShortcut(event.nativeEvent, SEND_COMMENT_KEYS)) return;
+              event.preventDefault();
+              void sendComment();
+            }}
           />
+          {commentFailed ? (
+            <p id="browser-comment-error" role="alert" className="text-meta text-destructive">
+              Couldn't send. Your comment is still here. Try again.
+            </p>
+          ) : null}
           {commentCount >= 10 ? (
             <p role="status" className="text-meta text-warning">
               Send or remove a comment before attaching more.
             </p>
           ) : null}
-          <Button type="submit" size="sm" disabled={!comment.trim() || commentCount >= 10}>
-            Attach comment to prompt
-          </Button>
+          <div className="flex justify-end gap-2">
+            {sendNow ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!comment.trim() || commentSending}
+                onClick={() => void sendComment()}
+              >
+                {commentSending ? "Sending…" : "Send now"}
+                <ShortcutKbd keys={SEND_COMMENT_KEYS} />
+              </Button>
+            ) : null}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!comment.trim() || commentCount >= 10 || commentSending}
+            >
+              Attach comment to prompt
+            </Button>
+          </div>
         </form>
       ) : null}
       {findOpen ? (
@@ -489,6 +553,8 @@ export function BrowserTab({
               void control({ type: "find", query: event.target.value });
             }}
             onKeyDown={(event) => {
+              // An input method uses Escape and Enter to cancel or commit its composition.
+              if (event.nativeEvent.isComposing) return;
               if (event.key === "Escape") {
                 setFindOpen(false);
                 void control({ type: "find.stop" });

@@ -8,9 +8,9 @@ export function useClipboardCopy() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const resetTimer = useRef<number | null>(null);
 
-  const copy = useCallback(async (value: string, key = "default") => {
+  const copy = useCallback(async (value: string, key = "default", html?: string) => {
     try {
-      await writeClipboardText(value);
+      await (html === undefined ? writeClipboardText(value) : writeClipboardText(value, html));
       setCopiedKey(key);
       if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
       resetTimer.current = window.setTimeout(() => {

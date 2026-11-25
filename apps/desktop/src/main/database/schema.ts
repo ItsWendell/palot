@@ -53,6 +53,12 @@ export const pullRequestLinks = sqliteTable(
       enum: ["approved", "changes-requested", "review-required"],
     }),
     mergeable: text("mergeable", { enum: ["mergeable", "conflicting", "unknown"] }).notNull(),
+    /** GitHub's merge state; null for hosts that don't report one. */
+    mergeState: text("merge_state", {
+      enum: ["clean", "blocked", "behind", "dirty", "unstable", "has-hooks", "draft", "unknown"],
+    }),
+    /** Open review threads; null when unknown. */
+    unresolvedThreads: integer("unresolved_threads"),
     headBranch: text("head_branch").notNull(),
     baseBranch: text("base_branch").notNull(),
     author: text("author"),

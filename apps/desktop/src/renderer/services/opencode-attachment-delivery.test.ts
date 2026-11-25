@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { composerDraftFromMessage } from "../lib/composer-restoration";
 import { mapMessage } from "./opencode-mappers";
 import { attachmentPrompt } from "./opencode-attachment-delivery";
-import { reviewCommentsFromMessage } from "../lib/review-comments";
+import { formatReviewComment, reviewCommentsFromMessage } from "../lib/review-comments";
 
 const binary = {
   uri: "file:///server/uploads/archive%20%22one%22.zip",
@@ -28,11 +28,16 @@ describe("attachment delivery", () => {
     });
     expect(delivered.text).toContain("Fix this");
     expect(delivered.text).toContain("browser ref @e1");
-    expect(delivered.metadata?.browserComments).toEqual([comment]);
     expect(delivered.inlineFiles).toMatchObject([{ uri: comment.preview, mime: "image/jpeg" }]);
-    expect(
-      attachmentPrompt("", { browserComments: [comment], modelInput: ["text"] }).inlineFiles,
-    ).toEqual([]);
+    const { preview: _preview, ...description } = comment;
+    expect(delivered.metadata?.browserComments).toEqual([
+      { ...description, previewFile: delivered.inlineFiles[0]?.name },
+    ]);
+    expect(JSON.stringify(delivered.metadata)).not.toContain("data:");
+    const textOnly = attachmentPrompt("", { browserComments: [comment], modelInput: ["text"] });
+    expect(textOnly.inlineFiles).toEqual([]);
+    // Without an attached file, the metadata is the only place the preview survives.
+    expect(textOnly.metadata?.browserComments).toEqual([comment]);
   });
   it("delivers a comment-only prompt as an explicit note with structured metadata", () => {
     const comments = [
@@ -60,6 +65,52 @@ describe("attachment delivery", () => {
     expect(reviewCommentsFromMessage(message)).toMatchObject([
       { path: "src/a b.ts", comment: "Handle null." },
     ]);
+  });
+  it("names removed lines as the old version and restores their side", () => {
+    const comments = [
+      {
+        path: "src/a.ts",
+        comment: "Why drop this?",
+        selection: { startLine: 12, startChar: 0, endLine: 12, endChar: 0 },
+        side: "deletions" as const,
+        origin: "review" as const,
+      },
+      {
+        path: "src/a.ts",
+        comment: "Keep these.",
+        selection: { startLine: 3, startChar: 0, endLine: 5, endChar: 0 },
+        side: "deletions" as const,
+        origin: "review" as const,
+      },
+      {
+        path: "src/b.ts",
+        comment: "Nice.",
+        selection: { startLine: 7, startChar: 0, endLine: 7, endChar: 0 },
+        side: "additions" as const,
+        origin: "review" as const,
+      },
+    ];
+    const delivered = attachmentPrompt("", { comments });
+    expect(delivered.text?.split("\n")).toEqual([
+      "The user made the following comment regarding line 12 of src/a.ts (removed line, old version): Why drop this?",
+      "The user made the following comment regarding lines 3 through 5 of src/a.ts (removed lines, old version): Keep these.",
+      "The user made the following comment regarding line 7 of src/b.ts: Nice.",
+    ]);
+    const message = mapMessage({
+      id: "sided",
+      type: "user",
+      time: { created: 1 },
+      text: delivered.text,
+      metadata: delivered.metadata,
+    });
+    const restored = reviewCommentsFromMessage(message);
+    expect(restored?.map((comment) => comment.side)).toEqual([
+      "deletions",
+      "deletions",
+      "additions",
+    ]);
+    // Resending a restored comment says the same thing.
+    expect(restored?.map(formatReviewComment).join("\n")).toBe(delivered.text);
   });
   it("delivers unsupported bytes as a quoted server path while retaining display and attachment history", () => {
     const delivered = attachmentPrompt("Inspect this", { files: [binary] });

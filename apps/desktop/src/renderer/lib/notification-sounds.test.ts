@@ -43,6 +43,7 @@ function setup(
 ) {
   let now = NOW;
   const play = vi.fn();
+  const timers: Array<() => void> = [];
   const controller = createNotificationSoundController({
     preferences: () => ({
       ...DEFAULT_NOTIFICATION_SOUND_PREFERENCES,
@@ -60,12 +61,18 @@ function setup(
     }),
     focused: () => overrides.focused ?? false,
     owner: () => overrides.owner ?? true,
-    isChildSession: (_connectionID, sessionID) => overrides.children?.includes(sessionID) ?? false,
+    parentOf: (_connectionID, sessionID) =>
+      overrides.children?.includes(sessionID) ? "ses_1" : null,
     play,
     now: () => now,
+    setTimer: (callback) => timers.push(callback),
+    clearTimer: () => undefined,
   });
   return {
     play,
+    graceElapses: () => {
+      for (const callback of timers.splice(0)) callback();
+    },
     handle: (...events: PalotEvent[]) => controller.handle("connection-1", events),
     advance: (ms: number) => {
       now += ms;
@@ -128,6 +135,25 @@ describe("notification sound controller", () => {
     const otherWindow = setup({ owner: false });
     otherWindow.handle(succeeded("evt_1"));
     expect(otherWindow.play).not.toHaveBeenCalled();
+  });
+
+  it("plays once when a task and its background subagent have both finished", () => {
+    const sounds = setup({ children: ["ses_child"] });
+    sounds.handle(
+      event("evt_1", "session.execution.started", { sessionID: "ses_1" }),
+      event("evt_2", "session.execution.started", { sessionID: "ses_child" }),
+      // The task ends its launching turn while the subagent runs on.
+      succeeded("evt_3"),
+    );
+    expect(sounds.play).not.toHaveBeenCalled();
+    sounds.handle(
+      succeeded("evt_4", "ses_child"),
+      event("evt_5", "session.execution.started", { sessionID: "ses_1" }),
+      succeeded("evt_6"),
+    );
+    expect(sounds.play).toHaveBeenCalledTimes(1);
+    sounds.graceElapses();
+    expect(sounds.play).toHaveBeenCalledTimes(1);
   });
 
   it("throttles bursts", () => {

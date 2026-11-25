@@ -1,5 +1,5 @@
 import { FileCode2, FolderOpen, RefreshCw, SquareArrowOutUpRight } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
 import { runtimeAtom } from "../../atoms/workspace";
 import { cn } from "../../lib/cn";
@@ -7,7 +7,7 @@ import { canCommentOnRange } from "../../lib/review-comments";
 import { useLocationDiffs } from "../../hooks/use-location-diffs";
 import type { WorkbenchTab } from "../../lib/workbench-tabs";
 import { palot } from "../../services/palot";
-import { FileDiffView } from "../file-diff-view";
+import { FileDiffView, type FileDiffFindTarget } from "../file-diff-view";
 import type { SelectedLineRange } from "@pierre/diffs";
 import { ReviewCommentEditor, useReviewComments } from "../review-comment-editor";
 import { DiffContextToggle } from "../diff-context-toggle";
@@ -16,6 +16,8 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Spinner } from "../ui/spinner";
 import { ReviewBasePicker, ReviewBaseStatus } from "./review-base-picker";
 import { DiffViewOptionsMenu, useDiffViewPreferences } from "./diff-view-options";
+import { DiffFindBar, useDiffFind } from "./diff-find";
+import { pierreHostFindView } from "./file-find";
 import type { DiffLayout } from "../../lib/diff-layout";
 
 export function FileDiffTab({
@@ -46,6 +48,7 @@ export function FileDiffTab({
       ) : (
         <FileDiffContent
           tab={tab}
+          active={active}
           query={query}
           expandUnchanged={expandUnchanged}
           setExpandUnchanged={setExpandUnchanged}
@@ -55,13 +58,17 @@ export function FileDiffTab({
   );
 }
 
+const NO_FIND_TARGET: FileDiffFindTarget = { fileDiff: null, scroller: null };
+
 function FileDiffContent({
   tab,
+  active,
   query,
   expandUnchanged,
   setExpandUnchanged,
 }: {
   tab: Extract<WorkbenchTab, { kind: "file-diff" }>;
+  active: boolean;
   query: ReturnType<typeof useLocationDiffs>;
   expandUnchanged: boolean;
   setExpandUnchanged(value: boolean): void;
@@ -72,6 +79,23 @@ function FileDiffContent({
   const [preferences] = useDiffViewPreferences();
   const [layout, setLayout] = useState<DiffLayout>("unified");
   const diff = query.data?.find((file) => file.file === tab.resource.path);
+  // FileDiff renders every line, so Find searches the parsed diff and highlights in its host.
+  const [findTarget, setFindTarget] = useState(NO_FIND_TARGET);
+  const scroller = findTarget.scroller;
+  const findView = useMemo(
+    () => pierreHostFindView(() => scroller, tab.resource.path),
+    [scroller, tab.resource.path],
+  );
+  const findSources = useMemo(
+    () => [{ id: tab.resource.path, fileDiff: findTarget.fileDiff }],
+    [findTarget.fileDiff, tab.resource.path],
+  );
+  const find = useDiffFind({
+    sources: findSources,
+    view: findView,
+    container: findTarget.scroller,
+    enabled: active,
+  });
 
   if (query.isPending) {
     return (
@@ -115,7 +139,7 @@ function FileDiffContent({
   const fileHref = `file://${encodeURI(fullPath)}`;
 
   return diff.patch ? (
-    <div className="flex min-h-0 flex-1 flex-col bg-card">
+    <div className="flex min-h-0 flex-1 flex-col bg-card" onKeyDown={find.onKeyDown}>
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-background px-2">
         <FileCode2 className="size-3 text-muted-foreground" aria-hidden="true" />
         <a
@@ -129,7 +153,7 @@ function FileDiffContent({
         <span className="font-mono text-diff text-success">+{diff.additions}</span>
         <span className="font-mono text-diff text-destructive">-{diff.deletions}</span>
         <DiffContextToggle expanded={expandUnchanged} onExpandedChange={setExpandUnchanged} />
-        <DiffViewOptionsMenu layout={layout} />
+        <DiffViewOptionsMenu layout={layout} onFind={find.openFind} />
         <Button
           type="button"
           variant="ghost"
@@ -180,22 +204,28 @@ function FileDiffContent({
           <RefreshCw className={cn(query.isFetching && "animate-spin")} aria-hidden="true" />
         </Button>
       </div>
-      <FileDiffView
-        file={diff.file}
-        patch={diff.patch}
-        expandUnchanged={expandUnchanged}
-        layout={preferences.layout}
-        onLayoutResolved={setLayout}
-        lineDiffType={preferences.inline}
-        hideWhitespace={preferences.hideWhitespace}
-        className="min-h-0 flex-1"
-        selectedLines={review.enabled ? selection : undefined}
-        onSelectedLinesChange={
-          review.enabled
-            ? (range) => setSelection(range && canCommentOnRange(range) ? range : null)
-            : undefined
-        }
-      />
+      <div className="relative flex min-h-0 flex-1">
+        <DiffFindBar controller={find} />
+        <FileDiffView
+          file={diff.file}
+          patch={diff.patch}
+          expandUnchanged={expandUnchanged}
+          layout={preferences.layout}
+          onLayoutResolved={setLayout}
+          lineDiffType={preferences.inline}
+          hideWhitespace={preferences.hideWhitespace}
+          className="min-h-0 min-w-0 flex-1"
+          changeRail
+          findMatches={find.open ? find.matches : undefined}
+          onFindTargetChange={setFindTarget}
+          selectedLines={review.enabled ? selection : undefined}
+          onSelectedLinesChange={
+            review.enabled
+              ? (range) => setSelection(range && canCommentOnRange(range) ? range : null)
+              : undefined
+          }
+        />
+      </div>
       {review.enabled && selection ? (
         <ReviewCommentEditor
           key={`${diff.file}:${selection.start}:${selection.end}:${selection.side}`}

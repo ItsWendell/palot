@@ -201,7 +201,13 @@ it.each(["failure", "no progress", "rejection"])(
   },
 );
 
-function navigationHarness({ width = 1000, height = 500, totalSize = 2000, promptCount = 4 } = {}) {
+function navigationHarness({
+  width = 1000,
+  height = 500,
+  totalSize = 2000,
+  promptCount = 4,
+  mounted = true,
+} = {}) {
   let nextFrame = 0;
   const frames = new Map<number, FrameRequestCallback>();
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -236,7 +242,7 @@ function navigationHarness({ width = 1000, height = 500, totalSize = 2000, promp
   const input = {
     rows,
     prompts: prompts(rows),
-    viewport: { current: viewport },
+    viewport: { current: mounted ? viewport : null } as { current: HTMLDivElement | null },
     bottomInset: 100,
     virtualizer: {
       scrollToIndex: vi.fn(),
@@ -298,6 +304,15 @@ it.each([
 ])("still requires enough prompts, usable height, and overflow: %j", (geometry) => {
   const view = navigationHarness(geometry);
   expect(view.result.current.railVisible).toBe(false);
+});
+
+it("shows the rail once a viewport that mounts after the first render is measured", () => {
+  // A cold transcript load mounts the scroll viewport only after its first page arrives.
+  const view = navigationHarness({ mounted: false });
+  expect(view.result.current.railVisible).toBe(false);
+  view.input.viewport.current = view.viewport;
+  view.rerender({ scopeID: "connection/session" });
+  expect(view.result.current.railVisible).toBe(true);
 });
 
 it("switches compact presentation on pane resize without losing current-position tracking", () => {
@@ -392,6 +407,16 @@ it("cancels manual navigation synchronously and releases only its transient pin"
   expect(view.input.pin).toHaveBeenLastCalledWith(null);
 });
 
+it("drops a held reading position on a jump, but only moves it when the reader scrolls", () => {
+  const view = navigationHarness();
+  act(() => view.result.current.jump("b"));
+  // A jump lands on its target; holding the older-page position would pull it back.
+  expect(view.input.clearAnchor).toHaveBeenLastCalledWith("cancel");
+  act(() => view.result.current.cancel());
+  // Wheel, keys or touch while a page loads: keep the reader's place, wherever it now is.
+  expect(view.input.clearAnchor).toHaveBeenLastCalledWith("user");
+});
+
 it("fences corrections from the previous connection and clears the active marker", () => {
   const view = navigationHarness();
   act(() => view.result.current.jump("b"));
@@ -401,4 +426,42 @@ it("fences corrections from the previous connection and clears the active marker
   act(() => pending.forEach((callback) => callback(performance.now())));
   expect(view.measure).not.toHaveBeenCalled();
   expect(view.input.pin).toHaveBeenLastCalledWith(null);
+});
+
+it("tracks and lands on a steer inside its turn", () => {
+  const view = navigationHarness();
+  const steer = document.createElement("div");
+  steer.dataset.palotPromptId = "b2";
+  const steerTop = vi
+    .spyOn(steer, "getBoundingClientRect")
+    .mockReturnValue({ top: 200 } as DOMRect);
+  view.viewport.querySelector('[data-turn-row-id="turn-b"]')!.append(steer);
+  const steered = view.input.rows.map((row) =>
+    row.id === "turn-b"
+      ? ({ ...row, turn: { ...row.turn, users: [...row.turn.users, { id: "b2" }] } } as typeof row)
+      : row,
+  );
+  const prompts = [
+    ...view.input.prompts.slice(0, 2),
+    { messageID: "b2", turnID: "turn-b", rowIndex: 1, label: "b2" },
+    ...view.input.prompts.slice(2),
+  ];
+  const { result } = renderHook(() =>
+    useTranscriptNavigation({ ...view.input, rows: steered, prompts, scopeID: "steer" }),
+  );
+
+  view.viewport.scrollTop = 400;
+  view.flush();
+  expect(result.current.activeMessageID).toBe("b");
+  steerTop.mockReturnValue({ top: 10 } as DOMRect);
+  act(() => view.viewport.dispatchEvent(new Event("scroll")));
+  view.flush();
+  expect(result.current.activeMessageID).toBe("b2");
+
+  steerTop.mockReturnValue({ top: 200 } as DOMRect);
+  act(() => result.current.jump("b2"));
+  expect(view.input.pin).toHaveBeenLastCalledWith("turn-b");
+  view.flush();
+  // The correction aligns the steer, not the turn row (at 100), with the viewport top.
+  expect(view.viewport.scrollTop).toBe(600);
 });

@@ -57,8 +57,14 @@ export const reviewBaseScenario: Scenario = {
   },
   async run(page, { client, session, projectDirectory, runRoot }) {
     const location = { directory: projectDirectory };
+    // OpenCode answers null until its Git provider has registered for a new location, so the
+    // first read can race the location's start.
+    await expect
+      .poll(async () => (await client.vcs.base({ location })).data, {
+        message: "Fixture must have an official inferred base",
+      })
+      .not.toBeNull();
     const inferred = (await client.vcs.base({ location })).data;
-    expect(inferred, "Fixture must have an official inferred base").not.toBeNull();
     const inferredDiffs = (await client.vcs.diff({ location, mode: "branch", base: inferred!.ref }))
       .data;
     const inferredFiles = inferredDiffs.map((file) => file.file).sort();
@@ -178,6 +184,11 @@ async function captureSizes(page: Page, runRoot: string) {
     });
     await page.setViewportSize({ width: 920, height: 640 });
     const trigger = page.getByRole("button", { name: /^Review base:/ });
+    // Beside the task list, 920px is too narrow for the changes pane: Palot closes it as the
+    // window shrinks. With the task list hidden it fits again.
+    await expect(trigger).toHaveCount(0);
+    await page.getByRole("button", { name: "Hide navigation", exact: true }).click();
+    await page.getByRole("button", { name: "Show changes", exact: true }).click();
     await expect(trigger).toBeVisible();
     const bounds = await trigger.boundingBox();
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
@@ -197,5 +208,7 @@ async function captureSizes(page: Page, runRoot: string) {
     await page.keyboard.press("Escape");
   } finally {
     await page.setViewportSize(normal);
+    const showNavigation = page.getByRole("button", { name: "Show navigation", exact: true });
+    if (await showNavigation.isVisible()) await showNavigation.click();
   }
 }

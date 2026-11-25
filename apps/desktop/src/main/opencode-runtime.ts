@@ -6,9 +6,12 @@ import Store from "electron-store";
 import type {
   OpenCodeConnectInput,
   OpenCodeCredentialInput,
+  OpenCodeCredentialProtection,
   OpenCodePairingInfo,
   LocalOpenCodeServiceInfo,
+  OpenCodeConnectionCheck,
   OpenCodePairImportInput,
+  OpenCodePairImportResult,
   OpenCodeProfile,
   OpenCodeProfileCreateInput,
   OpenCodeProfileSnapshot,
@@ -31,7 +34,23 @@ import {
   buildAllowsOpenCodeVersionMismatch,
   supportsOneTimeOpenCodePairing,
 } from "./opencode-version";
-import { OpenCodeCredentialVault } from "./opencode-connections/credential-vault";
+import {
+  OpenCodeCredentialVault,
+  credentialHeaders,
+} from "./opencode-connections/credential-vault";
+import {
+  connectionProblem,
+  plainHttpProblem,
+  probeOpenCodeServer,
+  statusRecordingFetch,
+  withSpentCode,
+  unsupportedVersionProblem,
+} from "./opencode-connections/connection-problem";
+import {
+  normalizeServerName,
+  serverNameFromHostname,
+  uniqueServerName,
+} from "../shared/server-name";
 import {
   parseOneTimePairingLink,
   serializeOpenCodePairPayload,
@@ -85,6 +104,16 @@ export class OpenCodeRuntime {
     const lifecycle = this.createLifecycle(profile);
     this.monitored.set(profile.id, lifecycle);
     return lifecycle;
+  }
+
+  /**
+   * The focused lifecycle, re-created when its profile was disconnected but stayed focused. Only
+   * explicit user actions call this: a disabled connection stays disabled for background work.
+   */
+  private focusedLifecycleForUser(): OpenCodeRuntimeLifecycle {
+    if (this.monitored.get(this.lifecycle.profileID) !== this.lifecycle)
+      this.lifecycle = this.retainLifecycle(this.profiles.get(this.lifecycle.profileID));
+    return this.lifecycle;
   }
 
   private createLifecycle(profile: OpenCodeProfile): OpenCodeRuntimeLifecycle {
@@ -244,7 +273,8 @@ export class OpenCodeRuntime {
     sshConnector?: SshConnector,
   ): Promise<OpenCodeRuntimeStatus> {
     this.assertNotSwitching();
-    const lifecycle = this.lifecycle;
+    const explicit = Boolean(input?.startLocalService) || input?.versionMismatch !== undefined;
+    const lifecycle = explicit ? this.focusedLifecycleForUser() : this.lifecycle;
     const status = await lifecycle.connect(input, sshConnector);
     const profile = this.profiles.get(status.profileID);
     if (profile.kind === "remote" && status.connected) {
@@ -264,6 +294,10 @@ export class OpenCodeRuntime {
     return this.profiles.snapshot();
   }
 
+  credentialProtection(): OpenCodeCredentialProtection {
+    return this.credentials.protection();
+  }
+
   createProfile(input: OpenCodeProfileCreateInput): OpenCodeProfileSnapshot {
     if (input.kind !== "remote") return this.profiles.create(input, null);
     const normalized = { ...input, urls: normalizeOpenCodeUrls(input.urls) };
@@ -279,6 +313,7 @@ export class OpenCodeRuntime {
 
   updateProfile(input: OpenCodeProfileUpdateInput): OpenCodeProfileSnapshot {
     const current = this.profiles.get(input.id);
+    if (isRenameOnly(current, input)) return this.profiles.update(input);
     if (current.id === this.profileID()) {
       throw new Error("Switch profiles before editing the active OpenCode server");
     }
@@ -345,6 +380,8 @@ export class OpenCodeRuntime {
     }
     const urls = normalizeOpenCodeUrls(input.urls);
     assertPlainHttpAllowed(urls, input.allowPlainHttp, input.credential);
+    const probe = await probeOpenCodeServer(urls, credentialHeaders(input.credential));
+    if (!probe.ok) throw new Error(`${probe.problem.title} ${probe.problem.fix}`);
     const credentialID = this.credentials.storeCredential(input.credential);
     try {
       const lifecycle = this.createLifecycle({
@@ -439,6 +476,7 @@ export class OpenCodeRuntime {
         code,
         expiresIn,
         payload: `${urls[0]}/auth/connect/${encodeURIComponent(code)}`,
+        name: serverNameFromHostname(server.hostname),
       };
     }
     const connection = await this.requestConnection();
@@ -446,14 +484,19 @@ export class OpenCodeRuntime {
     if (!auth || auth.type !== "basic")
       throw new Error("The active OpenCode service has no pairable credentials");
     const payload = { urls: server.urls, username: auth.username, password: auth.password };
-    return { mode: "credentials", ...payload, payload: serializeOpenCodePairPayload(payload) };
+    return {
+      mode: "credentials",
+      ...payload,
+      payload: serializeOpenCodePairPayload(payload),
+      name: serverNameFromHostname(server.hostname),
+    };
   }
 
   async restartLocalService(): Promise<OpenCodeRuntimeStatus> {
     if (this.profiles.get(this.profileID()).kind !== "local") {
       throw new Error("Switch to the local OpenCode connection before restarting its service");
     }
-    return this.lifecycle.restartLocalService();
+    return this.focusedLifecycleForUser().restartLocalService();
   }
 
   async localServiceInfo(): Promise<LocalOpenCodeServiceInfo> {
@@ -500,24 +543,43 @@ export class OpenCodeRuntime {
     };
   }
 
-  async importPairing(input: OpenCodePairImportInput): Promise<OpenCodeProfileSnapshot> {
-    let payload;
+  /**
+   * Pair with another server in named steps, so a failure says which one broke: send the one-time
+   * code to the one address the person chose, sign in with the session it returns, check the
+   * version, then save. Re-pairing a server Palot already knows renews that connection's sign-in
+   * instead of adding a duplicate, so its tasks stay attached.
+   */
+  async importPairing(input: OpenCodePairImportInput): Promise<OpenCodePairImportResult> {
+    let urls: string[];
+    let credential: { type: "basic"; username: string; password: string };
+    let codeSpent = false;
     if (input.link !== undefined) {
       const { origin, code } = parseOneTimePairingLink(input.link);
-      const urls = normalizeOpenCodeUrls([origin]);
+      urls = normalizeOpenCodeUrls([origin]);
       // The redemption URL carries a secret. Refuse cleartext before sending the code.
-      assertPlainHttpAllowed(urls, input.allowPlainHttp, {
-        type: "basic",
-        username: "opencode",
-        password: code,
-      });
-      const anonymousFetch: typeof fetch = (request, init) =>
-        fetch(request, { ...init, redirect: "manual" });
-      const client = OpenCode.make({ baseUrl: origin, fetch: anonymousFetch });
-      const { token } = await client.server.connect(
-        { code },
-        { signal: AbortSignal.timeout(15_000) },
+      if (needsPlainHttpConsent(urls, input.allowPlainHttp))
+        return { ok: false, problem: plainHttpProblem(true) };
+      const recorder = statusRecordingFetch((request, init) =>
+        fetch(request, { ...init, redirect: "manual" }),
       );
+      const client = OpenCode.make({ baseUrl: origin, fetch: recorder.fetch });
+      let token: string;
+      try {
+        ({ token } = await client.server.connect(
+          { code },
+          { signal: AbortSignal.timeout(15_000) },
+        ));
+      } catch (error) {
+        return {
+          ok: false,
+          problem: connectionProblem(error, {
+            url: origin,
+            stage: "redeem",
+            status: recorder.state.status,
+          }),
+        };
+      }
+      codeSpent = true;
       if (
         !token ||
         token.length > 2_048 ||
@@ -527,68 +589,192 @@ export class OpenCodeRuntime {
           return code < 32 || code === 127;
         })
       )
-        throw new Error("OpenCode returned an invalid pairing token");
-      payload = { urls, username: "opencode", password: token };
+        return {
+          ok: false,
+          problem: {
+            step: "server",
+            title: "The other computer answered the code with something Palot can't use.",
+            fix: "Update OpenCode there, then create a new pairing code.",
+            codeSpent: true,
+          },
+        };
+      credential = { type: "basic", username: "opencode", password: token };
     } else {
-      payload = input.payload;
+      urls = normalizeOpenCodeUrls(input.payload.urls);
+      credential = {
+        type: "basic",
+        username: input.payload.username,
+        password: input.payload.password,
+      };
+      if (needsPlainHttpConsent(urls, input.allowPlainHttp))
+        return { ok: false, problem: plainHttpProblem(true) };
     }
-    const urls = normalizeOpenCodeUrls(payload.urls);
-    const credential = {
-      type: "basic" as const,
-      username: payload.username,
-      password: payload.password,
-    };
-    assertPlainHttpAllowed(urls, input.allowPlainHttp, credential);
+
+    const probe = await probeOpenCodeServer(urls, credentialHeaders(credential));
+    if (!probe.ok)
+      return { ok: false, problem: codeSpent ? withSpentCode(probe.problem) : probe.problem };
+    if (!probe.supported)
+      return {
+        ok: false,
+        problem: codeSpent
+          ? withSpentCode(unsupportedVersionProblem(probe.version))
+          : unsupportedVersionProblem(probe.version),
+      };
+
+    const snapshot = this.profiles.snapshot();
+    const existing = snapshot.profiles.find(
+      (profile): profile is Extract<OpenCodeProfile, { kind: "remote" }> =>
+        profile.kind === "remote" && profile.urls.some((url) => urls.includes(url)),
+    );
+    const requested = normalizeServerName(input.name);
+    const name =
+      requested ??
+      existing?.name ??
+      uniqueServerName(
+        new URL(probe.url).hostname || "Paired OpenCode",
+        snapshot.profiles.map((profile) => profile.name),
+      );
     const credentialID = this.credentials.storeCredential(credential);
     const profile: Extract<OpenCodeProfile, { kind: "remote" }> = {
       id: "pairing-probe",
       kind: "remote",
-      name: new URL(urls[0]!).hostname || "Paired OpenCode",
+      name,
       urls,
       credentialID,
       allowPlainHttp: input.allowPlainHttp,
-      lastSuccessfulUrl: null,
+      lastSuccessfulUrl: probe.url,
       lastConnectedAt: null,
     };
     const lifecycle = this.createLifecycle(profile);
     let credentialCommitted = false;
     try {
-      const status = await lifecycle.connect();
-      const connection = await lifecycle.requestConnection();
-      const before = new Set(this.profiles.snapshot().profiles.map((item) => item.id));
-      const snapshot = this.profiles.create(
-        {
-          kind: "remote",
-          name: profile.name,
-          urls,
-          credential,
-          allowPlainHttp: input.allowPlainHttp,
-        },
-        credentialID,
-      );
-      credentialCommitted = true;
-      const created = snapshot.profiles.find((item) => !before.has(item.id));
-      if (created) {
-        try {
-          this.profiles.recordConnection(
-            created.id,
-            connection.endpoint.url,
-            status.lastConnectedAt ?? Date.now(),
-          );
-        } catch (error) {
-          openCodeLog.warn("failed to record paired server connection", {
-            profileID: created.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+      let status: OpenCodeRuntimeStatus;
+      let connectedUrl: string;
+      try {
+        status = await lifecycle.connect();
+        connectedUrl = (await lifecycle.requestConnection()).endpoint.url;
+      } catch (error) {
+        return {
+          ok: false,
+          problem: connectionProblem(error, { url: probe.url, stage: "connect", codeSpent }),
+        };
       }
-      return this.profiles.snapshot();
-    } catch (error) {
-      if (!credentialCommitted && credentialID) this.deleteCredentialBestEffort(credentialID);
-      throw error;
+      let profileID: string;
+      if (existing) {
+        // Keep the profile ID so tasks stay attached; the old sign-in is replaced.
+        this.profiles.update(
+          {
+            id: existing.id,
+            kind: "remote",
+            name,
+            urls: [...new Set([...urls, ...existing.urls])],
+            allowPlainHttp: input.allowPlainHttp || existing.allowPlainHttp,
+          },
+          credentialID,
+        );
+        credentialCommitted = true;
+        profileID = existing.id;
+        if (existing.credentialID) this.deleteCredentialBestEffort(existing.credentialID);
+        await this.invalidateProfile(existing.id);
+      } else {
+        const before = new Set(snapshot.profiles.map((item) => item.id));
+        const created = this.profiles
+          .create(
+            {
+              kind: "remote",
+              name,
+              urls,
+              credential,
+              allowPlainHttp: input.allowPlainHttp,
+            },
+            credentialID,
+          )
+          .profiles.find((item) => !before.has(item.id))!;
+        credentialCommitted = true;
+        profileID = created.id;
+      }
+      try {
+        this.profiles.recordConnection(
+          profileID,
+          connectedUrl,
+          status.lastConnectedAt ?? Date.now(),
+        );
+      } catch (error) {
+        openCodeLog.warn("failed to record paired server connection", {
+          profileID,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return {
+        ok: true,
+        snapshot: this.profiles.snapshot(),
+        profileID,
+        name,
+        url: connectedUrl,
+        version: status.version ?? probe.version,
+        updated: Boolean(existing),
+      };
     } finally {
+      if (!credentialCommitted && credentialID) this.deleteCredentialBestEffort(credentialID);
       await this.stopLifecycle(lifecycle);
     }
+  }
+
+  /** Check a saved connection with its own sign-in, without connecting or changing it. */
+  async checkProfile(profileID: string): Promise<OpenCodeConnectionCheck> {
+    const profile = this.profiles.get(profileID);
+    if (profile.kind === "local") {
+      const status = this.monitored.get(profileID)?.status();
+      if (status?.connected) {
+        const connection = await this.requestConnection({ profileID });
+        return {
+          ok: true,
+          url: connection.endpoint.url,
+          version: status.version ?? status.contractVersion,
+          secure: true,
+          supported: status.versionMismatch === null,
+        };
+      }
+      return {
+        ok: false,
+        problem: {
+          step: "address",
+          title: "The OpenCode service on this computer isn't running.",
+          fix: "Start it from Settings → Connections → Local service.",
+        },
+      };
+    }
+    if (profile.kind === "ssh") throw new Error("Check SSH connections by connecting to them");
+    if (needsPlainHttpConsent(profile.urls, profile.allowPlainHttp))
+      return { ok: false, problem: plainHttpProblem(false) };
+    const urls = profile.lastSuccessfulUrl
+      ? [
+          profile.lastSuccessfulUrl,
+          ...profile.urls.filter((url) => url !== profile.lastSuccessfulUrl),
+        ]
+      : profile.urls;
+    let headers: Record<string, string> | undefined;
+    try {
+      headers = this.credentials.headers(profile.credentialID);
+    } catch {
+      return {
+        ok: false,
+        problem: {
+          step: "credentials",
+          title: "Palot can't read this connection's saved sign-in.",
+          fix: "Unlock your system keyring and restart Palot, or pair again with a new code.",
+        },
+      };
+    }
+    const probe = await probeOpenCodeServer(urls, headers);
+    if (!probe.ok) return probe;
+    return {
+      ok: true,
+      url: probe.url,
+      version: probe.version,
+      secure: new URL(probe.url).protocol === "https:" || isLoopbackOpenCodeUrl(probe.url),
+      supported: probe.supported,
+    };
   }
 
   async requestConnection(target: { profileID?: string; connectionID?: string } = {}) {
@@ -807,6 +993,27 @@ function assertPlainHttpAllowed(
         : "Allow plain HTTP before sending credentials to a non-loopback OpenCode server",
     );
   }
+}
+
+function needsPlainHttpConsent(urls: string[], allowed: boolean): boolean {
+  return (
+    !allowed && urls.some((url) => new URL(url).protocol === "http:" && !isLoopbackOpenCodeUrl(url))
+  );
+}
+
+/** Renaming changes nothing about how Palot connects, so it is allowed while connected. */
+function isRenameOnly(current: OpenCodeProfile, input: OpenCodeProfileUpdateInput): boolean {
+  if (current.kind !== input.kind) return false;
+  if (input.kind === "remote" && current.kind === "remote") {
+    return (
+      input.credential === undefined &&
+      input.allowPlainHttp === current.allowPlainHttp &&
+      normalizeOpenCodeUrls(input.urls).join("\u0000") === current.urls.join("\u0000")
+    );
+  }
+  if (input.kind === "ssh" && current.kind === "ssh")
+    return JSON.stringify(input.ssh) === JSON.stringify(current.ssh);
+  return input.kind === "local";
 }
 
 function connectionProfileID(): string | undefined {

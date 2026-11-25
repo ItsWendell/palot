@@ -39,3 +39,26 @@ it("sends a comment-only prompt with explicit note, file-range context and upstr
     expect.anything(),
   );
 });
+
+it("attaches no current-file range for a comment on removed lines", async () => {
+  mocks.prompt.mockClear();
+  await sendPrompt({
+    sessionID: "session-1",
+    text: "",
+    comments: [
+      {
+        path: "src/a.ts",
+        selection: { startLine: 12, startChar: 0, endLine: 12, endChar: 0 },
+        comment: "Why drop this?",
+        side: "deletions",
+        origin: "review",
+      },
+    ],
+  });
+
+  const [request] = mocks.prompt.mock.calls.at(-1)!;
+  expect(request.text).toBe(
+    "The user made the following comment regarding line 12 of src/a.ts (removed line, old version): Why drop this?",
+  );
+  expect(request.files).toBeUndefined();
+});

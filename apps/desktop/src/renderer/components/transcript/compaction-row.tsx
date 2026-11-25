@@ -168,11 +168,7 @@ export function CompactionBoundary({ group }: { group: TurnActivityGroup }) {
             }}
           >
             {retrying ? (
-              <LoaderCircle
-                data-icon="inline-start"
-                className="animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
+              <LoaderCircle data-icon="inline-start" className="animate-spin" aria-hidden="true" />
             ) : (
               <RotateCcw data-icon="inline-start" aria-hidden="true" />
             )}

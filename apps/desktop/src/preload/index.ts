@@ -1,12 +1,13 @@
 /** Narrow, typed bridge from the sandboxed renderer to Electron main. */
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { PalotApi, PalotEventBatch, PalotOpenTarget } from "../shared/opencode-contract";
 import type {
   AutomationChangedEvent,
   AutomationNotificationTarget,
 } from "../shared/automation-contract";
 import type { SessionTriageSnapshot } from "../shared/session-triage-contract";
+import type { TerminalFileLink } from "../shared/terminal-file-url";
 import type { SourceControlChangedEvent } from "../shared/source-control-contract";
 import type { ProjectScriptRun } from "../shared/project-scripts-contract";
 import { VOICE_IPC_CHANNELS, type VoiceHostCommand } from "../shared/voice-contract";
@@ -25,6 +26,15 @@ import {
 } from "../shared/window-chrome";
 
 const CHROME_TIER_ARGUMENT = "--palot-chrome-tier=";
+
+/** Pasted bitmaps and files the page builds have no path, and neither does a value that is no File. */
+function pathForFile(file: File): string {
+  try {
+    return webUtils.getPathForFile(file);
+  } catch {
+    return "";
+  }
+}
 
 window.addEventListener("online", () => {
   void ipcRenderer.invoke(IPC_CHANNELS.networkRestored).catch(() => undefined);
@@ -109,6 +119,11 @@ const api: PalotApi = {
     ipcRenderer.on(IPC_CHANNELS.chromeTierChanged, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.chromeTierChanged, handler);
   },
+  onTerminalFileLink: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, link: TerminalFileLink) => listener(link);
+    ipcRenderer.on(IPC_CHANNELS.terminalFileLink, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.terminalFileLink, handler);
+  },
   runtimeStatus: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeStatus),
   openCodeReleaseStatus: () => ipcRenderer.invoke(IPC_CHANNELS.openCodeReleaseStatus),
   setOpenCodeReleaseChannel: (channel) =>
@@ -148,6 +163,7 @@ const api: PalotApi = {
   switchOpenCodeProfile: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.profilesSwitch, profileID),
   openCodePairingInfo: () => ipcRenderer.invoke(IPC_CHANNELS.pairingInfo),
   importOpenCodePairing: (input) => ipcRenderer.invoke(IPC_CHANNELS.pairingImport, input),
+  checkOpenCodeProfile: (profileID) => ipcRenderer.invoke(IPC_CHANNELS.profilesCheck, profileID),
   openCodeWebAccessInfo: () => ipcRenderer.invoke(IPC_CHANNELS.webAccessInfo),
   enableOpenCodeTailscaleAccess: () => ipcRenderer.invoke(IPC_CHANNELS.webAccessEnableTailscale),
   disableOpenCodeTailscaleAccess: () => ipcRenderer.invoke(IPC_CHANNELS.webAccessDisableTailscale),
@@ -208,9 +224,16 @@ const api: PalotApi = {
     ipcRenderer.invoke(IPC_CHANNELS.externalOpen, input, connectionID),
   pickFiles: (connectionID, requestID) =>
     ipcRenderer.invoke(IPC_CHANNELS.pickFiles, { requestID }, connectionID),
+  pathForFile,
+  attachDroppedFiles: (files, connectionID, requestID) => {
+    const paths = Array.from(files, pathForFile).filter(Boolean);
+    return ipcRenderer.invoke(IPC_CHANNELS.attachFilePaths, { paths, requestID }, connectionID);
+  },
   saveSessionExport: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveSessionExport, input),
+  saveTextFileCopy: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveTextFileCopy, input),
   pickSessionImport: () => ipcRenderer.invoke(IPC_CHANNELS.pickSessionImport),
-  writeClipboardText: (value) => ipcRenderer.invoke(IPC_CHANNELS.writeClipboardText, value),
+  writeClipboardText: (value, html) =>
+    ipcRenderer.invoke(IPC_CHANNELS.writeClipboardText, value, html),
   attachClipboardImages: (images, connectionID, requestID) =>
     ipcRenderer.invoke(IPC_CHANNELS.attachClipboardImages, { images, requestID }, connectionID),
   attachClipboardText: (text, connectionID, requestID) =>
@@ -225,6 +248,14 @@ const api: PalotApi = {
   },
   attachmentPreview: (grant, connectionID) =>
     ipcRenderer.invoke(IPC_CHANNELS.attachmentPreview, grant, connectionID),
+  persistComposerAttachments: (uris) =>
+    ipcRenderer.invoke(IPC_CHANNELS.persistComposerAttachments, uris),
+  restoreComposerAttachments: (uris) =>
+    ipcRenderer.invoke(IPC_CHANNELS.restoreComposerAttachments, uris),
+  releaseComposerAttachments: (uris) =>
+    ipcRenderer.invoke(IPC_CHANNELS.releaseComposerAttachments, uris),
+  sweepComposerAttachments: (uris) =>
+    ipcRenderer.invoke(IPC_CHANNELS.sweepComposerAttachments, uris),
   downloadUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.downloadUrl, url),
   performanceSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.performanceSnapshot),
   heapSnapshots: (input) => ipcRenderer.invoke(IPC_CHANNELS.heapSnapshots, input),
@@ -251,8 +282,10 @@ const api: PalotApi = {
     ipcRenderer.invoke(IPC_CHANNELS.notificationSystemSettingsOpen),
   sendDesktopTestNotification: () => ipcRenderer.invoke(IPC_CHANNELS.notificationTest),
   takeOpenTarget: () => ipcRenderer.invoke(IPC_CHANNELS.openTargetTake),
-  openSessionWindow: (sessionID, connectionID) =>
-    ipcRenderer.invoke(IPC_CHANNELS.openSessionWindow, sessionID, connectionID),
+  openSessionWindow: (sessionID, connectionID, options) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openSessionWindow, sessionID, connectionID, {
+      background: options?.background === true,
+    }),
   closeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.closeWindow),
   onOpenTargetRequested: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, target: PalotOpenTarget) =>
@@ -289,6 +322,7 @@ const api: PalotApi = {
     searchPullRequests: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestSearch, input),
     pullRequestDetail: (ref) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestDetail, ref),
     pullRequestTimeline: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestTimeline, input),
+    pullRequestCheckLogs: (input) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestCheckLogs, input),
     pullRequestFiles: (ref) => ipcRenderer.invoke(IPC_CHANNELS.pullRequestFiles, ref),
     setPullRequestFileViewed: (input) =>
       ipcRenderer.invoke(IPC_CHANNELS.pullRequestFileViewed, input),
@@ -331,6 +365,13 @@ const api: PalotApi = {
   spellcheck: {
     load: () => ipcRenderer.invoke(IPC_CHANNELS.spellcheckLoad),
     update: (update) => ipcRenderer.invoke(IPC_CHANNELS.spellcheckUpdate, update),
+  },
+  palotUpdate: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.palotUpdateStatus),
+    setEnabled: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.palotUpdateSetEnabled, enabled),
+    check: () => ipcRenderer.invoke(IPC_CHANNELS.palotUpdateCheck),
+    dismiss: (version) => ipcRenderer.invoke(IPC_CHANNELS.palotUpdateDismiss, version),
+    takeAnnouncement: () => ipcRenderer.invoke(IPC_CHANNELS.palotUpdateTakeAnnouncement),
   },
   voice: {
     claim: () => ipcRenderer.invoke(VOICE_IPC_CHANNELS.hostClaim),

@@ -5,7 +5,9 @@ import type { OpenCodeRuntimeStatus } from "../../../shared";
 import { BtwTab } from "./btw-tab";
 import type { BtwTab as BtwWorkbenchTab } from "../../lib/btw";
 import { btwFocusRequestAtom, btwPendingAtom, btwRequestKey } from "../../atoms/btw";
-import { transcriptJumpTargetAtom } from "../../atoms/workbench";
+import { transcriptJumpTargetAtom, workbenchStateAtom } from "../../atoms/workbench";
+import { findBtwTab } from "../../lib/btw";
+import { workbenchScopeKey } from "../../lib/workbench-tabs";
 import { runtimeAtom } from "../../atoms/workspace";
 
 vi.mock("../markdown-content", () => ({
@@ -27,6 +29,36 @@ const tab: BtwWorkbenchTab = {
 afterEach(cleanup);
 
 describe("BTW tab", () => {
+  it("clears its unread mark only while it is in view", () => {
+    const store = createStore();
+    const scope = { profileID: "owner", sessionID: "session" };
+    const unread = { ...tab, resource: { ...tab.resource, answer: "Because.", unread: true } };
+    store.set(workbenchStateAtom, {
+      version: 1,
+      scopes: {
+        [workbenchScopeKey(scope)]: {
+          right: { tabs: [unread], activeTabID: unread.id, requestedOpen: true },
+          bottom: { tabs: [], activeTabID: null, requestedOpen: false },
+          updatedAt: 1,
+        },
+      },
+    });
+    const saved = () => findBtwTab(store.get(workbenchStateAtom), scope, unread.id)?.resource;
+    const view = render(
+      <Provider store={store}>
+        <BtwTab tab={unread} active={false} />
+      </Provider>,
+    );
+    expect(saved()?.unread).toBe(true);
+    view.rerender(
+      <Provider store={store}>
+        <BtwTab tab={unread} active />
+      </Provider>,
+    );
+    expect(saved()?.unread).toBeUndefined();
+    expect(saved()?.answer).toBe("Because.");
+  });
+
   it("shows pending, completed answers, and retryable interrupted questions after reload", () => {
     const store = createStore();
     store.set(btwPendingAtom, new Set([btwRequestKey(tab.resource, tab.id)]));

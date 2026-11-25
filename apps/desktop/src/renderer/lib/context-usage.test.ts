@@ -313,5 +313,34 @@ describe("describeContextEntry", () => {
       "Switched to claude (max)",
       "Switched variant to Auto",
     ]);
+    expect(
+      describeContextEntry(
+        switched(
+          "m5",
+          { id: "gpt", providerID: "openai", variant: "xhigh" },
+          { id: "gpt", providerID: "openai" },
+        ),
+      ).preview,
+    ).toBe("Switched variant to Extra high");
+  });
+
+  it("labels OpenCode's <system-update> instructions and keeps them out of a prompt's preview", () => {
+    const plan = describeContextEntry({
+      type: "synthetic",
+      id: "s",
+      time: { created: 1 },
+      text: "<system-update>\nYou are NO LONGER in Plan mode.\n</system-update>",
+    } as SessionMessageInfo);
+    expect(plan).toMatchObject({
+      role: "Instruction update",
+      preview: "You are NO LONGER in Plan mode.",
+    });
+    const prompt = describeContextEntry({
+      type: "user",
+      id: "u",
+      time: { created: 1 },
+      text: '<system-update>Note: The user opened the file "a.ts".</system-update>\nFix the bug',
+    } as SessionMessageInfo);
+    expect(prompt.preview).toBe("Fix the bug");
   });
 });

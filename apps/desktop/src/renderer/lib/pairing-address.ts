@@ -1,4 +1,5 @@
 import type { OpenCodePairingInfo, OpenCodeWebAccessInfo } from "../../shared";
+import { normalizeServerName } from "../../shared/server-name";
 import { isLocalBrowserURL } from "./browser-address";
 
 /** Prefer an encrypted, reachable address without changing the server's advertised origins. */
@@ -12,11 +13,46 @@ export function preferredPairingAddress(urls: string[]): string | undefined {
   );
 }
 
-export function pairingQRCodePayload(info: OpenCodePairingInfo): string | null {
+/** Addresses another device can reach. A scanning device's localhost is not this computer. */
+export function reachablePairingAddresses(info: OpenCodePairingInfo): string[] {
+  return info.urls.filter((address) => !isLocalBrowserURL(new URL(address)));
+}
+
+/**
+ * The QR payload: OpenCode's `{"code","urls","name"?}` JSON (OpenCode's app reads `name` since
+ * #64139 "name a paired server from its QR code"; older readers ignore it). Legacy servers share
+ * reusable credentials instead. Null when no address is reachable from another device.
+ */
+export function pairingQRCodePayload(
+  info: OpenCodePairingInfo,
+  name?: string | null,
+): string | null {
+  const label = normalizeServerName(name);
+  if (info.mode === "credentials") {
+    if (!label) return info.payload;
+    const { urls, username, password } = JSON.parse(info.payload) as Record<string, unknown>;
+    return JSON.stringify({ urls, username, password, name: label });
+  }
+  const urls = reachablePairingAddresses(info);
+  return urls.length
+    ? JSON.stringify(label ? { code: info.code, urls, name: label } : { code: info.code, urls })
+    : null;
+}
+
+/**
+ * The pairing details to copy: the QR payload, or, when only this computer's own addresses exist
+ * (an SSH port forward, a second app on this machine), the same JSON with those addresses.
+ */
+export function pairingCopyPayload(info: OpenCodePairingInfo, name?: string | null): string {
+  const qr = pairingQRCodePayload(info, name);
+  if (qr) return qr;
   if (info.mode === "credentials") return info.payload;
-  const urls = info.urls.filter((address) => !isLocalBrowserURL(new URL(address)));
-  // A scanning device's localhost is not the computer hosting this service.
-  return urls.length ? JSON.stringify({ code: info.code, urls }) : null;
+  const label = normalizeServerName(name);
+  return JSON.stringify(
+    label
+      ? { code: info.code, urls: info.urls, name: label }
+      : { code: info.code, urls: info.urls },
+  );
 }
 
 export function suggestedPairingAddress(info: OpenCodeWebAccessInfo | null): string | null {
@@ -64,5 +100,5 @@ export function pairingInfoForAddress(
     };
   }
   const payload = { urls: [url.origin], username: info.username, password: info.password };
-  return { mode: "credentials", ...payload, payload: JSON.stringify(payload) };
+  return { mode: "credentials", ...payload, payload: JSON.stringify(payload), name: info.name };
 }

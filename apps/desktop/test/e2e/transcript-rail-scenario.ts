@@ -110,8 +110,9 @@ function createRailScenario(streaming: boolean): Scenario {
         // line, but actual bottom position must select the latest sent prompt.
         await expect
           .poll(async () => {
+            // A turn row is keyed by its prompt; the response carries its own message id.
             const previous = await page
-              .locator('[data-message-id="msg_rail_assistant_119"]')
+              .locator('[data-palot-response-message="msg_rail_assistant_119"]')
               .boundingBox();
             const clip = await transcript.boundingBox();
             return Boolean(
@@ -221,7 +222,7 @@ function createRailScenario(streaming: boolean): Scenario {
         await rail.press("ArrowDown");
         await rail.press("Enter");
         await expectAligned(page, 2);
-        await expect(composer).toHaveValue(SOURCE_DRAFT);
+        await expect(composer).toHaveJSProperty("value", SOURCE_DRAFT);
         await page.screenshot({ path: join(runRoot, "transcript-rail-wide-history.png") });
 
         // The cap stays compact on tall windows and yields space on short panes.
@@ -254,7 +255,7 @@ function createRailScenario(streaming: boolean): Scenario {
         await rail.press("ArrowDown");
         await rail.press("Enter");
         await expectAligned(page, 3);
-        await expect(composer).toHaveValue(SOURCE_DRAFT);
+        await expect(composer).toHaveJSProperty("value", SOURCE_DRAFT);
         const compactRailBounds = await railSurface.boundingBox();
         const bodyBounds = await page
           .getByText("Completed rail fixture turn 3.", { exact: true })
@@ -264,14 +265,14 @@ function createRailScenario(streaming: boolean): Scenario {
         await page.screenshot({ path: join(runRoot, "transcript-rail-narrow-focus.png") });
         await expectTwoLineComposer(page);
         await page.getByRole("button", { name: "Task actions", exact: true }).click();
-        await page.getByRole("menuitem", { name: "Prompt timeline", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Jump to message…", exact: true }).click();
         const dialog = page.getByRole("dialog");
         await expect(dialog.getByRole("textbox", { name: "Search prompts" })).toBeVisible();
         await dialog.getByRole("textbox", { name: "Search prompts" }).fill("Rail prompt 003");
         await dialog.getByRole("button", { name: new RegExp(label(3)) }).click();
         await expect(dialog).toHaveCount(0);
         await expectAligned(page, 3);
-        await expect(composer).toHaveValue(SOURCE_DRAFT);
+        await expect(composer).toHaveJSProperty("value", SOURCE_DRAFT);
         await page.screenshot({ path: join(runRoot, "transcript-rail-narrow-fallback.png") });
         expect(
           (await client.experimental.session.export({ sessionID: source.id })).messages,
@@ -333,7 +334,7 @@ async function exerciseStreamingRail(page: Page, sessionID: string, context: Sce
       const options = await rail.getByRole("option").count();
       expect(options).toBeLessThanOrEqual(80);
       await expect(rail.getByRole("option").first()).toHaveAttribute("aria-setsize", "121");
-      await expect(composer).toHaveValue(SOURCE_DRAFT);
+      await expect(composer).toHaveJSProperty("value", SOURCE_DRAFT);
       return {
         options,
         loadedPrompts: 121,
@@ -405,7 +406,7 @@ async function exerciseStreamingRail(page: Page, sessionID: string, context: Sce
     // Let the one owned local continuation settle before the outer fixture cleanup.
     await client.experimental.session.wait({ sessionID });
   }
-  await expect(composer).toHaveValue(SOURCE_DRAFT);
+  await expect(composer).toHaveJSProperty("value", SOURCE_DRAFT);
   const completed = await client.experimental.session.export({ sessionID });
   expect(
     completed.messages.some(

@@ -9,12 +9,14 @@ import type {
   PalotMessageContent,
   PalotSession,
 } from "../../shared";
-import type { SessionExecutionState, SessionRuntimeStatus } from "../atoms/workspace";
+import type { RetryError, SessionExecutionState, SessionRuntimeStatus } from "../atoms/workspace";
 import {
   createStreamingPatchInputState,
   streamingPatchInputFromJson,
   streamPatchInput,
 } from "./streaming-patch-input";
+import { cutTail } from "../../shared/text-cut";
+import { withRetainedScriptCalls } from "./message-reconcile";
 
 const MAX_LIVE_TOOL_OUTPUT = 256_000;
 
@@ -38,7 +40,7 @@ function boundedToolMetadata(value: unknown): JsonValue {
   if (output === null || output.length <= MAX_LIVE_TOOL_OUTPUT) return metadata;
   return {
     ...metadata,
-    output: `[Earlier output truncated]\n${output.slice(-MAX_LIVE_TOOL_OUTPUT)}`,
+    output: `[Earlier output truncated]\n${cutTail(output, MAX_LIVE_TOOL_OUTPUT)}`,
     truncated: true,
   };
 }
@@ -48,7 +50,8 @@ function isShellTool(part: PalotMessageContent): boolean {
 }
 
 function settledToolMetadata(part: PalotMessageContent, value: JsonValue): JsonValue {
-  if (!isShellTool(part)) return value;
+  if (!isShellTool(part))
+    return withRetainedScriptCalls(record(part.state).metadata, value) ?? value;
   return boundedToolMetadata({
     ...record(record(part.state).metadata),
     ...record(value),
@@ -104,6 +107,7 @@ export function sameSessionExecutionState(
     left.parentID === right.parentID &&
     left.error?.type === right.error?.type &&
     left.error?.message === right.error?.message &&
+    left.error?.status === right.error?.status &&
     sameSessionExecutionState(leftProjected?.settled, rightProjected?.settled)
   );
 }
@@ -116,8 +120,35 @@ export function sameSessionRuntimeStatus(
   if (!left || !right || left.type !== right.type) return false;
   if (left.type !== "retry" || right.type !== "retry") return true;
   return (
-    left.attempt === right.attempt && left.message === right.message && left.next === right.next
+    left.attempt === right.attempt &&
+    left.message === right.message &&
+    left.next === right.next &&
+    sameRetryError(left.error, right.error) &&
+    left.scheduledAt === right.scheduledAt
   );
+}
+
+export function sameRetryError(left: RetryError | undefined, right: RetryError | undefined) {
+  return (
+    left === right ||
+    (left?.type === right?.type &&
+      left?.status === right?.status &&
+      left?.retryAfterMs === right?.retryAfterMs)
+  );
+}
+
+/** The failure a scheduled retry follows, when OpenCode named it. */
+function retryError(value: JsonValue | undefined): RetryError | undefined {
+  const error = record(value);
+  const type = string(error.type);
+  if (!type) return undefined;
+  const status = number(error.status);
+  const retryAfterMs = number(error.retryAfterMs);
+  return {
+    type,
+    ...(status !== null ? { status } : {}),
+    ...(retryAfterMs !== null ? { retryAfterMs } : {}),
+  };
 }
 
 function compactionMessageID(eventID: string): string {
@@ -253,8 +284,19 @@ function executionError(value: JsonValue | undefined): SessionExecutionState["er
   const nested = record(error.data);
   const message = string(error.message) ?? string(nested.message);
   if (!message) return undefined;
-  return { type: string(error.type) ?? string(error.name), message };
+  const status = number(error.status);
+  const retryAfterMs = number(error.retryAfterMs);
+  const body = string(record(error.response).body)?.slice(0, 4_000);
+  return {
+    type: string(error.type) ?? string(error.name),
+    message,
+    ...(status !== null ? { status } : {}),
+    ...(retryAfterMs !== null ? { retryAfterMs } : {}),
+    ...(body ? { body } : {}),
+  };
 }
+
+const STEP_FIRST_TOKEN = "session.step.first-token";
 
 function assistantFallback(messageID: string, createdAt: number): PalotMessage {
   return {
@@ -376,19 +418,31 @@ function enqueuedUser(event: PalotEvent): PalotMessage | null {
   };
 }
 
+/**
+ * Replaces one message. A `writable` array is a copy the caller owns and has not shared
+ * yet, so it changes in place; any other array is copied first.
+ */
 function updateMessage(
   messages: PalotMessage[],
   messageID: string,
   update: (message: PalotMessage) => PalotMessage,
-  fallback?: PalotMessage,
+  fallback: PalotMessage | undefined,
+  writable: boolean,
 ): PalotMessage[] {
-  const index = messages.findIndex((message) => message.id === messageID);
-  if (index === -1) return fallback ? [...messages, update(fallback)] : messages;
+  // Streamed events almost always target the newest message.
+  const index = messages.findLastIndex((message) => message.id === messageID);
+  if (index === -1) {
+    if (!fallback) return messages;
+    const value = update(fallback);
+    if (!writable) return [...messages, value];
+    messages.push(value);
+    return messages;
+  }
   const current = messages[index];
   if (!current) return messages;
   const nextMessage = update(current);
   if (nextMessage === current) return messages;
-  const next = [...messages];
+  const next = writable ? messages : [...messages];
   next[index] = nextMessage;
   return next;
 }
@@ -506,6 +560,18 @@ export function applyOpenCodeEvents(
   events: PalotEvent[],
 ): PalotMessage[] {
   let next = messages;
+  // The copy this batch made for its first message write. Later writes replace its slots
+  // instead of copying the transcript once per event; it is never shared before returning.
+  let working: PalotMessage[] | null = null;
+  const updateNext = (
+    messageID: string,
+    update: (message: PalotMessage) => PalotMessage,
+    fallback?: PalotMessage,
+  ) => {
+    const result = updateMessage(next, messageID, update, fallback, next === working);
+    if (result !== next) working = result;
+    next = result;
+  };
   for (const event of events) {
     if (sessionID(event) !== selectedSessionID) continue;
     const data = record(event.data);
@@ -514,8 +580,7 @@ export function applyOpenCodeEvents(
     if (event.type === "session.inbox.enqueued") {
       const value = enqueuedUser(event);
       if (value) {
-        next = updateMessage(
-          next,
+        updateNext(
           value.id,
           (current) =>
             current.data === null
@@ -549,7 +614,7 @@ export function applyOpenCodeEvents(
             message.runStartedAt !== undefined &&
             message.runCompletedAt === undefined,
         )?.runStartedAt;
-        next = updateMessage(next, inputID, (message) => {
+        updateNext(inputID, (message) => {
           if (data.delivery === "steer") {
             return {
               ...message,
@@ -572,7 +637,7 @@ export function applyOpenCodeEvents(
             message.runStartedAt !== undefined &&
             message.runCompletedAt === undefined,
         )?.runStartedAt;
-        next = updateMessage(next, inputID, (message) => ({
+        updateNext(inputID, (message) => ({
           ...message,
           promotedAt: event.createdAt,
           ...(message.delivery === "steer" && activeRun !== undefined
@@ -601,12 +666,12 @@ export function applyOpenCodeEvents(
 
     if (event.type === "session.synthetic") {
       const value = eventMessage(event, "synthetic", data);
-      next = updateMessage(next, value.id, (current) => current, value);
+      updateNext(value.id, (current) => current, value);
       continue;
     }
     if (event.type === "session.instructions.updated") {
       const value = eventMessage(event, "system", data);
-      next = updateMessage(next, value.id, (current) => current, value);
+      updateNext(value.id, (current) => current, value);
       continue;
     }
     if (event.type === "session.skill.activated") {
@@ -615,22 +680,22 @@ export function applyOpenCodeEvents(
         ...data,
         ...(skill === undefined ? {} : { skill }),
       });
-      next = updateMessage(next, value.id, (current) => current, value);
+      updateNext(value.id, (current) => current, value);
       continue;
     }
     if (event.type === "session.agent.selected") {
       const value = eventMessage(event, "agent-switched", data);
-      next = updateMessage(next, value.id, (current) => current, value);
+      updateNext(value.id, (current) => current, value);
       continue;
     }
     if (event.type === "session.model.selected") {
       const value = eventMessage(event, "model-switched", data);
-      next = updateMessage(next, value.id, (current) => current, value);
+      updateNext(value.id, (current) => current, value);
       continue;
     }
     if (event.type === "session.moved") {
       const value = eventMessage(event, "location-switched", data);
-      next = updateMessage(next, value.id, (current) => current, value);
+      updateNext(value.id, (current) => current, value);
       continue;
     }
     if (event.type === "session.shell.started") {
@@ -649,7 +714,7 @@ export function applyOpenCodeEvents(
           createdAt: startedAt,
           completedAt: null,
         };
-        next = updateMessage(next, value.id, (current) => current, value);
+        updateNext(value.id, (current) => current, value);
       }
       continue;
     }
@@ -711,7 +776,7 @@ export function applyOpenCodeEvents(
         status: "running",
         ...(data.reason === "auto" || data.reason === "manual" ? { reason: data.reason } : {}),
       });
-      next = updateMessage(next, id, (current) => current, value);
+      updateNext(id, (current) => current, value);
       continue;
     }
     if (event.type === "session.compaction.delta") {
@@ -775,13 +840,13 @@ export function applyOpenCodeEvents(
     if (event.type === "session.step.started") {
       const value = assistant(event);
       if (value) {
-        next = updateMessage(
-          next,
+        updateNext(
           value.id,
           (current) => ({
             ...current,
             streamedAt: undefined,
             firstTokenAt: undefined,
+            firstTokenRecordedAt: undefined,
             createdAt: event.data.started ?? event.createdAt,
             content: current.content.map((part) =>
               part.streaming ? { ...part, streaming: false } : part,
@@ -795,10 +860,24 @@ export function applyOpenCodeEvents(
       }
       continue;
     }
+    // OpenCode after 2.2.7 records the step's first output token; it is not in the 2.2.7 contract.
+    if ((event.type as string) === STEP_FIRST_TOKEN) {
+      if (messageID) {
+        updateNext(
+          messageID,
+          (message) => ({
+            ...message,
+            firstTokenAt: event.createdAt,
+            firstTokenRecordedAt: event.createdAt,
+          }),
+          assistantFallback(messageID, event.createdAt),
+        );
+      }
+      continue;
+    }
     if (event.type === "session.step.streamed") {
       if (messageID) {
-        next = updateMessage(
-          next,
+        updateNext(
           messageID,
           (message) => ({ ...message, streamedAt: event.createdAt }),
           assistantFallback(messageID, event.createdAt),
@@ -813,8 +892,7 @@ export function applyOpenCodeEvents(
           ?.id ??
         next.findLast((message) => message.type === "assistant")?.id;
       if (retryMessageID) {
-        next = updateMessage(
-          next,
+        updateNext(
           retryMessageID,
           (message) => ({
             ...message,
@@ -825,6 +903,8 @@ export function applyOpenCodeEvents(
                 attempt: data.attempt ?? null,
                 at: number(data.at),
                 error: data.error ?? null,
+                // When the failure was recorded, which a usage limit's wait counts from.
+                scheduledAt: event.createdAt,
               },
             },
           }),
@@ -875,8 +955,7 @@ export function applyOpenCodeEvents(
         event.type === "session.text.delta" ||
         event.type === "session.text.ended")
     ) {
-      next = updateMessage(
-        next,
+      updateNext(
         messageID,
         (message) => {
           if (event.type === "session.text.delta" && message.completedAt !== null) return message;
@@ -890,6 +969,10 @@ export function applyOpenCodeEvents(
                 : {
                     ...part,
                     streaming: event.type !== "session.text.ended",
+                    // The provider's phase (commentary or final answer) arrives with the end.
+                    ...(event.type === "session.text.ended" && data.native !== undefined
+                      ? { native: data.native }
+                      : {}),
                     ...(event.type === "session.text.started"
                       ? { time: { created: event.createdAt } }
                       : {}),
@@ -928,8 +1011,7 @@ export function applyOpenCodeEvents(
         event.type === "session.reasoning.delta" ||
         event.type === "session.reasoning.ended")
     ) {
-      next = updateMessage(
-        next,
+      updateNext(
         messageID,
         (message) => {
           if (event.type === "session.reasoning.delta" && message.completedAt !== null)
@@ -980,8 +1062,7 @@ export function applyOpenCodeEvents(
 
     const toolID = string(data.id);
     if (toolID && event.type === "session.tool.input.started") {
-      next = updateMessage(
-        next,
+      updateNext(
         messageID,
         (message) =>
           toolPart(
@@ -1006,8 +1087,7 @@ export function applyOpenCodeEvents(
       continue;
     }
     if (toolID && event.type === "session.tool.input.delta") {
-      next = updateMessage(
-        next,
+      updateNext(
         messageID,
         (message) =>
           toolPart(message, toolID, (part) => {
@@ -1042,8 +1122,7 @@ export function applyOpenCodeEvents(
       continue;
     }
     if (toolID && event.type === "session.tool.input.ended") {
-      next = updateMessage(
-        next,
+      updateNext(
         messageID,
         (message) =>
           toolPart(message, toolID, (part) => ({
@@ -1063,8 +1142,7 @@ export function applyOpenCodeEvents(
       continue;
     }
     if (toolID && event.type === "session.tool.called") {
-      next = updateMessage(
-        next,
+      updateNext(
         messageID,
         (message) =>
           toolPart(
@@ -1093,8 +1171,7 @@ export function applyOpenCodeEvents(
       continue;
     }
     if (toolID && event.type === "session.tool.progress") {
-      next = updateMessage(
-        next,
+      updateNext(
         messageID,
         (message) =>
           toolPart(message, toolID, (part) => ({
@@ -1113,8 +1190,7 @@ export function applyOpenCodeEvents(
       continue;
     }
     if (toolID && (event.type === "session.tool.success" || event.type === "session.tool.failed")) {
-      next = updateMessage(
-        next,
+      updateNext(
         messageID,
         (message) =>
           toolPart(message, toolID, (part) => ({
@@ -1153,21 +1229,36 @@ export function applyOpenCodeEvents(
         event.type === "session.step.failed"
           ? "error"
           : (string(data.finish) as PalotMessage["finish"]);
-      next = updateMessage(
-        next,
+      // OpenCode stores the step's end snapshot and changed files on the message the same way.
+      const snapshot =
+        data.snapshot !== undefined || data.files !== undefined
+          ? {
+              snapshot: {
+                ...(data.snapshot !== undefined ? { end: data.snapshot } : {}),
+                ...(data.files !== undefined ? { files: data.files } : {}),
+              },
+            }
+          : null;
+      updateNext(
         messageID,
-        (message) => ({
-          ...message,
-          completedAt: event.createdAt,
-          tokens: usage ?? message.tokens,
-          finish: finish ?? message.finish,
-          ...(typeof data.rawFinish === "string" ? { rawFinish: data.rawFinish } : {}),
-          ...(data.native !== undefined ? { native: data.native } : {}),
-          data:
-            event.type === "session.step.failed"
-              ? { ...record(message.data), error: data.error ?? null, retry: null }
-              : { ...record(message.data), retry: null },
-        }),
+        (message) => {
+          const current = record(message.data);
+          const merged: Record<string, JsonValue> = snapshot
+            ? { snapshot: { ...record(current.snapshot), ...snapshot.snapshot } }
+            : {};
+          return {
+            ...message,
+            completedAt: event.createdAt,
+            tokens: usage ?? message.tokens,
+            finish: finish ?? message.finish,
+            ...(typeof data.rawFinish === "string" ? { rawFinish: data.rawFinish } : {}),
+            ...(data.native !== undefined ? { native: data.native } : {}),
+            data:
+              event.type === "session.step.failed"
+                ? { ...current, ...merged, error: data.error ?? null, retry: null }
+                : { ...current, ...merged, retry: null },
+          };
+        },
         messageID ? assistantFallback(messageID, event.createdAt) : undefined,
       );
     }
@@ -1301,7 +1392,17 @@ export function applySessionStatusEvents(
         const message = string(value.message);
         const nextRetry = number(value.next);
         if (attempt !== null && message && nextRetry !== null) {
-          status = { type: "retry", attempt, message, next: nextRetry };
+          // The status repeats a scheduled retry without its error; keep what that one said.
+          const known = next.get(id);
+          const same = known?.type === "retry" && known.attempt === attempt ? known : null;
+          status = {
+            type: "retry",
+            attempt,
+            message,
+            next: nextRetry,
+            ...(same?.error ? { error: same.error } : {}),
+            ...(same?.scheduledAt !== undefined ? { scheduledAt: same.scheduledAt } : {}),
+          };
         }
       }
     } else if (event.type === "session.retry.scheduled") {
@@ -1311,7 +1412,15 @@ export function applySessionStatusEvents(
       const nextRetry = number(data.at);
       const message = string(error.message);
       if (attempt !== null && nextRetry !== null && message) {
-        status = { type: "retry", attempt, message, next: nextRetry };
+        const failure = retryError(data.error);
+        status = {
+          type: "retry",
+          attempt,
+          message,
+          next: nextRetry,
+          ...(failure ? { error: failure } : {}),
+          scheduledAt: event.createdAt,
+        };
       }
     } else if (
       event.type === "session.execution.started" ||

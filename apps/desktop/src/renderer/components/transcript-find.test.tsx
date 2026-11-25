@@ -6,7 +6,7 @@ import { useSessionTranscript } from "../hooks/use-session-transcript";
 import { createRendererQueryClient } from "../lib/query-client";
 import { renderWithRouter, seedCatalog } from "../test-utils/render-with-router";
 import { Thread } from "./thread";
-import { openTranscriptFindAtom } from "./transcript-find";
+import { openTranscriptFindAtom, openTranscriptJumpAtom } from "./transcript-find";
 
 vi.mock("../hooks/use-session-transcript", async (original) => ({
   ...(await original<typeof import("../hooks/use-session-transcript")>()),
@@ -77,8 +77,8 @@ it("finds loaded text with Mod+F, steps through matches, and restores focus on E
   viewport.focus();
 
   fireEvent.keyDown(viewport, { key: "f", code: "KeyF", ctrlKey: true });
-  const input = await screen.findByRole("textbox", { name: "Find in task" });
-  await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  // Focused in the commit that shows the bar, so the next key already lands in it.
+  const input = screen.getByRole("textbox", { name: "Find in task" });
   expect(document.activeElement).toBe(input);
 
   fireEvent.change(input, { target: { value: "WIDGET" } });
@@ -140,4 +140,16 @@ it("claims the user-turn shortcuts only inside the task view", async () => {
   document.body.append(pane);
   expect(fireEvent(pane, altShortcut({ ...next, key: "[", code: "BracketLeft" }))).toBe(true);
   pane.remove();
+});
+
+it("opens Jump to message with Mod+Alt+G in the task view and from the palette's atom", async () => {
+  const { store, viewport } = await renderThread(false);
+  fireEvent(viewport, altShortcut({ key: "g", code: "KeyG", ctrlKey: true, altKey: true }));
+  const dialog = await screen.findByRole("dialog", { name: "Jump to message" });
+  expect(screen.getByRole("status").textContent).toBe("Searching all 2 prompts.");
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+  act(() => store.set(openTranscriptJumpAtom));
+  expect(await screen.findByRole("dialog", { name: "Jump to message" })).toBeTruthy();
 });

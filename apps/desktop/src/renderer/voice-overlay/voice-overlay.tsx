@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ThinkingOrb, type OrbState } from "@palot/orbits";
 import { Mic, MicOff, PhoneOff, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { cn } from "@/lib/cn";
 import {
   IDLE_VOICE_CALL_SNAPSHOT,
@@ -34,23 +35,10 @@ function statusLine(snapshot: VoiceCallSnapshot): { text: string; error: boolean
   return { text: ACTIVITY_LABELS[snapshot.activity], error: false };
 }
 
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(
-    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setReduced(media.matches);
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
-  return reduced;
-}
-
 export function VoiceOverlay({ api }: { api: PalotVoiceOverlayApi }) {
   const [snapshot, setSnapshot] = useState<VoiceCallSnapshot>(IDLE_VOICE_CALL_SNAPSHOT);
   const [levels, setLevels] = useState<VoiceAudioLevels>({ input: 0, output: 0 });
-  const reducedMotion = usePrefersReducedMotion();
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     let active = true;
@@ -99,7 +87,8 @@ export function VoiceOverlay({ api }: { api: PalotVoiceOverlayApi }) {
         <ThinkingOrb
           state={ORB_STATES[snapshot.activity]}
           size={44}
-          paused={ending}
+          // The orb package only reads the media query; this follows Palot's signal too.
+          paused={ending || reducedMotion}
           aria-label={ACTIVITY_LABELS[snapshot.activity]}
         />
       </div>

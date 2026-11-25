@@ -15,9 +15,11 @@ import {
   wheelZoomFactor,
   zoomImageViewAt,
 } from "../lib/image-zoom";
+import { spring } from "../lib/springs";
 import { useReducedMotion } from "./use-reduced-motion";
 
 const DRAG_THRESHOLD = 3;
+const ZOOM_TRANSITION_MS = Math.round(spring.moderate.duration * 1000);
 
 /**
  * Pinch/Ctrl-wheel zoom and pan for an image that CSS lays out at its fitted size and centres
@@ -164,7 +166,7 @@ export function useImageZoom() {
       zoomed || view.x || view.y
         ? `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`
         : undefined,
-    transition: smooth && !reducedMotion ? "transform 180ms ease-out" : undefined,
+    transition: smooth && !reducedMotion ? `transform ${ZOOM_TRANSITION_MS}ms ease-out` : undefined,
     touchAction: zoomed ? "none" : undefined,
     cursor: zoomed ? (dragging ? "grabbing" : "grab") : undefined,
   };

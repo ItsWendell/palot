@@ -13,10 +13,15 @@ export interface ComposerAdmissionReceipt {
 interface ComposerAdmissionInput {
   submission: ComposerSubmission;
   files: PalotFileAttachment[];
-  comments?: Omit<ReviewComment, "id" | "side">[];
+  comments?: Omit<ReviewComment, "id">[];
   browserComments?: PalotBrowserComment[];
   delivery: "steer" | "queue";
   optimistic?: boolean;
+  /**
+   * Hand the composer back when dispatch is still pending after this long. A slash command can
+   * run for minutes before OpenCode responds; a later failure is still reported.
+   */
+  detachAfterMs?: number;
   createTarget(): Promise<PalotSession | null>;
   dispatch(
     sessionID: string,
@@ -52,6 +57,7 @@ export async function admitComposerSubmission(input: ComposerAdmissionInput): Pr
   );
   let target: PalotSession | null = null;
   let admitted = false;
+  let detachTimer: ReturnType<typeof setTimeout> | undefined;
 
   input.effects.setSending(true);
   try {
@@ -65,7 +71,24 @@ export async function admitComposerSubmission(input: ComposerAdmissionInput): Pr
       });
       admitted = true;
     }
-    const receipt = await input.dispatch(target.id, optimistic.id);
+    const dispatched = input.dispatch(target.id, optimistic.id);
+    const receipt = await (input.detachAfterMs === undefined
+      ? dispatched
+      : Promise.race([
+          dispatched,
+          new Promise<typeof DETACHED>((resolve) => {
+            detachTimer = setTimeout(() => resolve(DETACHED), input.detachAfterMs);
+          }),
+        ]));
+    if (receipt === DETACHED) {
+      const sessionID = target.id;
+      input.effects.clearLocal();
+      void dispatched.catch((error: unknown) => {
+        if (admitted) input.effects.rollbackOptimistic(sessionID, optimistic.id, submittedAt);
+        input.effects.reportDispatchError(error);
+      });
+      return;
+    }
     input.effects.clearLocal();
     if (receipt) input.effects.convergeReceipt(target.id, optimistic.id, receipt);
   } catch (error) {
@@ -75,16 +98,19 @@ export async function admitComposerSubmission(input: ComposerAdmissionInput): Pr
       input.effects.reportDispatchError(error);
     }
   } finally {
+    clearTimeout(detachTimer);
     input.effects.setSending(false);
   }
 }
+
+const DETACHED = Symbol("detached");
 
 function optimisticMessage(
   submission: ComposerSubmission,
   files: PalotFileAttachment[],
   delivery: "steer" | "queue",
   submittedAt: number,
-  comments: Omit<ReviewComment, "id" | "side">[],
+  comments: Omit<ReviewComment, "id">[],
   browserComments: PalotBrowserComment[],
 ): PalotMessage {
   return {

@@ -1,3 +1,16 @@
+// Audit against OpenCode PR #61785 (timelines drifting from the server on flaky connections).
+// Gap 1, a catch-up read racing the stream: Palot does not have it. A read takes its snapshot
+// token before the request is sent, and every record a later batch writes is touched at a
+// revision above that token, so the read cannot overwrite or remove it. Records no later batch
+// wrote hold state the server already had when the read was sent, so the read may refresh them.
+// See "catch-up reads against the live stream" below and the reconnect tests in
+// hooks/use-workspace.test.tsx.
+// Gap 3, accepted prompts needing a transcript read: Palot does not have it. Pending input is
+// the server's inbox list with no client-side outbox, so an inbox read alone settles a prompt
+// the stream lost the delivery of. See "settles an accepted prompt from an inbox read alone".
+// A rooted read keeps the row of a prompt still pending in the inbox (queued by any client),
+// since the server's transcript holds it only after delivery ("keeps a prompt queued by
+// another client through a rooted read").
 import type { PermissionRuleset, Project, SessionInfo, SessionLogOutput } from "@opencode/client";
 import { describe, expect, it, vi } from "vitest";
 import type { PalotEvent, PalotEventBatch, PalotMessage } from "../../shared";
@@ -9,8 +22,11 @@ import {
   sessionInfoFromPalot,
 } from "./open-code-reconciler";
 import { mapProject, mapSession } from "../services/opencode-mappers";
+import { palot } from "../services/palot";
+import { sessionRequestsQueryOptions } from "./session-request-query";
 import { getStreamingPatchLine, getStreamingPatchLineCount } from "./streaming-patch-input";
 import { projectToolExecution } from "./tool-executions";
+import { pendingRequestViews } from "./view-models";
 
 function event(type: PalotEvent["type"], sequence: number, data: unknown): PalotEvent {
   return {
@@ -316,6 +332,43 @@ describe("OpenCodeReconciler", () => {
       }
     },
   );
+
+  it("keeps a running Code Mode script's live calls through a snapshot without them", () => {
+    const reconciler = new OpenCodeReconciler();
+    const script = (metadata: Record<string, never> = {}): PalotMessage => ({
+      ...assistant(""),
+      content: [
+        {
+          type: "tool",
+          id: "call-1",
+          name: "execute",
+          state: { status: "running", input: { code: "…" }, metadata },
+        },
+      ],
+    });
+    reconciler.setTranscriptSnapshot("connection", "session", [script()], "rooted");
+    const toolCalls = [{ tool: "shell", status: "running", input: { command: "./slow.sh" } }];
+    reconciler.applyBatch(
+      batch(1, [
+        event("session.tool.progress", 1, {
+          sessionID: "session",
+          assistantMessageID: "message",
+          id: "call-1",
+          metadata: { toolCalls },
+        }),
+      ]),
+    );
+    // OpenCode stores no progress, so a refetch while the script runs has empty metadata.
+    reconciler.setTranscriptSnapshot(
+      "connection",
+      "session",
+      [script()],
+      "recent",
+      reconciler.beginSnapshot("connection"),
+    );
+    const state = reconciler.messages("connection", "session")[0]!.content[0]!.state;
+    expect(state).toMatchObject({ status: "running", metadata: { toolCalls } });
+  });
 
   it("matches interleaved text and reasoning by typed ordinal while accepting part metadata", () => {
     const reconciler = new OpenCodeReconciler();
@@ -1021,6 +1074,267 @@ describe("OpenCodeReconciler", () => {
     );
 
     expect(reconciler.activity("connection").execution.get("session")?.startedAt).toBe(25);
+  });
+});
+
+describe("streamed batches", () => {
+  function streamingReconciler() {
+    const reconciler = new OpenCodeReconciler();
+    reconciler.upsertSessionInfos("connection", [session("Streaming")]);
+    const history: PalotMessage = { ...assistant("Earlier answer"), id: "history", createdAt: 0 };
+    reconciler.setTranscriptSnapshot(
+      "connection",
+      "session",
+      [history, assistant("Hel")],
+      "rooted",
+    );
+    const delta = (sequence: number, text: string) =>
+      event("session.text.delta", sequence, {
+        sessionID: "session",
+        assistantMessageID: "message",
+        ordinal: 0,
+        delta: text,
+      });
+    return { reconciler, history, delta };
+  }
+
+  it("streams text without collecting every session or request", () => {
+    const { reconciler, delta } = streamingReconciler();
+    const sessions = vi.spyOn(reconciler, "sessions");
+    const requests = vi.spyOn(reconciler, "requestMap");
+
+    reconciler.applyBatch(batch(1, [delta(1, "l"), delta(2, "lo")]));
+
+    expect(sessions).not.toHaveBeenCalled();
+    expect(requests).not.toHaveBeenCalled();
+    expect(reconciler.messages("connection", "session")[1]?.content[0]?.text).toBe("Helllo");
+
+    reconciler.applyBatch(
+      batch(2, [event("session.renamed", 3, { sessionID: "session", title: "Renamed" })]),
+    );
+    expect(reconciler.session("connection", "session")?.title).toBe("Renamed");
+  });
+
+  it("writes only the message a batch changed", () => {
+    const { reconciler, history, delta } = streamingReconciler();
+    const written: string[] = [];
+    const commit = reconciler.graph.commit.bind(reconciler.graph);
+    vi.spyOn(reconciler.graph, "commit").mockImplementation((input) =>
+      commit((writer) => {
+        if (typeof input !== "function") throw new Error("Expected a commit callback");
+        input({
+          ...writer,
+          upsert: (record) => {
+            written.push(`${record.kind}:${record.entityID}`);
+            writer.upsert(record);
+          },
+        });
+      }),
+    );
+
+    reconciler.applyBatch(batch(1, [delta(1, "lo")]));
+
+    expect(written).toEqual(["session-message:message"]);
+    expect(reconciler.messages("connection", "session")[0]).toBe(history);
+    expect(reconciler.messages("connection", "session")[1]?.content[0]?.text).toBe("Hello");
+  });
+
+  it("lets a catch-up read refresh what no later batch changed, and keeps what one did", () => {
+    const { reconciler, history, delta } = streamingReconciler();
+    // Applied before the read was sent, so the server's answer already reflects it.
+    reconciler.applyBatch(
+      batch(1, [
+        event("session.text.ended", 1, {
+          sessionID: "session",
+          assistantMessageID: history.id,
+          ordinal: 0,
+          text: "Earlier answer, revised",
+        }),
+      ]),
+    );
+    const token = reconciler.beginSnapshot("connection");
+    reconciler.applyBatch(batch(2, [delta(2, "lo")]));
+    const server: PalotMessage = {
+      ...history,
+      completedAt: 5,
+      finish: "stop",
+      text: "Earlier answer, revised",
+      content: [{ type: "text", text: "Earlier answer, revised" }],
+    };
+
+    reconciler.setTranscriptSnapshot(
+      "connection",
+      "session",
+      [server, assistant("Hel")],
+      "rooted",
+      token,
+    );
+
+    const [first, second] = reconciler.messages("connection", "session");
+    expect(first).toEqual(server);
+    expect(second?.content[0]?.text).toBe("Hello");
+  });
+});
+
+describe("catch-up reads against the live stream", () => {
+  const user: PalotMessage = {
+    id: "user",
+    type: "user",
+    createdAt: 1,
+    completedAt: 1,
+    text: "Start",
+    agent: null,
+    model: null,
+    tokens: null,
+    finish: null,
+    content: [],
+    data: null,
+  };
+  const answer: PalotMessage = { ...assistant("Done"), id: "answer", createdAt: 2, completedAt: 3 };
+
+  // A "recent" read only upserts what its page holds; "preserves transcript events received
+  // while a snapshot is in flight" covers it. A "rooted" read also removes what its page lacks.
+  it("keeps a reply and a prompt delivery applied while a rooted read was in flight", () => {
+    const reconciler = new OpenCodeReconciler();
+    reconciler.setTranscriptSnapshot("connection", "session", [user, answer], "rooted");
+    reconciler.applyBatch(
+      batch(1, [
+        event("session.inbox.enqueued", 1, {
+          sessionID: "session",
+          inboxID: "prompt",
+          item: { type: "user", payload: { text: "Next" }, delivery: "queue" },
+        }),
+      ]),
+    );
+    const token = reconciler.beginSnapshot("connection");
+    reconciler.applyBatch(
+      batch(2, [
+        event("session.inbox.delivered", 2, { sessionID: "session", inboxID: "prompt" }),
+        event("session.step.started", 3, {
+          sessionID: "session",
+          assistantMessageID: "reply",
+          agent: "build",
+        }),
+        event("session.text.delta", 4, {
+          sessionID: "session",
+          assistantMessageID: "reply",
+          ordinal: 0,
+          delta: "Live reply",
+        }),
+      ]),
+    );
+
+    // The server answered before it delivered the prompt.
+    reconciler.setTranscriptSnapshot("connection", "session", [user, answer], "rooted", token);
+
+    const messages = new Map(
+      reconciler.messages("connection", "session").map((message) => [message.id, message]),
+    );
+    expect([...messages.keys()].toSorted()).toEqual(["answer", "prompt", "reply", "user"]);
+    expect(messages.get("prompt")).toMatchObject({ text: "Next", promotedAt: 2 });
+    expect(messages.get("reply")?.content[0]?.text).toBe("Live reply");
+  });
+
+  function queuedElsewhere(reconciler: OpenCodeReconciler) {
+    reconciler.setTranscriptSnapshot("connection", "session", [user, answer], "rooted");
+    // Another client (the terminal UI) queues a prompt; its row exists only from this event.
+    reconciler.applyBatch(
+      batch(1, [
+        event("session.inbox.enqueued", 1, {
+          sessionID: "session",
+          inboxID: "queued",
+          item: { type: "user", payload: { text: "Later" }, delivery: "queue" },
+        }),
+      ]),
+    );
+  }
+  const ids = (reconciler: OpenCodeReconciler) =>
+    reconciler
+      .messages("connection", "session")
+      .map((message) => message.id)
+      .toSorted();
+
+  it("keeps a prompt queued by another client through a rooted read, removing what is gone", () => {
+    const reconciler = new OpenCodeReconciler();
+    queuedElsewhere(reconciler);
+
+    // The server deleted "answer"; the queued prompt is not in the transcript until delivery.
+    reconciler.setTranscriptSnapshot(
+      "connection",
+      "session",
+      [user],
+      "rooted",
+      reconciler.beginSnapshot("connection"),
+    );
+
+    expect(ids(reconciler)).toEqual(["queued", "user"]);
+  });
+
+  it("replaces a queued row with the delivered message once the transcript holds it", () => {
+    const reconciler = new OpenCodeReconciler();
+    queuedElsewhere(reconciler);
+    reconciler.applyBatch(
+      batch(2, [event("session.inbox.delivered", 2, { sessionID: "session", inboxID: "queued" })]),
+    );
+    const delivered: PalotMessage = { ...user, id: "queued", createdAt: 4, text: "Later" };
+
+    reconciler.setTranscriptSnapshot(
+      "connection",
+      "session",
+      [user, answer, delivered],
+      "rooted",
+      reconciler.beginSnapshot("connection"),
+    );
+
+    expect(reconciler.messages("connection", "session").at(-1)).toEqual(delivered);
+  });
+
+  it("removes a queued row on cancel, or on the next rooted read once the inbox lacks it", () => {
+    const cancelled = new OpenCodeReconciler();
+    queuedElsewhere(cancelled);
+    cancelled.applyBatch(
+      batch(2, [event("session.inbox.cancelled", 2, { sessionID: "session", inboxID: "queued" })]),
+    );
+    expect(ids(cancelled)).toEqual(["answer", "user"]);
+
+    // The stream lost the cancel; an inbox read without the prompt releases its row.
+    const lost = new OpenCodeReconciler();
+    queuedElsewhere(lost);
+    lost.setRequests("connection", "session", {
+      ...lost.requests("connection", "session")!,
+      inbox: [],
+    });
+    lost.setTranscriptSnapshot("connection", "session", [user, answer], "rooted");
+    expect(ids(lost)).toEqual(["answer", "user"]);
+  });
+
+  it("settles an accepted prompt from an inbox read alone, without a transcript read", async () => {
+    const queryClient = new QueryClient();
+    const reconciler = openCodeReconciler(queryClient);
+    reconciler.applyBatch(
+      batch(1, [
+        event("session.inbox.enqueued", 1, {
+          sessionID: "session",
+          inboxID: "prompt",
+          item: { type: "user", payload: { text: "Queued" }, delivery: "queue" },
+        }),
+      ]),
+    );
+    expect(
+      pendingRequestViews(reconciler.requests("connection", "session")!).map(
+        (request) => request.id,
+      ),
+    ).toEqual(["prompt"]);
+    // The stream lost the delivery; the server's inbox no longer holds the prompt.
+    const inbox = vi.spyOn(palot, "loadSessionInbox").mockResolvedValue([]);
+    const transcript = vi.spyOn(palot, "loadTranscript");
+
+    await queryClient.fetchQuery(sessionRequestsQueryOptions(queryClient, "connection", "session"));
+
+    expect(pendingRequestViews(reconciler.requests("connection", "session")!)).toEqual([]);
+    expect(transcript).not.toHaveBeenCalled();
+    inbox.mockRestore();
+    transcript.mockRestore();
   });
 });
 

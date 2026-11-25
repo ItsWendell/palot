@@ -34,3 +34,25 @@ describe("one-time pairing QR import", () => {
     expect(() => parsePairingText(JSON.stringify(payload))).toThrow();
   });
 });
+
+describe("pairing names", () => {
+  it("reads the name newer OpenCode and Palot put in the QR, and accepts payloads without one", () => {
+    expect(parsePairingText(JSON.stringify({ code, urls, name: " Anomaly  Box " })).name).toBe(
+      "Anomaly Box",
+    );
+    expect(parsePairingText(JSON.stringify({ code, urls })).name).toBeUndefined();
+    expect(parsePairingText(JSON.stringify({ code, urls, name: "" })).name).toBeUndefined();
+    expect(
+      parsePairingText(
+        JSON.stringify({ urls, username: "opencode", password: "secret", name: "Old Box" }),
+      ).name,
+    ).toBe("Old Box");
+  });
+
+  it.each([42, ["Box"], "a".repeat(81), "line\u0007bell", "spoof\u202Eexe.txt"])(
+    "refuses a name that is not a short plain string: %j",
+    (name) => {
+      expect(() => parsePairingText(JSON.stringify({ code, urls, name }))).toThrow("server name");
+    },
+  );
+});

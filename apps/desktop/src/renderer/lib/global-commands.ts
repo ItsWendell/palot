@@ -24,7 +24,7 @@ export interface GlobalCommand {
   closeOnRun?: boolean;
   runAfterClose?: boolean;
   trailing?: string;
-  status?: "running" | "attention" | "unread";
+  status?: "running" | "attention" | "failed" | "unread";
   kind?: "action" | "task" | "project" | "setting";
   run(): void | Promise<void>;
   preload?(): void | Promise<void>;

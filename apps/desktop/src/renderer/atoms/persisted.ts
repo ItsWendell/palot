@@ -180,9 +180,13 @@ export function persistedStorageKey(key: string): string {
   return `${PERSISTENCE_NAMESPACE}.${key}`;
 }
 
+/**
+ * A validated, persisted atom. `defaultValue` is the value used when nothing valid is
+ * stored, so settings can offer "Reset to default" without restating it.
+ */
 export function persistedAtom<T>(options: PersistedValueOptions<T>) {
   const valueAtom = atom(loadPersistedValue(options));
-  return atom(
+  const persisted = atom(
     (get) => get(valueAtom),
     (get, set, update: AtomUpdate<T>) => {
       const next =
@@ -191,7 +195,10 @@ export function persistedAtom<T>(options: PersistedValueOptions<T>) {
       savePersistedValue(options.key, next);
     },
   );
+  return Object.assign(persisted, { defaultValue: options.initialValue });
 }
+
+export type PersistedAtom<T> = ReturnType<typeof persistedAtom<T>>;
 
 export function loadPersistedValue<T>({
   key,

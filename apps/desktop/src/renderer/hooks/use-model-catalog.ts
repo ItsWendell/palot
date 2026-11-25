@@ -21,7 +21,11 @@ export function modelCatalogQueryKey(connectionID: string, location: LocationRef
   return openCodeKeys.modelsLocation(connectionID, location);
 }
 
-function modelCatalogQueryOptions(connectionID: string, location: LocationRef, enabled = true) {
+export function modelCatalogQueryOptions(
+  connectionID: string,
+  location: LocationRef,
+  enabled = true,
+) {
   return queryOptions({
     queryKey: modelCatalogQueryKey(connectionID, location),
     queryFn: ({ signal }) => palot.listModels(location, signal, connectionID),

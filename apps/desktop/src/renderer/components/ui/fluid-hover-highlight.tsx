@@ -40,7 +40,7 @@ export type FluidHoverHighlightProps = (HighlightFromHook | HighlightFromRect) &
   transition?: Transition | false;
 };
 
-const fade: Transition = { duration: 0.08 };
+const fade: Transition = { duration: spring.fast.duration };
 const snap: Transition = { duration: 0 };
 
 export function toTarget(rect: ItemRect) {

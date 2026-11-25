@@ -1,5 +1,5 @@
 import type { LocationRef } from "@opencode/client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { hashKey, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useEffect } from "react";
 import { runtimeAtom } from "../atoms/workspace";
@@ -16,6 +16,48 @@ import { palot } from "../services/palot";
 
 export const sessionGoalKey = (connectionID: string, sessionID: string) =>
   [...openCodeKeys.all(connectionID), "session-goal", sessionID] as const;
+
+/** How long a `/goal` sent before the task's goal has loaded waits for it. */
+export const GOAL_SETTLE_TIMEOUT_MS = 2_000;
+
+/**
+ * The task's goal as its query last read it, for a decision that must not act on a goal that
+ * has not loaded yet. A first read still in flight returns a promise that settles with it, or
+ * with `undefined` after `timeoutMs`; `undefined` also means the read failed or never runs
+ * (no goals on this server), so the caller keeps what it knew.
+ */
+export function settledSessionGoal(
+  queryClient: QueryClient,
+  connectionID: string,
+  sessionID: string,
+  timeoutMs = GOAL_SETTLE_TIMEOUT_MS,
+): SessionGoal | null | undefined | Promise<SessionGoal | null | undefined> {
+  const cache = queryClient.getQueryCache();
+  const queryKey = sessionGoalKey(connectionID, sessionID);
+  const read = (): { goal: SessionGoal | null | undefined } | null => {
+    const query = cache.find<SessionGoal | null>({ queryKey, exact: true });
+    if (!query || query.state.status === "error") return { goal: undefined };
+    if (query.state.status === "success") return { goal: query.state.data ?? null };
+    // Pending: wait only for a read that is running or about to run.
+    return query.isDisabled() && query.state.fetchStatus === "idle" ? { goal: undefined } : null;
+  };
+  const now = read();
+  if (now) return now.goal;
+  return new Promise((resolve) => {
+    const finish = (goal: SessionGoal | null | undefined) => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(goal);
+    };
+    const hash = hashKey(queryKey);
+    const timer = setTimeout(() => finish(undefined), timeoutMs);
+    const unsubscribe = cache.subscribe((event) => {
+      if (event.query.queryHash !== hash) return;
+      const settled = read();
+      if (settled) finish(settled.goal);
+    });
+  });
+}
 
 /** OpenCode added the built-in `/goal` plugin in 2.2.1; older servers have no goal RPC. */
 function supportsGoals(version: string | null | undefined): boolean {

@@ -26,8 +26,9 @@ local service. See [runtime packaging](opencode-runtime.md) and
 branches. Palot's main process adds a local-only layer in `main/source-control`:
 GitHub PR links stored in Palot's database (keyed by profile and session), a
 one-minute batched GraphQL sweep (open PRs each minute, closed every 15 minutes,
-merged never), settle-on-merge through the triage store, and PR watches that queue
-an OpenCode prompt to wake the agent. GitHub tokens come from `GH_TOKEN`,
+merged never), settle-on-merge through the triage store for unwatched PRs, and PR
+watches that queue an OpenCode prompt to wake the agent. A watched PR that merges or
+closes wakes the agent once more to do its post-merge steps and settle the task. GitHub tokens come from `GH_TOKEN`,
 `GITHUB_TOKEN`, or `gh auth token`, stay in main, and never reach the renderer.
 Background reads keep 10% of each GitHub quota for interactive requests and pause
 on rate limits. Local Git writes run `git` without a shell, with literal pathspecs

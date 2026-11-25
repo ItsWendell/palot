@@ -1,4 +1,5 @@
 import type { JsonValue, PalotMessageContent } from "../../shared";
+import { mediaRef } from "./media-refs";
 import { pythonShellPresentation } from "./shell-script-presentation";
 import { terminalOutput, type TerminalTextRun } from "./terminal-output";
 import {
@@ -6,8 +7,63 @@ import {
   streamingPatchInputFromJson,
   type StreamingPatchDocument,
 } from "./streaming-patch-input";
+import { cutTail, truncateEnd } from "../../shared/text-cut";
+import { machinesInPaths } from "../../shared/machine-path";
 
-export type ToolExecutionStatus = "pending" | "running" | "complete" | "error";
+export type ToolExecutionStatus = "pending" | "running" | "complete" | "error" | "interrupted";
+
+/** The error OpenCode's shell tool reports when its command was cancelled (OpenCode `toolStopped`). */
+const SHELL_COMMAND_CANCELLED = "Command cancelled";
+
+/**
+ * Whether a tool call was stopped rather than failed. OpenCode settles a tool that was stopped
+ * mid-run (an interrupted turn or restart) as an error of type `aborted`, and its shell tool
+ * reports a cancelled command as a plain error, "Command cancelled", with no structured type
+ * (`unknown`), so that one matches on the exact message as OpenCode's own rule does. Either is the
+ * user's or the runtime's stop, not a tool failure. A shell command its timeout or a kill ended
+ * (see `shellStopReason`) is stopped too, whatever its exit code.
+ */
+export function toolStateInterrupted(state: unknown): boolean {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
+  const value = state as { status?: unknown; error?: unknown; metadata?: unknown };
+  if (
+    (value.status === "completed" || value.status === "error") &&
+    shellStopReason(value.metadata) !== null
+  )
+    return true;
+  return toolStateCancelled(value);
+}
+
+/**
+ * Why a shell command was stopped rather than ending on its own, from the result metadata
+ * OpenCode writes (`ShellResult.metadata`): `timeout: true` when its timeout stopped it, `killed`
+ * (`true`, or the reason as text) when it was killed, e.g. by the user or the process daemon.
+ */
+export function shellStopReason(metadata: unknown): "timeout" | "killed" | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const { timeout, killed } = metadata as { timeout?: unknown; killed?: unknown };
+  if (timeout === true) return "timeout";
+  if (killed === true || (typeof killed === "string" && killed !== "")) return "killed";
+  return null;
+}
+
+function toolStateCancelled(value: { status?: unknown; error?: unknown }): boolean {
+  if (value.status !== "error") return false;
+  const error = value.error;
+  if (!error || typeof error !== "object" || Array.isArray(error)) return false;
+  const { type, message } = error as { type?: unknown; message?: unknown };
+  return type === "aborted" || message === SHELL_COMMAND_CANCELLED;
+}
+
+/** A call stopped before the model finished writing any of its input did nothing; it never shows. */
+export function toolStoppedBeforeInput(state: unknown): boolean {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
+  if (!toolStateCancelled(state as { status?: unknown; error?: unknown })) return false;
+  const input = (state as { input?: unknown }).input;
+  if (input === undefined || input === null) return true;
+  if (typeof input === "string") return input.trim() === "";
+  return typeof input === "object" && !Array.isArray(input) && Object.keys(input).length === 0;
+}
 
 export interface ToolFileDiff {
   file: string;
@@ -32,6 +88,7 @@ interface ToolExecutionBase {
 }
 
 export interface ToolImage {
+  /** A `data:` URL, or a `media:<hash>` reference to bytes the server stores. */
   uri: string;
   mime: string;
   name: string | null;
@@ -94,6 +151,8 @@ export interface ShellExecution extends ToolExecutionBase {
   exitCode: number | null;
   truncated: boolean;
   timedOut: boolean;
+  /** Killed rather than ending on its own or by its timeout. */
+  killed: boolean;
 }
 
 export interface FileChangeExecution extends ToolExecutionBase {
@@ -119,7 +178,15 @@ export interface SubagentExecution extends ToolExecutionBase {
   description: string;
   prompt: string | null;
   sessionID: string | null;
+  /** The call returned while the child runs on, so the parent does not wait for it. */
   background: boolean;
+  /** The model asked for the background (`input.background`, OpenCode 2.2.7 and earlier). */
+  requestedBackground: boolean;
+  /**
+   * The call returned at once with the child still running and no background flag: OpenCode's
+   * always-background launch (after 2.2.7), or a 2.2.7 call the user moved to the background.
+   */
+  launchOnly: boolean;
 }
 
 export interface ExecuteExecution extends ToolExecutionBase {
@@ -130,9 +197,20 @@ export interface ExecuteExecution extends ToolExecutionBase {
     title: string;
     status: "running" | "completed" | "error";
     args: string[];
+    /** The call's input as the script passed it. */
+    input: JsonValue | undefined;
   }>;
   output: string | null;
   runtimeError: boolean;
+  /**
+   * The script outlived OpenCode's foreground wait and went on as a background job
+   * (`metadata.jobID`); a later Code Mode notice carries its result.
+   */
+  background: {
+    jobID: string;
+    /** How the job ended once its notice is in (`completed`, `failed`, …); null while it runs. */
+    state: string | null;
+  } | null;
 }
 
 export interface ImageGenerationExecution extends ToolExecutionBase {
@@ -172,6 +250,7 @@ const MAX_VISIBLE_TERMINAL_OUTPUT = 256_000;
 const READ_IMAGE_MIME_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"]);
 const GENERIC_LABEL_KEYS = [
   "description",
+  "prompt",
   "query",
   "url",
   "filePath",
@@ -180,6 +259,8 @@ const GENERIC_LABEL_KEYS = [
   "name",
   "id",
   "command",
+  "title",
+  "directory",
 ] as const;
 const IMAGE_GENERATION_TOOL_NAMES = new Set([
   "create_image",
@@ -238,9 +319,7 @@ export function formatToolDetailValue(value: JsonValue | undefined): string | nu
 }
 
 function compactText(value: string, maximum = 96): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maximum) return normalized;
-  return `${normalized.slice(0, maximum - 1)}…`;
+  return truncateEnd(value.replace(/\s+/g, " ").trim(), maximum);
 }
 
 function genericScalar(value: JsonValue | undefined): string | null {
@@ -305,9 +384,18 @@ const ARTIFACT_TOOL_TITLES: Record<string, string> = {
   delete: "Delete artifact",
 };
 
+/** OpenCode's own session tools: `opencode.session.rename`/`.move` in Code Mode from 2.4.0. */
+const SESSION_TOOL_TITLES: Record<string, string> = {
+  rename: "Rename task",
+  move: "Move task",
+  interrupt: "Stop task",
+};
+
 function artifactToolTitle(name: string): string | null {
   const match = name.match(/^opencode[._]artifact_(create|read|update|delete)$/);
-  return match ? ARTIFACT_TOOL_TITLES[match[1]!]! : null;
+  if (match) return ARTIFACT_TOOL_TITLES[match[1]!]!;
+  const session = name.match(/^(?:opencode[._])?session[._](rename|move|interrupt)$/);
+  return session ? SESSION_TOOL_TITLES[session[1]!]! : null;
 }
 
 /** What a Palot tool call is doing, in the terms Palot's sidebar and Scheduled page use. */
@@ -434,6 +522,7 @@ function imageContent(state: RecordValue): ToolImage[] {
     const uri = string(value.uri);
     const mime = string(value.mime)?.toLowerCase() ?? null;
     if (!uri || !mime || !READ_IMAGE_MIME_TYPES.has(mime)) return [];
+    if (mediaRef(uri)) return [{ uri, mime, name: string(value.name) }];
     const prefix = `data:${mime};base64,`;
     if (uri.slice(0, prefix.length).toLowerCase() !== prefix) return [];
     return [{ uri, mime, name: string(value.name) }];
@@ -445,7 +534,9 @@ function errorMessage(state: RecordValue): string | null {
   return string(error.message) ?? string(state.error);
 }
 
-function status(value: JsonValue | undefined): ToolExecutionStatus {
+function status(state: RecordValue): ToolExecutionStatus {
+  const value = state.status;
+  if (toolStateInterrupted(state)) return "interrupted";
   if (value === "completed" || value === "complete") return "complete";
   if (value === "running" || value === "streaming") return "running";
   if (value === "error") return "error";
@@ -464,7 +555,7 @@ function base(part: PalotMessageContent, index: number) {
     value: {
       id: part.id ?? `tool-${index}`,
       name: part.name ?? string(state.name) ?? "tool",
-      status: status(state.status),
+      status: status(state),
       startedAt: part.time?.ran ?? part.time?.created ?? null,
       error: errorMessage(state),
       rawInput: input,
@@ -792,7 +883,7 @@ function visibleShellOutput(state: RecordValue, metadata: RecordValue): string |
   if (final !== null) return final;
   const value = string(metadata.output);
   if (value === null || value.length <= MAX_VISIBLE_TERMINAL_OUTPUT) return value;
-  return `[Earlier output truncated]\n${value.slice(-MAX_VISIBLE_TERMINAL_OUTPUT)}`;
+  return `[Earlier output truncated]\n${cutTail(value, MAX_VISIBLE_TERMINAL_OUTPUT)}`;
 }
 
 function executeCalls(value: JsonValue | undefined): ExecuteExecution["calls"] {
@@ -813,9 +904,258 @@ function executeCalls(value: JsonValue | undefined): ExecuteExecution["calls"] {
           : (artifactToolTitle(tool) ?? readableToolName(tool)),
         status: call.status as ExecuteExecution["calls"][number]["status"],
         args: [...(summary.label ? [summary.label] : []), ...summary.args],
+        input: call.input,
       },
     ];
   });
+}
+
+/** Code Mode's own catalog lookup (`search(…)`) finds tools; it is not work on the project. */
+const EXECUTE_INTERNAL_CALLS = new Set(["search"]);
+/** Artifact calls render as artifact cards from the script's own row, matched to its result. */
+const EXECUTE_ARTIFACT_CALL = /^opencode[._]artifact_(create|read|update|delete)$/;
+const nestedExecuteParts = new WeakMap<object, Map<number, PalotMessageContent[]>>();
+const scriptCallOrigins = new WeakMap<object, ScriptCallOrigin>();
+
+/** The Code Mode script a flattened call came from. */
+export interface ScriptCallOrigin {
+  /** The script's tool part, holding its source and result. */
+  script: PalotMessageContent;
+  index: number;
+  /** Where the call sits among the script's calls. */
+  position: number;
+}
+
+/** The script a call part came from, when it is one of a Code Mode script's flattened calls. */
+export function scriptCallOrigin(part: PalotMessageContent): ScriptCallOrigin | null {
+  return scriptCallOrigins.get(part as object) ?? null;
+}
+
+/**
+ * The calls a Code Mode script made, as tool parts of their own, so they render, group and count
+ * like the same calls made directly (shell command, read, edit, search). OpenCode records only
+ * each call's tool, status and input, so the parts carry no output, exit code or diff; a read's
+ * image comes from the script's result, where OpenCode attaches it. A script whose only call is
+ * to a tool without a view of its own keeps that call's row, with the script's output. Empty when
+ * the script made no call Palot recognises otherwise (pure computation, or several such calls);
+ * such a script stays one row.
+ */
+export function executeNestedParts(
+  part: PalotMessageContent,
+  index: number,
+): PalotMessageContent[] {
+  const execution = projectToolExecution(part, index);
+  if (execution.kind !== "execute" || execution.name.toLowerCase() !== "execute") return [];
+  const key = part as object;
+  let byIndex = nestedExecuteParts.get(key);
+  if (!byIndex) {
+    byIndex = new Map();
+    nestedExecuteParts.set(key, byIndex);
+  }
+  const cached = byIndex.get(index);
+  if (cached) return cached;
+  const state = record(part.state);
+  const files = Array.isArray(state.content)
+    ? state.content.map(record).filter((item) => item.type === "file")
+    : [];
+  const settled = nestedCallSettlement(execution);
+  const changes = scriptFileChanges(state.metadata);
+  const claimed = new Set<number>();
+  const parts = execution.calls.flatMap((call, position): PalotMessageContent[] => {
+    if (EXECUTE_INTERNAL_CALLS.has(call.tool) || EXECUTE_ARTIFACT_CALL.test(call.tool)) return [];
+    const input = record(call.input);
+    const status = call.status === "running" && settled ? settled : call.status;
+    const path = call.tool === "read" ? string(input.path) : null;
+    const image = path ? files.find((file) => string(file.name) === baseName(path)) : undefined;
+    const changed = FILE_CHANGE_TOOLS.has(call.tool.toLowerCase())
+      ? claimFileChanges(changes, claimed, fileChangeTargets(input))
+      : [];
+    const nested: PalotMessageContent = {
+      type: "tool",
+      id: `${execution.id}:call-${position}`,
+      name: call.tool,
+      state: {
+        status: status === "interrupted" ? "error" : status,
+        input: call.input ?? {},
+        ...(image ? { content: [image] } : {}),
+        ...(changed.length > 0 ? { metadata: { files: changed } } : {}),
+        // The stopped rule (`toolStateInterrupted`) reads an aborted error as a stop.
+        ...(status === "interrupted"
+          ? { error: { type: "aborted", message: "The script stopped" } }
+          : {}),
+      },
+    };
+    scriptCallOrigins.set(nested as object, { script: part, index, position });
+    return [nested];
+  });
+  // Changes no call of the script claims, such as `Bun.write`, show as file-change rows of their
+  // own after its calls.
+  changes.forEach((change, order) => {
+    if (claimed.has(order)) return;
+    const nested: PalotMessageContent = {
+      type: "tool",
+      id: `${execution.id}:file-${order}`,
+      name: "patch",
+      state: {
+        // The change is made by the time OpenCode lists it.
+        status: "completed",
+        input: { path: string(change.file) ?? "" },
+        metadata: { files: [change] },
+      },
+    };
+    scriptCallOrigins.set(nested as object, {
+      script: part,
+      index,
+      position: execution.calls.length + order,
+    });
+    parts.push(nested);
+  });
+  const recognised = parts.some((nested) => projectToolExecution(nested, index).kind !== "generic");
+  // One call to a tool without a view of its own (OpenCode 2.4 stores a direct call as a
+  // one-call script, #65193): the call keeps its row, with the script's output as its result.
+  let result = recognised ? parts : [];
+  const single = !recognised && parts.length === 1 ? parts[0]! : null;
+  if (single) {
+    const kept: PalotMessageContent = execution.output
+      ? {
+          ...single,
+          state: { ...record(single.state), content: [{ type: "text", text: execution.output }] },
+        }
+      : single;
+    scriptCallOrigins.set(kept as object, scriptCallOrigin(single)!);
+    result = [kept];
+  }
+  byIndex.set(index, result);
+  return result;
+}
+
+const FILE_CHANGE_TOOLS = new Set(["edit", "write", "patch", "apply_patch"]);
+
+/**
+ * The files a Code Mode script changed, in order (OpenCode 2.4.0, #65002/#65247). Read from the
+ * call's own metadata only: its `structured.files` are the script's attachments. Each entry is
+ * `{ file, status, additions?, deletions?, patch? }`; past 50 files or 200 KB of patch text an
+ * entry keeps only its counts, and the turn diff stands in for it.
+ */
+function scriptFileChanges(metadata: JsonValue | undefined): RecordValue[] {
+  const files = record(metadata).files;
+  if (!Array.isArray(files)) return [];
+  return files.map(record).filter((file) => string(file.file) !== null);
+}
+
+function fileChangeTargets(input: RecordValue): string[] {
+  const patch = string(input.patchText) ?? string(input.patch);
+  return [...inputFileTargets(input), ...(patch ? parsePatchTargetFiles(patch) : [])];
+}
+
+/** The script's changes to `targets` that no earlier call claimed, one per target file. */
+function claimFileChanges(
+  changes: readonly RecordValue[],
+  claimed: Set<number>,
+  targets: readonly string[],
+): RecordValue[] {
+  return targets.flatMap((target) => {
+    const found = changes.findIndex(
+      (change, order) => !claimed.has(order) && sameFilePath(string(change.file)!, target),
+    );
+    if (found < 0) return [];
+    claimed.add(found);
+    return [changes[found]!];
+  });
+}
+
+/** Whether two paths name one file: a call can name it relative or absolute. */
+export function sameFilePath(left: string, right: string): boolean {
+  const a = normalizedFilePath(left);
+  const b = normalizedFilePath(right);
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+
+function normalizedFilePath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+}
+
+function baseName(path: string): string {
+  return path.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? path;
+}
+
+/**
+ * What a call still marked running became once its script ended: OpenCode stops reporting a
+ * script's calls when it ends or moves to the background. Null while the script, in the
+ * foreground or the background, still runs.
+ */
+function nestedCallSettlement(execution: ExecuteExecution): "completed" | "interrupted" | null {
+  if (execution.background) {
+    const state = execution.background.state;
+    if (state === null) return null;
+    return state === "cancelled" || state === "interrupted" ? "interrupted" : "completed";
+  }
+  if (execution.status === "running" || execution.status === "pending") return null;
+  // A script that ended with a call in flight abandoned it.
+  return execution.status === "complete" && !execution.runtimeError ? "completed" : "interrupted";
+}
+
+/**
+ * A failed script whose calls already show where it failed: its own failed row says how the
+ * script ended, but counts as no further failure.
+ */
+export function executeFailureShownByCalls(part: PalotMessageContent, index: number): boolean {
+  const execution = projectToolExecution(part, index);
+  if (execution.kind !== "execute") return false;
+  return executeNestedParts(part, index).some(
+    (call) => projectToolExecution(call, index).status === "error",
+  );
+}
+
+/**
+ * Whether a script whose calls show as rows keeps a row of its own: to say it failed, stopped or
+ * went to the background, or to hold its artifact cards. A script that ran to the end stays out
+ * of view; its calls' rows offer its source and result.
+ */
+export function executeKeepsOwnRow(part: PalotMessageContent, index: number): boolean {
+  const execution = projectToolExecution(part, index);
+  if (execution.kind !== "execute") return true;
+  if (executeNestedParts(part, index).length === 0) return true;
+  return (
+    execution.status === "error" ||
+    execution.status === "interrupted" ||
+    execution.runtimeError ||
+    execution.background !== null ||
+    execution.calls.some((call) => EXECUTE_ARTIFACT_CALL.test(call.tool))
+  );
+}
+
+/**
+ * How a subagent call relates to its child. OpenCode 2.2.7 runs a call in the foreground unless
+ * `input.background` is set; later releases drop the flag and every call returns at once with
+ * `metadata.status: "running"`.
+ */
+function subagentReturn(
+  input: RecordValue,
+  metadata: RecordValue,
+  status: ToolExecutionStatus,
+): Pick<SubagentExecution, "background" | "requestedBackground" | "launchOnly"> {
+  const requestedBackground = boolean(metadata.background) || boolean(input.background);
+  const returnedRunning = status === "complete" && string(metadata.status) === "running";
+  return {
+    background: requestedBackground || returnedRunning,
+    requestedBackground,
+    launchOnly: returnedRunning && !requestedBackground && !("background" in input),
+  };
+}
+
+/**
+ * The OpenCode machines a call worked on: a `devbox:/…` path in its input (read, write, edit,
+ * search scope), a shell `workdir` there, or patch targets on one. Empty for this server's files.
+ */
+export function toolExecutionMachines(view: ToolExecutionView): string[] {
+  const input = record(view.rawInput);
+  return machinesInPaths([
+    string(input.workdir),
+    string(input.path),
+    string(input.filePath),
+    ...(view.kind === "file-change" ? view.targetFiles : []),
+  ]);
 }
 
 export function projectToolExecution(part: PalotMessageContent, index: number): ToolExecutionView {
@@ -948,7 +1288,8 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
       },
       exitCode,
       truncated: boolean(value.metadata.truncated),
-      timedOut: boolean(value.metadata.timeout),
+      timedOut: shellStopReason(value.metadata) === "timeout",
+      killed: shellStopReason(value.metadata) === "killed",
     };
   }
   if (name === "edit" || name === "write" || name === "patch" || name === "apply_patch") {
@@ -1008,10 +1349,7 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
         // A continued subagent names its session only in the input until the call finishes. A failed
         // continuation can name an unrelated session, such as the parent, so it gets no link.
         (value.value.status === "error" ? null : string(value.input.sessionID)),
-      background:
-        boolean(value.metadata.background) ||
-        boolean(value.input.background) ||
-        (value.value.status === "complete" && string(value.metadata.status) === "running"),
+      ...subagentReturn(value.input, value.metadata, value.value.status),
     };
   }
   if (isImageGenerationTool(name)) {
@@ -1038,6 +1376,7 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
   const code = string(value.input.code);
   if (name === "execute" || code !== null) {
     const metadata = { ...record(value.state.structured), ...value.metadata };
+    const jobID = string(metadata.jobID);
     return {
       ...value.value,
       kind: "execute",
@@ -1045,6 +1384,7 @@ function projectToolExecutionUncached(part: PalotMessageContent, index: number):
       calls: executeCalls(metadata.toolCalls),
       output: visibleOutput,
       runtimeError: boolean(metadata.error),
+      background: jobID ? { jobID, state: string(metadata.backgroundState) } : null,
     };
   }
   const palot = palotTool(name);

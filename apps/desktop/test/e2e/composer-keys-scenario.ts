@@ -3,6 +3,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Scenario } from "./scenarios.ts";
+import type { ComposerEditorElement } from "../../src/renderer/lib/composer-editor-element.ts";
 
 const TURNS = 30;
 const DRAFT = "keep this draft";
@@ -65,16 +66,16 @@ export const composerKeysScenario: Scenario = {
 
     await composer.click();
     await composer.fill(DRAFT);
-    await composer.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(4, 4));
+    await composer.evaluate((element: ComposerEditorElement) => element.setSelectionRange(4, 4));
     const pageHeight = await visibleHeight(page, transcript);
     const resting = await scrollTop(transcript);
     await composer.press("PageUp");
     await expect.poll(() => scrollTop(transcript)).toBeLessThan(resting - pageHeight * 0.6);
     await expect.poll(() => scrollTop(transcript)).toBeGreaterThan(resting - pageHeight);
     await expect(composer).toBeFocused();
-    await expect(composer).toHaveValue(DRAFT);
+    await expect(composer).toHaveJSProperty("value", DRAFT);
     expect(
-      await composer.evaluate((element: HTMLTextAreaElement) => [
+      await composer.evaluate((element: ComposerEditorElement) => [
         element.selectionStart,
         element.selectionEnd,
       ]),
@@ -95,14 +96,24 @@ export const composerKeysScenario: Scenario = {
     await expect(transcript).toHaveAttribute("data-bottom-locked", "true");
     await expect(composer).toBeFocused();
 
-    // An open suggestion list keeps the page keys' native meaning.
+    // An open suggestion list keeps the page keys' native meaning: PageUp moves the caret
+    // before the `/`, which closes the list, and does not page the transcript. The list is a
+    // panel in the card, so the transcript only follows the dock as it shrinks.
     await composer.fill("");
     await composer.pressSequentially("/");
-    const suggestions = page.getByRole("listbox", { name: "Composer suggestions" });
+    // Typed `/` opens the launcher's Commands list.
+    const suggestions = page.getByRole("listbox", { name: "Commands" });
     await expect(suggestions).toBeVisible();
+    await expect(composer).toHaveAttribute("aria-expanded", "true");
+    const dock = page.locator("[data-palot-composer-dock]");
     const bottom = await settledScrollTop(transcript);
+    const openDock = (await dock.boundingBox())!.height;
     await composer.press("PageUp");
-    expect(await settledScrollTop(transcript)).toBe(bottom);
+    await expect(suggestions).toBeHidden();
+    await expect(composer).toHaveAttribute("aria-expanded", "false");
+    const after = await settledScrollTop(transcript);
+    const shrink = openDock - (await dock.boundingBox())!.height;
+    expect(Math.abs(bottom - shrink - after)).toBeLessThanOrEqual(2);
 
     // A pointer resting over the list must not take the highlight when the list scrolls.
     await composer.fill("");
@@ -110,11 +121,13 @@ export const composerKeysScenario: Scenario = {
     await expect(suggestions).toBeVisible();
     const options = suggestions.getByRole("option");
     const count = await options.count();
-    const list = suggestions.locator("div.overflow-y-auto");
+    const list = page.locator('[data-slot="launcher-body"]');
     expect(
       await list.evaluate((element) => element.scrollHeight > element.clientHeight + 1),
       `${count} commands should overflow the suggestion list`,
     ).toBe(true);
+    // The panel grows open; aim once the row has stopped moving.
+    await options.nth(1).hover({ trial: true });
     const second = (await options.nth(1).boundingBox())!;
     await page.mouse.move(second.x + 40, second.y + second.height / 2, { steps: 4 });
     await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
@@ -129,17 +142,15 @@ export const composerKeysScenario: Scenario = {
     await page.screenshot({ path: join(runRoot, "composer-keys-resting-pointer.png") });
     const name = (await options
       .nth(count - 1)
-      .locator("span.font-medium")
+      .locator('[data-slot="launcher-item-title"]')
       .textContent())!;
     await composer.press("Enter");
-    await expect(composer).toHaveValue(`${name} `);
+    await expect(composer).toHaveJSProperty("value", `${name} `);
+    // A script's select-all straight after the pick must not leave the editor on its old caret.
     await composer.fill("");
+    await expect(composer).toHaveJSProperty("value", "");
 
-    // The rich composer pages the same way.
-    await page.evaluate(() => {
-      location.hash = "#/settings/general";
-    });
-    await page.getByRole("switch", { name: "Rich composer (beta)", exact: true }).click();
+    // The composer pages the same way after the task is opened again.
     await openSession(page, sessionID);
     const rich = page.getByRole("textbox", { name: "Message Palot", exact: true });
     await expect(rich).toHaveAttribute("contenteditable", "true");

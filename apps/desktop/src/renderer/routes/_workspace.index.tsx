@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAtomValue, useStore } from "jotai";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   newTaskDestinationAtom,
   newTaskProjectIDAtom,
@@ -9,6 +9,12 @@ import {
   selectedSessionIDAtom,
 } from "../atoms/workspace";
 import { disabledProfileIDsAtom } from "../atoms/connections";
+import {
+  onboardingComplete,
+  onboardingCompletedVersionAtom,
+  onboardingSkippedAtom,
+} from "../atoms/onboarding";
+import { palot } from "../services/palot";
 import { connectionOverview } from "../lib/connection-overview";
 import { resolveNewTaskDestination } from "../lib/new-task-destination";
 import { showErrorToast } from "../lib/toast-error";
@@ -18,6 +24,8 @@ export const Route = createFileRoute("/_workspace/")({
   component: WorkspaceIndex,
 });
 
+const ONBOARDING_LAUNCH_WAIT_MS = 10_000;
+
 function WorkspaceIndex() {
   const navigate = useNavigate();
   const store = useStore();
@@ -26,9 +34,25 @@ function WorkspaceIndex() {
   const sessions = useSessionCatalog();
   const projectID = useAtomValue(newTaskProjectIDAtom);
   const selectedSessionID = useAtomValue(selectedSessionIDAtom);
+  // On a first run the OnboardingController opens /welcome from here; opening the newest task
+  // first would read as the user leaving and skip onboarding.
+  const onboardingDone = useAtomValue(onboardingCompletedVersionAtom);
+  const onboardingSkipped = useAtomValue(onboardingSkippedAtom);
+  // Bounded: if onboarding never decides (its project list keeps failing), open the launch anyway.
+  const [onboardingTimedOut, setOnboardingTimedOut] = useState(false);
+  const launchReady =
+    onboardingComplete(onboardingDone) ||
+    onboardingSkipped ||
+    onboardingTimedOut ||
+    palot.isPreview();
+  useEffect(() => {
+    if (phase !== "ready" || launchReady) return;
+    const timer = window.setTimeout(() => setOnboardingTimedOut(true), ONBOARDING_LAUNCH_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [launchReady, phase]);
 
   useEffect(() => {
-    if (phase !== "ready") return;
+    if (phase !== "ready" || !launchReady) return;
     let cancelled = false;
     const openDraft = async () => {
       const overview = connectionOverview(queryClient);
@@ -67,7 +91,7 @@ function WorkspaceIndex() {
       search: {},
       replace: true,
     });
-  }, [navigate, phase, projectID, queryClient, selectedSessionID, sessions, store]);
+  }, [launchReady, navigate, phase, projectID, queryClient, selectedSessionID, sessions, store]);
 
   // Do not expose a draft on the focused (possibly remote) server before the
   // remembered/local destination has been resolved and its route committed.

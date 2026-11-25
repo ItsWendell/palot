@@ -1,9 +1,17 @@
+import { QueryClientContext } from "@tanstack/react-query";
 import { useAtomValue, useSetAtom } from "jotai";
 import { RotateCw, WifiOff } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, useContext, useEffect, useState } from "react";
 import type { OpenCodeConnectInput, OpenCodeRuntimeStatus } from "../../shared";
+import { includeStartedProfileAtom } from "../atoms/connections";
 import { runtimeAtom } from "../atoms/workspace";
 import type { ProjectCatalogRecovery } from "../hooks/use-project-catalog-recovery";
+import { connectionOverview } from "../lib/connection-overview";
+import {
+  runningLocalTasks,
+  runningTasksSentence,
+  type RunningLocalTask,
+} from "../lib/running-local-tasks";
 import { palot } from "../services/palot";
 import { OpenCodeReleaseSetup } from "./open-code-release-settings";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
@@ -30,6 +38,9 @@ import {
   AlertDialogAction,
 } from "./ui/alert-dialog";
 
+/** Running tasks the confirmation names before "and N more". */
+const MAX_LISTED_TASKS = 5;
+
 export function SharedOpenCodeAction({
   action = "start",
   disabled,
@@ -40,14 +51,28 @@ export function SharedOpenCodeAction({
   onConfirm(): void;
 }) {
   const [open, setOpen] = useState(false);
+  const queryClient = useContext(QueryClientContext);
+  // Read when the dialog opens: the list is what this press would stop.
+  const [running, setRunning] = useState<readonly RunningLocalTask[]>([]);
   const label =
     action === "start"
       ? "Start OpenCode"
       : action === "restart"
         ? "Restart service"
         : "Use selected runtime";
+  const verb =
+    action === "start" ? "recovering" : action === "restart" ? "restarting" : "replacing";
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next)
+          setRunning(
+            queryClient ? runningLocalTasks(connectionOverview(queryClient).getSnapshot()) : [],
+          );
+        setOpen(next);
+      }}
+    >
       <AlertDialogTrigger
         render={<Button type="button" variant="outline" size="sm" disabled={disabled} />}
       >
@@ -71,6 +96,24 @@ export function SharedOpenCodeAction({
               : "This will restart the shared service and may interrupt other OpenCode clients and their running tasks."}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {running.length ? (
+          <Banner
+            status="warning"
+            data-palot-running-tasks=""
+            title={`${runningTasksSentence(running.length)}; ${verb} stops ${running.length === 1 ? "it" : "them"}.`}
+          >
+            <ul className="m-0 list-none space-y-0.5 p-0 text-meta text-muted-foreground">
+              {running.slice(0, MAX_LISTED_TASKS).map((task) => (
+                <li key={task.id} className="truncate" title={task.title}>
+                  {task.title}
+                </li>
+              ))}
+              {running.length > MAX_LISTED_TASKS ? (
+                <li>and {running.length - MAX_LISTED_TASKS} more</li>
+              ) : null}
+            </ul>
+          </Banner>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
@@ -85,6 +128,7 @@ export function SharedOpenCodeAction({
               : action === "restart"
                 ? "Restart"
                 : "Replace service"}
+            {running.length ? " anyway" : ""}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -158,6 +202,7 @@ function ProjectCatalogAlert({ recovery }: { recovery: ProjectCatalogRecovery })
 
 function DisconnectedOpenCodeAlert({ runtime }: { runtime: OpenCodeRuntimeStatus }) {
   const setRuntime = useSetAtom(runtimeAtom);
+  const includeStartedProfile = useSetAtom(includeStartedProfileAtom);
   const [visible, setVisible] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
@@ -174,7 +219,9 @@ function DisconnectedOpenCodeAlert({ runtime }: { runtime: OpenCodeRuntimeStatus
   async function reconnect(input?: OpenCodeConnectInput) {
     setRetrying(true);
     try {
-      setRuntime(await palot.connectOpenCode(input));
+      const next = await palot.connectOpenCode(input);
+      if (input?.startLocalService) includeStartedProfile(next);
+      setRuntime(next);
     } catch {
       setRuntime(await palot.runtimeStatus().catch(() => runtime));
     } finally {

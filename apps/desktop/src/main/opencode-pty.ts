@@ -8,6 +8,7 @@ import type {
   PtyTransportEvent,
 } from "../shared";
 import { IPC_CHANNELS } from "../shared";
+import { chunkTerminalWrite } from "../shared/terminal-input";
 
 interface PtyRuntime {
   withClient<T>(operation: (client: OpenCodeClient, remote: boolean) => Promise<T>): Promise<T>;
@@ -271,9 +272,12 @@ export class PtyTransport {
     )
       return;
     if (control && connection.transport === "legacy") return;
-    connection.socket.send(
-      connection.transport === "persistent" ? persistentInputFrame(data, size, control) : data,
-    );
+    // One bounded frame per piece, in order; a control frame carries no data.
+    for (const piece of data ? chunkTerminalWrite(data) : [data]) {
+      connection.socket.send(
+        connection.transport === "persistent" ? persistentInputFrame(piece, size, control) : piece,
+      );
+    }
   }
 
   disconnect(sender: WebContents, connectionID: string): void {

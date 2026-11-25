@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAtomValue } from "jotai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { runtimeAtom } from "../atoms/workspace";
@@ -10,7 +10,17 @@ import { mapProject } from "../services/opencode-mappers";
 
 export function useSettingsServer(enabled: boolean) {
   const selected = useAtomValue(runtimeAtom);
-  const [profileID, setProfileID] = useState(() => selected?.profileID ?? null);
+  // Settings keep the server they opened on, even when the task later focuses another one.
+  // After a reload they can mount before the runtime is known, so until a server is known they
+  // follow the active one, then keep the first one that appears.
+  const [chosenProfileID, setProfileID] = useState<string | null>(
+    () => selected?.profileID ?? null,
+  );
+  const known = selected?.profileID ?? null;
+  useEffect(() => {
+    if (known) setProfileID((current) => current ?? known);
+  }, [known]);
+  const profileID = chosenProfileID ?? known;
   const { connections } = useConnectionOverview();
   const disabled = useAtomValue(disabledProfileIDsAtom);
   const entry = connections.find((connection) => connection.profile.id === profileID);

@@ -119,5 +119,12 @@ describe("usage limits", () => {
         data: { error: { type: "provider.error", retryAfterMs: 100 } },
       }),
     ).toBeNull();
+    // An empty balance never resets, so there is nothing to continue after.
+    expect(
+      usageLimitFailure({
+        ...message,
+        data: { error: { type: "provider.quota", status: 402, retryAfterMs: 100 } },
+      }),
+    ).toBeNull();
   });
 });

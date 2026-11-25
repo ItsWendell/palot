@@ -11,10 +11,14 @@ import {
   type ProjectDetails,
   type ProjectEdits,
 } from "../services/opencode-projects";
-import { SettingsGroup, SettingsSection } from "./settings-layout";
+import {
+  SettingsGroup,
+  SettingsRow,
+  SettingsSection,
+  type SettingsRowLayout,
+} from "./settings-layout";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "./ui/field";
 import { Alert, AlertDescription } from "./ui/alert";
 import { ProjectScriptsSettings } from "./project-scripts-settings";
 
@@ -117,26 +121,37 @@ function ProjectSettingsScope({
       </SettingsSection>
     );
 
-  function field(name: keyof ProjectEdits, label: string, value: string, description: string) {
+  function field(
+    name: keyof ProjectEdits,
+    label: string,
+    value: string,
+    description: string,
+    layout: SettingsRowLayout = "inline",
+  ) {
     return (
-      <Field>
-        <FieldLabel htmlFor={`project-${name}`}>{label}</FieldLabel>
-        <Input
-          id={`project-${name}`}
-          value={edits[name] ?? value}
-          disabled={pending}
-          onChange={(event) => {
-            const next = event.target.value;
-            setEdits((current) => {
-              const result = { ...current, [name]: next };
-              if (next === value) delete result[name];
-              return result;
-            });
-            setSaved(false);
-          }}
-        />
-        <FieldDescription>{description}</FieldDescription>
-      </Field>
+      <SettingsRow
+        title={label}
+        htmlFor={`project-${name}`}
+        description={description}
+        layout={layout}
+        control={
+          <Input
+            id={`project-${name}`}
+            className={layout === "inline" ? "w-full @lg/settings:w-56" : undefined}
+            value={edits[name] ?? value}
+            disabled={pending}
+            onChange={(event) => {
+              const next = event.target.value;
+              setEdits((current) => {
+                const result = { ...current, [name]: next };
+                if (next === value) delete result[name];
+                return result;
+              });
+              setSaved(false);
+            }}
+          />
+        }
+      />
     );
   }
 
@@ -154,38 +169,39 @@ function ProjectSettingsScope({
         className="space-y-4"
       >
         <SettingsGroup>
-          <FieldGroup className="p-4">
-            {field(
-              "name",
-              "Project name",
-              project.name ?? "",
-              "Leave blank to use the directory name.",
-            )}
-            {field(
-              "override",
-              "Icon override",
-              project.icon?.override ?? "",
-              "Image URL or data URL. Leave blank to use the discovered project icon.",
-            )}
-            {field(
-              "color",
-              "Icon color",
-              project.icon?.color ?? "",
-              "Optional color value. Leave blank to clear the override.",
-            )}
-            {field(
-              "start",
-              "Worktree startup command",
-              project.commands?.start ?? "",
-              "Runs when OpenCode creates a worktree. Saving does not run it. Leave blank to disable.",
-            )}
-            {field(
-              "canonical",
-              "Main checkout directory",
-              project.canonical,
-              "Absolute path on the connected OpenCode server. Changes the project's canonical directory metadata only; files and existing sessions are not moved.",
-            )}
-          </FieldGroup>
+          {field(
+            "name",
+            "Project name",
+            project.name ?? "",
+            "Leave blank to use the directory name.",
+          )}
+          {field(
+            "override",
+            "Icon override",
+            project.icon?.override ?? "",
+            "Image URL or data URL. Leave blank to use the discovered project icon.",
+            "stacked",
+          )}
+          {field(
+            "color",
+            "Icon color",
+            project.icon?.color ?? "",
+            "Optional color value. Leave blank to clear the override.",
+          )}
+          {field(
+            "start",
+            "Worktree startup command",
+            project.commands?.start ?? "",
+            "Runs when OpenCode creates a worktree. Saving does not run it. Leave blank to disable.",
+            "stacked",
+          )}
+          {field(
+            "canonical",
+            "Main checkout directory",
+            project.canonical,
+            "Absolute path on the connected OpenCode server. Changes the project's canonical directory metadata only; files and existing sessions are not moved.",
+            "stacked",
+          )}
         </SettingsGroup>
         {error ? (
           <Alert variant="destructive">

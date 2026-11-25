@@ -1,4 +1,6 @@
 import type {
+  PullRequestCheckLog,
+  PullRequestCheckLogsInput,
   PullRequestEditInput,
   PullRequestLabelInput,
   PullRequestAutoMergeInput,
@@ -21,6 +23,7 @@ import type {
 } from "../../shared/source-control-contract";
 import { pullRequestKey } from "../../shared/source-control-contract";
 import { SourceControlError } from "./errors";
+import { GitHubCheckLogs } from "./github-check-logs";
 import { GitHubApiError, type GitHubGateway } from "./github-client";
 import type { RawConnection } from "./github-pull-requests";
 import {
@@ -80,8 +83,16 @@ export interface PullRequestReviewOptions {
  */
 export class PullRequestReviewService {
   private readonly nodeIDs = new Map<string, string>();
+  private readonly logReader: GitHubCheckLogs;
 
-  constructor(private readonly options: PullRequestReviewOptions) {}
+  constructor(private readonly options: PullRequestReviewOptions) {
+    this.logReader = new GitHubCheckLogs(options.github);
+  }
+
+  /** The failure behind each failing check; unreadable logs come back with a null excerpt. */
+  checkLogs(input: PullRequestCheckLogsInput): Promise<PullRequestCheckLog[]> {
+    return this.logReader.read(normalized(input), input);
+  }
 
   async detail(input: PullRequestRef): Promise<PullRequestDetail> {
     const ref = normalized(input);

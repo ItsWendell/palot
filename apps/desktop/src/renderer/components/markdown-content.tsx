@@ -38,6 +38,7 @@ import { resolvedAppearanceAtom } from "../atoms/appearance";
 import { runtimeAtom } from "../atoms/workspace";
 import { cn } from "../lib/cn";
 import { duckDuckGoFaviconUrl } from "../lib/markdown-favicon";
+import { literalSingleTildeExtension } from "../lib/markdown-literal-tilde";
 import { transformInlineMath } from "../lib/markdown-math";
 import {
   decodeEntities,
@@ -50,6 +51,7 @@ import { isCompleteSessionID, sessionLinksExtension } from "../lib/markdown-sess
 import { taskMentionsExtension } from "../lib/task-mentions";
 import { palot } from "../services/palot";
 import { isLocalBrowserURL } from "../lib/browser-address";
+import { MachineBadge } from "./machine-badge";
 import { MarkdownCodeBlock } from "./markdown-code-block";
 import type { CodeAnimationRange } from "./highlighted-code";
 import { PalotMarkdown, useMarkdownBlockStreaming } from "./palot-markdown-react";
@@ -74,7 +76,13 @@ import { MarkdownActionsContext } from "./markdown-actions";
 import { toggleMarkdownTask } from "../lib/markdown-task-edit";
 import { markdownMediaSource, type MarkdownMediaSource } from "../lib/markdown-media";
 import { MarkdownImageActions } from "./markdown-image-actions";
-import { FileLinkMenu, WebLinkMenu, type FileOpenTrigger } from "./link-actions";
+import {
+  EmailLinkMenu,
+  FileLinkMenu,
+  mailtoAddress,
+  WebLinkMenu,
+  type FileOpenTrigger,
+} from "./link-actions";
 import { trimAutoLinkLiteral } from "../lib/linkify";
 
 // Block parsers run in order: raw HTML blocks first, paragraphs last (they claim what is left).
@@ -277,7 +285,12 @@ function MarkdownTable({
   const { copiedKey, copy } = useClipboardCopy();
   const formats = useMemo(() => {
     try {
-      return JSON.parse(serialized ?? "{}") as { markdown?: string; tsv?: string; csv?: string };
+      return JSON.parse(serialized ?? "{}") as {
+        markdown?: string;
+        tsv?: string;
+        csv?: string;
+        html?: string;
+      };
     } catch {
       return {};
     }
@@ -286,7 +299,8 @@ function MarkdownTable({
   function copyTable(format: "tsv" | "markdown" | "csv") {
     const value = formats[format];
     if (!value) return;
-    void copy(value, format);
+    // The table copy carries HTML too, so it pastes as a table in documents, mail and chat.
+    void copy(value, format, format === "tsv" ? formats.html : undefined);
   }
 
   return (
@@ -301,7 +315,7 @@ function MarkdownTable({
             }
           />
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => copyTable("tsv")}>Copy as TSV</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => copyTable("tsv")}>Copy as table</DropdownMenuItem>
             <DropdownMenuItem onClick={() => copyTable("markdown")}>
               Copy as Markdown
             </DropdownMenuItem>
@@ -429,12 +443,15 @@ function MarkdownLink({ href, children, ...props }: MarkdownComponentProps<"a">)
       )}
     </a>
   );
+  const email = isWebUrl ? null : mailtoAddress(resolvedHref);
   return (
     <MarkdownLinkContext.Provider value>
       {isWebUrl && resolvedHref ? (
         <WebLinkMenu url={resolvedHref.startsWith("//") ? `https:${resolvedHref}` : resolvedHref}>
           {anchor}
         </WebLinkMenu>
+      ) : email ? (
+        <EmailLinkMenu address={email}>{anchor}</EmailLinkMenu>
       ) : (
         anchor
       )}
@@ -536,6 +553,7 @@ function MarkdownFileLink({
   const icon = workspaceFileIcon(reference.path);
   const fileHref = fileReferenceHref(reference, workspaceDirectory, homeDirectory);
   const label = fileReferenceLabel(reference);
+  const accessibleLabel = reference.machine ? `${label} on ${reference.machine}` : label;
   const open = (event: ReactMouseEvent | ReactKeyboardEvent) => {
     event.preventDefault();
     onOpen(reference, event);
@@ -547,15 +565,15 @@ function MarkdownFileLink({
         href={fileHref}
         role={fileHref ? undefined : "link"}
         tabIndex={fileHref ? undefined : 0}
-        title={label}
-        aria-label={`Open ${label}`}
+        title={reference.machine ? `${reference.machine}:${label}` : label}
+        aria-label={`Open ${accessibleLabel}`}
         onClick={open}
         onKeyDown={(event) => {
           if (!fileHref && event.key === "Enter") open(event);
         }}
         className="inline-flex max-w-full cursor-pointer items-center gap-1 text-info underline-offset-4 outline-none hover:underline focus-visible:rounded-[2px] focus-visible:ring-2 focus-visible:ring-ring aria-busy:cursor-progress aria-busy:opacity-70"
       >
-        {icon}
+        {reference.machine ? <MachineBadge machine={reference.machine} /> : icon}
         <span className="min-w-0 truncate">{children}</span>
       </a>
     </FileLinkMenu>
@@ -875,6 +893,8 @@ interface MarkdownContentProps {
   value: string;
   className?: string;
   streaming?: boolean;
+  /** Text the user typed: a single `~` stays literal instead of striking text through. */
+  literalSingleTilde?: boolean;
   passiveMedia?: boolean;
   baseUrl?: string;
   onTaskEdit?(text: string): void;
@@ -884,6 +904,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   value,
   className,
   streaming = false,
+  literalSingleTilde = false,
   passiveMedia = false,
   baseUrl,
   onTaskEdit,
@@ -915,6 +936,7 @@ export const MarkdownContent = memo(function MarkdownContent({
         passiveMedia={passiveMedia}
         baseUrl={baseUrl}
         editableTasks={Boolean(onTaskEdit)}
+        literalSingleTilde={literalSingleTilde}
       />
     </div>
   );
@@ -926,21 +948,21 @@ const MarkdownBody = memo(function MarkdownBody({
   passiveMedia,
   baseUrl,
   editableTasks,
-}: Required<Pick<MarkdownContentProps, "value" | "streaming" | "passiveMedia">> &
+  literalSingleTilde,
+}: Required<
+  Pick<MarkdownContentProps, "value" | "streaming" | "passiveMedia" | "literalSingleTilde">
+> &
   Pick<MarkdownContentProps, "baseUrl"> & { editableTasks: boolean }) {
   const remoteFavicons = useAtomValue(remoteMarkdownFaviconsAtom);
   const openSession = useContext(MarkdownSessionLinkContext);
-  const extensions = useMemo(
-    () =>
-      openSession && !baseUrl
-        ? [
-            ...MARKDOWN_EXTENSIONS,
-            taskMentionsExtension(streaming),
-            sessionLinksExtension(streaming),
-          ]
-        : MARKDOWN_EXTENSIONS,
-    [baseUrl, openSession, streaming],
-  );
+  const extensions = useMemo(() => {
+    const base = literalSingleTilde
+      ? [...MARKDOWN_EXTENSIONS, literalSingleTildeExtension()]
+      : MARKDOWN_EXTENSIONS;
+    return openSession && !baseUrl
+      ? [...base, taskMentionsExtension(streaming), sessionLinksExtension(streaming)]
+      : base;
+  }, [baseUrl, literalSingleTilde, openSession, streaming]);
   const generatedID = useId().replaceAll(":", "");
   const idPrefix = `markdown-${generatedID}`;
   const context = useMemo(

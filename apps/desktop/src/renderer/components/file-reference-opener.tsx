@@ -5,12 +5,15 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { FileCode2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PalotMessage } from "../../shared";
+import { stripLocalPrefix } from "../../shared/machine-path";
 import { workspaceFileQueryOptions } from "../hooks/use-workspace-file";
 import { isHtmlFilePath } from "../lib/browser-files";
 import {
   expandHomePath,
   fileReferenceBases,
   fileReferenceLabel,
+  fileReferenceMachine,
+  fileReferenceText,
   isAbsoluteFilePath,
   isFileReferenceAbort,
   joinFilePath,
@@ -21,6 +24,7 @@ import {
   type FileReferenceIO,
   type FileReferenceLocation,
 } from "../lib/file-reference";
+import { writeClipboardText } from "../lib/clipboard";
 import { showErrorToast } from "../lib/toast-error";
 import { sessionFileLocation } from "../services/opencode-resources";
 import { palot } from "../services/palot";
@@ -100,6 +104,28 @@ interface PickerState {
 }
 
 type OpenEvent = FileOpenTrigger;
+
+/**
+ * A file on another OpenCode machine (`devbox:/srv/a.ts`). OpenCode 2.4.1's file API reads only
+ * its own server's files, so Palot can't open it in a tab or on this computer; it says so.
+ */
+export function showMachineFileNotice(reference: FileReference): void {
+  const machine = fileReferenceMachine(reference);
+  if (!machine) return;
+  const text = fileReferenceText(reference);
+  toast.add({
+    type: "info",
+    title: `This file is on ${machine.machine}`,
+    description: `${fileReferenceLabel({ ...reference, path: machine.path })}. Palot can't open files on other machines: OpenCode reads only its own server's files for the app. Ask the task to read it.`,
+    actionProps: {
+      children: "Copy path",
+      onClick: () =>
+        void writeClipboardText(text).catch((error: unknown) =>
+          showErrorToast("Could not copy path", error),
+        ),
+    },
+  });
+}
 
 export function useFileReferenceOpener({
   sessionID,
@@ -188,10 +214,17 @@ export function useFileReferenceOpener({
 
   const open = useCallback(
     (input: FileReference, event?: OpenEvent) => {
+      if (fileReferenceMachine(input)) {
+        showMachineFileNotice(input);
+        return;
+      }
       const controller = begin();
       setPicker(null);
       // `~` resolves on the task's server, so an expanded path checks the workspace like any other.
-      const reference = { ...input, path: expandHomePath(input.path, homeDirectory) };
+      const reference = {
+        ...input,
+        path: expandHomePath(stripLocalPrefix(input.path), homeDirectory),
+      };
 
       const anchor = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
       const messageID =

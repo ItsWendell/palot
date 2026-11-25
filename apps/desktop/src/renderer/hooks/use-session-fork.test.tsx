@@ -11,7 +11,10 @@ import { useSessionFork } from "./use-session-fork";
 
 const mocks = vi.hoisted(() => ({ open: vi.fn(), cache: vi.fn() }));
 vi.mock("./use-navigation", () => ({ usePalotNavigation: () => ({ openSession: mocks.open }) }));
-vi.mock("./use-session-catalog", () => ({ useCacheSession: () => mocks.cache }));
+vi.mock("./use-session-catalog", () => ({
+  useCacheSession: () => mocks.cache,
+  useTaskTitleLookup: () => () => undefined,
+}));
 afterEach(() => {
   vi.restoreAllMocks();
   mocks.open.mockReset();

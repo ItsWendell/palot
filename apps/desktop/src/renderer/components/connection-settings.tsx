@@ -1,53 +1,63 @@
 import {
+  Activity,
   Check,
   CircleAlert,
   Copy,
-  Eye,
-  EyeOff,
   ExternalLink,
   Globe2,
   Laptop,
+  Link2,
   LoaderCircle,
+  MoreHorizontal,
   Pencil,
   Plus,
   QrCode,
+  RefreshCw,
   Server,
+  Settings2,
   ShieldCheck,
   Trash2,
   WifiOff,
 } from "lucide-react";
-import { useClipboardCopy } from "../hooks/use-clipboard-copy";
 import { useConnectionOverview } from "../hooks/use-connection-overview";
-import { useAtom } from "jotai";
+import type { ConnectionOverview } from "../lib/connection-overview";
+import { useAtom, useSetAtom } from "jotai";
+import { includeStartedProfileAtom } from "../atoms/connections";
 import { runtimeAtom } from "../atoms/workspace";
 import { SharedOpenCodeAction } from "./opencode-connection-alert";
 import { LocalOpenCodeRuntimeSettings } from "./open-code-release-settings";
 import { OpenCodeLoginAutostartSettings } from "./open-code-login-autostart-settings";
 import { useNavigate } from "@tanstack/react-router";
 import QRCode from "qrcode";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type {
-  OpenCodeCredentialInput,
-  OpenCodePairingInfo,
-  OpenCodeProfile,
-  OpenCodeProfileCreateInput,
-  OpenCodeProfileSnapshot,
-  OpenCodeProfileUpdateInput,
-  OpenCodeWebAccessInfo,
-} from "../../shared";
-import { writeClipboardText } from "../lib/clipboard";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  pairingInfoForAddress,
-  pairingQRCodePayload,
-  suggestedPairingAddress,
-} from "../lib/pairing-address";
-import { parsePairingText } from "../lib/pairing-import";
+  WEAK_CREDENTIAL_STORAGE_MESSAGE,
+  type OpenCodeConnectionCheck,
+  type OpenCodeCredentialInput,
+  type OpenCodeCredentialProtection,
+  type OpenCodeProfile,
+  type OpenCodeProfileCreateInput,
+  type OpenCodeProfileSnapshot,
+  type OpenCodeProfileUpdateInput,
+  type OpenCodeWebAccessInfo,
+} from "../../shared";
+import { normalizeServerName, SERVER_NAME_MAX_LENGTH } from "../../shared/server-name";
+import { writeClipboardText } from "../lib/clipboard";
+import { ipcErrorMessage } from "../lib/ipc-error";
+import { suggestedPairingAddress } from "../lib/pairing-address";
 import { palot } from "../services/palot";
-import { SettingsEmpty, SettingsGroup, SettingsSection } from "./settings-layout";
+import {
+  ConnectComputerDialog,
+  ConnectionProblemNotice,
+  ShareComputerDialog,
+} from "./pairing-dialogs";
+import { SettingsEmpty, SettingsGroup, SettingsNotice, SettingsSection } from "./settings-layout";
 import { SshConnectionDialog } from "./ssh-connection-dialog";
 import { Badge } from "./ui/badge";
+import { Banner } from "./ui/banner";
 import { Button, buttonVariants } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
+import { CopyField } from "./ui/copy-field";
 import { Switch } from "./ui/switch";
 import {
   Dialog,
@@ -57,8 +67,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { Input } from "./ui/input";
-import { NativeSelect, NativeSelectOption } from "./ui/native-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Textarea } from "./ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -82,37 +98,84 @@ const TAB_ROUTES: Record<ConnectionTab, string> = {
   "local-service": "/settings/connections/local-service",
 };
 
+/** Warns when saved server credentials are only obfuscated on disk. */
+export function CredentialStorageNotice({
+  protection,
+}: {
+  protection: OpenCodeCredentialProtection | null;
+}) {
+  if (protection !== "basic-text") return null;
+  return (
+    <SettingsNotice status="warning" title="Saved credentials are not encrypted">
+      {WEAK_CREDENTIAL_STORAGE_MESSAGE}
+    </SettingsNotice>
+  );
+}
+
 export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
   const navigate = useNavigate();
-  const { connections, includedProfileIDs, setIncludedProfileIDs } = useConnectionOverview();
+  const { connections, includedProfileIDs, setIncludedProfileIDs, connect } =
+    useConnectionOverview();
   const [snapshot, setSnapshot] = useState<OpenCodeProfileSnapshot | null>(null);
+  const [protection, setProtection] = useState<OpenCodeCredentialProtection | null>(null);
   const [webAccess, setWebAccess] = useState<OpenCodeWebAccessInfo | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [sshOpen, setSshOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<OpenCodeProfile | null>(null);
+  const [renaming, setRenaming] = useState<OpenCodeProfile | null>(null);
   const [deleting, setDeleting] = useState<OpenCodeProfile | null>(null);
   const [busyID, setBusyID] = useState<string | null>(null);
+  const [checks, setChecks] = useState<Record<string, ConnectionCheckState>>({});
   const [accessBusy, setAccessBusy] = useState<"enable" | "disable" | "restart" | null>(null);
 
-  const reload = () => palot.listOpenCodeProfiles().then(setSnapshot);
+  const reload = () =>
+    palot.listOpenCodeProfiles().then((value) => {
+      setSnapshot(value);
+      setProtection(value.credentialProtection ?? null);
+    });
   const reloadWebAccess = () => palot.openCodeWebAccessInfo().then(setWebAccess);
   useEffect(() => {
     void reload().catch(showError);
   }, []);
   useEffect(() => {
-    if (tab !== "profiles") void reloadWebAccess().catch(showError);
+    // Sharing needs to know whether a Tailscale address can be suggested.
+    void reloadWebAccess().catch(tab === "profiles" ? () => undefined : showError);
   }, [tab]);
 
   const removeProfile = async (profile: OpenCodeProfile) => {
     setBusyID(profile.id);
     try {
       setSnapshot(await palot.deleteOpenCodeProfile(profile.id));
+      toast.add({ type: "success", title: `Removed ${profile.name}` });
     } catch (error) {
       showError(error);
     } finally {
       setBusyID(null);
+    }
+  };
+
+  const checkProfile = async (profile: OpenCodeProfile) => {
+    setChecks((current) => ({ ...current, [profile.id]: { status: "checking" } }));
+    try {
+      const result = await palot.checkOpenCodeProfile(profile.id);
+      setChecks((current) => ({ ...current, [profile.id]: { status: "done", result } }));
+    } catch (error) {
+      setChecks((current) => ({
+        ...current,
+        [profile.id]: {
+          status: "done",
+          result: {
+            ok: false,
+            problem: {
+              step: "server",
+              title: "Couldn’t test this connection.",
+              fix: ipcErrorMessage(error, "Try again."),
+            },
+          },
+        },
+      }));
     }
   };
 
@@ -148,6 +211,8 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
     }
   };
 
+  const shareUnavailable = webAccess && !webAccess.local.pairingAvailable;
+
   return (
     <Tabs
       value={tab}
@@ -169,121 +234,95 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
 
       {tab === "profiles" ? (
         <div className="space-y-8">
+          <CredentialStorageNotice protection={protection} />
           <SettingsSection
             title="Servers"
             description="Enabled servers share one workspace. Opening a task uses its server automatically. Disabling a server only disconnects Palot; it does not stop the server."
             action={
               <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={() => setAddOpen(true)}>
-                  <Plus className="size-4" /> Add HTTP server
+                <Button type="button" size="sm" onClick={() => setImportOpen(true)}>
+                  <Link2 className="size-4" /> Connect to another computer
                 </Button>
-                <Button type="button" size="sm" onClick={() => setSshOpen(true)}>
-                  <Plus className="size-4" /> Add SSH connection
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        aria-label="More ways to add a server"
+                      />
+                    }
+                  >
+                    <Plus className="size-4" /> Add
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem onClick={() => setAddOpen(true)}>
+                      <Globe2 aria-hidden="true" /> Add by address…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setSshOpen(true)}>
+                      <Server aria-hidden="true" /> Add SSH connection…
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             }
           >
             <SettingsGroup>
-              {snapshot?.profiles.map((profile) => {
-                const active = profile.id === snapshot.activeProfileID;
-                const enabled = includedProfileIDs.includes(profile.id);
-                const connection = connections.find((entry) => entry.profile.id === profile.id);
-                return (
-                  <div
-                    key={profile.id}
-                    className="grid min-w-0 gap-3 p-4 @lg/settings:grid-cols-[minmax(0,1fr)_auto] @lg/settings:items-center @lg/settings:gap-6"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Server
-                          className="size-4 shrink-0 text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                        <h3 className="min-w-0 text-sm font-medium wrap-anywhere">
-                          {profile.name}
-                        </h3>
-                        {enabled && connection ? (
-                          <Badge variant="secondary">
-                            {connection.runtime?.connected
-                              ? "Connected"
-                              : connection.phase === "loading"
-                                ? "Connecting…"
-                                : "Offline"}
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <p className="mt-1 text-compact leading-relaxed text-muted-foreground wrap-anywhere">
-                        {profileDescription(profile)}
-                      </p>
-                      <p className="mt-1 text-meta text-muted-foreground">
-                        {profile.kind === "local"
-                          ? "Local service"
-                          : profile.kind === "ssh"
-                            ? "SSH tunnel · remote service stays running when disconnected"
-                            : "Remote server"}
-                      </p>
-                      {profile.kind === "remote" &&
-                      profile.urls.some((url) => url.startsWith("http://")) ? (
-                        <p className="mt-2 text-compact leading-relaxed text-warning">
-                          Plain HTTP can expose prompts, source, credentials, and terminal traffic.
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 @lg/settings:justify-end">
-                      <div className="flex items-center gap-2 text-compact text-muted-foreground">
-                        {enabled ? "Enabled" : "Disabled"}
-                        <Switch
-                          aria-label={`Enable ${profile.name}`}
-                          checked={enabled}
-                          onCheckedChange={(checked) =>
-                            setIncludedProfileIDs((current) =>
-                              checked
-                                ? [...new Set([...current, profile.id])]
-                                : current.filter((id) => id !== profile.id),
-                            )
-                          }
-                        />
-                      </div>
-                      {profile.id !== "local-default" && !active ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Edit ${profile.name}`}
-                          disabled={busyID !== null}
-                          onClick={() => setEditing(profile)}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                      ) : null}
-                      {profile.id !== "local-default" && !active ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Delete ${profile.name}`}
-                          disabled={busyID !== null}
-                          onClick={() => setDeleting(profile)}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
+              {snapshot?.profiles.map((profile) => (
+                <ServerRow
+                  key={profile.id}
+                  profile={profile}
+                  active={profile.id === snapshot.activeProfileID}
+                  enabled={includedProfileIDs.includes(profile.id)}
+                  connection={connections.find((entry) => entry.profile.id === profile.id)}
+                  busy={busyID !== null}
+                  check={checks[profile.id]}
+                  onEnabledChange={(checked) =>
+                    setIncludedProfileIDs((current) =>
+                      checked
+                        ? [...new Set([...current, profile.id])]
+                        : current.filter((id) => id !== profile.id),
+                    )
+                  }
+                  onReconnect={() => void connect(profile.id).catch(() => undefined)}
+                  onCheck={() => void checkProfile(profile)}
+                  onDismissCheck={() =>
+                    setChecks((current) => {
+                      const next = { ...current };
+                      delete next[profile.id];
+                      return next;
+                    })
+                  }
+                  onRename={() => setRenaming(profile)}
+                  onEdit={() => setEditing(profile)}
+                  onPairAgain={() => setImportOpen(true)}
+                  onRemove={() => setDeleting(profile)}
+                />
+              ))}
               {!snapshot ? <SettingsEmpty>Loading connections…</SettingsEmpty> : null}
             </SettingsGroup>
           </SettingsSection>
 
           <SettingsSection
-            title="Import a connection"
-            description="Use a one-time pairing link, or import legacy Basic credentials from another computer."
+            title="Share this computer"
+            description="Let another computer, phone or tablet use this computer’s OpenCode with a one-time pairing code."
           >
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-                <Plus className="size-4" /> Add paired server
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={shareUnavailable === true}
+                onClick={() => setPairOpen(true)}
+              >
+                <QrCode className="size-4" /> Share this computer
               </Button>
+              {shareUnavailable ? (
+                <span className="text-compact text-muted-foreground">
+                  {webAccess?.local.reason ?? "Connect to this computer’s OpenCode first."}
+                </span>
+              ) : null}
             </div>
           </SettingsSection>
         </div>
@@ -318,17 +357,29 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
           setAddOpen(false);
         }}
       />
-      <PairDialog
+      <ShareComputerDialog
         open={pairOpen}
         onOpenChange={setPairOpen}
         suggestedAddress={suggestedPairingAddress(webAccess)}
       />
-      <ImportPairDialog
+      <ConnectComputerDialog
         open={importOpen}
         onOpenChange={setImportOpen}
+        profiles={snapshot?.profiles}
         onSaved={(value) => {
           setSnapshot(value);
-          setImportOpen(false);
+          setChecks({});
+        }}
+      />
+      <RenameServerDialog
+        profile={renaming}
+        taken={snapshot?.profiles.map((profile) => profile.name) ?? []}
+        onOpenChange={(open) => {
+          if (!open) setRenaming(null);
+        }}
+        onSaved={(value) => {
+          setSnapshot(value);
+          setRenaming(null);
         }}
       />
       <EditServerDialog
@@ -359,10 +410,12 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
       <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleting?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>Remove {deleting?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the connection profile and its encrypted credential from Palot. It does
-              not delete the OpenCode server, sessions, auth, configuration, or projects.
+              Palot forgets this connection and its saved sign-in. Nothing changes on the server:
+              its OpenCode, tasks, and projects stay. The sign-in itself stays valid on that server
+              until it expires, because OpenCode can’t sign out one device; change the server’s
+              password to end every paired sign-in at once.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -377,12 +430,307 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
                 void removeProfile(profile);
               }}
             >
-              Delete connection
+              Remove connection
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </Tabs>
+  );
+}
+
+type ConnectionCheckState =
+  | { status: "checking" }
+  | { status: "done"; result: OpenCodeConnectionCheck };
+
+function connectionBadge(
+  enabled: boolean,
+  connection: ConnectionOverview | undefined,
+): { label: string; variant: "success" | "neutral" | "warning" | "secondary" } {
+  if (!enabled) return { label: "Disabled", variant: "neutral" };
+  if (connection?.runtime?.connected) return { label: "Connected", variant: "success" };
+  if (connection?.phase === "loading") return { label: "Connecting…", variant: "secondary" };
+  return { label: "Offline", variant: "warning" };
+}
+
+function ServerRow({
+  profile,
+  active,
+  enabled,
+  connection,
+  busy,
+  check,
+  onEnabledChange,
+  onReconnect,
+  onCheck,
+  onDismissCheck,
+  onRename,
+  onEdit,
+  onPairAgain,
+  onRemove,
+}: {
+  profile: OpenCodeProfile;
+  active: boolean;
+  enabled: boolean;
+  connection: ConnectionOverview | undefined;
+  busy: boolean;
+  check: ConnectionCheckState | undefined;
+  onEnabledChange(checked: boolean): void;
+  onReconnect(): void;
+  onCheck(): void;
+  onDismissCheck(): void;
+  onRename(): void;
+  onEdit(): void;
+  onPairAgain(): void;
+  onRemove(): void;
+}) {
+  const badge = connectionBadge(enabled, connection);
+  const connected = enabled && connection?.runtime?.connected === true;
+  const address =
+    profile.kind === "remote" ? (profile.lastSuccessfulUrl ?? profile.urls[0] ?? null) : null;
+  const version = connected ? connection?.runtime?.version : null;
+  const offlineReason =
+    enabled && !connected && connection?.phase !== "loading"
+      ? (connection?.error ?? connection?.runtime?.error ?? null)
+      : null;
+  const isDefault = profile.id === "local-default";
+  return (
+    <div
+      className="grid min-w-0 gap-3 p-4 @lg/settings:grid-cols-[minmax(0,1fr)_auto] @lg/settings:items-start @lg/settings:gap-6"
+      aria-label={profile.name}
+      role="group"
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <Server className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <h3 className="min-w-0 text-sm font-medium wrap-anywhere">{profile.name}</h3>
+          <Badge variant={badge.variant} size="sm">
+            {badge.label}
+          </Badge>
+        </div>
+        <p className="mt-1 text-meta text-muted-foreground">
+          {profile.kind === "local"
+            ? "This computer · connects to the shared OpenCode service; Palot doesn’t start it automatically"
+            : profile.kind === "ssh"
+              ? `SSH · ${profileDescription(profile)} · the remote service keeps running when disconnected`
+              : "Paired or added by address"}
+          {version ? ` · OpenCode ${version}` : ""}
+        </p>
+        {address ? (
+          <CopyField
+            className="mt-2 max-w-md"
+            value={address}
+            valueName={`${profile.name} address`}
+          />
+        ) : null}
+        {profile.kind === "remote" &&
+        profile.urls.some((url) => url.startsWith("http://") && !isLoopback(url)) ? (
+          <p className="mt-2 text-compact leading-relaxed text-warning">
+            Plain HTTP can expose prompts, source, credentials, and terminal traffic.
+          </p>
+        ) : null}
+        {offlineReason && check?.status !== "done" ? (
+          <p className="mt-2 text-compact leading-relaxed text-muted-foreground wrap-anywhere">
+            {offlineReason}
+          </p>
+        ) : null}
+        {check?.status === "checking" ? (
+          <p
+            role="status"
+            className="mt-2 flex items-center gap-2 text-compact text-muted-foreground"
+          >
+            <LoaderCircle className="size-4 animate-spin" /> Testing {profile.name}…
+          </p>
+        ) : check?.status === "done" ? (
+          check.result.ok ? (
+            <Banner
+              className="mt-2"
+              status={check.result.supported ? "success" : "warning"}
+              title={
+                check.result.supported
+                  ? `Reached ${profile.name}`
+                  : `Reached ${profile.name}, but its OpenCode version isn’t supported`
+              }
+              dismissible
+              onDismiss={onDismissCheck}
+            >
+              {`OpenCode ${check.result.version} at ${check.result.url}${check.result.secure ? "" : " over plain HTTP"}.`}
+            </Banner>
+          ) : (
+            <ConnectionProblemNotice
+              className="mt-2"
+              problem={check.result.problem}
+              actions={
+                check.result.problem.step === "credentials" ? (
+                  <Button type="button" size="sm" variant="outline" onClick={onPairAgain}>
+                    Pair again
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" variant="outline" onClick={onCheck}>
+                    Test again
+                  </Button>
+                )
+              }
+            />
+          )
+        ) : null}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 @lg/settings:justify-end">
+        {enabled && !connected && connection?.phase !== "loading" ? (
+          <Button type="button" size="sm" variant="outline" onClick={onReconnect}>
+            <RefreshCw className="size-4" /> Reconnect
+          </Button>
+        ) : null}
+        <div className="flex items-center gap-2 text-compact text-muted-foreground">
+          <Switch
+            aria-label={`Enable ${profile.name}`}
+            checked={enabled}
+            onCheckedChange={onEnabledChange}
+          />
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Manage ${profile.name}`}
+                disabled={busy}
+              />
+            }
+          >
+            <MoreHorizontal className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            {!isDefault ? (
+              <DropdownMenuItem onClick={onRename}>
+                <Pencil aria-hidden="true" /> Rename…
+              </DropdownMenuItem>
+            ) : null}
+            {profile.kind !== "ssh" ? (
+              <DropdownMenuItem disabled={check?.status === "checking"} onClick={onCheck}>
+                <Activity aria-hidden="true" /> Test connection
+              </DropdownMenuItem>
+            ) : null}
+            {profile.kind === "remote" ? (
+              <DropdownMenuItem onClick={onPairAgain}>
+                <Link2 aria-hidden="true" /> Pair again…
+              </DropdownMenuItem>
+            ) : null}
+            {!isDefault && !active ? (
+              <DropdownMenuItem onClick={onEdit}>
+                <Settings2 aria-hidden="true" />
+                {profile.kind === "ssh" ? "Edit SSH connection…" : "Edit address and sign-in…"}
+              </DropdownMenuItem>
+            ) : null}
+            {!isDefault ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" disabled={active} onClick={onRemove}>
+                  <Trash2 aria-hidden="true" />
+                  {active ? "Remove (open a task on another server first)" : "Remove…"}
+                </DropdownMenuItem>
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}
+
+function RenameServerDialog({
+  profile,
+  taken,
+  onOpenChange,
+  onSaved,
+}: {
+  profile: OpenCodeProfile | null;
+  taken: string[];
+  onOpenChange(open: boolean): void;
+  onSaved(snapshot: OpenCodeProfileSnapshot): void;
+}) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (profile) setName(profile.name);
+  }, [profile]);
+  if (!profile) return null;
+  const normalized = normalizeServerName(name);
+  const duplicate =
+    normalized !== null &&
+    normalized.toLocaleLowerCase() !== profile.name.toLocaleLowerCase() &&
+    taken.some((value) => value.toLocaleLowerCase() === normalized.toLocaleLowerCase());
+  const save = async () => {
+    if (!normalized || duplicate) return;
+    setBusy(true);
+    try {
+      const input: OpenCodeProfileUpdateInput =
+        profile.kind === "remote"
+          ? {
+              id: profile.id,
+              kind: "remote",
+              name: normalized,
+              urls: profile.urls,
+              allowPlainHttp: profile.allowPlainHttp,
+            }
+          : profile.kind === "ssh"
+            ? { id: profile.id, kind: "ssh", name: normalized, ssh: profile.ssh }
+            : { id: profile.id, kind: "local", name: normalized };
+      onSaved(await palot.updateOpenCodeProfile(input));
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <form
+          className="contents"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Rename {profile.name}</DialogTitle>
+            <DialogDescription>
+              The name shows in the task list, server menus and task destinations. It stays in
+              Palot; the server isn’t told.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <label className="text-meta text-muted-foreground" htmlFor="server-rename">
+              Name
+            </label>
+            <Input
+              id="server-rename"
+              value={name}
+              maxLength={SERVER_NAME_MAX_LENGTH}
+              autoFocus
+              onChange={(event) => setName(event.target.value)}
+              aria-invalid={!normalized || duplicate}
+            />
+            {duplicate ? (
+              <p role="alert" className="text-meta text-destructive">
+                Another server already uses this name.
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy || !normalized || duplicate}>
+              Rename
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -448,7 +796,7 @@ function WebAccessSettings({
             </a>
           ) : null}
           <Button type="button" variant="outline" disabled={!pairingAvailable} onClick={onPair}>
-            <QrCode className="size-4" /> Pair device
+            <QrCode className="size-4" /> Share this computer
           </Button>
           <Button type="button" variant="ghost" onClick={onRefresh}>
             Refresh
@@ -545,13 +893,16 @@ export function LocalServiceSettings({
 }) {
   const local = info?.local;
   const [runtime, setRuntime] = useAtom(runtimeAtom);
+  const includeStartedProfile = useSetAtom(includeStartedProfileAtom);
   const [starting, setStarting] = useState(false);
   const [releaseBusy, setReleaseBusy] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const startService = async () => {
     setStarting(true);
     try {
-      setRuntime(await palot.connectOpenCode({ startLocalService: true }));
+      const started = await palot.connectOpenCode({ startLocalService: true });
+      includeStartedProfile(started);
+      setRuntime(started);
       onRefresh();
     } catch (error) {
       setRuntime(await palot.runtimeStatus().catch(() => runtime));
@@ -1003,452 +1354,6 @@ function AddServerDialog({
   );
 }
 
-export function PairDialog({
-  open,
-  onOpenChange,
-  suggestedAddress = null,
-}: {
-  open: boolean;
-  onOpenChange(open: boolean): void;
-  suggestedAddress?: string | null;
-}) {
-  const [info, setInfo] = useState<OpenCodePairingInfo | null>(null);
-  const [address, setAddress] = useState("");
-  const [qr, setQr] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState(false);
-  const [showQr, setShowQr] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const loadRequest = useRef(0);
-  const qrRequest = useRef(0);
-  useEffect(() => {
-    loadRequest.current += 1;
-    qrRequest.current += 1;
-    setInfo(null);
-    setAddress(suggestedAddress ?? "");
-    setQr(null);
-    setShowQr(false);
-    setRevealed(false);
-    setLoading(false);
-    return () => {
-      loadRequest.current += 1;
-      qrRequest.current += 1;
-    };
-  }, [open, suggestedAddress]);
-  useEffect(() => {
-    if (!info) return;
-    const timeout = window.setTimeout(
-      () => {
-        qrRequest.current += 1;
-        setInfo(null);
-        setQr(null);
-        setShowQr(false);
-        setRevealed(false);
-      },
-      info.mode === "link" ? info.expiresIn * 1_000 : 60_000,
-    );
-    return () => window.clearTimeout(timeout);
-  }, [info]);
-  const pairing = useMemo(() => {
-    if (!info) return { info: null, error: null };
-    try {
-      return { info: pairingInfoForAddress(info, address), error: null };
-    } catch (error) {
-      return { info: null, error: error instanceof Error ? error.message : "Invalid address" };
-    }
-  }, [info, address]);
-  const changeAddress = (value: string) => {
-    qrRequest.current += 1;
-    setAddress(value);
-    setQr(null);
-    setShowQr(false);
-  };
-  const load = async () => {
-    const request = ++loadRequest.current;
-    setLoading(true);
-    try {
-      const pairingInfo = await palot.openCodePairingInfo();
-      if (request === loadRequest.current) setInfo(pairingInfo);
-    } catch (error) {
-      if (request === loadRequest.current) showError(error);
-    } finally {
-      if (request === loadRequest.current) setLoading(false);
-    }
-  };
-  const toggleQr = async () => {
-    const request = ++qrRequest.current;
-    if (showQr) {
-      setShowQr(false);
-      setQr(null);
-      return;
-    }
-    if (!pairing.info) return;
-    const payload = pairingQRCodePayload(pairing.info);
-    if (!payload) return;
-    try {
-      const image = qr ?? (await QRCode.toDataURL(payload, { margin: 1, width: 320 }));
-      if (request === qrRequest.current) {
-        setQr(image);
-        setShowQr(true);
-      }
-    } catch (error) {
-      if (request === qrRequest.current) showError(error);
-    }
-  };
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Pair device</DialogTitle>
-          <DialogDescription>
-            {info?.mode === "link"
-              ? "This one-time link and QR expire in up to 5 minutes and work only once. The session credential issued when redeemed can last up to 30 days."
-              : info?.mode === "credentials"
-                ? "Legacy pairing JSON and QR contain reusable OpenCode service credentials."
-                : "Generate pairing details when the other device is ready."}
-          </DialogDescription>
-        </DialogHeader>
-        {info ? (
-          <div className="@container/pairing">
-            <div className="grid gap-4 @md/pairing:grid-cols-[minmax(0,1fr)_12rem] @md/pairing:items-center">
-              <div className="min-w-0 space-y-3 text-sm">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium" htmlFor="pairing-address">
-                    Address for pairing
-                  </label>
-                  <Input
-                    id="pairing-address"
-                    value={address}
-                    onChange={(event) => changeAddress(event.target.value)}
-                    placeholder="Use service addresses"
-                    aria-invalid={Boolean(pairing.error)}
-                    aria-describedby="pairing-address-help"
-                  />
-                  <p id="pairing-address-help" className="text-meta text-muted-foreground">
-                    Leave blank to include the service’s network addresses in the QR code, including
-                    an active OpenTunnel address. An override must be an HTTPS proxy you control.
-                    This does not configure a proxy or expose the service.
-                  </p>
-                  {address ? (
-                    <Button variant="ghost" size="sm" onClick={() => changeAddress("")}>
-                      Use service addresses
-                    </Button>
-                  ) : suggestedAddress ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => changeAddress(suggestedAddress)}
-                    >
-                      Use Tailscale address
-                    </Button>
-                  ) : null}
-                  {pairing.error ? (
-                    <p role="alert" className="text-meta text-destructive">
-                      {pairing.error}
-                    </p>
-                  ) : null}
-                </div>
-                {pairing.info?.mode === "link" && !pairingQRCodePayload(pairing.info) ? (
-                  <p role="status" className="text-meta text-muted-foreground">
-                    Only local addresses are available. Set up a reachable HTTPS address first.
-                    OpenCode 2.0.25 supports <code>opencode pair --remote</code> in your terminal;
-                    enabling it exposes the service through OpenTunnel and can restart the shared
-                    service. Generate new pairing details afterward.
-                  </p>
-                ) : null}
-                {info.mode === "link" ? (
-                  <>
-                    <p className="text-meta text-muted-foreground">
-                      Expires{" "}
-                      {info.expiresIn === 300 ? "in 5 minutes" : `in ${info.expiresIn} seconds`}{" "}
-                      after generation. Redeeming it creates a longer-lived session credential.
-                    </p>
-                    {pairing.info ? (
-                      <code className="block break-all text-code-compact">
-                        {pairing.info.payload}
-                      </code>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    {pairing.info?.urls.map((url) => (
-                      <p key={url} className="break-all text-code-compact">
-                        {url}
-                      </p>
-                    ))}
-                    <div className="space-y-2">
-                      <PairingCredentialRow label="Username" value={info.username} />
-                      <PairingCredentialRow
-                        label="Password"
-                        value={info.password}
-                        concealed={!revealed}
-                        onToggleConcealed={() => setRevealed((value) => !value)}
-                      />
-                    </div>
-                  </>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!pairing.info || !pairingQRCodePayload(pairing.info)}
-                    onClick={() => void toggleQr()}
-                  >
-                    <QrCode className="size-4" />
-                    {showQr ? "Hide QR" : "Show QR"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!pairing.info}
-                    onClick={() => {
-                      if (pairing.info)
-                        void writeClipboardText(pairing.info.payload).catch(showError);
-                    }}
-                  >
-                    <Copy className="size-4" />
-                    {info.mode === "link" ? "Copy one-time link" : "Copy pairing JSON"}
-                  </Button>
-                </div>
-              </div>
-              {qr && showQr ? (
-                <img
-                  src={qr}
-                  alt={
-                    info.mode === "link"
-                      ? "OpenCode one-time pairing QR code"
-                      : "OpenCode pairing QR code"
-                  }
-                  className="w-48 max-w-full justify-self-center rounded-lg bg-white p-2"
-                />
-              ) : null}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <p>
-              Generate only when the other device is ready. Legacy credentials and redeemed sessions
-              can control this OpenCode service.
-            </p>
-            <Button type="button" disabled={loading} onClick={() => void load()}>
-              {loading ? "Loading…" : "Generate pairing details"}
-            </Button>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export function PairingCredentialRow({
-  label,
-  value,
-  concealed = false,
-  onToggleConcealed,
-}: {
-  label: string;
-  value: string;
-  concealed?: boolean;
-  onToggleConcealed?: () => void;
-}) {
-  const { copiedKey, copy } = useClipboardCopy();
-  const copied = copiedKey === "credential";
-
-  return (
-    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
-      <div className="min-w-0 flex-1">
-        <p className="text-meta text-muted-foreground">{label}</p>
-        <code className="block truncate text-code-compact">
-          {concealed ? "••••••••••••" : value}
-        </code>
-      </div>
-      {onToggleConcealed ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          aria-label={`${concealed ? "Show" : "Hide"} password`}
-          onClick={onToggleConcealed}
-        >
-          {concealed ? <Eye /> : <EyeOff />}
-          {concealed ? "Show" : "Hide"}
-        </Button>
-      ) : null}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        aria-label={copied ? `${label} copied` : `Copy ${label.toLowerCase()}`}
-        onClick={() => void copy(value, "credential")}
-      >
-        {copied ? <Check /> : <Copy />}
-        {copied ? "Copied" : "Copy"}
-      </Button>
-    </div>
-  );
-}
-
-export function ImportPairDialog({
-  open,
-  onOpenChange,
-  onSaved,
-}: {
-  open: boolean;
-  onOpenChange(open: boolean): void;
-  onSaved(value: OpenCodeProfileSnapshot): void;
-}) {
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [allowPlainHttp, setAllowPlainHttp] = useState(false);
-  const [selectedAddress, setSelectedAddress] = useState("");
-  useEffect(() => {
-    if (!open) {
-      setText("");
-      setAllowPlainHttp(false);
-      setSelectedAddress("");
-    }
-  }, [open]);
-  const parsed = useMemo(() => {
-    if (!text.trim()) return null;
-    try {
-      return { value: parsePairingText(text, selectedAddress), error: null };
-    } catch (error) {
-      return {
-        value: null,
-        error: error instanceof Error ? error.message : "Invalid pairing details",
-      };
-    }
-  }, [text, selectedAddress]);
-  const insecure =
-    (parsed?.value?.selectedAddress ? [parsed.value.selectedAddress] : parsed?.value?.urls)?.some(
-      (url) => url.startsWith("http://") && !isLoopback(url),
-    ) ?? false;
-  const save = async () => {
-    if (!parsed?.value || busy || (insecure && !allowPlainHttp)) return;
-    setBusy(true);
-    try {
-      onSaved(await palot.importOpenCodePairing({ ...parsed.value.input, allowPlainHttp }));
-    } catch (error) {
-      showError(error);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (busy) return;
-        if (!next) {
-          setText("");
-          setAllowPlainHttp(false);
-        }
-        onOpenChange(next);
-      }}
-    >
-      <DialogContent showCloseButton={!busy}>
-        <DialogHeader>
-          <DialogTitle>Add paired server</DialogTitle>
-          <DialogDescription>
-            Paste a one-time pairing URL, QR payload, or legacy Basic pairing JSON. Review the
-            target before importing. Nothing is sent when you paste.
-          </DialogDescription>
-        </DialogHeader>
-        <Textarea
-          value={text}
-          onChange={(event) => {
-            setText(event.target.value);
-            setAllowPlainHttp(false);
-            setSelectedAddress("");
-          }}
-          disabled={busy}
-          aria-label="Pairing link or legacy JSON"
-          rows={8}
-          placeholder="https://server.example/auth/connect/… or pairing JSON"
-        />
-        {parsed?.error ? (
-          <p role="alert" className="text-meta text-destructive">
-            {parsed.error}
-          </p>
-        ) : null}
-        {parsed?.value ? (
-          <div className="space-y-2 rounded-lg border border-border/70 bg-muted/30 p-3 text-meta text-muted-foreground">
-            <p>
-              {"link" in parsed.value.input
-                ? "One-time link target"
-                : "Legacy Basic credential targets"}
-            </p>
-            {parsed.value.selectedAddress ? (
-              <div className="space-y-2">
-                <label htmlFor="pairing-import-address">Redeem at this address</label>
-                <NativeSelect
-                  id="pairing-import-address"
-                  className="w-full"
-                  value={parsed.value.selectedAddress}
-                  disabled={busy}
-                  onChange={(event) => {
-                    setSelectedAddress(event.target.value);
-                    setAllowPlainHttp(false);
-                  }}
-                >
-                  {parsed.value.urls.map((url) => (
-                    <NativeSelectOption key={url} value={url}>
-                      {url}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-                <p>
-                  Only this address receives the one-time code. Other addresses are not tried
-                  automatically.
-                </p>
-              </div>
-            ) : (
-              parsed.value.urls.map((url) => (
-                <p key={url} className="break-all font-mono">
-                  {url}
-                </p>
-              ))
-            )}
-          </div>
-        ) : null}
-        {insecure ? (
-          <label className="flex items-start gap-2 text-sm text-muted-foreground">
-            <Checkbox
-              checked={allowPlainHttp}
-              disabled={busy}
-              onCheckedChange={(checked) => setAllowPlainHttp(checked === true)}
-            />
-            Allow plain HTTP. The pairing code or credentials, prompts, source, and terminal traffic
-            can be observed or modified in transit.
-          </label>
-        ) : null}
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={() => {
-              setText("");
-              setAllowPlainHttp(false);
-              onOpenChange(false);
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            disabled={busy || !parsed?.value || (insecure && !allowPlainHttp)}
-            onClick={() => void save()}
-          >
-            Probe and import
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function credential(
   type: "none" | "basic" | "bearer",
   username: string,
@@ -1489,8 +1394,5 @@ function isLoopback(value: string): boolean {
 }
 
 function showError(error: unknown): void {
-  toast.add({
-    type: "error",
-    title: error instanceof Error ? error.message : "OpenCode server action failed",
-  });
+  toast.add({ type: "error", title: ipcErrorMessage(error, "OpenCode server action failed") });
 }

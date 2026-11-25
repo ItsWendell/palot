@@ -1,4 +1,7 @@
 import type { PalotMessage } from "../../shared";
+import { stripSystemUpdates } from "../../shared/system-update";
+import { prContextSegments } from "./pr-context";
+import { promptAutomation, promptAutomationLabel } from "./prompt-automation";
 
 export type TranscriptPromptAnchor = {
   messageID: string;
@@ -36,6 +39,13 @@ function boundedText(text: string): string {
   return result.trimEnd();
 }
 
+/** A PR repair context reads as its chip label, not its whole block. */
+function promptText(text: string): string {
+  return prContextSegments(stripSystemUpdates(text))
+    .map((segment) => (segment.kind === "text" ? segment.text : ` ${segment.label} `))
+    .join("");
+}
+
 /** User objects are immutable; assistant deltas never re-read prompt text. */
 export function transcriptPromptLabel(message: PalotMessage): string {
   const cached = labels.get(message);
@@ -43,12 +53,15 @@ export function transcriptPromptLabel(message: PalotMessage): string {
   const metadata = record(record(message.data).metadata);
   const displayText =
     typeof metadata.displayText === "string" ? boundedText(metadata.displayText) : "";
-  let label = displayText || boundedText(message.text ?? "");
+  let label = displayText || boundedText(promptText(message.text ?? ""));
   if (!label) {
     const names = message.files?.map((file) => file.name).filter(Boolean) ?? [];
     label = names.length ? boundedText(names.join(", ")) : "Prompt";
     if (message.files?.length && !names.length) label = "Attachment";
   }
+  // The outline says who sent a prompt when it was not you.
+  const automation = promptAutomation(message);
+  if (automation) label = `${promptAutomationLabel(automation)}: ${label}`;
   labels.set(message, label);
   return label;
 }

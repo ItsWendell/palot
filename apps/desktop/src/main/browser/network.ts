@@ -1,5 +1,6 @@
 // Derived from OpenCode v2.0.14 (MIT), Copyright (c) 2025 opencode.
 // https://github.com/anomalyco/opencode/blob/v2.0.14/packages/desktop/src/main/browser/network.ts
+// See UPSTREAM.md.
 import { session, type WebContents } from "electron";
 import type { RpcClient } from "@opencode/client/effect/api";
 import type { Session } from "@opencode/schema/session";

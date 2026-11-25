@@ -64,6 +64,11 @@ describe("connection-scoped native wrappers", () => {
       args: [[], "owner", "upload"],
     },
     {
+      method: "attachDroppedFiles",
+      run: () => palot.attachDroppedFiles([], "owner", "upload"),
+      args: [[], "owner", "upload"],
+    },
+    {
       method: "attachmentPreview",
       run: () => palot.attachmentPreview("grant", "owner"),
       args: ["grant", "owner"],

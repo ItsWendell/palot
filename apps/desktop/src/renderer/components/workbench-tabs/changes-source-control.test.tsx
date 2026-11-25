@@ -64,6 +64,7 @@ vi.mock("../../hooks/use-source-control", async (original) => ({
 vi.mock("../../hooks/use-session-catalog", () => ({
   useSessionCatalogSelector: (select: (sessions: unknown[]) => unknown) =>
     select([{ id: "session", model: { id: "fast", providerID: "acme" } }]),
+  useProjectCatalog: () => [],
 }));
 vi.mock("../../services/opencode-generate", () => ({ generateOpenCodeText: mocks.generate }));
 vi.mock("../review-comment-editor", () => ({
@@ -318,5 +319,6 @@ it("explains which connections support Git actions", () => {
     ),
   ).toBeTruthy();
   expect(screen.queryByRole("textbox", { name: "Commit message" })).toBeNull();
-  expect(screen.queryByRole("checkbox")).toBeNull();
+  // Viewed marks stay; staging checkboxes need Git actions.
+  expect(screen.queryByRole("checkbox", { name: /^(Un)?stage / })).toBeNull();
 });

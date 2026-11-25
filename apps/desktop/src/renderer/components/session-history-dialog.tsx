@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { OpenCodeRuntimeStatus, PalotMessage, PalotSession } from "../../shared";
 import { userPromptHistory, promptHistoryLabel } from "../lib/session-history";
 import { useSessionTranscript } from "../hooks/use-session-transcript";
@@ -17,6 +17,7 @@ export function SessionHistoryDialog({
   loading,
   error,
   onLoadMore,
+  autoLoad = false,
 }: {
   messages: PalotMessage[];
   mode: "timeline" | "fork";
@@ -26,9 +27,19 @@ export function SessionHistoryDialog({
   loading: boolean;
   error: boolean;
   onLoadMore(): void;
+  /**
+   * Keep loading earlier prompts until the whole history is searchable. The timeline reads
+   * them from OpenCode's user-message index, which adds nothing to the transcript.
+   */
+  autoLoad?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [selecting, setSelecting] = useState(false);
+  const loadMore = useRef(onLoadMore);
+  loadMore.current = onLoadMore;
+  useEffect(() => {
+    if (autoLoad && hasMore && !loading && !error) loadMore.current();
+  }, [autoLoad, hasMore, loading, error, messages.length]);
   const prompts = useMemo(() => userPromptHistory(messages), [messages]);
   const matches = useMemo(
     () =>
@@ -48,7 +59,7 @@ export function SessionHistoryDialog({
     >
       <DialogContent className="max-h-[80vh] sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{mode === "fork" ? "Fork from prompt" : "Prompt timeline"}</DialogTitle>
+          <DialogTitle>{mode === "fork" ? "Fork from prompt" : "Jump to message"}</DialogTitle>
           <DialogDescription>
             {mode === "fork"
               ? "Copy history before a prompt and restore it as an unsent, editable draft. File comments become text; unavailable attachments are noted."
@@ -64,9 +75,11 @@ export function SessionHistoryDialog({
         <p role="status" className="text-meta text-muted-foreground">
           {loading
             ? "Loading earlier prompts…"
-            : hasMore
+            : hasMore && !autoLoad
               ? `Searching ${prompts.length} loaded prompts. Earlier history is not searched yet.`
-              : `Searching all ${prompts.length} prompts.`}
+              : hasMore
+                ? `Searching ${prompts.length} prompts so far.`
+                : `Searching all ${prompts.length} prompts.`}
         </p>
         <div
           className="flex min-h-0 max-h-80 flex-col gap-1 overflow-y-auto"
@@ -97,9 +110,11 @@ export function SessionHistoryDialog({
           ))}
           {!matches.length ? (
             <p className="p-3 text-sm text-muted-foreground">
-              {hasMore
+              {hasMore && !autoLoad
                 ? "No matching loaded prompts. Load earlier history to search more."
-                : "No matching prompts."}
+                : hasMore || loading
+                  ? "No matching prompts yet."
+                  : "No matching prompts."}
             </p>
           ) : null}
         </div>
@@ -108,7 +123,7 @@ export function SessionHistoryDialog({
             Could not load earlier prompts. Try again.
           </p>
         ) : null}
-        {hasMore || error ? (
+        {(hasMore && !autoLoad) || error ? (
           <Button variant="outline" disabled={loading || selecting} onClick={onLoadMore}>
             {error ? "Retry loading history" : "Load earlier prompts"}
           </Button>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseWorkbenchState } from "./workbench-persistence";
 import {
+  carryRightPane,
   createWorkbenchState,
   mutateWorkbench,
   openWorkbenchTab,
@@ -16,6 +17,41 @@ const scope: WorkbenchScope = { profileID: "profile-1", sessionID: "session-1" }
 const location = { directory: "/repo" };
 
 describe("workbench tabs", () => {
+  it("carries the right pane's open state and shared surface to the next task", () => {
+    const next: WorkbenchScope = { profileID: "profile-1", sessionID: "session-2" };
+    const elsewhere = { directory: "/other" };
+    const right = (state: ReturnType<typeof createWorkbenchState>, target: WorkbenchScope) =>
+      state.scopes[workbenchScopeKey(target)]?.right;
+    let state = openWorkbenchTab(createWorkbenchState(), scope, {
+      kind: "changes",
+      location,
+      mode: "branch",
+    }).state;
+    state = carryRightPane(state, scope, next, elsewhere, 1, () => "carried");
+    expect(right(state, next)).toMatchObject({ requestedOpen: true, activeTabID: "carried" });
+    expect(right(state, next)?.tabs[0]?.resource).toMatchObject({
+      location: elsewhere,
+      mode: "branch",
+    });
+
+    // A task-owned surface stays behind; the next task opens on its own tab.
+    state = openWorkbenchTab(state, scope, {
+      kind: "btw",
+      location,
+      questionID: "q",
+      question: "Why?",
+    }).state;
+    const third: WorkbenchScope = { profileID: "profile-1", sessionID: "session-3" };
+    state = carryRightPane(state, scope, third, elsewhere, 2);
+    expect(right(state, third)).toMatchObject({ requestedOpen: true, tabs: [] });
+
+    // Closed stays closed.
+    state = mutateWorkbench(state, scope, { type: "toggle-pane", pane: "right" });
+    state = carryRightPane(state, scope, next, elsewhere, 3);
+    expect(right(state, next)?.requestedOpen).toBe(false);
+    expect(right(state, next)?.tabs).toHaveLength(1);
+  });
+
   it("restores a closed tab's pane, position, pin and resource ownership only in its task", () => {
     const input = {
       kind: "terminal" as const,
@@ -545,6 +581,41 @@ describe("workbench tabs", () => {
     expect(workbenchTabTitle(second.state.scopes[workbenchScopeKey(scope)]!.right.tabs[1]!)).toBe(
       "Turn changes",
     );
+  });
+
+  it("reuses a turn review for a file and keeps its target when the whole turn opens", () => {
+    const resource = (state: ReturnType<typeof createWorkbenchState>) => {
+      const tab = state.scopes[workbenchScopeKey(scope)]!.right.tabs[0]!;
+      return tab.kind === "turn-diff" ? tab.resource : null;
+    };
+    const opened = openWorkbenchTab(
+      createWorkbenchState(),
+      scope,
+      { kind: "turn-diff", location, userMessageID: "user-1", file: "src/a.ts" },
+      {},
+      1,
+      () => "turn",
+    );
+    expect(resource(opened.state)?.file).toEqual({ path: "src/a.ts", request: 1 });
+    const repeated = openWorkbenchTab(
+      opened.state,
+      scope,
+      { kind: "turn-diff", location, userMessageID: "user-1", file: "src/a.ts" },
+      {},
+      2,
+      () => "duplicate",
+    );
+    expect(repeated.result).toMatchObject({ created: false, tabID: "turn" });
+    expect(resource(repeated.state)?.file).toEqual({ path: "src/a.ts", request: 2 });
+    const whole = openWorkbenchTab(
+      repeated.state,
+      scope,
+      { kind: "turn-diff", location, userMessageID: "user-1" },
+      {},
+      3,
+      () => "duplicate",
+    );
+    expect(resource(whole.state)?.file).toEqual({ path: "src/a.ts", request: 2 });
   });
 
   it("opens workspace files in the right pane and updates their line target", () => {

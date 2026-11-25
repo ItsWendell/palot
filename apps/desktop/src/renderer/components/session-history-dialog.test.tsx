@@ -45,6 +45,60 @@ it("searches newly loaded prompts without claiming partial history is complete",
   await user.click(screen.getByRole("button", { name: /The needle is here/ }));
   expect(select).toHaveBeenCalledWith(older);
 });
+it("loads every earlier prompt on its own when it searches the whole history", async () => {
+  const user = userEvent.setup();
+  const load = vi.fn();
+  const select = vi.fn();
+  const message = (id: string, text: string) =>
+    ({ id, text, type: "user", createdAt: 1 }) as PalotMessage;
+  const props = {
+    mode: "timeline" as const,
+    onClose: vi.fn(),
+    onSelect: select,
+    error: false,
+    onLoadMore: load,
+    autoLoad: true,
+  };
+  const view = render(
+    <SessionHistoryDialog
+      {...props}
+      hasMore
+      loading={false}
+      messages={[message("new", "New prompt")]}
+    />,
+  );
+  expect(load).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Load earlier prompts" })).toBeNull();
+  view.rerender(
+    <SessionHistoryDialog {...props} hasMore loading messages={[message("new", "New prompt")]} />,
+  );
+  expect(load).toHaveBeenCalledOnce();
+  // The next page arrived and more remain: keep going.
+  const middle = message("middle", "Middle prompt");
+  view.rerender(
+    <SessionHistoryDialog
+      {...props}
+      hasMore
+      loading={false}
+      messages={[middle, message("new", "New prompt")]}
+    />,
+  );
+  expect(load).toHaveBeenCalledTimes(2);
+  const oldest = message("oldest", "The needle is here");
+  view.rerender(
+    <SessionHistoryDialog
+      {...props}
+      hasMore={false}
+      loading={false}
+      messages={[oldest, middle, message("new", "New prompt")]}
+    />,
+  );
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("status").textContent).toBe("Searching all 3 prompts.");
+  await user.type(screen.getByRole("textbox", { name: "Search prompts" }), "needle");
+  await user.click(screen.getByRole("button", { name: /The needle is here/ }));
+  expect(select).toHaveBeenCalledWith(oldest);
+});
 it("does not wrap turn navigation and resolves IDs after a prepend", () => {
   expect(adjacentPromptID(["b", "c"], "b", "previous")).toBeNull();
   expect(adjacentPromptID(["a", "b", "c"], "b", "previous")).toBe("a");

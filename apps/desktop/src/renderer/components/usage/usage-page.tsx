@@ -1,16 +1,33 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import type { SessionStatsInfo, SessionStatsModelUsage } from "@opencode/client";
+import type {
+  SessionStatsInfo,
+  SessionStatsModelUsage,
+  SessionStatsToolUsage,
+} from "@opencode/client";
 import type { PalotModel, PalotProvider } from "../../../shared";
-import { BarChart3, RefreshCw, TriangleAlert } from "lucide-react";
+import { BarChart3, Download, RefreshCw, TriangleAlert } from "lucide-react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { runtimeAtom } from "../../atoms/workspace";
 import { usageRangeAtom, usageToolDetailsOpenAtom } from "../../atoms/ui";
 import { useModelCatalog } from "../../hooks/use-model-catalog";
 import { useSessionStats } from "../../hooks/use-session-stats";
 import { useProjectCatalogState, useSelectedSession } from "../../hooks/use-session-catalog";
 import { openCodeKeys } from "../../lib/opencode-query";
+import { showErrorToast } from "../../lib/toast-error";
+import {
+  CODE_MODE_TOOL,
+  cacheHitRate,
+  costPerMillion,
+  modelTokens as modelTokenTotal,
+  mostExpensiveTasks,
+  rollUpTasks,
+  toolMix,
+  usageExportCsv,
+  usageExportJson,
+  usageExportName,
+} from "../../lib/usage-analytics";
 import {
   isUsageRangeDays,
   USAGE_RANGE_OPTIONS,
@@ -22,22 +39,45 @@ import {
   previousUsageDateRange,
   usageDateRange,
 } from "../../lib/session-stats-range";
-import { orderProjects, projectLocation, visibleProjects } from "../../lib/view-models";
+import {
+  orderProjects,
+  projectLocation,
+  projectName,
+  visibleProjects,
+} from "../../lib/view-models";
+import { palot } from "../../services/palot";
 import { ProjectSelect } from "../project-select";
 import { Banner } from "../ui/banner";
 import { Button } from "../ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import { Skeleton } from "../ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
+import { toast } from "../ui/toast";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { UsageActivityChart } from "./usage-activity-chart";
+import {
+  COMPACT,
+  CURRENCY,
+  NUMBER,
+  PERCENT,
+  formatPerMillion,
+  formatRate,
+  formatShare,
+} from "./usage-format";
 import { UsageLimitsSection } from "./usage-limits-section";
+import { UsageProjectsSection } from "./usage-projects-section";
+import { UsageTasksSection } from "./usage-tasks-section";
+import { usageTaskKeys, type UsageTasksData } from "./use-usage-tasks";
 
 type ModelSort = "cost" | "tokens" | "steps";
 
-const CURRENCY = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
-const NUMBER = new Intl.NumberFormat(undefined);
-const COMPACT = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
-const PERCENT = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 0 });
+const NO_TOOLS: readonly SessionStatsToolUsage[] = [];
 const UPDATED = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 
 export function UsagePage() {
@@ -115,6 +155,62 @@ export function UsagePage() {
     }
   }, [navigate, projectCatalog.ready, search.days, search.projectID, selectedProject]);
 
+  const projectNames = useMemo(
+    () => new Map(visible.map((project) => [project.id, projectName(project)])),
+    [visible],
+  );
+
+  // Exports what the page holds for this range: the summary, plus tool details, tasks and
+  // per-project stats when those sections have loaded. Nothing is fetched for the export.
+  const exportUsage = async (format: "csv" | "json") => {
+    if (!data) return;
+    const connectionID = runtime?.connectionID ?? "disconnected";
+    const detail = queryClient.getQueryData<SessionStatsInfo>(
+      openCodeKeys.sessionStats(connectionID, detailInput),
+    );
+    const tasks = queryClient.getQueryData<UsageTasksData>(
+      usageTaskKeys.list(connectionID, { from: range.from, project: search.projectID ?? null }),
+    );
+    const projectStats = search.projectID
+      ? []
+      : visible.flatMap((project) => {
+          const stats = queryClient.getQueryData<SessionStatsInfo>(
+            openCodeKeys.sessionStats(connectionID, {
+              from: range.from,
+              to: range.to,
+              timezone: range.timezone,
+              tools: "none",
+              project: project.id,
+            }),
+          );
+          return stats ? [{ id: project.id, name: projectName(project), stats }] : [];
+        });
+    const catalogModels = modelCatalog.data?.models ?? [];
+    const catalogProviders = modelCatalog.data?.providers ?? [];
+    const input = {
+      exportedAt: Date.now(),
+      range,
+      projectID: search.projectID ?? null,
+      stats: data,
+      tools: detail?.tools.mode === "detail" ? detail.tools.usage : null,
+      tasks: tasks
+        ? mostExpensiveTasks(rollUpTasks(tasks.sessions), Number.POSITIVE_INFINITY)
+        : null,
+      projects: projectStats,
+      modelName: (usage: SessionStatsModelUsage) =>
+        modelUsageIdentity(usage, catalogModels, catalogProviders).modelName,
+    };
+    try {
+      const path = await palot.saveTextFileCopy(
+        usageExportName(range, format),
+        format === "csv" ? usageExportCsv(input) : usageExportJson(input),
+      );
+      if (path) toast.add({ type: "success", title: "Usage exported", description: path });
+    } catch (error) {
+      showErrorToast("Couldn't export usage", error);
+    }
+  };
+
   const updateSearch = (input: { days?: UsageRangeDays; projectID?: string | null }) =>
     navigate({
       to: "/usage",
@@ -185,6 +281,29 @@ export function UsagePage() {
               >
                 Compare periods
               </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Export usage"
+                      disabled={!data}
+                    />
+                  }
+                >
+                  <Download aria-hidden="true" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => void exportUsage("csv")}>
+                    Export as CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void exportUsage("json")}>
+                    Export as JSON
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 type="button"
                 variant="ghost"
@@ -278,6 +397,20 @@ export function UsagePage() {
                 detailRetryDisabled={runtime?.connected !== true}
                 retryDetails={() => void details.refetch()}
               />
+              <div className="mt-8 flex flex-col gap-8">
+                <UsageTasksSection
+                  from={range.from}
+                  projectID={search.projectID ?? null}
+                  projectNames={projectNames}
+                />
+                {search.projectID ? null : (
+                  <UsageProjectsSection
+                    projects={visible}
+                    range={range}
+                    onSelectProject={(projectID) => void updateSearch({ projectID })}
+                  />
+                )}
+              </div>
             </>
           ) : null}
           <Banner
@@ -345,7 +478,8 @@ function UsageContent({
   const models = useMemo(() => sortModels(data.models, modelSort), [data.models, modelSort]);
   const providers = useMemo(() => summarizeProviders(data.models), [data.models]);
   const toolTotals = data.tools.mode === "none" ? null : data.tools.totals;
-  const toolUsage = detailData?.tools.mode === "detail" ? detailData.tools.usage : [];
+  const toolUsage = detailData?.tools.mode === "detail" ? detailData.tools.usage : NO_TOOLS;
+  const mix = useMemo(() => toolMix(toolUsage), [toolUsage]);
 
   return (
     <div className="flex flex-col gap-8">
@@ -359,6 +493,10 @@ function UsageContent({
             <div className="mt-1 text-xs text-muted-foreground">
               Aggregate model cost returned by OpenCode
             </div>
+            <p className="mt-3 text-meta text-muted-foreground/80">
+              Includes context compaction. Leaves out task titles, side questions, and text
+              generated without a task, such as commit messages.
+            </p>
           </div>
           <div className="border-b border-border/70 p-6">
             <div className="text-xs text-muted-foreground">Model tokens</div>
@@ -384,6 +522,16 @@ function UsageContent({
             <UsageValue label="Reasoning" value={COMPACT.format(data.tokens.reasoning)} />
             <UsageValue label="Cache read" value={COMPACT.format(data.tokens.cache.read)} />
             <UsageValue label="Cache write" value={COMPACT.format(data.tokens.cache.write)} />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-border/60 pt-4 @min-[34rem]/usage:grid-cols-5">
+            <UsageValue
+              label={<CacheHitLabel>Cache hit rate</CacheHitLabel>}
+              value={formatRate(cacheHitRate(data.tokens))}
+            />
+            <UsageValue
+              label={<PerMillionLabel>Cost per 1M tokens</PerMillionLabel>}
+              value={formatPerMillion(costPerMillion(data.cost, data.tokens))}
+            />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 p-5 @min-[42rem]/usage:grid-cols-6">
@@ -454,7 +602,7 @@ function UsageContent({
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 px-1">
           <UsageSectionHeading
             title="Models"
-            description="Cost, model tokens, cache activity, and supporting step counts"
+            description="Cost, model tokens, cache activity, and steps. Model rows leave out compaction."
           />
           <ToggleGroup
             value={[modelSort]}
@@ -473,13 +621,19 @@ function UsageContent({
           </ToggleGroup>
         </div>
         <div className="hidden overflow-x-auto rounded-xl border border-border/75 @min-[44rem]/usage:block">
-          <Table className="min-w-[46rem]">
+          <Table className="min-w-[54rem]">
             <TableHeader>
               <TableRow>
                 <TableHead>Model</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">Model tokens</TableHead>
                 <TableHead className="text-right">Cache read</TableHead>
+                <TableHead className="text-right">
+                  <CacheHitLabel>Cache hit</CacheHitLabel>
+                </TableHead>
+                <TableHead className="text-right">
+                  <PerMillionLabel>Per 1M tokens</PerMillionLabel>
+                </TableHead>
                 <TableHead className="text-right">Steps</TableHead>
               </TableRow>
             </TableHeader>
@@ -497,7 +651,7 @@ function UsageContent({
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="h-20 text-center text-muted-foreground">
                     No model usage in this range.
                   </TableCell>
                 </TableRow>
@@ -591,6 +745,7 @@ function UsageContent({
                   </Button>
                 </div>
               ) : null}
+              {toolUsage.length ? <ToolMixSummary mix={mix} /> : null}
               {toolUsage.length ? (
                 <div className="grid gap-2">
                   {toolUsage.map((tool) => (
@@ -617,6 +772,68 @@ function UsageContent({
           ) : null}
         </div>
       </section>
+    </div>
+  );
+}
+
+function ToolMixSummary({ mix }: { mix: ReturnType<typeof toolMix> }) {
+  const share = mix.codeModeShare ?? 0;
+  return (
+    <div className="mb-5 grid gap-5 @min-[42rem]/usage:grid-cols-2">
+      <div className="min-w-0">
+        <div className="text-meta text-muted-foreground">
+          <HintLabel
+            hint={`Share of tool calls that were Code Mode scripts (${CODE_MODE_TOOL}). Calls a script makes inside it aren't recorded separately, so each script counts once.`}
+          >
+            Code Mode vs direct tools
+          </HintLabel>
+        </div>
+        <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+          <span className="bg-info" style={{ width: `${share * 100}%` }} />
+          <span className="bg-success" style={{ width: `${(1 - share) * 100}%` }} />
+        </div>
+        <dl className="mt-2 grid grid-cols-2 gap-3 text-sm">
+          <div className="min-w-0">
+            <dt className="text-meta text-muted-foreground">Code Mode</dt>
+            <dd className="tabular-nums">
+              {NUMBER.format(mix.codeModeCalls)} calls · {formatRate(mix.codeModeShare)}
+            </dd>
+            <dd className="text-meta text-muted-foreground tabular-nums">
+              {formatRate(mix.codeModeFailureRate)} failed
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-meta text-muted-foreground">Direct</dt>
+            <dd className="tabular-nums">
+              {NUMBER.format(mix.directCalls)} calls ·{" "}
+              {formatRate(mix.calls > 0 ? mix.directCalls / mix.calls : null)}
+            </dd>
+            <dd className="text-meta text-muted-foreground tabular-nums">
+              {formatRate(mix.directFailureRate)} failed
+            </dd>
+          </div>
+        </dl>
+      </div>
+      <div className="min-w-0">
+        <div className="text-meta text-muted-foreground">Most failing tools</div>
+        {mix.failures.length ? (
+          <ol className="mt-2 grid gap-1.5" aria-label="Most failing tools">
+            {mix.failures.map((tool) => (
+              <li key={tool.name} className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate font-mono text-xs">{tool.name}</span>
+                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
+                  {PERCENT.format(tool.failureRate)} · {NUMBER.format(tool.failed)} of{" "}
+                  {NUMBER.format(tool.calls)}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">
+            No tool with three or more calls failed.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -761,6 +978,12 @@ function ModelUsageRow({
           {COMPACT.format(usage.tokens.cache.write)} write
         </div>
       </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {formatRate(cacheHitRate(usage.tokens))}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {formatPerMillion(costPerMillion(usage.cost, usage.tokens))}
+      </TableCell>
       <TableCell className="text-right tabular-nums">{NUMBER.format(usage.steps)}</TableCell>
     </TableRow>
   );
@@ -807,6 +1030,16 @@ function ModelUsageCard({
         />
         <UsageValue label="Steps" value={NUMBER.format(usage.steps)} compact />
         <UsageValue label="Token share" value={formatShare(tokens, totalModelTokens)} compact />
+        <UsageValue
+          label={<CacheHitLabel>Cache hit rate</CacheHitLabel>}
+          value={formatRate(cacheHitRate(usage.tokens))}
+          compact
+        />
+        <UsageValue
+          label={<PerMillionLabel>Per 1M tokens</PerMillionLabel>}
+          value={formatPerMillion(costPerMillion(usage.cost, usage.tokens))}
+          compact
+        />
       </div>
       <p className="mt-3 text-meta text-muted-foreground tabular-nums">
         {COMPACT.format(usage.tokens.input)} input · {COMPACT.format(usage.tokens.output)} output
@@ -881,7 +1114,7 @@ function UsageValue({
   value,
   compact = false,
 }: {
-  label: string;
+  label: ReactNode;
   value: string;
   compact?: boolean;
 }) {
@@ -894,6 +1127,40 @@ function UsageValue({
       </div>
       <div className="truncate text-meta text-muted-foreground">{label}</div>
     </div>
+  );
+}
+
+function HintLabel({ children, hint }: { children: ReactNode; hint: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            tabIndex={0}
+            className="cursor-help underline decoration-muted-foreground/50 decoration-dotted underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent className="max-w-72">{hint}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function CacheHitLabel({ children }: { children: ReactNode }) {
+  return (
+    <HintLabel hint="Share of prompt tokens read from the provider's cache: cache reads divided by all prompt tokens (fresh input, cache reads and cache writes). Higher is cheaper.">
+      {children}
+    </HintLabel>
+  );
+}
+
+function PerMillionLabel({ children }: { children: ReactNode }) {
+  return (
+    <HintLabel hint="Reported cost divided by every token processed (input, output, reasoning, cache reads and cache writes), per million. Effective price after caching.">
+      {children}
+    </HintLabel>
   );
 }
 
@@ -974,10 +1241,6 @@ function modelUsageKey(usage: SessionStatsModelUsage): string {
   return `${usage.model.providerID}/${usage.model.id}/${usage.model.variant ?? ""}`;
 }
 
-function modelTokenTotal(tokens: SessionStatsInfo["tokens"]): number {
-  return tokens.input + tokens.output + tokens.reasoning;
-}
-
 interface ProviderUsageSummary {
   providerID: string;
   models: number;
@@ -1027,10 +1290,6 @@ function modelUsageIdentity(
     modelName: model?.name ?? usage.model.id,
     providerName: provider?.name ?? usage.model.providerID,
   };
-}
-
-function formatShare(value: number, total: number): string {
-  return PERCENT.format(total > 0 ? value / total : 0);
 }
 
 function updatedLabel(updatedAt: number, now: number): string {

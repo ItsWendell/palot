@@ -7,12 +7,40 @@
 
 import type { LocationRef } from "@opencode/client";
 import type { PalotMessage } from "../../shared";
+import {
+  formatMachinePath,
+  parseMachinePath,
+  stripLocalPrefix,
+  type MachinePath,
+} from "../../shared/machine-path";
 
 export interface FileReference {
   path: string;
   line?: number;
   column?: number;
   endLine?: number;
+  /**
+   * The OpenCode machine the file is on (`devbox:/srv/a.ts`), when it is not on the task's
+   * server; `path` is then that machine's path. Such files never resolve locally.
+   */
+  machine?: string;
+}
+
+/**
+ * The machine a reference names, from its `machine` field or a `devbox:/…` path (tool targets
+ * pass the raw text). Null for files on the task's server.
+ */
+export function fileReferenceMachine(
+  reference: Pick<FileReference, "path" | "machine">,
+): MachinePath | null {
+  if (reference.machine) return { machine: reference.machine, path: reference.path };
+  return parseMachinePath(reference.path);
+}
+
+/** The text that names a reference's file to OpenCode: `devbox:/a.ts` on a machine. */
+export function fileReferenceText(reference: Pick<FileReference, "path" | "machine">): string {
+  const machine = fileReferenceMachine(reference);
+  return machine ? formatMachinePath(machine) : reference.path;
 }
 
 export type FileReferenceSource = "code" | "href";
@@ -29,6 +57,7 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "cpp",
   "cs",
   "css",
+  "csv",
   "db",
   "docx",
   "env",
@@ -77,6 +106,7 @@ const WORKSPACE_FILE_EXTENSIONS = new Set([
   "tar",
   "tgz",
   "toml",
+  "tsv",
   "ts",
   "tsx",
   "txt",
@@ -337,6 +367,8 @@ function likelyWorkspaceFile(path: string, hasLine: boolean): boolean {
   return lower.length <= 4 || LONG_EXTENSION_ALLOWLIST.has(lower);
 }
 
+const ELIDED_PATH_SEGMENT = /(?:^|[\\/])(?:\.{3,}|…)(?:[\\/:]|$)/;
+
 /** Parses a Markdown href or inline code span into a workspace file reference. */
 export function parseFileReference(
   raw: string | undefined,
@@ -350,10 +382,16 @@ export function parseFileReference(
     value = trimTrailingPunctuation(value);
   }
   if (!value || [...value].some((character) => character.charCodeAt(0) < 32)) return null;
+  // Agents shorten long paths with a `...` or `…` segment (`src/.../main.ts`); no file has that path.
+  if (ELIDED_PATH_SEGMENT.test(value)) return null;
   if (NON_FILE_SCHEME.test(value)) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value) && !/^file:\/\//i.test(value)) return null;
   // A URL anywhere in the text (`run https://example.com`) means it is not a path.
   if (!/^file:\/\//i.test(value) && /[a-z][a-z0-9+.-]*:\/\//i.test(value)) return null;
+  // `local:/a` is the server's own `/a` (OpenCode's environment path syntax).
+  value = stripLocalPrefix(value);
+  const machine = /^file:/i.test(value) ? null : parseMachinePath(value);
+  if (machine) return machineFileReference(machine, options);
 
   // Hrefs and file URLs are percent-encoded; decode the path only after the query,
   // line suffix, and fragment are split off so `%23` and `%3F` stay in the name.
@@ -400,6 +438,26 @@ export function parseFileReference(
   return {
     path,
     ...(line ? { line } : {}),
+    ...(suffix?.column ? { column: suffix.column } : {}),
+    ...(suffix?.endLine ? { endLine: suffix.endLine } : {}),
+  };
+}
+
+/** `devbox:/srv/a.ts:12`: a file on another machine, with the same line suffixes as local paths. */
+function machineFileReference(
+  machine: MachinePath,
+  options: ParseFileReferenceOptions,
+): FileReference | null {
+  const { path, suffix } = splitLineSuffix(machine.path);
+  if (options.source === "code" && looksLikeCommandOrCode(path)) return null;
+  if (path.startsWith("//") || /[\\]/.test(path)) return null;
+  // Rooted on the machine: an absolute path, or one in its home.
+  const named = path.startsWith("~/") ? path.length > 2 : path.length > 1;
+  if (!named || path.endsWith("/")) return null;
+  return {
+    path,
+    machine: machine.machine,
+    ...(suffix?.line ? { line: suffix.line } : {}),
     ...(suffix?.column ? { column: suffix.column } : {}),
     ...(suffix?.endLine ? { endLine: suffix.endLine } : {}),
   };
@@ -529,7 +587,9 @@ export function fileReferenceAbsolutePath(
   directory: string | undefined,
   home?: string,
 ): string | null {
-  const value = expandHomePath(path, home).replaceAll("\\", "/");
+  // Another machine's file has no path on this server, nor on this computer.
+  if (parseMachinePath(path)) return null;
+  const value = expandHomePath(stripLocalPrefix(path), home).replaceAll("\\", "/");
   if (value.startsWith("~")) return null;
   if (isAbsoluteFilePath(value)) return normalizeFilePath(value);
   return directory ? joinFilePath(directory, value) : null;
@@ -537,10 +597,11 @@ export function fileReferenceAbsolutePath(
 
 /** A `file://` href for copy/drag, or undefined when the path cannot be made absolute. */
 export function fileReferenceHref(
-  reference: Pick<FileReference, "path" | "line">,
+  reference: Pick<FileReference, "path" | "line" | "machine">,
   directory: string | undefined,
   home?: string,
 ): string | undefined {
+  if (reference.machine) return undefined;
   const absolute = fileReferenceAbsolutePath(reference.path, directory, home);
   return absolute ? fileUrl(absolute, reference.line) : undefined;
 }

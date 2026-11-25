@@ -10,6 +10,7 @@ import { createRendererQueryClient } from "../../lib/query-client";
 import { previousUsageDateRange, usageDateRange } from "../../lib/session-stats-range";
 import { palot } from "../../services/palot";
 import {
+  openCodeClient,
   resetOpenCodeClientForTest,
   setOpenCodeClientForTest,
 } from "../../services/opencode-client";
@@ -60,7 +61,10 @@ const detailStats: SessionStatsInfo = {
       stats.tools.mode === "summary"
         ? stats.tools.totals
         : { calls: 0, succeeded: 0, failed: 0, unfinished: 0 },
-    usage: [{ name: "read", calls: 10, succeeded: 9, failed: 1, unfinished: 0, durationP50: 24 }],
+    usage: [
+      { name: "read", calls: 10, succeeded: 9, failed: 1, unfinished: 0, durationP50: 24 },
+      { name: "execute", calls: 5, succeeded: 3, failed: 2, unfinished: 0 },
+    ],
   },
 };
 
@@ -84,6 +88,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   resetOpenCodeClientForTest();
   vi.restoreAllMocks();
 });
@@ -172,6 +177,9 @@ describe("UsagePage", () => {
     expect(limitsFetch).toHaveBeenCalledTimes(1);
     expect(screen.getAllByText("gpt-5").length).toBeGreaterThan(0);
     expect(screen.getByText("Token composition")).toBeTruthy();
+    // 2,000 cache reads of 3,100 prompt tokens.
+    expect(screen.getByText("65%")).toBeTruthy();
+    expect(screen.getByText(/Includes context compaction\. Leaves out task titles/)).toBeTruthy();
     expect(screen.getByText("Input", { exact: true })).toBeTruthy();
     expect(screen.getByText("Output", { exact: true })).toBeTruthy();
     expect(screen.getByText("Reasoning", { exact: true })).toBeTruthy();
@@ -183,8 +191,12 @@ describe("UsagePage", () => {
     expect(toolDetails.getAttribute("aria-expanded")).toBe("false");
     await userEvent.click(toolDetails);
     expect(toolDetails.getAttribute("aria-expanded")).toBe("true");
-    expect(await screen.findByText("Tool details loaded for 1 tool.")).toBeTruthy();
-    expect(screen.getByText("read")).toBeTruthy();
+    expect(await screen.findByText("Tool details loaded for 2 tools.")).toBeTruthy();
+    expect(screen.getAllByText("read").length).toBeGreaterThan(0);
+    expect(screen.getByText("Code Mode vs direct tools")).toBeTruthy();
+    expect(screen.getByText("5 calls · 33%")).toBeTruthy();
+    const failing = screen.getByRole("list", { name: "Most failing tools" });
+    expect(failing.textContent).toMatch(/^execute40% · 2 of 5read10% · 1 of 10$/);
     expect(sessionStats).toHaveBeenCalledWith(
       expect.objectContaining({ tools: "detail", project: "project-1" }),
       expect.any(AbortSignal),
@@ -289,7 +301,7 @@ describe("UsagePage", () => {
 
     await screen.findByText("$12.34");
     await userEvent.click(screen.getByRole("button", { name: "Show details" }));
-    await screen.findByText("Tool details loaded for 1 tool.");
+    await screen.findByText("Tool details loaded for 2 tools.");
     expect(sessionStats.mock.calls.filter(([input]) => input.tools === "detail")).toHaveLength(1);
 
     await userEvent.click(screen.getByRole("button", { name: "Refresh usage" }));
@@ -318,5 +330,60 @@ describe("UsagePage", () => {
     await userEvent.click(screen.getByRole("button", { name: "30 days" }));
 
     expect(await screen.findByText("Reconnect OpenCode to load the previous period.")).toBeTruthy();
+  });
+
+  it("lists the most expensive tasks with subagents rolled up, linking to each task", async () => {
+    vi.spyOn(palot, "sessionStats").mockResolvedValue(stats);
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(private readonly callback: IntersectionObserverCallback) {}
+        observe() {
+          this.callback([{ isIntersecting: true } as IntersectionObserverEntry], this as never);
+        }
+        disconnect() {}
+      },
+    );
+    const now = Date.now();
+    const session = (id: string, cost: number, extra: Record<string, unknown> = {}) => ({
+      id,
+      projectID: project.id,
+      cost,
+      tokens: stats.tokens,
+      time: { created: now, updated: now },
+      location: { directory: "/repo" },
+      ...extra,
+    });
+    const list = vi.spyOn(openCodeClient("connection").session, "list").mockResolvedValue({
+      data: [
+        session("ses_cheap", 1, { title: "Cheap task" }),
+        session("ses_root", 2, { title: "Big task" }),
+        session("ses_child", 3, { parentID: "ses_root" }),
+        session("ses_aut_01_1", 0.5, { parentID: "ses_cheap" }),
+      ],
+      cursor: { next: null },
+    } as never);
+    const queryClient = createRendererQueryClient();
+    seedCatalog(queryClient, { projects: [project] }, "connection");
+    const { router } = renderWithRouter(
+      <UsagePage />,
+      connectedStore(),
+      "/usage?days=7",
+      queryClient,
+    );
+
+    const tasks = await screen.findByRole("list", { name: "Most expensive tasks" });
+    await waitFor(() => expect(tasks.querySelectorAll("li")).toHaveLength(2));
+    expect(tasks.querySelector("li")?.textContent).toContain("Big task$5.00");
+    expect(tasks.textContent).toContain("1 subagent · 60% of cost");
+    expect(list).toHaveBeenCalledWith(
+      { limit: 100, order: "desc" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    // OpenCode's subagent automation run ($0.50) of $6.50 in tasks.
+    expect(screen.getByText("8%")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /Big task/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sessions/ses_root"));
   });
 });

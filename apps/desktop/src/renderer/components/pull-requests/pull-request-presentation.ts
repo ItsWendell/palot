@@ -17,6 +17,11 @@ import type {
   PullRequestMergeMethod,
   PullRequestReviewerState,
 } from "../../../shared/source-control-contract";
+import {
+  pullRequestReadiness,
+  snapshotReadinessFacts,
+  type PullRequestReadiness,
+} from "../../../shared/pull-request-readiness";
 import { SourceControlError } from "../../hooks/use-source-control";
 
 export const PULL_REQUEST_STATE_ICON: Record<PullRequestState, LucideIcon> = {
@@ -70,7 +75,12 @@ export const WATCH_END_LABEL: Record<PullRequestWatchEndReason, string> = {
 };
 
 export const WATCH_EXPLANATION =
-  "Wakes the agent when checks fail or pass, someone reviews, or the branch conflicts.";
+  "Wakes the agent when checks fail or pass, someone reviews, or the branch conflicts, and once when it is ready to merge. Merging stays with you.";
+
+/** The readiness verdict of a linked PR's snapshot; null once it merged or closed. */
+export function snapshotReadiness(pullRequest: PullRequestSnapshot): PullRequestReadiness | null {
+  return pullRequestReadiness(snapshotReadinessFacts(pullRequest));
+}
 
 export function pullRequestCanWatch(pullRequest: Pick<PullRequestSnapshot, "state">): boolean {
   return pullRequest.state === "open" || pullRequest.state === "draft";
@@ -87,6 +97,8 @@ export function describePullRequest(link: Pick<PullRequestLink, "pullRequest" | 
   if (pullRequest.reviewDecision)
     parts.push(REVIEW_LABEL[pullRequest.reviewDecision].toLowerCase());
   if (pullRequest.mergeable === "conflicting") parts.push("has conflicts");
+  // What is still needed shows in the panel; the summary adds the verdict only once it is ready.
+  if (snapshotReadiness(pullRequest)?.status === "ready") parts.push("ready to merge");
   if (link.watch) parts.push("watching");
   return parts.join(", ");
 }

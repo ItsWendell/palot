@@ -63,8 +63,13 @@ jobs:
         run: |
           {
             bun run format:check && bun run lint &&
-              bun run --cwd packages/orbits check-types && bun run typecheck
+              bun run --cwd packages/orbits check-types &&
+              bun run --cwd packages/opencode-voice-coordinator check-types && bun run typecheck
           } 2>&1 | tee .local/ci/check.log
+
+      - name: Check Effect version pin
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: bun apps/desktop/scripts/check-effect-pin.ts 2>&1 | tee .local/ci/effect-pin.log
 
       # Keep coverage and tests independently visible. A stale reviewed coverage
       # baseline must fail, not prevent the full unit suite from reporting.
@@ -74,7 +79,10 @@ jobs:
 
       - name: Run all unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: bun run test 2>&1 | tee .local/ci/unit-tests.log
+        run: |
+          {
+            bun run test && bun run --cwd packages/opencode-voice-coordinator test
+          } 2>&1 | tee .local/ci/unit-tests.log
 
       - name: Build
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
@@ -100,7 +108,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -144,21 +152,31 @@ jobs:
           version="$(bun -p 'require("./apps/desktop/package.json").devDependencies["@opencode/client"]')"
           bun add --global --trust "@opencode/cli@$version"
 
-      - name: Run deterministic smoke scenario
+      # Linux runs the core tier; macOS keeps the single smoke scenario.
+      - name: Run deterministic E2E scenarios
+        id: e2e
         run: |
+          status=0
           if [ "$RUNNER_OS" = Linux ]; then
-            dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' bun run test:e2e -- smoke --display=desktop
+            dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' bun run test:e2e -- --tier core --retries 1 --display=desktop || status=$?
           else
-            bun run test:e2e -- smoke
+            bun run test:e2e -- smoke || status=$?
           fi
+          # Successful runs remove their directories, so any that remain belong to a
+          # failed scenario or to the failed attempt of a flaky one.
+          if compgen -G '.local/desktop-e2e/*/instance.json' > /dev/null; then
+            echo "retained=true" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
 
-      - name: Upload failure artifacts
-        if: failure()
+      - name: Upload failed scenario artifacts
+        if: ${{ failure() || steps.e2e.outputs.retained == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: smoke-e2e-failure-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: e2e-failure-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           # Allowlist synthetic-run diagnostics, not isolated homes/auth/service data.
           path: |
+            .local/desktop-e2e/last-run.json
             .local/desktop-e2e/**/instance.json
             .local/desktop-e2e/**/build.log
             .local/desktop-e2e/**/electron.log

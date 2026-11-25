@@ -13,6 +13,7 @@ import {
 } from "./data-recovery";
 import { requestAppRestart } from "./app-restart";
 import { redactLogValue } from "./logging";
+import { presentWhenReady } from "./window-startup";
 
 let recoveryWindow: BrowserWindow | null = null;
 let recoveryFailure: unknown;
@@ -54,7 +55,7 @@ export async function showRecoveryWindow(failure: unknown): Promise<BrowserWindo
     event.preventDefault();
     if (!actionRunning) void runRecoveryAction(new URL(url).pathname.replace(/^\//, ""), window);
   });
-  window.once("ready-to-show", () => window.show());
+  presentWhenReady(window, () => window.show());
   await loadRecoveryPage(window);
   return window;
 }

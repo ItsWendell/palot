@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { TestLLMServer } from "./test-llm-server";
+import { showTaskColumn, taskColumn } from "./task-list.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -157,10 +158,8 @@ export const showcaseScenarios = {
         .getByRole("button", { name: "Show changes" })
         .evaluate((element: HTMLButtonElement) => element.click());
       await page.locator('[data-palot-diff-header="src/components/tool-part.tsx"]').waitFor();
-      await page
-        .getByRole("button", { name: /^Show inbox/ })
-        .evaluate((element: HTMLButtonElement) => element.click());
-      await expect(page.getByLabel("Inbox navigation")).toBeVisible();
+      await showTaskColumn(page);
+      await expect(taskColumn(page)).toBeVisible();
 
       await page.evaluate(
         (value) => {
