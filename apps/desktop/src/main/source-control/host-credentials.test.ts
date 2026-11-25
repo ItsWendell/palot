@@ -8,8 +8,8 @@ function fixture(env: NodeJS.ProcessEnv = {}) {
     credentialID: string;
   }> = [];
   const vault = {
-    storeCredential: vi.fn(() => "encrypted-id"),
-    headers: vi.fn(() => ({ authorization: "Bearer saved-secret" })),
+    storeCredential: vi.fn(async (): Promise<string | null> => "encrypted-id"),
+    headers: vi.fn(async () => ({ authorization: "Bearer saved-secret" })),
     delete: vi.fn(),
   };
   const store = {
@@ -24,7 +24,7 @@ function fixture(env: NodeJS.ProcessEnv = {}) {
 }
 it("stores only a vault reference in host settings, returns no token, and deletes replaced secrets", async () => {
   const { credentials, store, vault } = fixture();
-  credentials.save({ url: "https://gitlab.example", kind: "gitlab", token: "new-secret" });
+  await credentials.save({ url: "https://gitlab.example", kind: "gitlab", token: "new-secret" });
   expect(JSON.stringify(store.get())).not.toContain("new-secret");
   expect(JSON.stringify(credentials.accounts())).not.toContain("secret");
   expect(await credentials.token("gitlab.example")).toBe("saved-secret");
@@ -52,15 +52,15 @@ it("uses glab only after saved and environment tokens and rejects unsafe host UR
     "https://gitlab.example/subpath",
     "https://bitbucket.org/?token=x",
   ])
-    expect(() => credentials.save({ url, kind: "gitlab", token: "secret" })).toThrow();
+    await expect(credentials.save({ url, kind: "gitlab", token: "secret" })).rejects.toThrow();
 });
-it("does not retain host metadata when secure storage refuses a token", () => {
+it("does not retain host metadata when secure storage refuses a token", async () => {
   const { credentials, vault, store } = fixture();
-  vault.storeCredential.mockImplementation(() => {
+  vault.storeCredential.mockImplementation(async () => {
     throw new Error("Secure credential storage is unavailable");
   });
-  expect(() =>
+  await expect(
     credentials.save({ url: "https://gitlab.example", kind: "gitlab", token: "secret" }),
-  ).toThrow("Secure credential");
+  ).rejects.toThrow("Secure credential");
   expect(store.get()).toEqual([]);
 });

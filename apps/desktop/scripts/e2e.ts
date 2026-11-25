@@ -43,7 +43,6 @@ const SINGLE_RUN_FLAGS = [
   "inspect-on-failure",
   "video",
   "keep",
-  "visible",
   "profile",
   "trace",
   "app-trace",

@@ -160,7 +160,8 @@ jobs:
           test -x "/opt/$product/$package"
           # Non-root, real installed executable; no --no-sandbox or global policy changes.
           dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' \
-            bun run test:e2e -- smoke --display=desktop --executable "/opt/$product/$package"
+            bun run test:e2e -- smoke --display=desktop --executable "/opt/$product/$package" \
+            2>&1 | tee .local/desktop-release/smoke.log
           cleanup
           trap - EXIT
           test ! -e "/opt/$product"
@@ -184,9 +185,19 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-failure-${{ matrix.target }}-${{ github.run_attempt }}
+          # A failed smoke keeps its isolated home; upload only its app logs and failure,
+          # and the E2E harness logs for the Linux installed-package smoke.
           path: |
             .local/desktop-release/*.log
             apps/desktop/release/builder-debug.yml
+            .local/release-smoke/*/failure.txt
+            .local/release-smoke/*/logs/**
+            .local/desktop-e2e/last-run.json
+            .local/desktop-e2e/**/instance.json
+            .local/desktop-e2e/**/electron.log
+            .local/desktop-e2e/**/service-startup-error.log
+            .local/desktop-e2e/**/failure.png
+            .local/desktop-e2e/**/logs/**
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7

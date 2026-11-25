@@ -44,6 +44,7 @@ import type {
   OpenCodePairingInfo,
   OpenCodeProfileCreateInput,
   OpenCodeProfileSnapshot,
+  OpenCodeCredentialProtection,
   OpenCodeProfileTestResult,
   OpenCodeProfileUpdateInput,
   OpenCodeWebAccessInfo,
@@ -727,6 +728,11 @@ export const palot = {
           activeProfileID: "local-default",
           profiles: [{ id: "local-default", kind: "local", name: "Local OpenCode" }],
         };
+  },
+
+  async openCodeCredentialProtection(): Promise<OpenCodeCredentialProtection | null> {
+    const api = getApi();
+    return api ? api.openCodeCredentialProtection() : null;
   },
 
   async createOpenCodeProfile(input: OpenCodeProfileCreateInput): Promise<OpenCodeProfileSnapshot> {

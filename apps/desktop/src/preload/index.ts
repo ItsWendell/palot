@@ -147,6 +147,7 @@ const api: PalotApi = {
     ipcRenderer.invoke(IPC_CHANNELS.profileDisconnect, profileID),
   connectOpenCode: (input) => ipcRenderer.invoke(IPC_CHANNELS.connect, input),
   listOpenCodeProfiles: () => ipcRenderer.invoke(IPC_CHANNELS.profilesList),
+  openCodeCredentialProtection: () => ipcRenderer.invoke(IPC_CHANNELS.profilesCredentialProtection),
   getSshConnectionState: () => ipcRenderer.invoke(IPC_CHANNELS.sshState),
   respondSshPrompt: (input) => ipcRenderer.invoke(IPC_CHANNELS.sshRespond, input),
   cancelSshConnection: (operationID) => ipcRenderer.invoke(IPC_CHANNELS.sshCancel, operationID),

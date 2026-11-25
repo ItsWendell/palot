@@ -91,7 +91,8 @@ jobs:
           }
           status=0
           # shellcheck disable=SC2086 # Scenario names are word-split on purpose.
-          run $UNFOCUSED || status=$?
+          # Xvfb stops drawing hidden windows after a resize or scroll, so show them.
+          run $UNFOCUSED --visible || status=$?
           mv .local/desktop-e2e/last-run.json .local/desktop-e2e/last-run-unfocused.json || true
           # shellcheck disable=SC2086
           run $FOCUSED --focus || status=$?

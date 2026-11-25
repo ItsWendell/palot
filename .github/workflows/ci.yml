@@ -152,13 +152,14 @@ jobs:
           version="$(bun -p 'require("./apps/desktop/package.json").devDependencies["@opencode/client"]')"
           bun add --global --trust "@opencode/cli@$version"
 
-      # Linux runs the core tier; macOS keeps the single smoke scenario.
+      # Linux runs the core tier; macOS keeps the single smoke scenario. Xvfb stops
+      # drawing hidden windows after a resize or scroll, so Linux shows them (--visible).
       - name: Run deterministic E2E scenarios
         id: e2e
         run: |
           status=0
           if [ "$RUNNER_OS" = Linux ]; then
-            dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' bun run test:e2e -- --tier core --retries 1 --display=desktop || status=$?
+            dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 -nolisten tcp' bun run test:e2e -- --tier core --retries 1 --display=desktop --visible || status=$?
           else
             bun run test:e2e -- smoke || status=$?
           fi

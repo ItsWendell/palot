@@ -187,6 +187,16 @@ describe("E2E CLI", () => {
     expect(result.stdout).toBe("");
   });
 
+  it("accepts --visible for a tier, because CI's Xvfb only paints shown windows", () => {
+    const result = runCli(["--tier", "core", "--visible", "--display=desktop"], {
+      version: `opencode2 v${version}`,
+      buildFailure: true,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("works with one scenario only");
+    expect(result.stdout).toMatch(/failed\s+smoke\s+build failed/);
+  });
+
   it("lists each scenario's tier", () => {
     const result = runCli(["--list"]);
     expect(result.status).toBe(0);

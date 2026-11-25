@@ -127,7 +127,9 @@ export class OpenCodeRuntime {
     lifecycle = new OpenCodeRuntimeLifecycle({
       profile,
       headers:
-        profile.kind === "remote" ? this.credentials.headers(profile.credentialID) : undefined,
+        profile.kind === "remote"
+          ? () => this.credentials.headers(profile.credentialID)
+          : undefined,
       allowVersionMismatch,
       isVersionMismatchAllowed: allowVersionMismatch
         ? (mismatch) =>
@@ -294,15 +296,16 @@ export class OpenCodeRuntime {
     return this.profiles.snapshot();
   }
 
-  credentialProtection(): OpenCodeCredentialProtection {
+  /** Touches the system keyring, so only connection settings ask for it, never startup. */
+  credentialProtection(): Promise<OpenCodeCredentialProtection> {
     return this.credentials.protection();
   }
 
-  createProfile(input: OpenCodeProfileCreateInput): OpenCodeProfileSnapshot {
+  async createProfile(input: OpenCodeProfileCreateInput): Promise<OpenCodeProfileSnapshot> {
     if (input.kind !== "remote") return this.profiles.create(input, null);
     const normalized = { ...input, urls: normalizeOpenCodeUrls(input.urls) };
     assertPlainHttpAllowed(normalized.urls, normalized.allowPlainHttp, normalized.credential);
-    const credentialID = this.credentials.storeCredential(normalized.credential);
+    const credentialID = await this.credentials.storeCredential(normalized.credential);
     try {
       return this.profiles.create(normalized, credentialID);
     } catch (error) {
@@ -311,7 +314,7 @@ export class OpenCodeRuntime {
     }
   }
 
-  updateProfile(input: OpenCodeProfileUpdateInput): OpenCodeProfileSnapshot {
+  async updateProfile(input: OpenCodeProfileUpdateInput): Promise<OpenCodeProfileSnapshot> {
     const current = this.profiles.get(input.id);
     if (isRenameOnly(current, input)) return this.profiles.update(input);
     if (current.id === this.profileID()) {
@@ -332,7 +335,7 @@ export class OpenCodeRuntime {
       return snapshot;
     }
     const previousID = current.kind === "remote" ? current.credentialID : null;
-    const credentialID = this.credentials.storeCredential(normalized.credential);
+    const credentialID = await this.credentials.storeCredential(normalized.credential);
     let snapshot: OpenCodeProfileSnapshot;
     try {
       snapshot = this.profiles.update(normalized, credentialID);
@@ -382,7 +385,7 @@ export class OpenCodeRuntime {
     assertPlainHttpAllowed(urls, input.allowPlainHttp, input.credential);
     const probe = await probeOpenCodeServer(urls, credentialHeaders(input.credential));
     if (!probe.ok) throw new Error(`${probe.problem.title} ${probe.problem.fix}`);
-    const credentialID = this.credentials.storeCredential(input.credential);
+    const credentialID = await this.credentials.storeCredential(input.credential);
     try {
       const lifecycle = this.createLifecycle({
         id: "profile-test",
@@ -634,7 +637,7 @@ export class OpenCodeRuntime {
         new URL(probe.url).hostname || "Paired OpenCode",
         snapshot.profiles.map((profile) => profile.name),
       );
-    const credentialID = this.credentials.storeCredential(credential);
+    const credentialID = await this.credentials.storeCredential(credential);
     const profile: Extract<OpenCodeProfile, { kind: "remote" }> = {
       id: "pairing-probe",
       kind: "remote",
@@ -755,7 +758,7 @@ export class OpenCodeRuntime {
       : profile.urls;
     let headers: Record<string, string> | undefined;
     try {
-      headers = this.credentials.headers(profile.credentialID);
+      headers = await this.credentials.headers(profile.credentialID);
     } catch {
       return {
         ok: false,

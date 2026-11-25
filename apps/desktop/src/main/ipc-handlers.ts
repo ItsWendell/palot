@@ -807,12 +807,14 @@ export function registerIpcHandlers(options: NonNullable<typeof ipcTrust>): void
     assertTrustedMainFrame(event);
     openCodeRuntime.recoverEventStream("online");
   });
+  // Startup lists profiles, so this must not reach the system keyring (see credentialProtection).
   register(IPC_CHANNELS.profilesList, (event) => {
     assertTrustedMainFrame(event);
-    return {
-      ...openCodeRuntime.profileSnapshot(),
-      credentialProtection: openCodeRuntime.credentialProtection(),
-    };
+    return openCodeRuntime.profileSnapshot();
+  });
+  register(IPC_CHANNELS.profilesCredentialProtection, (event) => {
+    assertTrustedMainFrame(event);
+    return openCodeRuntime.credentialProtection();
   });
   register(IPC_CHANNELS.profilesCreate, (event, input: unknown) => {
     assertTrustedMainFrame(event);

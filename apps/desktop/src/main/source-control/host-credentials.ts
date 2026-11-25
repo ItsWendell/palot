@@ -136,7 +136,7 @@ export class HostCredentials {
     return entries;
   }
 
-  save(input: SaveCodeHostInput): void {
+  async save(input: SaveCodeHostInput): Promise<void> {
     const url = codeHostUrl(input.url);
     if (url.host === "github.com" || (input.kind === "bitbucket" && url.host !== "bitbucket.org"))
       throw new SourceControlError(
@@ -150,7 +150,10 @@ export class HostCredentials {
       );
     const previous = this.store.get("hosts");
     const old = previous.find((entry) => entry.url === url.origin);
-    const credentialID = this.vault.storeCredential({ type: "bearer", token: input.token.trim() });
+    const credentialID = await this.vault.storeCredential({
+      type: "bearer",
+      token: input.token.trim(),
+    });
     if (!credentialID) throw new Error("Could not save token");
     try {
       this.store.set("hosts", [
@@ -185,7 +188,7 @@ export class HostCredentials {
       );
     const saved = this.store.get("hosts").find((entry) => new URL(entry.url).host === host);
     if (saved) {
-      const header = this.vault.headers(saved.credentialID)?.authorization;
+      const header = (await this.vault.headers(saved.credentialID))?.authorization;
       if (header?.startsWith("Bearer ")) return header.slice(7);
       throw new SourceControlError(
         "host-unauthenticated",

@@ -77,7 +77,11 @@ interface OpenCodeRuntimeLifecycleOptions {
   /** Local launch selection only. SSH keeps the exact CLI authentication contract. */
   discoverLocalBinary?(): Promise<Binary | null>;
   profile?: OpenCodeProfile;
-  headers?: Record<string, string>;
+  /**
+   * Request headers for a remote server. A function is resolved when a connection attempt starts,
+   * so reading a saved credential (and the system keyring) never happens at construction.
+   */
+  headers?: Record<string, string> | (() => Promise<Record<string, string> | undefined>);
   isVersionMismatchAllowed?(mismatch: OpenCodeVersionMismatch): boolean;
   onVersionMismatchAccepted?(mismatch: OpenCodeVersionMismatch): void;
   onEvent(event: OpenCodeEvent, streamEpoch: number): void;
@@ -208,8 +212,12 @@ export class OpenCodeRuntimeLifecycle {
   private sshConnection: SshConnection | null = null;
   private connectionAbort = new AbortController();
   private stopPromise: Promise<void> | null = null;
+  private headers: Record<string, string> | undefined;
+  private headersResolved: boolean;
 
   constructor(private readonly options: OpenCodeRuntimeLifecycleOptions) {
+    this.headersResolved = typeof options.headers !== "function";
+    this.headers = typeof options.headers === "function" ? undefined : options.headers;
     const profile = options.profile ?? {
       id: "local-default",
       kind: "local",
@@ -319,7 +327,7 @@ export class OpenCodeRuntimeLifecycle {
         ]);
         const answers = await withAbort(
           this.adapter
-            .makeClient(endpoint, this.options.headers, false)
+            .makeClient(endpoint, this.headers, false)
             .server.info({ signal: probeSignal }),
           probeSignal,
         ).then(
@@ -388,7 +396,7 @@ export class OpenCodeRuntimeLifecycle {
     if (!this.endpointValue) throw new Error("OpenCode endpoint is not connected");
     return {
       endpoint: this.endpointValue,
-      headers: this.options.headers ?? Service.headers(this.endpointValue),
+      headers: this.headers ?? Service.headers(this.endpointValue),
     };
   }
 
@@ -501,6 +509,12 @@ export class OpenCodeRuntimeLifecycle {
       kind: "local" as const,
       name: "Local OpenCode",
     };
+    if (!this.headersResolved && typeof this.options.headers === "function") {
+      // A failed read (for example a locked keyring) is retried by the next attempt.
+      this.headers = await withAbort(this.options.headers(), signal);
+      this.headersResolved = true;
+      signal.throwIfAborted();
+    }
     let endpoint: Endpoint | undefined;
     if (profile.kind === "ssh") {
       await this.closeSsh();
@@ -530,7 +544,7 @@ export class OpenCodeRuntimeLifecycle {
           ]);
           await withAbort(
             this.adapter
-              .makeClient(this.endpointValue, this.options.headers, false)
+              .makeClient(this.endpointValue, this.headers, false)
               .server.info({ signal: probeSignal }),
             probeSignal,
           );
@@ -559,11 +573,7 @@ export class OpenCodeRuntimeLifecycle {
     let binaryPath = this.statusValue.binaryPath;
     let acceptedMismatch: OpenCodeVersionMismatch | null = null;
     if (endpoint) {
-      const candidate = this.adapter.makeClient(
-        endpoint,
-        this.options.headers,
-        profile.kind !== "local",
-      );
+      const candidate = this.adapter.makeClient(endpoint, this.headers, profile.kind !== "local");
       const healthSignal = requestSignal(signal);
       const health = await withAbort(
         candidate.server.info({ signal: healthSignal }),
@@ -655,11 +665,7 @@ export class OpenCodeRuntimeLifecycle {
       error: null,
     });
     if (!endpoint) throw new Error("OpenCode server is unavailable");
-    const client = this.adapter.makeClient(
-      endpoint,
-      this.options.headers,
-      profile.kind !== "local",
-    );
+    const client = this.adapter.makeClient(endpoint, this.headers, profile.kind !== "local");
     const healthSignal = requestSignal(signal);
     const health = await withAbort(client.server.info({ signal: healthSignal }), healthSignal);
     signal.throwIfAborted();
@@ -722,7 +728,7 @@ export class OpenCodeRuntimeLifecycle {
     for (const url of urls) {
       try {
         const endpoint = { url } satisfies Endpoint;
-        const client = this.adapter.makeClient(endpoint, this.options.headers, true);
+        const client = this.adapter.makeClient(endpoint, this.headers, true);
         await client.server.info({ signal: requestSignal() });
         return endpoint;
       } catch (error) {

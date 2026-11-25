@@ -78,10 +78,10 @@ export class SourceControlService {
     return Promise.resolve(this.options.providers?.accounts() ?? []);
   }
   saveCodeHost(input: SaveCodeHostInput) {
-    return sourceControlResult(() => {
+    return sourceControlResult(async () => {
       if (!this.options.providers)
         throw new SourceControlError("unsupported-action", "Code hosts are unavailable.");
-      this.options.providers.credentials.save(input);
+      await this.options.providers.credentials.save(input);
       this.options.emit({ type: "github", host: new URL(input.url).host });
       return null;
     });

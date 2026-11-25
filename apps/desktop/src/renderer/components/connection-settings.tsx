@@ -130,14 +130,15 @@ export function ConnectionSettings({ tab }: { tab: ConnectionTab }) {
   const [checks, setChecks] = useState<Record<string, ConnectionCheckState>>({});
   const [accessBusy, setAccessBusy] = useState<"enable" | "disable" | "restart" | null>(null);
 
-  const reload = () =>
-    palot.listOpenCodeProfiles().then((value) => {
-      setSnapshot(value);
-      setProtection(value.credentialProtection ?? null);
-    });
+  const reload = () => palot.listOpenCodeProfiles().then(setSnapshot);
   const reloadWebAccess = () => palot.openCodeWebAccessInfo().then(setWebAccess);
   useEffect(() => {
     void reload().catch(showError);
+    // Separate from the profile list: it may wait on a system keyring prompt.
+    void palot
+      .openCodeCredentialProtection()
+      .then(setProtection)
+      .catch(() => setProtection(null));
   }, []);
   useEffect(() => {
     // Sharing needs to know whether a Tailscale address can be suggested.

@@ -151,8 +151,6 @@ export const WEAK_CREDENTIAL_STORAGE_MESSAGE =
 export interface OpenCodeProfileSnapshot {
   activeProfileID: string;
   profiles: OpenCodeProfile[];
-  /** Included when connection settings list profiles; absent from edit results. */
-  credentialProtection?: OpenCodeCredentialProtection;
 }
 
 export interface OpenCodeProfileTestResult {
@@ -1325,6 +1323,7 @@ export const IPC_CHANNELS = {
   sshCancel: "palot:opencode:ssh-cancel",
   networkRestored: "palot:opencode:network-restored",
   profilesList: "palot:opencode:profiles-list",
+  profilesCredentialProtection: "palot:opencode:profiles-credential-protection",
   profilesCreate: "palot:opencode:profiles-create",
   profilesUpdate: "palot:opencode:profiles-update",
   profilesDelete: "palot:opencode:profiles-delete",
@@ -1499,6 +1498,8 @@ export interface PalotApi {
   connectOpenCodeProfile(profileID: string): Promise<OpenCodeRuntimeStatus>;
   disconnectOpenCodeProfile(profileID: string): Promise<void>;
   listOpenCodeProfiles(): Promise<OpenCodeProfileSnapshot>;
+  /** Asks the system keyring, which can prompt on macOS; call only from connection settings. */
+  openCodeCredentialProtection(): Promise<OpenCodeCredentialProtection>;
   getSshConnectionState(): Promise<SshConnectionState | null>;
   onSshConnectionState(listener: (state: SshConnectionState | null) => void): () => void;
   respondSshPrompt(input: SshPromptResponse): Promise<void>;

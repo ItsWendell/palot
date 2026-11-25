@@ -82,8 +82,10 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-function addSshProfile(target: string) {
-  return runtime.createProfile({ kind: "ssh", name: target, ssh: { target } }).profiles.at(-1)!;
+async function addSshProfile(target: string) {
+  return (await runtime.createProfile({ kind: "ssh", name: target, ssh: { target } })).profiles.at(
+    -1,
+  )!;
 }
 
 function tunnel(close = vi.fn(async () => {})) {
@@ -92,8 +94,8 @@ function tunnel(close = vi.fn(async () => {})) {
 
 describe("OpenCode runtime SSH shutdown ownership", () => {
   it("keeps terminal streams across focus switches and closes only their disposed owner", async () => {
-    const first = addSshProfile("terminal-first");
-    const second = addSshProfile("terminal-second");
+    const first = await addSshProfile("terminal-first");
+    const second = await addSshProfile("terminal-second");
     const firstStatus = await runtime.switchProfile(first.id, async () => tunnel());
     const secondStatus = await runtime.connectProfile(second.id, async () => tunnel());
     const sockets = [0, 1].map(() => Object.assign(new EventTarget(), { close: vi.fn() }));
@@ -137,7 +139,7 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
   });
 
   it("publishes background event owners and status changes without changing focus", async () => {
-    const profile = addSshProfile("observed-background");
+    const profile = await addSshProfile("observed-background");
     const event = vi.fn();
     const status = vi.fn();
     const offEvent = runtime.onScopedEvent(event);
@@ -168,7 +170,7 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
   });
 
   it("disconnects only a known nonfocused lifecycle and immediately notifies disposal", async () => {
-    const profile = addSshProfile("background");
+    const profile = await addSshProfile("background");
     const closeReady = deferred();
     const connection = tunnel(vi.fn(() => closeReady.promise));
     releaseCleanup.push(closeReady.resolve);
@@ -204,7 +206,7 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
   });
 
   it("disables the focused connection without switching profiles and can enable it again", async () => {
-    const profile = addSshProfile("focused");
+    const profile = await addSshProfile("focused");
     const connection = tunnel();
     const connected = await runtime.switchProfile(profile.id, async () => connection);
     await runtime.disconnectProfile(profile.id);
@@ -225,7 +227,7 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
   it("disposes cached attention indexes when their lifecycle is disconnected", async () => {
     const { openCodeAttentionIndex, destroyOpenCodeAttentionIndex } =
       await import("./attention-index");
-    const profile = addSshProfile("attention");
+    const profile = await addSshProfile("attention");
     const status = await runtime.connectProfile(profile.id, async () => tunnel());
     const index = openCodeAttentionIndex(status.connectionID);
     const dispose = vi.spyOn(index, "dispose");
@@ -236,7 +238,7 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
   it("coalesces concurrent connection attempts for one retained profile without changing focus", async () => {
-    const profile = addSshProfile("shared");
+    const profile = await addSshProfile("shared");
     const ready = deferred();
     const connector = vi.fn<SshConnector>(async () => {
       await ready.promise;
@@ -279,7 +281,7 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
       const pending =
         operation === "test"
           ? runtime.testProfile({ kind: "ssh", name: "Test", ssh: { target: "test" } }, connector)
-          : runtime.switchProfile(addSshProfile("candidate").id, connector);
+          : runtime.switchProfile((await addSshProfile("candidate")).id, connector);
       const rejected = expect(pending).rejects.toThrow(/stopped|disposed/);
       await entered.promise;
       let shutdownFinished = false;
@@ -312,7 +314,7 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
         }),
       ),
     );
-    const profile = addSshProfile("active");
+    const profile = await addSshProfile("active");
     await runtime.switchProfile(profile.id, connector);
     const shutdown = runtime.shutdown();
     await closing.promise;
@@ -333,8 +335,8 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
     const closing = deferred();
     const finishClose = deferred();
     releaseCleanup.push(finishClose.resolve);
-    const previous = addSshProfile("previous");
-    const candidate = addSshProfile("candidate");
+    const previous = await addSshProfile("previous");
+    const candidate = await addSshProfile("candidate");
     await runtime.switchProfile(previous.id, async () => tunnel());
     runtime.onBeforeSwitch(async () => {
       closing.resolve();
@@ -356,8 +358,8 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
   });
 
   it("retains connected profiles across focus and deduplicates events per connection", async () => {
-    const first = addSshProfile("first");
-    const second = addSshProfile("second");
+    const first = await addSshProfile("first");
+    const second = await addSshProfile("second");
     const a = tunnel();
     const b = tunnel();
     const focusedObserver = vi.fn();
@@ -389,8 +391,8 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
   });
 
   it("routes exact background requests and rejects stale or mismatched generations", async () => {
-    const first = addSshProfile("first");
-    const second = addSshProfile("second");
+    const first = await addSshProfile("first");
+    const second = await addSshProfile("second");
     const statusA = await runtime.connectProfile(first.id, async () => ({
       ...tunnel(),
       endpoint: { url: "http://127.0.0.1:1111" },
@@ -414,7 +416,7 @@ describe("OpenCode runtime SSH shutdown ownership", () => {
       "not connected",
     );
     const scoped = runtime.scopedConnection(statusA.connectionID);
-    runtime.updateProfile({ ...first, kind: "ssh", ssh: { target: "edited" } });
+    await runtime.updateProfile({ ...first, kind: "ssh", ssh: { target: "edited" } });
     await expect(runtime.requestConnection({ connectionID: statusA.connectionID })).rejects.toThrow(
       "stale",
     );

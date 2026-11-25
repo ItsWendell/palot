@@ -243,6 +243,9 @@ This remains an experimental pre-release, not a supported stable release.
 
 ### Fixed
 
+- On macOS, Palot no longer freezes at startup behind a Keychain prompt. Starting no longer reads
+  the Keychain; Palot asks it only when it saves or reads a server password or token, or when
+  Connections settings checks how they are stored, and it waits without blocking the window.
 - Find in diff and Find in task no longer lose a key typed right after Mod+F, and typing straight
   after clicking into a file in the editor no longer loses the first keystrokes while Palot is busy.
 - Opening a task lands on what you haven't seen even when Palot's copy of the task was out of

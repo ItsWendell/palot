@@ -338,6 +338,8 @@ describe("OpenCodeRuntimeLifecycle remote profiles", () => {
     const discoverService = vi.fn();
     const ensureService = vi.fn();
     const makeClient = vi.fn(() => client(SUPPORTED_OPENCODE_VERSION));
+    // Reading a saved credential can wait on the system keyring, so it waits for connect().
+    const headers = vi.fn(async () => ({ authorization: "Bearer secret" }));
     const runtime = new OpenCodeRuntimeLifecycle({
       profile: {
         id: "remote",
@@ -349,7 +351,7 @@ describe("OpenCodeRuntimeLifecycle remote profiles", () => {
         lastSuccessfulUrl: null,
         lastConnectedAt: null,
       },
-      headers: { authorization: "Bearer secret" },
+      headers,
       adapter: {
         discoverService,
         ensureService,
@@ -363,6 +365,7 @@ describe("OpenCodeRuntimeLifecycle remote profiles", () => {
       onReconnect: vi.fn(),
       onStatus: vi.fn(),
     });
+    expect(headers).not.toHaveBeenCalled();
 
     await expect(runtime.connect()).resolves.toMatchObject({
       connected: true,
@@ -371,6 +374,7 @@ describe("OpenCodeRuntimeLifecycle remote profiles", () => {
       topology: "remote-machine",
     });
 
+    expect(headers).toHaveBeenCalledOnce();
     expect(discoverService).not.toHaveBeenCalled();
     expect(ensureService).not.toHaveBeenCalled();
     expect(makeClient).toHaveBeenCalledWith(
